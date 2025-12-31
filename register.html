@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register – Kannako Homes</title>
+    <meta name="description" content="Register your interest in Kannako Homes projects.">
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-page">
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="nav-container">
+            <div class="nav-left">
+                <img src="kannako-homes-logo.png" alt="Kannako Homes" class="top-logo">
+                <div class="nav-menu" id="nav-menu">
+                    <a href="index.html#home" class="nav-link">Home</a>
+                    <a href="index.html#services" class="nav-link">Services</a>
+                    <a href="index.html#portfolio" class="nav-link">Portfolio</a>
+                    <a href="index.html#contact" class="nav-link">Contact</a>
+                </div>
+            </div>
+            <div class="nav-auth">
+                <a href="login.html" class="auth-link">Login</a>
+                <a href="register.html" class="auth-link auth-register">Register</a>
+            </div>
+            <div class="hamburger" id="hamburger">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Registration Content -->
+    <main class="auth-main">
+        <div class="auth-card">
+            <h1>Create an Account</h1>
+            <p class="auth-subtitle">
+                Tell us a bit about yourself and the type of projects you’re interested in.
+            </p>
+
+            <!-- For now, just send to success page -->
+            <form class="auth-form" action="success.html" method="get">
+                <div class="auth-field">
+                    <label for="first-name">First Name</label>
+                    <input type="text" id="first-name" name="first_name" placeholder="First name" required>
+                </div>
+
+                <div class="auth-field">
+                    <label for="last-name">Last Name</label>
+                    <input type="text" id="last-name" name="last_name" placeholder="Last name" required>
+                </div>
+
+                <div class="auth-field">
+                    <label for="email">Email ID</label>
+                    <input type="email" id="email" name="email" placeholder="you@example.com" required>
+                </div>
+
+                <div class="auth-field">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Choose a password" required>
+                </div>
+
+                <div class="auth-field">
+                    <label for="project-type">Type of projects you are interested in</label>
+                    <textarea id="project-type" name="project_interest" rows="4"
+                        placeholder="For example: new construction, full home renovation, basement finishing, additions..." required></textarea>
+                </div>
+
+                <button type="submit" class="cta-button">Submit</button>
+            </form>
+        </div>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>

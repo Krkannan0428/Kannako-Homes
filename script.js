@@ -31,16 +31,16 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
 });
 
 // Navbar background change on scroll
-window.addEventListener('scroll', () => {
+/**window.addEventListener('scroll', () => {
     const navbar = document.getElementById('navbar');
     if (window.scrollY > 50) {
-        navbar.style.backgroundColor = 'rgba(255, 255, 255, 0.95)';
+        navbar.style.backgroundColor = 'rgba(15, 39, 71, 0.95)';
         navbar.style.backdropFilter = 'blur(10px)';
     } else {
-        navbar.style.backgroundColor = '#FFFFFF';
+        navbar.style.backgroundColor = '#0F2747';
         navbar.style.backdropFilter = 'none';
     }
-});
+});**/
 
 // Active navigation link highlighting
 window.addEventListener('scroll', () => {
@@ -245,10 +245,10 @@ const debouncedScrollHandler = debounce(() => {
     // Navbar background change
     const navbar = document.getElementById('navbar');
     if (window.scrollY > 50) {
-        navbar.style.backgroundColor = 'rgba(255, 255, 255, 0.95)';
+        navbar.style.backgroundColor = 'rgba(15, 39, 71, 0.95)';
         navbar.style.backdropFilter = 'blur(10px)';
     } else {
-        navbar.style.backgroundColor = '#FFFFFF';
+        navbar.style.backgroundColor = '#0F2747';
         navbar.style.backdropFilter = 'none';
     }
     

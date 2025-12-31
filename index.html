@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kannako Homes – Making Dreams Into Reality</title>
     <meta name="description" content="Kannako Homes delivers high-quality builds and renovations with craftsmanship and care.">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/jpeg" href="Editing Help.jpeg">
     
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Raleway:wght@300;400;500;600;700&family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
@@ -16,20 +20,21 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Top Logo -->
-    <div class="top-logo-container">
-        <img src="kannako-homes-logo.png" alt="Kannako Homes" class="top-logo">
-    </div>
-
     <!-- Navigation -->
     <nav class="navbar" id="navbar">
         <div class="nav-container">
-            <div class="nav-menu" id="nav-menu">
-                <a href="#home" class="nav-link">Home</a>
-                <a href="#about" class="nav-link">About</a>
-                <a href="#services" class="nav-link">Services</a>
-                <a href="#portfolio" class="nav-link">Portfolio</a>
-                <a href="#contact" class="nav-link">Contact</a>
+            <div class="nav-left">
+                <img src="kannako-homes-logo.png" alt="Kannako Homes" class="top-logo">
+                <div class="nav-menu" id="nav-menu">
+                    <a href="#home" class="nav-link">Home</a>
+                    <a href="#services" class="nav-link">Services</a>
+                    <a href="#portfolio" class="nav-link">Portfolio</a>
+                    <a href="#contact" class="nav-link">Contact</a>
+                </div>
+            </div>
+            <div class="nav-auth">
+                <a href="login.html" class="auth-link">Login</a>
+                <a href="register.html" class="auth-link auth-register">Register</a>
             </div>
             <div class="hamburger" id="hamburger">
                 <span class="bar"></span>
@@ -47,7 +52,6 @@
                 <!-- Hero Text -->
                 <h1 class="hero-subheading">WELCOME TO KANNAKO HOMES</h1>
                 <h2 class="hero-headline">BUILDING DREAMS INTO REALITY</h2>
-                <p class="hero-tagline-text">Our passion is creating beautiful homes that last a lifetime.</p>
                 <!-- Centered CTA button -->
                 <a href="#contact" class="cta-button">GET STARTED</a>
             </div>
@@ -60,7 +64,7 @@
             <h2 class="section-title">Building With Integrity & Vision</h2>
             <div class="about-content">
                 <div class="about-image">
-                    <img src="https://images.unsplash.com/photo-1564013799919-ab600027ffc6?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Kannako Homes luxury home exterior">
+                    <img src="house1.png" alt="Kannako Homes luxury home exterior">
                 </div>
                 <div class="about-text">
                     <p>At Kannako Homes, we believe everyone deserves a beautifully built home that reflects their lifestyle and vision. With integrity, craftsmanship and care we turn dreams into reality.</p>
@@ -100,7 +104,7 @@
                     <div class="service-icon">
                         <i class="fas fa-handshake"></i>
                     </div>
-                    <h3>Real Estate Partnerships</h3>
+                    <h3><a href="investors.html" style="text-decoration: none; color: inherit;">Real Estate Partnerships</a></h3>
                     <p>Collaborate with our real estate partners for seamless property acquisition and development.</p>
                 </div>
             </div>
@@ -113,45 +117,17 @@
             <h2 class="section-title">Featured Homes</h2>
             <div class="portfolio-grid">
                 <div class="portfolio-item">
-                    <img src="https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Modern luxury home exterior">
+                    <img src="currentproject1.png" alt="Kannako Homes house type">
                     <div class="portfolio-overlay">
-                        <h3>Modern Luxury</h3>
-                        <a href="#" class="portfolio-link">View Details</a>
+                        <h3>Our Work</h3>
+                        <a href="#" class="portfolio-link" data-portfolio="1">View Details</a>
                     </div>
                 </div>
                 <div class="portfolio-item">
-                    <img src="https://images.unsplash.com/photo-1600585154340-be6161a56a0c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Contemporary family home">
+                    <img src="currentproject1.png" alt="Kannako Homes house type">
                     <div class="portfolio-overlay">
-                        <h3>Contemporary Family</h3>
-                        <a href="#" class="portfolio-link">View Details</a>
-                    </div>
-                </div>
-                <div class="portfolio-item">
-                    <img src="https://images.unsplash.com/photo-1600607687644-c7171b42498b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Traditional craftsman home">
-                    <div class="portfolio-overlay">
-                        <h3>Traditional Craftsman</h3>
-                        <a href="#" class="portfolio-link">View Details</a>
-                    </div>
-                </div>
-                <div class="portfolio-item">
-                    <img src="https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Minimalist modern home">
-                    <div class="portfolio-overlay">
-                        <h3>Minimalist Modern</h3>
-                        <a href="#" class="portfolio-link">View Details</a>
-                    </div>
-                </div>
-                <div class="portfolio-item">
-                    <img src="https://images.unsplash.com/photo-1600607687920-4e2a09cf159d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Rustic farmhouse home">
-                    <div class="portfolio-overlay">
-                        <h3>Rustic Farmhouse</h3>
-                        <a href="#" class="portfolio-link">View Details</a>
-                    </div>
-                </div>
-                <div class="portfolio-item">
-                    <img src="https://images.unsplash.com/photo-1600566752355-35792bedcfea?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80" alt="Elegant colonial home">
-                    <div class="portfolio-overlay">
-                        <h3>Elegant Colonial</h3>
-                        <a href="#" class="portfolio-link">View Details</a>
+                        <h3>Our Work</h3>
+                        <a href="#" class="portfolio-link" data-portfolio="2">View Details</a>
                     </div>
                 </div>
             </div>
@@ -198,9 +174,9 @@
                         <p>"Kannako Homes exceeded our expectations in every way. Their attention to detail and commitment to quality is unmatched. We couldn't be happier with our new home."</p>
                     </div>
                     <div class="testimonial-author">
-                        <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=150&q=80" alt="Client photo">
+                        <div class="testimonial-avatar">JM</div>
                         <div class="author-info">
-                            <h4>John & Sarah Miller</h4>
+                            <h4>John</h4>
                             <span>Custom Home Owners</span>
                         </div>
                     </div>
@@ -210,25 +186,14 @@
                         <p>"The renovation process was smooth and stress-free. The team kept us informed every step of the way and delivered exactly what we envisioned."</p>
                     </div>
                     <div class="testimonial-author">
-                        <img src="https://images.unsplash.com/photo-1494790108755-2616b612b786?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=150&q=80" alt="Client photo">
+                        <div class="testimonial-avatar">ER</div>
                         <div class="author-info">
-                            <h4>Emily Rodriguez</h4>
-                            <span>Kitchen Renovation</span>
+                            <h4>Senthil</h4>
+                            <span>Basement renovation</span>
                         </div>
                     </div>
                 </div>
-                <div class="testimonial">
-                    <div class="testimonial-content">
-                        <p>"Professional, reliable, and incredibly talented. Kannako Homes turned our dream home into a reality. We highly recommend them to anyone."</p>
-                    </div>
-                    <div class="testimonial-author">
-                        <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=150&q=80" alt="Client photo">
-                        <div class="author-info">
-                            <h4>Michael Chen</h4>
-                            <span>Custom Build</span>
-                        </div>
-                    </div>
-                </div>
+                
             </div>
         </div>
     </section>
@@ -260,21 +225,21 @@
                         <i class="fas fa-phone"></i>
                         <div>
                             <h3>Phone</h3>
-                            <p>(555) 123-4567</p>
+                            <p>201-892-4950</p>
                         </div>
                     </div>
                     <div class="contact-item">
                         <i class="fas fa-envelope"></i>
                         <div>
                             <h3>Email</h3>
-                            <p>info@kannakohomes.com</p>
+                            <p>kannan@kannakohomes.com</p>
                         </div>
                     </div>
                     <div class="contact-item">
                         <i class="fas fa-map-marker-alt"></i>
                         <div>
                             <h3>Address</h3>
-                            <p>123 Builder's Lane<br>Construction City, ST 12345</p>
+                            <p>Edison New Jersey 08820</p>
                         </div>
                     </div>
                 </div>
@@ -300,21 +265,28 @@
                         <li><a href="#contact">Contact</a></li>
                     </ul>
                 </div>
-                <div class="footer-section">
-                    <h4>Follow Us</h4>
-                    <div class="social-links">
-                        <a href="#" aria-label="Facebook"><i class="fab fa-facebook"></i></a>
-                        <a href="#" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
-                        <a href="#" aria-label="LinkedIn"><i class="fab fa-linkedin"></i></a>
-                    </div>
-                </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2025 Kannako Homes. All rights reserved.</p>
+                <p>&copy; 2025 Kannako Homes LLC. All rights reserved.</p>
             </div>
         </div>
     </footer>
 
+    <!-- Portfolio Modal -->
+    <div id="portfolio-modal" class="portfolio-modal">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <img id="modal-image" src="" alt="Portfolio image">
+            <div class="modal-text">
+                <h3 id="modal-title"></h3>
+                <p id="modal-description"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- EmailJS -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+    
     <!-- JavaScript -->
     <script src="script.js"></script>
 </body>

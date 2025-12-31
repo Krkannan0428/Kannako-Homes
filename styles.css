@@ -58,25 +58,27 @@ h1, h2, h3, h4, h5, h6 {
     justify-content: center;
     align-items: center;
     padding: 8px 0 8px 0;
-    background-color: #FDFDFD;
+    background-color: #0F2747;
     z-index: 1001;
     box-shadow: none;
     margin-bottom: 0;
 }
 
 .top-logo {
+    width: 160px; /* reduced from 240px */
+
     width: 240px;
-    height: auto;
+    height: 74px;
     object-fit: contain;
-    background-color: #FDFDFD;
+    background-color: #0F2747;
 }
 
 /* Navigation */
 .navbar {
     position: fixed;
-    top: 105px;
+    top: 0;
     width: 100%;
-    background-color: #FDFDFD;
+    background-color: #0F2747;
     box-shadow: none;
     z-index: 1000;
     margin-top: 0;
@@ -85,14 +87,51 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .nav-container {
-    max-width: 1200px;
+    max-width: 1500px;
     margin: 0 auto;
-    padding: 10px 20px;
+    padding: 0px 0px;
     display: flex;
-    justify-content: center;
+    justify-content: space-between;
     align-items: center;
-    height: 44px;
+    column-gap: 2rem;
+    height: 100px;
 }
+
+.nav-left {
+    display: flex;
+    align-items: center;
+    column-gap: 2rem;
+    flex: 1;
+}
+
+.nav-auth {
+    display: flex;
+    align-items: center;
+    column-gap: 1.5rem;
+}
+
+.auth-link {
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #ffffff;
+    text-decoration: none;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.auth-link:hover {
+    border-color: var(--primary-color);
+    background-color: var(--primary-color);
+    color: #ffffff;
+}
+
+.auth-register {
+    border-color: var(--primary-color);
+}
+
 
 .nav-menu {
     display: flex;
@@ -100,9 +139,11 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .nav-link {
+    font-weight: 1200;
+    color: var(--primary-color);
     text-decoration: none;
-    color: var(--text-color);
-    font-weight: 500;
+    color: #FFFFFF;
+    font-weight: 700;
     font-family: 'Montserrat', sans-serif;
     transition: all 0.3s ease;
     position: relative;
@@ -116,21 +157,24 @@ h1, h2, h3, h4, h5, h6 {
     left: 0;
     width: 0;
     height: 2px;
-    background-color: var(--primary-color);
+    background-color:FFFFFF;
     transition: width 0.3s ease;
+	 color: #FFFFFF;
 }
 
 .nav-link:hover {
-    color: var(--primary-color);
+    
     transform: translateY(-2px);
+	 color: #FFFFFF;
 }
 
 .nav-link:hover::after {
     width: 100%;
+	
 }
 
 .nav-link.active {
-    color: var(--primary-color);
+    color: FFFFFF;
 }
 
 .hamburger {
@@ -155,7 +199,7 @@ h1, h2, h3, h4, h5, h6 {
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    margin-top: 161px;
+    margin-top: 96px;
 }
 
 .hero-image {
@@ -449,7 +493,7 @@ h1, h2, h3, h4, h5, h6 {
 .portfolio-link {
     color: white;
     text-decoration: none;
-    padding: 10px 20px;
+    padding: 10px 0px;
     border: 2px solid white;
     border-radius: 5px;
     transition: var(--transition);
@@ -707,12 +751,17 @@ h1, h2, h3, h4, h5, h6 {
         display: flex;
     }
 
+    .nav-auth {
+        display: none;
+    }
+
+
     .nav-menu {
         position: fixed;
         left: -100%;
-        top: 92px;
+        top: 72px;
         flex-direction: column;
-        background-color: #FDFDFD;
+        background-color: #FFFFFF;
         width: 100%;
         text-align: center;
         transition: 0.3s;
@@ -743,6 +792,8 @@ h1, h2, h3, h4, h5, h6 {
 
     /* Responsive top logo - scales down for tablet */
     .top-logo {
+    width: 160px; /* reduced from 240px */
+
         width: 180px;
     }
     
@@ -816,6 +867,8 @@ h1, h2, h3, h4, h5, h6 {
 
     /* Mobile top logo - optimized for small screens */
     .top-logo {
+    width: 160px; /* reduced from 240px */
+
         width: 150px;
     }
     
@@ -898,4 +951,116 @@ html {
 
 .fade-in-up {
     animation: fadeInUp 0.6s ease-out;
+}
+
+/* Footer Quick Links inline */
+.footer-section ul {
+    display: flex;
+    gap: 1.2rem;
+    list-style: none;
+    padding-left: 0;
+}
+.footer-section ul li {
+    display: inline;
+}
+
+/* Auth / Login / Register / Success Pages */
+.auth-page {
+    background: var(--background-white);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.auth-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5rem 1.5rem 3rem;
+    background: linear-gradient(135deg, #f5f9ff 0%, #e8f4fd 100%);
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 480px;
+    background: #ffffff;
+    border-radius: 18px;
+    box-shadow: 0 20px 45px rgba(8, 32, 63, 0.15);
+    padding: 2.5rem 2rem 2.25rem;
+}
+
+.auth-card h1 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.8rem;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.auth-subtitle {
+    font-family: 'Open Sans', sans-serif;
+    font-size: 0.95rem;
+    color: var(--text-light);
+    margin-bottom: 1.75rem;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    row-gap: 1rem;
+}
+
+.auth-field {
+    display: flex;
+    flex-direction: column;
+    row-gap: 0.35rem;
+}
+
+.auth-field label {
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.9rem;
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
+.auth-field input,
+.auth-field textarea {
+    width: 100%;
+    padding: 0.75rem 0.85rem;
+    border-radius: 8px;
+    border: 1px solid #ccd6e5;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    background-color: #f9fbff;
+}
+
+.auth-field input:focus,
+.auth-field textarea:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(11, 45, 87, 0.08);
+    background-color: #ffffff;
+}
+
+.auth-field textarea {
+    resize: vertical;
+    min-height: 120px;
+}
+
+.auth-footer-text {
+    margin-top: 1.2rem;
+    font-size: 0.9rem;
+    font-family: 'Open Sans', sans-serif;
+    color: var(--text-light);
+}
+
+.auth-footer-text a {
+    color: var(--primary-color);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.auth-footer-text a:hover {
+    text-decoration: underline;
 }

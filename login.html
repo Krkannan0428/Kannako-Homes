@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login – Kannako Homes</title>
+    <meta name="description" content="Login to your Kannako Homes account.">
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-page">
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="nav-container">
+            <div class="nav-left">
+                <img src="kannako-homes-logo.png" alt="Kannako Homes" class="top-logo">
+                <div class="nav-menu" id="nav-menu">
+                    <a href="index.html#home" class="nav-link">Home</a>
+                    <a href="index.html#services" class="nav-link">Services</a>
+                    <a href="index.html#portfolio" class="nav-link">Portfolio</a>
+                    <a href="index.html#contact" class="nav-link">Contact</a>
+                </div>
+            </div>
+            <div class="nav-auth">
+                <a href="login.html" class="auth-link">Login</a>
+                <a href="register.html" class="auth-link auth-register">Register</a>
+            </div>
+            <div class="hamburger" id="hamburger">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Login Content -->
+    <main class="auth-main">
+        <div class="auth-card">
+            <h1>Login</h1>
+            <p class="auth-subtitle">Access your Kannako Homes account.</p>
+
+            <form class="auth-form" action="#" method="post">
+                <div class="auth-field">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" name="email" placeholder="you@example.com" required>
+                </div>
+
+                <div class="auth-field">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" name="password" placeholder="Enter your password" required>
+                </div>
+
+                <button type="submit" class="cta-button">Login</button>
+
+                <p class="auth-footer-text">
+                    Don’t have an account?
+                    <a href="register.html">Register here</a>
+                </p>
+            </form>
+        </div>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
