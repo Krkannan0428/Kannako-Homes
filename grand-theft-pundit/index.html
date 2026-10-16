@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<title>Grand Theft Pundit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A top-down open-city parody crime game about the pundit-industrial complex, drawn entirely in canvas.">
+<style>
+/* Layout: one full-height stage; the canvas letterboxes a 1280x720 logical view inside it.
+   Single deliberate theme: a neon-noir cable-news city at night. */
+:root {
+  color-scheme: dark;
+  --bg: #06070d;
+  --bg-glow: #121735;
+  --ink: #eef1fb;
+  --muted: #8f97b3;
+  --neon-pink: #ff3fa4;
+  --neon-cyan: #2ee6ff;
+  --neon-amber: #ffbe3c;
+  --news-red: #ff3b30;
+  --panel: rgba(13, 16, 32, 0.86);
+  --font-ui: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-display: "Arial Black", Impact, "Helvetica Neue", Arial, sans-serif;
+  --gutter-l: max(16px, env(safe-area-inset-left, 0px));
+  --gutter-r: max(16px, env(safe-area-inset-right, 0px));
+  --gutter-t: env(safe-area-inset-top, 0px);
+  --gutter-b: env(safe-area-inset-bottom, 0px);
+}
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+#app {
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
+  background: radial-gradient(ellipse at 50% 120%, var(--bg-glow), var(--bg) 70%);
+}
+#stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+#game {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--bg);
+  outline: none;
+  cursor: crosshair;
+}
+#game:focus-visible { box-shadow: inset 0 0 0 2px var(--neon-cyan); }
+#overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--font-ui);
+  color: var(--ink);
+}
+#overlay > * { pointer-events: auto; }
+.gtp-panel {
+  background: var(--panel);
+  border: 1px solid rgba(46, 230, 255, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  #app { background: var(--bg); }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="game" aria-label="Grand Theft Pundit game view" role="img"></canvas>
+    <div id="overlay"></div>
+  </div>
+</div>
+<script src="js/00_util.js"></script>
+<script src="js/01_config.js"></script>
+<script src="js/02_input.js"></script>
+<script src="js/03_audio.js"></script>
+<script src="js/04_world.js"></script>
+<script src="js/05_entities.js"></script>
+<script src="js/06_ai.js"></script>
+<script src="js/07_combat.js"></script>
+<script src="js/08_missions.js"></script>
+<script src="js/09_render.js"></script>
+<script src="js/10_ui.js"></script>
+<script src="js/20_content_world.js"></script>
+<script src="js/21_content_cast.js"></script>
+<script src="js/22_content_missions.js"></script>
+<script src="js/23_content_radio.js"></script>
+<script src="js/30_game.js"></script>
+</body>
+</html>
