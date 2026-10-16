@@ -8,6 +8,7 @@
   var C = GTP.C, U = GTP.util;
   var SAVE_KEY = 'gtp.save.v1';
   var SIM_STATES = { playing: 1, cutscene: 1, minigame: 1 };
+  var RESPAWN_STATES = { wasted: 1, busted: 1 }; // the world freezes; Combat runs its respawn timer
 
   function parseParams() {
     var out = {};
@@ -162,6 +163,9 @@
         this.time.t += dt;
         this.time.clock += dt / C.DAY.secondsPerHour;
         if (this.time.clock >= 24) { this.time.clock -= 24; this.time.day++; }
+      } else if (RESPAWN_STATES[this.state]) {
+        GTP.Combat.update(dt);
+        GTP.Render.fx.update(dt);
       }
       GTP.UI.update(dt);
       GTP.Render.updateCamera(dt);
