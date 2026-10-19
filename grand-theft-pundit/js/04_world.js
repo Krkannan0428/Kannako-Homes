@@ -792,8 +792,9 @@
         var side = def.door || 's', sx, sz, rot;
         if (side === 's') { sx = b.cx; sz = b.z + b.d + 0.12; rot = Math.PI; }
         else if (side === 'n') { sx = b.cx; sz = b.z - 0.12; rot = 0; }
-        else if (side === 'e') { sx = b.x + b.w + 0.12; sz = b.cz; rot = Math.PI / 2; }
-        else { sx = b.x - 0.12; sz = b.cz; rot = -Math.PI / 2; }
+        // rot is a yaw: 0 faces north (-z), PI south, -PI/2 east (+x), PI/2 west (-x)
+        else if (side === 'e') { sx = b.x + b.w + 0.12; sz = b.cz; rot = -Math.PI / 2; }
+        else { sx = b.x - 0.12; sz = b.cz; rot = Math.PI / 2; }
         var faceLen = (side === 's' || side === 'n') ? b.w : b.d;
         var sw = Math.min(faceLen - 1, Math.max(3, text.length * (big ? 0.7 : 0.5) + 1.2));
         P({ kind: 'sign', text: text, x: sx, z: sz, y: Math.min(b.h - 0.3, C.FLOOR_H + 0.9), rot: rot, w: sw, h: big ? 1.6 : 1.1, neon: !!neon, landmark: lmk.id, solid: false });
@@ -845,7 +846,7 @@
             [[lot.x + 2, lot.z + 10], [lot.x + 6, lot.z + 30]].forEach(function (c) {
               for (var dz = 0; dz < 2; dz++) for (var dx = 0; dx < 2; dx++) { i = (c[1] + dz) * w + c[0] + dx; if (tiles[i] === T.GRASS) { tiles[i] = T.SAND; meta[i] &= ~M.LAWN; } }
             });
-            P({ kind: 'sign', text: 'GOLDPLATE LINKS: PAR 10', x: lx + lw - TILE - 0.6, z: czm, y: 1.6, rot: Math.PI / 2, w: 6, h: 1.0, standing: true, solid: false });
+            P({ kind: 'sign', text: 'GOLDPLATE LINKS: PAR 10', x: lx + lw - TILE - 0.6, z: czm, y: 1.6, rot: -Math.PI / 2, w: 6, h: 1.0, standing: true, solid: false });
             for (k = 0; k < 10; k++) P({ kind: 'tree', x: lx + TILE * 1.5 + R.random() * (lw - 3 * TILE), z: lz + TILE * 1.5 + R.random() * (ld - 3 * TILE), r: 0.5, solid: true, scale: R.range(0.9, 1.4), h: 7 });
           } else {
             paths(true, false);
@@ -857,7 +858,7 @@
             P({ kind: 'dish', x: b.x + 2, z: b.z + 2, y: b.y + b.h, rot: R.range(0, 6), r: 0, solid: false, h: 2.5 });
             facadeSign(def.sign || 'ON AIR', true, false);
             if (lmk.id === 'tyn_tower') P({ kind: 'sign', text: 'THE YELL NETWORK', x: b.cx, z: b.z + b.d + 0.15, y: b.h - 2.2, rot: Math.PI, w: b.w - 1, h: 2.4, neon: true, solid: false, landmark: lmk.id });
-            else P({ kind: 'sign', text: 'DORM 4B', x: b.x - 0.12, z: b.cz, y: C.FLOOR_H * 2 + 1, rot: -Math.PI / 2, w: 4, h: 1, neon: false, solid: false });
+            else P({ kind: 'sign', text: 'DORM 4B', x: b.x - 0.12, z: b.cz, y: C.FLOOR_H * 2 + 1, rot: Math.PI / 2, w: 4, h: 1, neon: false, solid: false });
           }
           break;
         }
@@ -915,7 +916,7 @@
             [[b.x - 1.5, b.z - 1.5], [b.x + b.w + 1.5, b.z - 1.5], [b.x - 1.5, b.z + b.d + 1.5], [b.x + b.w + 1.5, b.z + b.d + 1.5]].forEach(function (c) {
               P({ kind: 'mast', x: c[0], z: c[1], r: 0.6, solid: true, h: 26 });
             });
-            P({ kind: 'sign', text: 'GOLDPLATE GOLDPLATE STADIUM', x: b.x - 0.3, z: b.cz, y: b.h - 2, rot: -Math.PI / 2, w: 22, h: 3, neon: true, solid: false, landmark: lmk.id });
+            P({ kind: 'sign', text: 'GOLDPLATE GOLDPLATE STADIUM', x: b.x - 0.3, z: b.cz, y: b.h - 2, rot: Math.PI / 2, w: 22, h: 3, neon: true, solid: false, landmark: lmk.id });
           }
           break;
         }
@@ -955,7 +956,7 @@
         case 'tower': {
           if (b) {
             facadeSign(def.sign, true, true);
-            P({ kind: 'sign', text: def.sign, x: b.x + b.w + 0.15, z: b.cz, y: b.h - 4, rot: Math.PI / 2, w: b.d - 1, h: 2.4, neon: true, solid: false });
+            P({ kind: 'sign', text: def.sign, x: b.x + b.w + 0.15, z: b.cz, y: b.h - 4, rot: -Math.PI / 2, w: b.d - 1, h: 2.4, neon: true, solid: false });
             P({ kind: 'sign', text: def.sign, x: b.cx, z: b.z + b.d + 0.15, y: b.h - 4, rot: Math.PI, w: b.w - 1, h: 2.4, neon: true, solid: false });
             if (def.roofSign) P({ kind: 'sign', text: def.roofSign, x: b.cx, z: b.cz, y: b.y + b.h + 3, rot: 0, w: 4, h: 4, neon: true, solid: false, standing: true, double: true });
           }
@@ -1093,7 +1094,8 @@
       }
       // sponsor billboards along the Loop's outer shoulders and the strip
       var ads = (CW.billboards && CW.billboards.ads) || [];
-      var adSpots = [[42, 50, Math.PI / 2], [42, 80, Math.PI / 2], [109, 42, -Math.PI / 2], [109, 86, -Math.PI / 2], [60, 30, Math.PI], [90, 30, Math.PI], [60, 97, 0], [90, 97, 0], [75, 108, 0]];
+      // each board faces the Loop leg (or the strip road) beside it: yaw -PI/2 faces east, PI/2 west
+      var adSpots = [[42, 50, -Math.PI / 2], [42, 80, -Math.PI / 2], [109, 42, Math.PI / 2], [109, 86, Math.PI / 2], [60, 30, Math.PI], [90, 30, Math.PI], [60, 97, 0], [90, 97, 0], [75, 108, 0]];
       for (var k = 0; k < adSpots.length && ads.length; k++) {
         var sx = adSpots[k][0], sz = adSpots[k][1], tt = World.tile(sx, sz);
         if (tt !== T.PLAZA && tt !== T.GRASS && tt !== T.SIDEWALK && tt !== T.PARKING) continue;

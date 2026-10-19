@@ -1,8 +1,8 @@
 /* Grand Theft Pundit: 30_game.js
  * GTP.Game: boot, URL params, state machine, fixed-step loop with accumulator
  * and max-steps guard, headless advance, render, time/clock, save/load
- * skeleton, debug API. Holds a placeholder on-foot player (step 2 replaces it
- * with GTP.Player + the real controller).
+ * skeleton, debug API. The player is a GTP.Player (06_entities) spawned at the
+ * GTP.Content.world.playerSpawn landmark door with the cast "player" look.
  */
 (function () {
   'use strict';
@@ -25,70 +25,6 @@
     return out;
   }
   function truthy(v) { return v === true || v === 1 || v === '1' || v === 'true' || v === 'yes'; }
-
-  // ------------------------------------------------------ placeholder player --
-  // A walking capsule with the contract's fields. Uses heightAt, resolveCapsule,
-  // step-up, jump and gravity so the camera rig and tests have something real to follow.
-  function PlaceholderPlayer(x, z) {
-    this.kind = 'player'; this.id = 0;
-    this.x = x; this.z = z; this.y = GTP.World.heightAt(x, z, 0); this.yaw = Math.PI;
-    this.vx = 0; this.vy = 0; this.vz = 0; this.speed = 0;
-    this.radius = C.PLAYER.radius; this.height = C.PLAYER.height;
-    this.hp = C.PLAYER.hp; this.maxHp = C.PLAYER.hp; this.armor = 0; this.alive = true;
-    this.money = C.PLAYER.startMoney; this.wanted = 0; this.heat = 0;
-    this.weapons = { fist: Infinity }; this.weapon = 'fist'; this.vehicle = null; this.inVehicle = null; this.lockTarget = null;
-    this.cameraMode = 'chase'; this.stats = {}; this.onGround = true; this.animTime = 0; this.aiming = false;
-    this.look = { skin: 2, hair: 'short', hairColor: '#3a2a1a', shirt: '#ff3fa4', pants: '#2a2f4a', glasses: 'none', hat: 'none', extra: 'mic' };
-    this.mesh = null; this.persistent = true; this.placeholder = true;
-    this._px = x; this._py = this.y; this._pz = z; this._pyaw = this.yaw;
-  }
-  PlaceholderPlayer.prototype.update = function (dt) {
-    var In = GTP.Input, W = GTP.World, P = C.PLAYER;
-    this._px = this.x; this._py = this.y; this._pz = this.z; this._pyaw = this.yaw;
-    var mv = In.move, camYaw = GTP.Render.rig.yaw;
-    var f = U.yawToDir(camYaw), rx = -f.z, rz = f.x;
-    var wx = f.x * mv.z + rx * mv.x, wz = f.z * mv.z + rz * mv.x;
-    var l = Math.sqrt(wx * wx + wz * wz);
-    var run = In.down('run');
-    var target = l > 0.01 ? (run ? P.run : P.walk) : 0;
-    if (l > 1) { wx /= l; wz /= l; l = 1; }
-    this.aiming = In.down('aim');
-    var tvx = l > 0.01 ? wx / l * target * Math.min(1, l) : 0, tvz = l > 0.01 ? wz / l * target * Math.min(1, l) : 0;
-    this.vx = U.damp(this.vx, tvx, P.accel / 2, dt); this.vz = U.damp(this.vz, tvz, P.accel / 2, dt);
-    if (l > 0.01) this.yaw = U.angleDamp(this.yaw, U.dirToYaw(wx, wz), 14, dt);
-    // gravity and jump
-    var ground = W.heightAt(this.x, this.z, this.y);
-    if (this.onGround && In.pressed('jump')) { this.vy = Math.sqrt(2 * C.PHYS.gravity * P.jump); this.onGround = false; }
-    if (!this.onGround) this.vy -= C.PHYS.gravity * dt;
-    var nx = this.x + this.vx * dt, nz = this.z + this.vz * dt, ny = this.y + this.vy * dt;
-    // step-up: a ledge taller than stepUp is a wall
-    var gNew = W.heightAt(nx, nz, this.y);
-    if (gNew > this.y + P.stepUp + 0.05 && this.onGround) {
-      var gx = W.heightAt(nx, this.z, this.y), gz = W.heightAt(this.x, nz, this.y);
-      if (gx <= this.y + P.stepUp + 0.05) { nz = this.z; this.vz = 0; } else if (gz <= this.y + P.stepUp + 0.05) { nx = this.x; this.vx = 0; } else { nx = this.x; nz = this.z; this.vx = this.vz = 0; }
-      gNew = W.heightAt(nx, nz, this.y);
-    }
-    var r = W.resolveCapsule(nx, nz, this.y, this.radius);
-    this.x = r.x; this.z = r.z;
-    if (r.hitX) this.vx = 0; if (r.hitZ) this.vz = 0;
-    ground = W.heightAt(this.x, this.z, this.onGround ? this.y : ny);
-    if (this.onGround) { this.y = U.damp(this.y, ground, 30, dt); if (Math.abs(this.y - ground) < 0.02) this.y = ground; if (ground < this.y - 0.6) { this.onGround = false; this.vy = 0; } }
-    else { this.y = ny; if (this.vy <= 0 && this.y <= ground) { this.y = ground; this.vy = 0; this.onGround = true; } }
-    this.speed = Math.sqrt(this.vx * this.vx + this.vz * this.vz);
-    this.animTime += this.speed * dt * 1.6;
-    this.stats.distance = (this.stats.distance || 0) + this.speed * dt;
-  };
-  PlaceholderPlayer.prototype.syncMesh = function (alpha) {
-    var m = this.mesh; if (!m) return;
-    var a = alpha == null ? 1 : alpha;
-    m.position.set(this._px + (this.x - this._px) * a, this._py + (this.y - this._py) * a, this._pz + (this.z - this._pz) * a);
-    m.rotation.y = this._pyaw + U.wrapAngle(this.yaw - this._pyaw) * a;
-    var sw = Math.sin(this.animTime * 6) * Math.min(1, this.speed / 2.6) * 0.7;
-    var parts = this._parts || (this._parts = { legL: m.getObjectByName('legL'), legR: m.getObjectByName('legR'), armL: m.getObjectByName('armL'), armR: m.getObjectByName('armR') });
-    if (parts.legL) { parts.legL.rotation.x = sw; parts.legR.rotation.x = -sw; parts.armL.rotation.x = -sw * 0.8; parts.armR.rotation.x = sw * 0.8; }
-    if (!this.onGround && parts.legL) { parts.legL.rotation.x = 0.5; parts.legR.rotation.x = -0.3; }
-    m.visible = this.cameraMode !== 'first';
-  };
 
   // ---------------------------------------------------------------- Game --
   function Game() {
@@ -160,15 +96,15 @@
     GTP.Render.invalidateAll();
     GTP.Render.fx.clear();
     var E = GTP.Entities;
-    if (this.player && !this.player.placeholder) E.remove(this.player);
-    if (this.player && this.player.mesh) GTP.Render.detach(this.player);
-    E.clearDynamic();
+    for (var i = E.list.length - 1; i >= 0; i--) E.remove(E.list[i]);
     E.list.length = 0; E.hash.clear();
+    this.player = null;
     var sp = this._spawnPoint();
     this.player = this._makePlayer(sp);
     this.time = { t: 0, clock: C.DAY.startClock, day: 1 };
     this.steps = 0;
     if (GTP.AI.reset) GTP.AI.reset();
+    if (GTP.Combat && GTP.Combat.reset) GTP.Combat.reset();
     if (GTP.AI.spawner && GTP.AI.spawner.warmup) { try { GTP.AI.spawner.warmup(); } catch (e) { U.reportError(e, 'spawner.warmup'); } }
     GTP.Missions.init();
     GTP.Render.freeCam(false);
@@ -181,15 +117,10 @@
   };
 
   Game.prototype._makePlayer = function (sp) {
-    var p;
-    if (GTP.Player && !GTP.Player.placeholderOnly && GTP.Player.prototype.control) {
-      p = new GTP.Player({ x: sp.x, y: sp.y, z: sp.z });
-      GTP.Entities.add(p);
-    } else {
-      p = new PlaceholderPlayer(sp.x, sp.z);
-      p.mesh = GTP.Assets.pedParts(p.look);
-      GTP.Render.entityGroup.add(p.mesh);
-    }
+    var p = new GTP.Player({ x: sp.x, y: sp.y, z: sp.z });
+    p.yaw = 0;
+    p.snap();
+    GTP.Entities.add(p);
     return p;
   };
 
@@ -236,10 +167,7 @@
     try {
       GTP.Input.beginFrame();
       this._handleGlobalInput();
-      if (this.state === 'playing' && this.player) {
-        if (this.player.control) this.player.control(dt);
-        else if (this.player.placeholder) this.player.update(dt);
-      }
+      if (this.state === 'playing' && this.player && this.player.control) this.player.control(dt);
       if (SIM_STATES[this.state]) {
         GTP.Missions.update(dt);
         GTP.AI.update(dt);
@@ -251,6 +179,7 @@
         if (this.time.clock >= 24) { this.time.clock -= 24; this.time.day++; }
       } else if (RESPAWN_STATES[this.state]) {
         GTP.Combat.update(dt);
+        if (GTP.AI.updateRespawn) GTP.AI.updateRespawn(dt);   // the AI's fallback DEPLATFORMED flow until Combat owns it
         GTP.Render.fx.update(dt);
       }
       if (GTP.Audio.update) GTP.Audio.update(dt);
@@ -345,21 +274,35 @@
   Game.prototype._makeDebug = function () {
     var g = this;
     return {
+      // moves the player (and the vehicle they sit in); y defaults to the surface under (x, z)
       teleport: function (x, z, y) {
         var p = g.player; if (!p) return;
-        p.x = x; p.z = z; p.y = y != null ? y : GTP.World.heightAt(x, z, y || 0); p._px = p.x; p._py = p.y; p._pz = p.z; p.vx = p.vz = p.vy = 0; p.onGround = true;
+        var ty = y != null ? y : GTP.World.heightAt(x, z, y || 0), v = p.inVehicle;
+        if (v) { v.x = x; v.z = z; v.y = ty; v.vx = v.vz = v.vy = 0; v.speed = 0; v.lateral = 0; v.angVel = 0; v.onGround = true; v.snap(); if (v._sh) GTP.Entities.hash.update(v); }
+        p.x = x; p.z = z; p.y = ty; p.vx = p.vz = p.vy = 0; p.onGround = true; p.swimming = false; p.knockedDown = false; p.snap();
         if (p._sh) GTP.Entities.hash.update(p);
         GTP.Render.rig.snap(); GTP.Render.updateCamera(0);
       },
-      spawnVehicle: function (x, z, type) {
+      // opts: {color, yaw, wrap:'pod', locked, y}
+      spawnVehicle: function (x, z, type, opts) {
         if (!GTP.Vehicle) return null;
-        var v = new GTP.Vehicle({ x: x, z: z, type: type || 'sedan' });
-        v.y = GTP.World.heightAt(x, z, 0);
-        var d = GTP.World.roadDir(x, z, v.y); if (d) v.yaw = U.dirToYaw(d.dx, d.dz);
+        opts = opts || {};
+        var v = new GTP.Vehicle({ x: x, z: z, type: type || 'sedan', color: opts.color, wrap: opts.wrap, locked: opts.locked, tag: opts.tag });
+        v.y = opts.y != null ? opts.y : GTP.World.heightAt(x, z, 0);
+        if (opts.yaw != null) v.yaw = opts.yaw;
+        else { var d = GTP.World.roadDir(x, z, v.y); if (d) v.yaw = U.dirToYaw(d.dx, d.dz); }
+        v.snap();
         GTP.Entities.add(v); return v;
       },
+      spawnPed: function (x, z, look, role) {
+        var district = GTP.World.districtAt(x, z), did = district ? district.id : 'downtown';
+        var lk = look || GTP.Content.world.spawn.peds.rollLook(did, role || 'civ');
+        var p = new GTP.Ped({ x: x, z: z, look: lk, role: role || lk.role || 'civ' });
+        p.y = GTP.World.heightAt(x, z, 0); p.snap();
+        GTP.Entities.add(p); return p;
+      },
       giveWeapon: function (id, ammo) { var p = g.player; if (!p) return; p.weapons[id] = (p.weapons[id] || 0) + (ammo == null ? 50 : ammo); p.weapon = id; },
-      setWanted: function (n) { var p = g.player; if (!p) return; p.wanted = U.clamp(n | 0, 0, 5); var th = C.WANTED.thresholds; p.heat = p.wanted ? th[p.wanted - 1] : 0; if (GTP.AI.wanted) { GTP.AI.wanted.level = p.wanted; GTP.AI.wanted.heat = p.heat; } },
+      setWanted: function (n) { var p = g.player; if (!p) return; p.wanted = U.clamp(n | 0, 0, 5); var th = C.WANTED.thresholds; p.heat = p.wanted ? th[p.wanted - 1] : 0; if (GTP.AI.wanted) { if (GTP.AI.wanted.set) GTP.AI.wanted.set(p.wanted); else { GTP.AI.wanted.level = p.wanted; GTP.AI.wanted.heat = p.heat; } } },
       setMoney: function (n) { if (g.player) g.player.money = n | 0; },
       startMission: function (id) { return GTP.Missions.start(id); },
       completeObjective: function () { return GTP.Missions.completeObjective(); },
@@ -374,7 +317,7 @@
         var d = p.x != null ? W.districtAt(p.x, p.z) : null;
         return {
           state: g.state, t: +g.time.t.toFixed(2), clock: +g.time.clock.toFixed(3), day: g.time.day, fps: +g.fps.toFixed(1), steps: g.steps, frames: g.frames,
-          player: { x: +(p.x || 0).toFixed(2), y: +(p.y || 0).toFixed(2), z: +(p.z || 0).toFixed(2), yaw: +(p.yaw || 0).toFixed(3), hp: p.hp, money: p.money, wanted: p.wanted, weapon: p.weapon, vehicle: p.vehicle ? p.vehicle.type : null, onGround: p.onGround, cameraMode: p.cameraMode },
+          player: { x: +(p.x || 0).toFixed(2), y: +(p.y || 0).toFixed(2), z: +(p.z || 0).toFixed(2), yaw: +(p.yaw || 0).toFixed(3), hp: p.hp, armor: p.armor, money: p.money, wanted: p.wanted, weapon: p.weapon, vehicle: p.inVehicle ? p.inVehicle.type : null, speed: +((p.inVehicle ? p.inVehicle.speed : p.speed) || 0).toFixed(2), state: p.state, onGround: p.onGround, swimming: !!p.swimming, cameraMode: p.cameraMode },
           district: d ? d.id : null, street: p.x != null ? W.streetAt(p.x, p.z, p.y) : null,
           mission: GTP.Missions.state.active, entities: GTP.Entities.list.length, errors: GTP.errors.length,
           render: { chunks: GTP.Render.chunks.size, tris: GTP.Render.stats.triangles, calls: GTP.Render.stats.calls, frameMs: +GTP.Render.stats.frameMs.toFixed(1), night: +GTP.Render.night.toFixed(2) }

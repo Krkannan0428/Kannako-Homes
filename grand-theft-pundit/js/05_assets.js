@@ -271,127 +271,333 @@
     },
 
     // ------------------------------------------------------------ vehicles --
-    vehicleGeometry: function (cls) {
-      if (Assets._vehicles[cls]) return Assets._vehicles[cls];
+    // Mesh-local frame: forward = -z, right = +x, up = +y, ground at y = 0.
+    // Returns {body, groups, wheel, wheelRadius, wheelWidth, wheelOffsets[{x,z,steer}], lightPoints, doorPoints, size}.
+    // Body geometry groups (material slots): paint 0, detail 1, glass 2, head 3, tail 4, barRed 5, barBlue 6, wrap 7.
+    GROUPS: { paint: 0, detail: 1, glass: 2, head: 3, tail: 4, barRed: 5, barBlue: 6, wrap: 7 },
+    vehicleGeometry: function (cls, wrap) {
+      var key = cls + (wrap ? ':' + wrap : '');
+      if (Assets._vehicles[key]) return Assets._vehicles[key];
       var spec = C.VEHICLES[cls] || C.VEHICLES.sedan;
-      var paint = new GB({ color: true }), det = new GB({ color: true });
-      var L = spec.length, W = spec.width, H = spec.height, wr = spec.wheelRadius;
-      var white = [1, 1, 1], glass = [0.22, 0.3, 0.38], dark = [0.1, 0.1, 0.12], chrome = [0.75, 0.78, 0.82], red = [0.9, 0.1, 0.08], amber = [1, 0.75, 0.2], headl = [1, 0.98, 0.85];
-      var y0 = wr * 0.9; // chassis bottom
-      function cabin(x0, x1, zHalf, yb, yt, inset) {
-        // a cabin box with glass on the sides and front/back, roof painted
-        var z0 = -zHalf + inset, z1 = zHalf - inset;
-        det.box(x0, yb, z0, x1 - x0, yt - yb, z1 - z0, GB.UV0, function (f) { return f === 'top' ? white : glass; }, { top: 0, bottom: 0, north: 1, south: 1, west: 1, east: 1 });
-        paint.box(x0, yt - 0.02, z0, x1 - x0, 0.02, z1 - z0, GB.UV0, white, { top: 1, bottom: 0, north: 0, south: 0, west: 0, east: 0 });
+      if (!C.VEHICLES[cls]) cls = 'sedan';
+      var L = spec.length, Wd = spec.width, H = spec.height, wr = spec.wheelRadius, hl = L / 2, hw = Wd / 2;
+      var G = { paint: new GB({ color: true }), detail: new GB({ color: true }), glass: new GB({ color: true }), head: new GB({ color: true }), tail: new GB({ color: true }), barRed: new GB({ color: true }), barBlue: new GB({ color: true }), wrap: new GB({ color: true }) };
+      var WHITE = [1, 1, 1], GLASS = [0.42, 0.55, 0.66], DARK = [0.12, 0.12, 0.14], CHROME = [0.8, 0.82, 0.86], NAVY = [0.14, 0.2, 0.42], AMBER = [1, 0.72, 0.15], LGREY = [0.86, 0.86, 0.84], RED = [1, 0.12, 0.08], HEADC = [1, 0.97, 0.82], BLUE = [0.2, 0.45, 1];
+      var y0 = wr * 0.85;
+      var ww = cls === 'bike' ? 0.1 : (cls === 'truck' || cls === 'bus') ? 0.3 : cls === 'suv' ? 0.26 : 0.22;
+      function box(g, x, y, z, w, h, d, col, faces) { g.box(x, y, z, w, h, d, GB.UV0, col, faces); }
+      // trapezoid prism: bottom rect z[zb0,zb1] at yb, top rect z[zt0,zt1] (inset on x) at yt; cols = {front, back, left, right, top} -> [geo, color]
+      function prism(x0, x1, yb, yt, zb0, zb1, zt0, zt1, inset, cols) {
+        var A = [x0, yb, zb0], B = [x1, yb, zb0], Cc = [x1, yb, zb1], D = [x0, yb, zb1];
+        var E = [x0 + inset, yt, zt0], F = [x1 - inset, yt, zt0], Gg = [x1 - inset, yt, zt1], Hh = [x0 + inset, yt, zt1];
+        cols.front[0].quad(B, A, E, F, GB.UV0, cols.front[1]);
+        cols.back[0].quad(D, Cc, Gg, Hh, GB.UV0, cols.back[1]);
+        cols.right[0].quad(Cc, B, F, Gg, GB.UV0, cols.right[1]);
+        cols.left[0].quad(A, D, Hh, E, GB.UV0, cols.left[1]);
+        cols.top[0].quad(E, Hh, Gg, F, GB.UV0, cols.top[1]);
       }
-      // body coordinates: x along length (front = +x), z across (width), y up
-      var fx = L / 2, bx = -L / 2, hz = W / 2;
-      if (cls === 'truck') {
-        paint.box(fx - 2.2, y0, -hz, 2.2, 0.9, W, GB.UV0, white);       // hood
-        cabin(fx - 2.1, fx - 0.3, hz, y0 + 0.9, y0 + 1.9, 0.12);
-        paint.box(fx - 2.1, y0 + 1.88, -hz + 0.1, 1.8, 0.1, W - 0.2, GB.UV0, white);
-        det.box(bx, y0 + 0.2, -hz, L - 2.4, H - y0 - 0.2, W, GB.UV0, [0.85, 0.85, 0.82]); // cargo box
-        det.box(bx + 0.2, y0 - 0.2, -hz + 0.2, L - 2.6, 0.3, W - 0.4, GB.UV0, dark);
-      } else if (cls === 'bus') {
-        paint.box(bx, y0, -hz, L, H - y0 - 0.9, W, GB.UV0, white);
-        det.box(bx + 0.1, y0 + (H - y0 - 0.9) - 0.05, -hz + 0.05, L - 0.2, 0.75, W - 0.1, GB.UV0, function (f) { return f === 'top' ? white : glass; });
-        paint.box(bx + 0.05, H - 0.2, -hz + 0.05, L - 0.1, 0.2, W - 0.1, GB.UV0, white);
+      var P = G.paint, Dt = G.detail, Gl = G.glass;
+      var glassCab = { front: [Gl, GLASS], back: [Gl, GLASS], left: [Gl, GLASS], right: [Gl, GLASS], top: [P, WHITE] };
+      function lights(ly, lw, lh, inset, zf, zb) {
+        zf = zf == null ? -hl : zf; zb = zb == null ? hl : zb;
+        box(G.head, -hw + inset, ly, zf - 0.03, lw, lh, 0.08, HEADC); box(G.head, hw - inset - lw, ly, zf - 0.03, lw, lh, 0.08, HEADC);
+        box(G.tail, -hw + inset, ly, zb - 0.05, lw, lh * 0.85, 0.08, RED); box(G.tail, hw - inset - lw, ly, zb - 0.05, lw, lh * 0.85, 0.08, RED);
+      }
+      function bumpers(h, zf, zb) {
+        zf = zf == null ? -hl : zf; zb = zb == null ? hl : zb;
+        box(Dt, -hw + 0.04, y0 - 0.02, zf - 0.1, Wd - 0.08, h, 0.14, DARK);
+        box(Dt, -hw + 0.04, y0 - 0.02, zb - 0.04, Wd - 0.08, h, 0.14, DARK);
+      }
+      function underbody() { box(Dt, -hw + 0.15, y0 - 0.14, -hl + 0.4, Wd - 0.3, 0.16, L - 0.8, DARK, GB.ALL_FACES); }
+      function mirrors(zc, yc) { box(Dt, -hw - 0.14, yc, zc, 0.16, 0.08, 0.1, DARK); box(Dt, hw - 0.02, yc, zc, 0.16, 0.08, 0.1, DARK); }
+      function plate(zb, y) { box(Dt, -0.18, y, zb - 0.01, 0.36, 0.12, 0.03, LGREY); }
+      function pillars(zb0, zb1, yb, yt) {
+        var zm = (zb0 + zb1) / 2;
+        box(P, -hw + 0.08, yb, zm - 0.05, 0.05, yt - yb, 0.1, WHITE); box(P, hw - 0.13, yb, zm - 0.05, 0.05, yt - yb, 0.1, WHITE);
+      }
+      var cab = null;   // cabin extents for door/light placement
+      if (cls === 'sedan' || cls === 'cop' || cls === 'taxi') {
+        var bh = 0.55;
+        box(P, -hw, y0, -hl, Wd, bh, L, WHITE, GB.NO_BOTTOM);
+        cab = { zb0: -hl + 1.55, zb1: hl - 0.95 };
+        box(P, -hw + 0.02, y0 + bh, -hl + 0.1, Wd - 0.04, 0.17, cab.zb0 + hl - 0.1 + 0.2, WHITE);      // hood
+        box(P, -hw + 0.02, y0 + bh, cab.zb1 - 0.2, Wd - 0.04, 0.15, hl - cab.zb1 + 0.1, WHITE);        // trunk
+        prism(-hw + 0.1, hw - 0.1, y0 + bh + 0.17, H, cab.zb0, cab.zb1, cab.zb0 + 0.8, cab.zb1 - 0.45, 0.1, glassCab);
+        pillars(cab.zb0 + 0.3, cab.zb1 - 0.1, y0 + bh + 0.17, H - 0.03);
+        bumpers(0.24); underbody(); mirrors(cab.zb0 + 0.1, y0 + bh + 0.3); plate(hl, y0 + 0.2);
+        box(Dt, -0.45, y0 + 0.2, -hl - 0.02, 0.9, 0.22, 0.05, DARK);   // grille
+        lights(y0 + 0.36, 0.36, 0.16, 0.14);
+        if (cls === 'cop') {
+          box(Dt, -0.6, H - 0.02, -0.25, 1.2, 0.06, 0.5, DARK);
+          box(G.barRed, -0.58, H + 0.04, -0.2, 0.56, 0.16, 0.4, RED); box(G.barBlue, 0.02, H + 0.04, -0.2, 0.56, 0.16, 0.4, BLUE);
+          box(Dt, -hw - 0.01, y0 + 0.18, cab.zb0 - 0.2, 0.02, 0.26, cab.zb1 - cab.zb0 + 0.4, NAVY); box(Dt, hw - 0.01, y0 + 0.18, cab.zb0 - 0.2, 0.02, 0.26, cab.zb1 - cab.zb0 + 0.4, NAVY);
+          box(Dt, -hw + 0.25, y0 + 0.05, -hl - 0.3, 0.07, 0.5, 0.07, DARK); box(Dt, hw - 0.32, y0 + 0.05, -hl - 0.3, 0.07, 0.5, 0.07, DARK); box(Dt, -hw + 0.25, y0 + 0.45, -hl - 0.32, Wd - 0.5, 0.08, 0.08, DARK);   // push bar
+          box(P, -hw, y0 + bh - 0.01, -hl + 0.3, Wd, 0.02, L - 0.6, [0.1, 0.14, 0.3]);   // dark beltline
+        }
+        if (cls === 'taxi') {
+          box(Dt, -0.4, H - 0.01, -0.25, 0.8, 0.24, 0.34, AMBER);
+          box(Dt, -0.28, H + 0.05, -0.27, 0.56, 0.1, 0.02, DARK); box(Dt, -0.28, H + 0.05, 0.08, 0.56, 0.1, 0.02, DARK);
+          for (var ck = 0; ck < 10; ck++) { var cz = -hl + 0.3 + ck * (L - 0.6) / 10; box(Dt, -hw - 0.01, y0 + 0.3, cz, 0.02, 0.12, (L - 0.6) / 10, ck % 2 ? DARK : WHITE); box(Dt, hw - 0.01, y0 + 0.3, cz, 0.02, 0.12, (L - 0.6) / 10, ck % 2 ? DARK : WHITE); }
+        }
+      } else if (cls === 'sports') {
+        box(P, -hw, y0, -hl, Wd, 0.4, L, WHITE, GB.NO_BOTTOM);
+        cab = { zb0: -hl + 1.75, zb1: hl - 1.05 };
+        prism(-hw, hw, y0 + 0.4, y0 + 0.62, -hl + 0.05, hl - 0.05, cab.zb0 - 0.05, hl - 0.05, 0.02, { front: [P, WHITE], back: [P, WHITE], left: [P, WHITE], right: [P, WHITE], top: [P, WHITE] });
+        prism(-hw + 0.12, hw - 0.12, y0 + 0.62, H, cab.zb0, cab.zb1, cab.zb0 + 0.95, cab.zb1 - 0.3, 0.12, glassCab);
+        pillars(cab.zb0 + 0.5, cab.zb1, y0 + 0.62, H - 0.03);
+        box(Dt, -hw + 0.1, H - 0.22, hl - 0.5, 0.08, 0.2, 0.3, DARK); box(Dt, hw - 0.18, H - 0.22, hl - 0.5, 0.08, 0.2, 0.3, DARK);
+        box(P, -hw + 0.05, H - 0.06, hl - 0.6, Wd - 0.1, 0.06, 0.4, WHITE);   // wing
+        box(Dt, -hw + 0.1, y0 - 0.08, -hl - 0.12, Wd - 0.2, 0.2, 0.2, DARK);  // splitter
+        box(Dt, -hw - 0.02, y0 - 0.06, -hl + 0.9, 0.06, 0.12, L - 1.8, DARK); box(Dt, hw - 0.04, y0 - 0.06, -hl + 0.9, 0.06, 0.12, L - 1.8, DARK);   // skirts
+        bumpers(0.18); underbody(); mirrors(cab.zb0 + 0.15, y0 + 0.7); plate(hl, y0 + 0.14);
+        box(Dt, -0.5, y0 + 0.08, -hl - 0.02, 1.0, 0.2, 0.05, DARK);
+        lights(y0 + 0.34, 0.42, 0.12, 0.12);
+      } else if (cls === 'suv') {
+        box(P, -hw, y0, -hl, Wd, 0.72, L, WHITE, GB.NO_BOTTOM);
+        cab = { zb0: -hl + 1.45, zb1: hl - 0.15 };
+        box(P, -hw + 0.03, y0 + 0.72, -hl + 0.08, Wd - 0.06, 0.26, cab.zb0 + hl + 0.1, WHITE);       // hood
+        prism(-hw + 0.06, hw - 0.06, y0 + 0.98, H, cab.zb0, cab.zb1, cab.zb0 + 0.55, cab.zb1 - 0.08, 0.08, glassCab);
+        pillars(cab.zb0 + 0.3, cab.zb1 - 1.2, y0 + 0.98, H - 0.03); pillars(cab.zb0 + 1.9, cab.zb1 + 0.4, y0 + 0.98, H - 0.03);
+        box(Dt, -hw + 0.25, H - 0.02, cab.zb0 + 0.6, 0.08, 0.1, cab.zb1 - cab.zb0 - 0.9, DARK); box(Dt, hw - 0.33, H - 0.02, cab.zb0 + 0.6, 0.08, 0.1, cab.zb1 - cab.zb0 - 0.9, DARK);   // roof rails
+        box(Dt, -hw - 0.1, y0 + 0.05, -hl + 1.3, 0.12, 0.08, L - 2.6, DARK); box(Dt, hw - 0.02, y0 + 0.05, -hl + 1.3, 0.12, 0.08, L - 2.6, DARK);   // side steps
+        bumpers(0.3); underbody(); mirrors(cab.zb0 + 0.1, y0 + 1.1); plate(hl, y0 + 0.3);
+        box(Dt, -0.55, y0 + 0.28, -hl - 0.02, 1.1, 0.34, 0.05, DARK);
+        lights(y0 + 0.5, 0.34, 0.2, 0.14);
+      } else if (cls === 'truck') {
+        var cabL = 2.5;
+        box(Dt, -hw + 0.2, y0 - 0.1, -hl + 0.3, Wd - 0.4, 0.34, L - 0.6, DARK);                        // chassis rails
+        box(P, -hw + 0.05, y0, -hl, Wd - 0.1, 1.0, 1.5, WHITE);                                           // hood
+        cab = { zb0: -hl + 1.3, zb1: -hl + cabL };
+        prism(-hw + 0.05, hw - 0.05, y0 + 1.0, y0 + 2.1, cab.zb0, cab.zb1, cab.zb0 + 0.35, cab.zb1, 0.06, { front: [Gl, GLASS], back: [P, WHITE], left: [Gl, GLASS], right: [Gl, GLASS], top: [P, WHITE] });
+        box(P, -hw + 0.05, y0, cab.zb0, Wd - 0.1, 1.0, cabL - 1.3, WHITE);                               // cab lower
+        pillars(cab.zb0 + 0.6, cab.zb1 - 0.05, y0 + 1.0, y0 + 2.08);
+        box(Dt, -hw, y0 + 0.3, -hl + cabL + 0.3, Wd, H - y0 - 0.3, L - cabL - 0.4, LGREY);              // cargo box
+        box(Dt, -0.03, y0 + 0.4, hl - 0.11, 0.06, H - y0 - 0.6, 0.03, DARK);                               // rear door seam
+        box(Dt, -0.25, y0 + 2.14, cab.zb0 + 0.2, 0.5, 0.25, 0.3, CHROME);                                 // exhaust stack / horn
+        box(Dt, -hw + 0.3, y0 + 0.05, -hl - 0.15, Wd - 0.6, 0.4, 0.2, CHROME);                            // front bumper
+        box(Dt, -0.6, y0 + 0.35, -hl - 0.02, 1.2, 0.5, 0.05, DARK);                                        // grille
+        mirrors(cab.zb0, y0 + 1.5);
+        lights(y0 + 0.5, 0.36, 0.22, 0.2, -hl, hl);
       } else if (cls === 'van') {
-        paint.box(bx, y0, -hz, L, 0.9, W, GB.UV0, white);
-        det.box(bx + 0.1, y0 + 0.88, -hz + 0.08, L - 0.2, 0.7, W - 0.16, GB.UV0, function (f) { return f === 'top' ? white : glass; });
-        paint.box(bx + 0.1, y0 + 1.56, -hz + 0.08, L - 0.2, H - y0 - 1.56, W - 0.16, GB.UV0, white);
+        var noseL = 1.15;
+        box(P, -hw + 0.02, y0, -hl, Wd - 0.04, 0.85, noseL + 0.1, WHITE, GB.NO_BOTTOM);                   // nose
+        box(P, -hw, y0, -hl + noseL, Wd, H - y0, L - noseL, WHITE, GB.NO_BOTTOM);                         // body
+        prism(-hw + 0.02, hw - 0.02, y0 + 0.85, H, -hl + 0.3, -hl + noseL, -hl + noseL - 0.05, -hl + noseL, 0.0, { front: [Gl, GLASS], back: [P, WHITE], left: [P, WHITE], right: [P, WHITE], top: [P, WHITE] });
+        box(Gl, -hw - 0.01, y0 + 1.05, -hl + noseL + 0.08, 0.03, H - y0 - 1.45, 1.0, GLASS); box(Gl, hw - 0.02, y0 + 1.05, -hl + noseL + 0.08, 0.03, H - y0 - 1.45, 1.0, GLASS);   // cab windows
+        box(Dt, -0.02, y0 + 0.3, hl - 0.11, 0.04, H - y0 - 0.5, 0.03, DARK);                               // rear doors seam
+        box(Dt, -hw + 0.3, y0 + 0.5, hl - 0.11, 0.3, 0.3, 0.03, GLASS); box(Dt, hw - 0.6, y0 + 0.5, hl - 0.11, 0.3, 0.3, 0.03, GLASS);
+        bumpers(0.26); underbody(); mirrors(-hl + noseL + 0.05, y0 + 1.25); plate(hl, y0 + 0.2);
+        box(Dt, -0.5, y0 + 0.25, -hl - 0.02, 1.0, 0.3, 0.05, DARK);
+        lights(y0 + 0.4, 0.34, 0.2, 0.15);
+        if (wrap) {
+          // side panels + rear doors carry the wrap texture (u runs front -> back on the left, back -> front on the right)
+          // texture: upper half = side panels (u front -> back on the left, back -> front on the right), lower half centre = rear doors
+          var wz0 = -hl + noseL + 1.2, wz1 = hl - 0.05, wy0 = y0 + 0.35, wy1 = H - 0.25, e = 0.012;
+          G.wrap.quad([-hw - e, wy0, wz0], [-hw - e, wy0, wz1], [-hw - e, wy1, wz1], [-hw - e, wy1, wz0], [[0, 0.5], [1, 0.5], [1, 1], [0, 1]], WHITE);
+          G.wrap.quad([hw + e, wy0, wz1], [hw + e, wy0, wz0], [hw + e, wy1, wz0], [hw + e, wy1, wz1], [[0, 0.5], [1, 0.5], [1, 1], [0, 1]], WHITE);
+          G.wrap.quad([-hw + 0.1, wy0, hl + e], [hw - 0.1, wy0, hl + e], [hw - 0.1, wy1, hl + e], [-hw + 0.1, wy1, hl + e], [[0.25, 0], [0.75, 0], [0.75, 0.5], [0.25, 0.5]], WHITE);
+        }
+      } else if (cls === 'bus') {
+        var wy = y0 + 1.25, wh = 1.05, winL = 0.95, gap = 0.18, nWin = 8;
+        box(P, -hw, y0, -hl, Wd, H - y0 - 0.12, L, WHITE, GB.NO_BOTTOM);
+        box(P, -hw + 0.1, H - 0.14, -hl + 0.3, Wd - 0.2, 0.14, L - 0.6, WHITE);                           // roof
+        for (var wi = 0; wi < nWin; wi++) {
+          var wz = -hl + 1.5 + wi * (winL + gap);
+          box(Gl, -hw - 0.015, wy, wz, 0.03, wh, winL, GLASS); box(Gl, hw - 0.015, wy, wz, 0.03, wh, winL, GLASS);
+        }
+        box(Gl, -hw + 0.12, y0 + 1.0, -hl - 0.02, Wd - 0.24, H - y0 - 1.3, 0.04, GLASS);                   // windshield
+        box(Gl, -hw + 0.2, wy, hl - 0.02, Wd - 0.4, wh, 0.04, GLASS);                                      // rear window
+        box(Dt, hw - 0.015, y0 + 0.1, -hl + 0.45, 0.03, H - y0 - 0.5, 0.9, DARK);                           // front door (right side)
+        box(Dt, hw - 0.015, y0 + 0.1, hl - 3.2, 0.03, H - y0 - 0.5, 0.9, DARK);                             // rear door
+        box(Dt, -0.9, H - 0.55, -hl - 0.03, 1.8, 0.3, 0.05, AMBER);                                         // destination sign
+        box(Dt, -hw, y0 + 0.5, -hl + 0.2, Wd, 0.06, L - 0.4, NAVY);                                         // stripe
+        bumpers(0.3); underbody(); mirrors(-hl + 0.1, y0 + 1.6);
+        lights(y0 + 0.55, 0.3, 0.2, 0.2);
       } else if (cls === 'bike') {
-        paint.box(bx + 0.5, y0 + 0.15, -0.18, L - 1.0, 0.35, 0.36, GB.UV0, white);
-        det.box(bx + 0.3, y0 + 0.5, -0.12, 0.8, 0.12, 0.24, GB.UV0, dark);  // seat
-        det.box(fx - 0.7, y0 + 0.5, -0.35, 0.08, 0.08, 0.7, GB.UV0, chrome); // bars
-        det.box(bx + 0.2, y0 - 0.1, -0.25, L - 0.4, 0.25, 0.5, GB.UV0, dark);
-      } else {
-        var lowH = cls === 'sports' ? 0.55 : cls === 'suv' ? 0.95 : 0.7;
-        paint.box(bx, y0, -hz, L, lowH, W, GB.UV0, white);
-        var cabFront = cls === 'sports' ? fx - 1.6 : cls === 'suv' ? fx - 1.4 : fx - 1.5;
-        var cabBack = cls === 'sports' ? bx + 0.9 : cls === 'suv' ? bx + 0.2 : bx + 0.9;
-        cabin(cabBack, cabFront, hz, y0 + lowH, H, 0.15);
-        if (cls === 'cop') { det.box(-0.5, H, -0.55, 1.0, 0.18, 0.5, GB.UV0, red); det.box(-0.5, H, 0.05, 1.0, 0.18, 0.5, GB.UV0, [0.2, 0.4, 1]); }
-        if (cls === 'taxi') det.box(-0.4, H, -0.3, 0.8, 0.25, 0.6, GB.UV0, amber);
+        box(Dt, -0.2, 0.3, -0.35, 0.4, 0.06, 0.9, DARK);                                                     // floorboard
+        box(P, -0.22, 0.42, 0.05, 0.44, 0.34, 0.8, WHITE);                                                   // rear body
+        box(Dt, -0.17, 0.76, 0.0, 0.34, 0.1, 0.72, DARK);                                                    // seat
+        prism(-0.2, 0.2, 0.35, 0.95, -0.9, -0.62, -0.8, -0.64, 0.0, { front: [P, WHITE], back: [P, WHITE], left: [P, WHITE], right: [P, WHITE], top: [P, WHITE] });   // front shield
+        box(Dt, -0.03, 0.9, -0.78, 0.06, 0.12, 0.06, DARK);                                                  // column
+        box(Dt, -0.32, 1.0, -0.8, 0.64, 0.04, 0.04, CHROME);                                                 // bars
+        box(Dt, -0.07, 0.5, -0.9, 0.14, 0.09, 0.02, LGREY);                                                  // the tiny front plate
+        box(G.head, -0.09, 0.72, -0.9, 0.18, 0.14, 0.04, HEADC);
+        box(G.tail, -0.08, 0.6, 0.84, 0.16, 0.08, 0.04, RED);
+        box(Dt, -0.06, 0.1, -0.76, 0.12, 0.3, 0.1, DARK); box(Dt, -0.06, 0.1, 0.66, 0.12, 0.3, 0.1, DARK);   // forks
       }
-      // bumpers, lights, grille, plate
-      det.box(fx - 0.12, y0 + 0.05, -hz, 0.14, 0.3, W, GB.UV0, chrome);
-      det.box(bx - 0.02, y0 + 0.05, -hz, 0.14, 0.3, W, GB.UV0, chrome);
-      var ly = y0 + (cls === 'bus' || cls === 'truck' ? 0.6 : 0.45), lw = cls === 'bike' ? 0.18 : 0.36;
-      det.box(fx - 0.04, ly, -hz + 0.15, 0.06, 0.2, lw, GB.UV0, headl);
-      det.box(fx - 0.04, ly, hz - 0.15 - lw, 0.06, 0.2, lw, GB.UV0, headl);
-      det.box(bx - 0.04, ly, -hz + 0.15, 0.06, 0.18, lw, GB.UV0, red);
-      det.box(bx - 0.04, ly, hz - 0.15 - lw, 0.06, 0.18, lw, GB.UV0, red);
-      if (cls !== 'bike') det.box(fx - 0.03, ly - 0.02, -0.4, 0.05, 0.22, 0.8, GB.UV0, dark);
-      // merge: group 0 = paint (material.color = vehicle color), group 1 = details
-      var gp = paint.build(), gd = det.build();
-      var body = GB.merge([gp, gd]);
-      var np = gp.getIndex().count;
-      body.clearGroups(); body.addGroup(0, np, 0); body.addGroup(np, gd.getIndex().count, 1);
-      // wheel
+      // merge with stable group indices
+      var order = ['paint', 'detail', 'glass', 'head', 'tail', 'barRed', 'barBlue', 'wrap'], parts = [], ranges = [];
+      order.forEach(function (name, gi) {
+        var gb = G[name]; if (!gb.count()) return;
+        var geo = gb.build(); parts.push(geo); ranges.push({ gi: gi, count: geo.getIndex().count });
+      });
+      var body = GB.merge(parts), start = 0;
+      body.clearGroups();
+      ranges.forEach(function (r) { body.addGroup(start, r.count, r.gi); start += r.count; });
+      // wheels: a cylinder around the x axis with a hub cap so the spin reads
       var wg = new GB({ color: true });
-      var ww = cls === 'bike' ? 0.12 : cls === 'truck' || cls === 'bus' ? 0.32 : 0.24;
-      wheelCyl(wg, wr, ww, dark, chrome);
-      var wheelOffsets = cls === 'bike'
-        ? [{ x: fx - 0.45, z: 0, steer: true }, { x: bx + 0.45, z: 0, steer: false }]
-        : [{ x: fx - L * 0.22, z: -hz + ww * 0.4, steer: true }, { x: fx - L * 0.22, z: hz - ww * 0.4, steer: true }, { x: bx + L * 0.2, z: -hz + ww * 0.4, steer: false }, { x: bx + L * 0.2, z: hz - ww * 0.4, steer: false }];
-      var rec = Assets._vehicles[cls] = {
-        body: body, wheel: wg.build(), wheelRadius: wr, wheelOffsets: wheelOffsets, groups: { paint: 0, detail: 1 },
-        lightPoints: { headL: { x: fx, y: ly + 0.1, z: -hz + 0.3 }, headR: { x: fx, y: ly + 0.1, z: hz - 0.3 }, tailL: { x: bx, y: ly + 0.1, z: -hz + 0.3 }, tailR: { x: bx, y: ly + 0.1, z: hz - 0.3 }, roof: { x: 0, y: H + 0.1, z: 0 } },
-        doorPoints: [{ x: 0.3, z: -hz - 0.6, seat: 0 }, { x: 0.3, z: hz + 0.6, seat: 1 }],
-        size: { length: L, width: W, height: H }
+      wheelAxle(wg, wr, ww, DARK, CHROME, cls === 'bike' ? 8 : 12);
+      var wx = cls === 'bike' ? 0 : hw - ww * 0.5 + 0.02, fz = -(hl - L * 0.2), bz = hl - L * 0.2;
+      var wheelOffsets;
+      if (cls === 'bike') wheelOffsets = [{ x: 0, z: -0.72, steer: true }, { x: 0, z: 0.72, steer: false }];
+      else if (cls === 'truck') wheelOffsets = [{ x: -wx, z: -hl + 1.0, steer: true }, { x: wx, z: -hl + 1.0, steer: true }, { x: -wx, z: hl - 1.0, steer: false }, { x: wx, z: hl - 1.0, steer: false }, { x: -wx, z: hl - 2.3, steer: false }, { x: wx, z: hl - 2.3, steer: false }];
+      else if (cls === 'bus') wheelOffsets = [{ x: -wx, z: -hl + 1.7, steer: true }, { x: wx, z: -hl + 1.7, steer: true }, { x: -wx, z: hl - 2.4, steer: false }, { x: wx, z: hl - 2.4, steer: false }];
+      else wheelOffsets = [{ x: -wx, z: fz, steer: true }, { x: wx, z: fz, steer: true }, { x: -wx, z: bz, steer: false }, { x: wx, z: bz, steer: false }];
+      var ly = cls === 'bike' ? 0.78 : cls === 'truck' ? y0 + 0.6 : y0 + 0.45;
+      var rec = Assets._vehicles[key] = {
+        body: body, groups: Assets.GROUPS, wheel: wg.build(), wheelRadius: wr, wheelWidth: ww, wheelOffsets: wheelOffsets,
+        lightPoints: { headL: { x: -hw + 0.3, y: ly, z: -hl }, headR: { x: hw - 0.3, y: ly, z: -hl }, head: { x: 0, y: ly, z: -hl }, tailL: { x: -hw + 0.3, y: ly, z: hl }, tailR: { x: hw - 0.3, y: ly, z: hl }, roof: { x: 0, y: H + 0.1, z: 0 }, eye: { x: cls === 'bike' ? 0 : -0.4, y: H * 0.82, z: cab ? cab.zb0 + 0.6 : -hl * 0.2 } },
+        doorPoints: [{ x: -(hw + 0.7), z: -hl * 0.15, seat: 0 }, { x: hw + 0.7, z: -hl * 0.15, seat: 1 }],
+        size: { length: L, width: Wd, height: H }, wrap: wrap || null
       };
       return rec;
     },
+    // the podcast van livery: canvas texture with the game logo (the T is a folding table)
+    wrapTexture: function (name) {
+      Assets._wraps = Assets._wraps || {};
+      if (Assets._wraps[name]) return Assets._wraps[name];
+      // upper half: the side panel; lower half, centre 512 px: the rear doors
+      var Wc = 1024, Hc = 768, Hs = 384, cv = canvas(Wc, Hc), ctx = cv.getContext('2d');
+      ctx.fillStyle = '#f4f1ea'; ctx.fillRect(0, 0, Wc, Hc);
+      function tableT(tx, ty, s) { ctx.fillStyle = PAL.gold; ctx.fillRect(tx - 46 * s, ty, 92 * s, 16 * s); ctx.fillRect(tx - 30 * s, ty + 16 * s, 10 * s, 58 * s); ctx.fillRect(tx + 20 * s, ty + 16 * s, 10 * s, 58 * s); }
+      // headless browsers may lack Arial Black: shrink the display font until the line fits
+      function fitFont(text, size, maxW) {
+        for (var k = 0; k < 12; k++) { ctx.font = '900 ' + size + 'px "Arial Black", Impact, Arial, sans-serif'; if (ctx.measureText(text).width <= maxW) break; size = Math.floor(size * 0.9); }
+        return size;
+      }
+      // side: diagonal neon bands, the logo, the tagline
+      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, Wc, Hs); ctx.clip();
+      ctx.save(); ctx.rotate(-0.12);
+      ctx.fillStyle = PAL.neon[0]; ctx.fillRect(-100, 250, Wc + 300, 70);
+      ctx.fillStyle = PAL.neon[1]; ctx.fillRect(-100, 330, Wc + 300, 30);
+      ctx.restore();
+      ctx.fillStyle = '#101014'; ctx.fillRect(0, 0, Wc, 30); ctx.fillRect(0, Hs - 34, Wc, 34);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      var fs = fitFont('LOUD & CORRECT', 118, Wc * 0.84);
+      ctx.fillStyle = '#101014'; ctx.fillText('LOUD & CORRECT', Wc / 2 + 4, 132);
+      ctx.fillStyle = PAL.neon[0]; ctx.fillText('LOUD & CORRECT', Wc / 2, 126);
+      var lw = ctx.measureText('LOUD & CORRECT').width, tw = ctx.measureText('T').width;
+      tableT(Wc / 2 + lw / 2 - tw / 2, 126 - fs * 0.36, fs / 118);
+      ctx.font = '700 44px ui-monospace, Menlo, Consolas, monospace'; ctx.fillStyle = '#101014';
+      ctx.fillText('A PODCAST. FROM A VAN.', Wc / 2, 215);
+      ctx.font = '700 26px ui-monospace, Menlo, Consolas, monospace'; ctx.fillStyle = '#f4f1ea';
+      ctx.fillText('ASK ME ANYTHING, I\'LL ANSWER SOMETHING ELSE', Wc / 2, Hs - 17);
+      ctx.fillText('CODE TAKES20', Wc - 160, 15);
+      ctx.restore();
+      // rear doors (x 256..768, y 384..768): two-line logo, a band, the sponsor code
+      ctx.save(); ctx.beginPath(); ctx.rect(256, Hs, 512, Hs); ctx.clip();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';   // restore() above reset the alignment
+      ctx.fillStyle = PAL.neon[0]; ctx.fillRect(256, Hs + 250, 512, 44); ctx.fillStyle = PAL.neon[1]; ctx.fillRect(256, Hs + 300, 512, 18);
+      ctx.fillStyle = '#101014'; ctx.fillRect(256, Hs, 512, 20); ctx.fillRect(256, Hc - 36, 512, 36);
+      var fs2 = fitFont('CORRECT', 96, 512 * 0.86);
+      ctx.fillStyle = '#101014'; ctx.fillText('LOUD &', 512 + 3, Hs + 92); ctx.fillText('CORRECT', 512 + 3, Hs + 190);
+      ctx.fillStyle = PAL.neon[0]; ctx.fillText('LOUD &', 512, Hs + 88); ctx.fillText('CORRECT', 512, Hs + 186);
+      var cw = ctx.measureText('CORRECT').width, tw2 = ctx.measureText('T').width;
+      tableT(512 + cw / 2 - tw2 / 2, Hs + 186 - fs2 * 0.36, fs2 / 118);
+      ctx.font = '700 30px ui-monospace, Menlo, Consolas, monospace'; ctx.fillStyle = '#f4f1ea';
+      ctx.fillText('CODE TAKES20', 512, Hc - 17);
+      ctx.restore();
+      var tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      Assets._wraps[name] = tex;
+      return tex;
+    },
 
     // ---------------------------------------------------------------- peds --
+    // Articulated low-poly figure. Root group (feet at y 0, faces -z) with pivots:
+    //   legL legR (hips), torso (hip pivot holding the torso mesh, armL armR shoulder pivots, head)
+    // Each pivot holds one merged vertex-coloured mesh, so a ped costs six draw calls.
     pedParts: function (look) {
       look = look || {};
-      var skinTones = ['#f3d9c4', '#e8c39e', '#d1a074', '#b57a4d', '#8d5524', '#5c3a21'];
-      var skin = skinTones[U.clamp((look.skin || 2) - 1, 0, 5)];
-      var shirt = look.shirt || '#6a8fcf', pants = look.pants || '#2a2f4a', hairC = look.hairColor || '#3a2a1a';
       var g = new THREE.Group();
-      var mSkin = Assets.colorMaterial(skin), mShirt = Assets.colorMaterial(shirt), mPants = Assets.colorMaterial(pants), mHair = Assets.colorMaterial(hairC), mShoe = Assets.colorMaterial('#222228');
+      var mat = Assets.propMaterial();
       var sc = look.scale || 1;
-      function part(name, geo, mat, x, y, z) { var m = new THREE.Mesh(geo, mat); m.name = name; m.position.set(x, y, z); m.castShadow = true; return m; }
-      var legH = 0.85, torsoH = 0.62, headR = 0.14;
-      // legs pivot at the hip
-      ['legL', 'legR'].forEach(function (n, i) {
-        var piv = new THREE.Group(); piv.name = n; piv.position.set(i ? 0.11 : -0.11, legH, 0);
-        piv.add(part(n + 'Mesh', new THREE.BoxGeometry(0.17, legH, 0.2), mPants, 0, -legH / 2, 0));
-        piv.add(part(n + 'Shoe', new THREE.BoxGeometry(0.18, 0.08, 0.28), mShoe, 0, -legH + 0.04, 0.04));
-        g.add(piv);
+      var skin = c(skinHex(look.skin)), shirt = c(look.shirt || '#6a8fcf'), pants = c(look.pants || '#2a2f4a'), hair = c(look.hairColor || '#3a2a1a');
+      var shoe = [0.13, 0.13, 0.15];
+      var legH = 0.84, torsoH = 0.6, headR = 0.14, hy = torsoH + 0.05 + 0.15;   // head centre in torso space
+      function mesh(name, geo, x, y, z) { var m = new THREE.Mesh(geo, mat); m.name = name; m.castShadow = true; m.userData.own = false; if (x != null) m.position.set(x, y, z); return m; }
+      function pivot(name, x, y, z) { var p = new THREE.Group(); p.name = name; p.position.set(x, y, z); return p; }
+      // legs
+      var legGeo = pedGeo('leg:' + look.pants, function (L) {
+        L.push(gbox(-0.085, -legH, -0.1, 0.17, legH - 0.04, 0.2, pants));
+        L.push(gbox(-0.09, -legH, -0.15, 0.18, 0.08, 0.3, shoe));
       });
-      g.add(part('torso', new THREE.BoxGeometry(0.46, torsoH, 0.26), mShirt, 0, legH + torsoH / 2, 0));
-      ['armL', 'armR'].forEach(function (n, i) {
-        var piv = new THREE.Group(); piv.name = n; piv.position.set(i ? 0.3 : -0.3, legH + torsoH - 0.04, 0);
-        piv.add(part(n + 'Mesh', new THREE.BoxGeometry(0.13, 0.6, 0.14), mShirt, 0, -0.26, 0));
-        piv.add(part(n + 'Hand', new THREE.BoxGeometry(0.12, 0.12, 0.12), mSkin, 0, -0.6, 0));
-        g.add(piv);
+      var legL = pivot('legL', -0.11, legH, 0), legR = pivot('legR', 0.11, legH, 0);
+      legL.add(mesh('legLMesh', legGeo)); legR.add(mesh('legRMesh', legGeo));
+      g.add(legL); g.add(legR);
+      // torso pivot at the hip
+      var torso = pivot('torso', 0, legH, 0);
+      var torsoKey = ['torso', look.shirt, look.tie, look.extra, look.uniform, look.badge, look.skin].join('|');
+      var torsoGeo = pedGeo(torsoKey, function (L) {
+        L.push(gbox(-0.23, 0, -0.13, 0.46, torsoH, 0.26, shirt));
+        L.push(gbox(-0.05, torsoH - 0.01, -0.05, 0.1, 0.07, 0.1, skin));   // neck
+        if (look.uniform === 'swat') L.push(gbox(-0.25, 0.12, -0.15, 0.5, 0.42, 0.3, [0.1, 0.11, 0.14]));
+        if (look.badge) L.push(gbox(0.08, torsoH - 0.2, -0.14, 0.06, 0.07, 0.012, c(look.badge)));
+        var tie = look.tie && look.tie !== 'none' ? look.tie : null;
+        if (tie === 'bowtie') { var bc = [0.1, 0.1, 0.12]; L.push(gbox(-0.08, torsoH - 0.08, -0.145, 0.06, 0.05, 0.02, bc)); L.push(gbox(0.02, torsoH - 0.08, -0.145, 0.06, 0.05, 0.02, bc)); L.push(gbox(-0.02, torsoH - 0.07, -0.15, 0.04, 0.03, 0.025, bc)); }
+        else if (tie) { var tc = c(tie === 'red' ? '#c94040' : tie === 'blue' ? '#3d6fcf' : '#e8b53a'); L.push(gbox(-0.035, torsoH - 0.08, -0.14, 0.07, 0.05, 0.02, tc)); L.push(gbox(-0.03, torsoH - 0.4, -0.138, 0.06, 0.33, 0.015, tc)); }
+        if (look.extra === 'lanyard') { var lc = c(look.lanyardColor || '#c94040'); L.push(gbox(-0.09, torsoH - 0.34, -0.14, 0.02, 0.3, 0.012, lc)); L.push(gbox(0.07, torsoH - 0.34, -0.14, 0.02, 0.3, 0.012, lc)); L.push(gbox(-0.05, torsoH - 0.46, -0.142, 0.1, 0.13, 0.012, [0.95, 0.95, 0.95])); L.push(gbox(-0.04, torsoH - 0.42, -0.145, 0.08, 0.02, 0.012, [0.2, 0.2, 0.2])); }
+        if (look.extra === 'medal') { L.push(gbox(-0.15, torsoH - 0.2, -0.14, 0.05, 0.08, 0.012, [0.8, 0.1, 0.1])); L.push(gcyl(-0.125, torsoH - 0.27, -0.145, 0.05, 0.012, c('#e8b53a'), Math.PI / 2)); }
+        if (look.extra === 'flag_pin') { L.push(gbox(-0.17, torsoH - 0.16, -0.14, 0.06, 0.04, 0.012, [0.2, 0.35, 0.8])); L.push(gbox(-0.17, torsoH - 0.14, -0.142, 0.06, 0.012, 0.012, [0.95, 0.95, 0.95])); }
       });
-      var headY = legH + torsoH + 0.06 + headR;
-      g.add(part('head', new THREE.BoxGeometry(headR * 2, headR * 2.1, headR * 2), mSkin, 0, headY, 0));
-      // hair: a cap shaped by style
-      var hair = look.hair || 'short', hg = null;
-      if (hair === 'short' || hair === 'slick') hg = new THREE.BoxGeometry(0.3, 0.1, 0.3);
-      else if (hair === 'long') hg = new THREE.BoxGeometry(0.31, 0.36, 0.31);
-      else if (hair === 'bob') hg = new THREE.BoxGeometry(0.32, 0.26, 0.32);
-      else if (hair === 'bun') hg = new THREE.BoxGeometry(0.3, 0.12, 0.3);
-      else if (hair === 'pompadour') hg = new THREE.BoxGeometry(0.3, 0.2, 0.26);
-      else if (hair === 'mohawk') hg = new THREE.BoxGeometry(0.08, 0.22, 0.3);
-      else if (hair === 'afro') hg = new THREE.BoxGeometry(0.4, 0.34, 0.4);
-      if (hg && hair !== 'bald') {
-        var hy = hair === 'long' ? headY + 0.02 : hair === 'bob' ? headY + 0.04 : headY + headR + 0.02;
-        g.add(part('hair', hg, mHair, 0, hy, hair === 'pompadour' ? -0.02 : 0));
-        if (hair === 'bun') g.add(part('bun', new THREE.BoxGeometry(0.12, 0.12, 0.12), mHair, 0, headY + headR, -0.16));
+      torso.add(mesh('torsoMesh', torsoGeo));
+      // arms (shoulder pivots in torso space)
+      function armGeo(side) {
+        var held = side > 0 ? (look.extra === 'mic' || look.extra === 'phone' ? look.extra : null) : (look.sign ? 'sign' : null);
+        return pedGeo(['arm', side, look.shirt, look.skin, held].join('|'), function (L) {
+          L.push(gbox(-0.065, -0.56, -0.07, 0.13, 0.54, 0.14, shirt));
+          L.push(gbox(-0.06, -0.66, -0.06, 0.12, 0.11, 0.12, skin));
+          if (held === 'mic') { L.push(gcyl(0, -0.72, -0.04, 0.025, 0.2, [0.12, 0.12, 0.14], 0)); L.push(gsphere(0, -0.5, -0.04, 0.045, [0.55, 0.55, 0.58])); }
+          if (held === 'phone') L.push(gbox(-0.035, -0.7, -0.14, 0.07, 0.13, 0.015, [0.1, 0.1, 0.12]));
+          if (held === 'sign') { L.push(gbox(-0.015, -0.7, -0.1, 0.03, 1.0, 0.03, c('#8a6a44'))); L.push(gbox(-0.26, 0.2, -0.11, 0.52, 0.36, 0.02, [0.95, 0.93, 0.88])); L.push(gbox(-0.2, 0.3, -0.122, 0.4, 0.05, 0.012, c('#ff7a00'))); L.push(gbox(-0.16, 0.22, -0.122, 0.32, 0.04, 0.012, c('#ff7a00'))); }
+        });
       }
-      if (look.hat && look.hat !== 'none') {
-        var hm = Assets.colorMaterial(look.hatColor || (look.hat === 'crown' ? '#e8b53a' : look.hat === 'helmet' ? '#e8b53a' : '#2b2b2b'));
-        var hatG = look.hat === 'cowboy' ? new THREE.BoxGeometry(0.5, 0.06, 0.5) : look.hat === 'cap' ? new THREE.BoxGeometry(0.3, 0.1, 0.36) : new THREE.BoxGeometry(0.32, 0.16, 0.32);
-        g.add(part('hat', hatG, hm, 0, headY + headR + 0.06, look.hat === 'cap' ? 0.03 : 0));
-      }
-      if (look.glasses && look.glasses !== 'none') g.add(part('glasses', new THREE.BoxGeometry(0.26, 0.05, 0.04), Assets.colorMaterial(look.glasses === 'shades' ? '#111' : '#333'), 0, headY + 0.02, headR + 0.01));
-      if (look.extra && look.extra !== 'none') g.add(part('extra', new THREE.BoxGeometry(0.06, 0.16, 0.06), Assets.colorMaterial(look.extra === 'mic' ? '#222' : '#c9ccd4'), 0.16, legH + torsoH - 0.2, 0.16));
+      var armL = pivot('armL', -0.3, torsoH - 0.06, 0), armR = pivot('armR', 0.3, torsoH - 0.06, 0);
+      armL.add(mesh('armLMesh', armGeo(-1))); armR.add(mesh('armRMesh', armGeo(1)));
+      torso.add(armL); torso.add(armR);
+      // head: face, hair, hat, glasses, face extras
+      var hat = look.hat && look.hat !== 'none' ? look.hat : null, hairStyle = look.hair || 'short', glasses = look.glasses && look.glasses !== 'none' ? look.glasses : null;
+      var headKey = ['head', look.skin, hairStyle, look.hairColor, hat, look.hatColor, glasses, look.extra, look.mask].join('|');
+      var headGeo = pedGeo(headKey, function (L) {
+        var ht = 0.15;   // half height
+        L.push(gbox(-headR, -ht, -headR, headR * 2, ht * 2, headR * 2, skin));
+        L.push(gbox(-headR - 0.012, -0.03, -0.05, 0.012, 0.06, 0.04, skin)); L.push(gbox(headR, -0.03, -0.05, 0.012, 0.06, 0.04, skin));   // ears
+        L.push(gbox(-0.07, 0.01, -headR - 0.004, 0.035, 0.03, 0.006, [0.08, 0.08, 0.1])); L.push(gbox(0.035, 0.01, -headR - 0.004, 0.035, 0.03, 0.006, [0.08, 0.08, 0.1]));   // eyes
+        L.push(gbox(-0.02, -0.04, -headR - 0.02, 0.04, 0.05, 0.02, skin));   // nose
+        L.push(gbox(-0.04, -0.1, -headR - 0.003, 0.08, 0.012, 0.004, [0.45, 0.2, 0.2]));   // mouth
+        if (look.mask) L.push(gbox(-headR - 0.005, -0.005, -headR - 0.006, headR * 2 + 0.01, 0.06, headR * 2 + 0.006, c(look.mask)));
+        var top = ht, capY = top - 0.04;
+        var hideHairTop = hat === 'beanie' || hat === 'helmet' || hat === 'cap';
+        if (hairStyle !== 'bald' || !hairStyle) {
+          if (hairStyle === 'short') { L.push(gbox(-headR - 0.01, capY, -headR - 0.005, headR * 2 + 0.02, 0.1, headR * 2 + 0.015, hair)); L.push(gbox(-headR - 0.01, -0.08, headR - 0.03, headR * 2 + 0.02, 0.2, 0.04, hair)); }
+          else if (hairStyle === 'slick') { L.push(gbox(-headR - 0.008, top - 0.02, -headR - 0.002, headR * 2 + 0.016, 0.055, headR * 2 + 0.012, hair)); L.push(gbox(-headR - 0.008, -0.06, headR - 0.02, headR * 2 + 0.016, 0.2, 0.03, hair)); }
+          else if (hairStyle === 'long') { L.push(gbox(-headR - 0.012, capY, -headR - 0.005, headR * 2 + 0.024, 0.1, headR * 2 + 0.02, hair)); L.push(gbox(-headR - 0.012, -0.5, headR - 0.05, headR * 2 + 0.024, 0.6, 0.08, hair)); L.push(gbox(-headR - 0.03, -0.36, -0.08, 0.03, 0.46, headR + 0.1, hair)); L.push(gbox(headR, -0.36, -0.08, 0.03, 0.46, headR + 0.1, hair)); }
+          else if (hairStyle === 'bob') { L.push(gbox(-headR - 0.012, capY, -headR - 0.005, headR * 2 + 0.024, 0.1, headR * 2 + 0.02, hair)); L.push(gbox(-headR - 0.035, -0.17, -0.06, 0.035, 0.28, headR + 0.08, hair)); L.push(gbox(headR, -0.17, -0.06, 0.035, 0.28, headR + 0.08, hair)); L.push(gbox(-headR - 0.035, -0.17, headR - 0.04, headR * 2 + 0.07, 0.28, 0.06, hair)); }
+          else if (hairStyle === 'bun') { L.push(gbox(-headR - 0.01, capY, -headR - 0.005, headR * 2 + 0.02, 0.1, headR * 2 + 0.015, hair)); L.push(gsphere(0, top, headR + 0.02, 0.07, hair)); }
+          else if (hairStyle === 'pompadour') { L.push(gbox(-headR - 0.01, capY, -0.02, headR * 2 + 0.02, 0.09, headR + 0.03, hair)); L.push(gbox(-headR + 0.01, top - 0.02, -headR - 0.05, headR * 2 - 0.02, 0.2, 0.17, hair)); L.push(gbox(-headR - 0.01, -0.06, headR - 0.02, headR * 2 + 0.02, 0.2, 0.03, hair)); }
+          else if (hairStyle === 'mohawk') { L.push(gbox(-0.035, top - 0.02, -headR + 0.01, 0.07, 0.22, headR * 2 - 0.02, hair)); L.push(gbox(-headR - 0.006, top - 0.03, -headR, headR * 2 + 0.012, 0.03, headR * 2 + 0.01, [0.2, 0.18, 0.18])); }
+          else if (hairStyle === 'afro') { L.push(gsphere(0, 0.05, 0.01, 0.26, hair, 1.0)); }
+        }
+        var ht2 = top;
+        if (hat === 'cap') { var hc = c(look.hatColor || '#2b2b2b'); L.push(gbox(-headR - 0.01, ht2 - 0.02 + (hideHairTop ? 0.04 : 0), -headR - 0.005, headR * 2 + 0.02, 0.1, headR * 2 + 0.015, hc)); L.push(gbox(-0.13, ht2 + 0.02, -headR - 0.14, 0.26, 0.025, 0.14, hc)); }
+        else if (hat === 'beanie') { var bc2 = c(look.hatColor || '#2f9e6a'); L.push(gbox(-headR - 0.015, ht2 - 0.1, -headR - 0.012, headR * 2 + 0.03, 0.17, headR * 2 + 0.024, bc2)); L.push(gbox(-headR - 0.02, ht2 - 0.1, -headR - 0.016, headR * 2 + 0.04, 0.05, headR * 2 + 0.032, c(U.shade(look.hatColor || '#2f9e6a', -0.25)))); }
+        else if (hat === 'cowboy') { var cc = c(look.hatColor || '#6a4a2a'); L.push(gbox(-0.27, ht2 + 0.04, -0.26, 0.54, 0.025, 0.52, cc)); L.push(gbox(-headR + 0.01, ht2 + 0.06, -headR + 0.005, headR * 2 - 0.02, 0.16, headR * 2 - 0.01, cc)); L.push(gbox(-headR, ht2 + 0.06, -headR - 0.005, headR * 2, 0.04, headR * 2 + 0.01, c(U.shade(look.hatColor || '#6a4a2a', -0.35)))); }
+        else if (hat === 'fedora') { var fc = c(look.hatColor || '#2b2b2b'); L.push(gbox(-0.22, ht2 + 0.04, -0.22, 0.44, 0.025, 0.44, fc)); L.push(gbox(-headR + 0.01, ht2 + 0.06, -headR + 0.005, headR * 2 - 0.02, 0.14, headR * 2 - 0.01, fc)); L.push(gbox(-headR + 0.005, ht2 + 0.07, -headR, headR * 2 - 0.01, 0.04, headR * 2, c('#8a2f2f'))); }
+        else if (hat === 'beret') { L.push(gboxRot(-0.16, ht2 + 0.03, -0.16, 0.32, 0.05, 0.32, c(look.hatColor || '#2b2b2b'), 0.22, 0.04, ht2 + 0.05)); L.push(gbox(-0.01, ht2 + 0.09, -0.01, 0.02, 0.03, 0.02, [0.1, 0.1, 0.1])); }
+        else if (hat === 'crown') { var gc = c('#e8b53a'); L.push(gbox(-headR - 0.012, ht2 + 0.01, -headR - 0.012, headR * 2 + 0.024, 0.07, headR * 2 + 0.024, gc)); for (var ci = 0; ci < 4; ci++) L.push(gbox((ci % 2 ? headR - 0.04 : -headR - 0.012), ht2 + 0.08, (ci < 2 ? -headR - 0.012 : headR - 0.04), 0.052, 0.07, 0.052, gc)); L.push(gbox(-0.026, ht2 + 0.08, -headR - 0.012, 0.052, 0.09, 0.052, gc)); }
+        else if (hat === 'helmet') { var hh = c(look.hatColor || '#e8b53a'); L.push(gbox(-headR - 0.02, ht2 - 0.04, -headR - 0.02, headR * 2 + 0.04, 0.14, headR * 2 + 0.04, hh)); L.push(gbox(-headR - 0.05, ht2 - 0.04, -headR - 0.1, headR * 2 + 0.1, 0.025, headR * 2 + 0.14, hh)); L.push(gbox(-0.05, ht2 + 0.1, -headR, 0.1, 0.03, headR * 2, hh)); }
+        if (glasses) {
+          var fz = -headR - 0.012, gy = 0.015;
+          if (glasses === 'round') { var rc = [0.3, 0.25, 0.2]; L.push(gring(-0.062, gy, fz, 0.045, 0.01, rc)); L.push(gring(0.062, gy, fz, 0.045, 0.01, rc)); L.push(gbox(-0.02, gy, fz, 0.04, 0.008, 0.008, rc)); }
+          else if (glasses === 'aviator') { var av = [0.12, 0.1, 0.1], fr = c('#e8b53a'); L.push(gbox(-0.125, gy - 0.045, fz, 0.11, 0.08, 0.012, av)); L.push(gbox(0.015, gy - 0.045, fz, 0.11, 0.08, 0.012, av)); L.push(gbox(-0.14, gy + 0.03, fz, 0.28, 0.008, 0.008, fr)); }
+          else if (glasses === 'thick') { var tk = [0.06, 0.06, 0.07]; L.push(gbox(-0.13, gy - 0.04, fz, 0.115, 0.075, 0.018, tk)); L.push(gbox(0.015, gy - 0.04, fz, 0.115, 0.075, 0.018, tk)); L.push(gbox(-0.1, gy - 0.025, fz - 0.004, 0.055, 0.045, 0.006, [0.7, 0.85, 0.95])); L.push(gbox(0.045, gy - 0.025, fz - 0.004, 0.055, 0.045, 0.006, [0.7, 0.85, 0.95])); L.push(gbox(-0.02, gy, fz, 0.04, 0.012, 0.012, tk)); }
+          else { L.push(gbox(-0.135, gy - 0.035, fz, 0.27, 0.065, 0.014, [0.05, 0.05, 0.06])); L.push(gbox(-0.14, gy + 0.025, fz, 0.28, 0.008, 0.008, [0.1, 0.1, 0.1])); }
+        }
+        if (look.extra === 'earpiece') { var ec = c('#c9ccd4'); L.push(gbox(headR + 0.005, -0.03, -0.04, 0.03, 0.045, 0.035, ec)); L.push(gbox(headR + 0.015, -0.2, -0.015, 0.01, 0.18, 0.01, [0.9, 0.9, 0.92])); }
+        if (look.extra === 'cigar') { L.push(gcyl(0.045, -0.1, -headR - 0.07, 0.016, 0.14, c('#5a3f2a'), Math.PI / 2 - 0.25)); L.push(gsphere(0.045, -0.085, -headR - 0.145, 0.018, [1, 0.45, 0.1])); }
+      });
+      var head = mesh('head', headGeo, 0, hy, 0);
+      torso.add(head);
+      g.add(torso);
       g.scale.setScalar(sc);
       g.userData.look = look;
       return g;
@@ -415,17 +621,57 @@
     }
   };
 
-  function wheelCyl(g, r, w, dark, hub) {
-    // axis along z (across the car); drawn as a cylinder around z by building in xy then rotating isn't available, so build segments directly
-    var segs = 10;
-    for (var i = 0; i < segs; i++) {
-      var a0 = i / segs * TAU, a1 = (i + 1) / segs * TAU;
-      var x0 = Math.cos(a0) * r, y0 = Math.sin(a0) * r, x1 = Math.cos(a1) * r, y1 = Math.sin(a1) * r;
-      g.quad([x0, y0, -w / 2], [x0, y0, w / 2], [x1, y1, w / 2], [x1, y1, -w / 2], GB.UV0, dark);
-      var i0 = g.vertex(0, 0, w / 2, 0, 0, 1, 0, 0, hub), i1 = g.vertex(x0, y0, w / 2, 0, 0, 1, 0, 0, i % 2 ? hub : dark), i2 = g.vertex(x1, y1, w / 2, 0, 0, 1, 0, 0, i % 2 ? hub : dark);
-      g.idx.push(i0, i1, i2);
-      var j0 = g.vertex(0, 0, -w / 2, 0, 0, -1, 0, 0, hub), j1 = g.vertex(x0, y0, -w / 2, 0, 0, -1, 0, 0, i % 2 ? hub : dark), j2 = g.vertex(x1, y1, -w / 2, 0, 0, -1, 0, 0, i % 2 ? hub : dark);
-      g.idx.push(j0, j2, j1);
+  // ---- actor geometry helpers (ped parts are merged per limb; wheels spin around x) ----
+  function skinHex(skin) {
+    if (typeof skin === 'string') return skin;
+    var Lk = GTP.Content && GTP.Content.looks;
+    if (Lk && Lk.skinColor) return Lk.skinColor(skin);
+    var tones = ['#f3d9c4', '#e8c39e', '#d1a074', '#b57a4d', '#8d5524', '#5c3a21'];
+    return tones[U.clamp((skin || 2) - 1, 0, 5)];
+  }
+  var pedGeoCache = new Map();
+  function pedGeo(key, fn) {
+    var g = pedGeoCache.get(key); if (g) return g;
+    var list = []; fn(list);
+    g = GB.merge(list); pedGeoCache.set(key, g);
+    return g;
+  }
+  function gbox(x, y, z, w, h, d, col) { var g = new GB({ color: true }); g.box(x, y, z, w, h, d, GB.UV0, col); return g.build(); }
+  function gboxRot(x, y, z, w, h, d, col, rz, px, py) { var geo = gbox(x, y, z, w, h, d, col); geo.translate(-px, -py, 0); geo.rotateZ(rz); geo.translate(px, py, 0); return geo; }
+  // vertical cylinder of height h standing at (x, y, z), optionally tilted about x around its base
+  function gcyl(x, y, z, r, h, col, rx) { var g = new GB({ color: true }); g.cylinder(0, 0, 0, r, r, h, 7, col); var geo = g.build(); if (rx) geo.rotateX(rx); geo.translate(x, y, z); return geo; }
+  function gsphere(x, y, z, r, col, squash) { var g = new GB({ color: true }); g.sphere(x, y, z, r, 7, 4, col, null, squash || 1); return g.build(); }
+  // a flat ring in the xy plane (glasses rim), thickness t
+  function gring(x, y, z, r, t, col) {
+    var g = new GB({ color: true }), n = 10;
+    function pt(cc, ss, rr, zz) { return [x + cc * rr, y + ss * rr, z + zz]; }
+    for (var i = 0; i < n; i++) {
+      var a0 = i / n * TAU, a1 = (i + 1) / n * TAU, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      g.quad(pt(c0, s0, r + t, -t), pt(c1, s1, r + t, -t), pt(c1, s1, r + t, t), pt(c0, s0, r + t, t), GB.UV0, col);
+      g.quad(pt(c0, s0, r - t, t), pt(c1, s1, r - t, t), pt(c1, s1, r - t, -t), pt(c0, s0, r - t, -t), GB.UV0, col);
+      g.quad(pt(c0, s0, r - t, -t), pt(c1, s1, r - t, -t), pt(c1, s1, r + t, -t), pt(c0, s0, r + t, -t), GB.UV0, col);
+      g.quad(pt(c0, s0, r + t, t), pt(c1, s1, r + t, t), pt(c1, s1, r - t, t), pt(c0, s0, r - t, t), GB.UV0, col);
+    }
+    return g.build();
+  }
+  // wheel: tyre + spoked caps around the x axis, centred at the origin
+  function wheelAxle(g, r, w, tire, hub, segs) {
+    segs = segs || 12;
+    var hx = w / 2, ri = r * 0.5, i, a0, a1, y0, z0, y1, z1;
+    for (i = 0; i < segs; i++) {
+      a0 = i / segs * TAU; a1 = (i + 1) / segs * TAU;
+      y0 = Math.cos(a0) * r; z0 = Math.sin(a0) * r; y1 = Math.cos(a1) * r; z1 = Math.sin(a1) * r;
+      g.quad([-hx, y0, z0], [-hx, y1, z1], [hx, y1, z1], [hx, y0, z0], GB.UV0, tire);
+      var spoke = (i % 3 === 0) ? hub : [0.2, 0.2, 0.22];
+      var o0 = g.vertex(hx, 0, 0, 1, 0, 0, 0, 0, spoke), o1 = g.vertex(hx, y0, z0, 1, 0, 0, 0, 0, spoke), o2 = g.vertex(hx, y1, z1, 1, 0, 0, 0, 0, spoke);
+      g.idx.push(o0, o1, o2);
+      var n0 = g.vertex(-hx, 0, 0, -1, 0, 0, 0, 0, spoke), n1 = g.vertex(-hx, y0, z0, -1, 0, 0, 0, 0, spoke), n2 = g.vertex(-hx, y1, z1, -1, 0, 0, 0, 0, spoke);
+      g.idx.push(n0, n2, n1);
+      // hub cap disc, a hair proud of the sidewall
+      var p0 = g.vertex(hx + 0.006, 0, 0, 1, 0, 0, 0, 0, hub), p1 = g.vertex(hx + 0.006, y0 * ri / r, z0 * ri / r, 1, 0, 0, 0, 0, hub), p2 = g.vertex(hx + 0.006, y1 * ri / r, z1 * ri / r, 1, 0, 0, 0, 0, hub);
+      g.idx.push(p0, p1, p2);
+      var q0 = g.vertex(-hx - 0.006, 0, 0, -1, 0, 0, 0, 0, hub), q1 = g.vertex(-hx - 0.006, y0 * ri / r, z0 * ri / r, -1, 0, 0, 0, 0, hub), q2 = g.vertex(-hx - 0.006, y1 * ri / r, z1 * ri / r, -1, 0, 0, 0, 0, hub);
+      g.idx.push(q0, q2, q1);
     }
   }
 

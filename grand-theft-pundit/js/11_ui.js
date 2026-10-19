@@ -18,6 +18,8 @@
         ctx.font = '12px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.textBaseline = 'top';
         ctx.fillText(JSON.stringify(s).slice(0, 220), 12, 12);
       }
+      // aim mode: crosshair + lock reticle (Combat owns the hooks; the full HUD may draw its own from GTP.Combat.aim)
+      if (GTP.Combat && GTP.Combat.drawAimOverlay) { try { GTP.Combat.drawAimOverlay(ctx, w, h); } catch (e) { GTP.util.reportError(e, 'combat.overlay'); } }
       if (toasts.length) {
         ctx.font = 'bold 16px ui-monospace, Menlo, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.9)';
         for (var i = 0; i < toasts.length; i++) ctx.fillText(toasts[i].text, w / 2, h - 60 - i * 22);

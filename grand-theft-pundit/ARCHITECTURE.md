@@ -178,8 +178,9 @@ GTP.Assets.atlas                      // CanvasTexture 2048 px: ground tiles (as
 GTP.Assets.facade(style, floors)      // cached CanvasTexture per (style, floors) with windows lit by a night uniform (two textures: day/night, blended by material onBeforeCompile or by swapping emissiveMap)
 GTP.Assets.roof(style)                // roof texture with AC units, vents, skylights
 GTP.Assets.billboard(text, colors)    // CanvasTexture for signage with the game's fonts
-GTP.Assets.vehicleGeometry(cls)       // {body: BufferGeometry (merged, vertex colors for windows/lights), wheel: BufferGeometry, wheelOffsets: [...], lightPoints: {...}}
-GTP.Assets.pedParts(look)             // Group with named children: head, hair, torso, armL, armR, legL, legR, hat, glasses, extra; materials by look
+GTP.Assets.vehicleGeometry(cls, wrap) // {body: BufferGeometry (merged, vertex colors; material groups paint/detail/glass/head/tail/barRed/barBlue/wrap, see Assets.GROUPS), wheel, wheelRadius, wheelWidth, wheelOffsets: [{x, z, steer}] (mesh-local: forward = -z, right = +x), lightPoints: {headL, headR, head, tailL, tailR, roof, eye}, doorPoints, size}
+GTP.Assets.wrapTexture(name)          // livery CanvasTexture ('pod' = the Loud & Correct van); passed as the vehicle's `wrap`
+GTP.Assets.pedParts(look)             // Group (feet at y 0, faces -z) with pivots legL, legR (hips), torso (hip pivot holding armL, armR shoulder pivots and head). Hair, hat, glasses, tie, lanyard, medal, pin, badge, mic, phone, sign are merged into those six vertex-coloured meshes (six draw calls per ped), so there are no separate hair/hat/glasses/extra children; look.scale, look.uniform, look.badge, look.mask, look.sign honoured
 GTP.Assets.prop(kind)                 // cached geometry+material per prop kind for InstancedMesh
 GTP.Assets.weaponMesh(id), pickupMesh(type)
 ```
@@ -203,6 +204,22 @@ class GTP.Projectile extends Entity { owner, weaponId, dmg, life, tracer }
 class GTP.Pickup extends Entity { pickupType, value, weaponId, bob }
 GTP.Entities = { list, hash, add(e), remove(e), byKind(kind), near(x,z,r,kind?), clearDynamic(), update(dt), sync(alpha) }
 ```
+
+Driving a Ped (AI, missions): set `ped.intent = {x, z, run}` (world-space direction, length <= 1) or call
+`ped.moveTo(x, z, run)` / `ped.stop()`; `ped.wantJump = true`; `ped.enterVehicle(v, seat)` (door walk, then the
+seat; seat 0 carjacks a driver, who gets `state 'flee'`), `ped.exitVehicle()`, `ped.knockDown(ix, iz, dmg, src)`,
+`ped.applyDamage(n, src, type)` (armor first, `die()` at 0, `GTP.Combat.damage` routes here), `ped.speakLine(text)`.
+Driving a Vehicle: `v.throttle` (-1..1), `v.brake` (0..1), `v.steer` (-1..1, +1 = right), `v.handbrake`, or
+`v.setControls(throttle, steer, handbrake, brake)`; only a living `v.driver` makes them count. Vehicle local frame:
+forward = `yawToDir(yaw)`, right = (-f.z, f.x); `v.localToWorld(right, forward)`, `v.worldToLocal(x, z)`,
+`v.doorWorld(0|1|2)`, `v.pushCircle(x, z, r)`, `v.edgeDistance(x, z)`. State flags: `onGround, burning, exploded,
+wreck, sinking, reversing, reverseTime, braking, lights, siren, offroad, yawRate, pitch, roll, wheelSpin, wheelSteer`.
+Events (GTP.Events): `damage, ped:dead, vehicle:enter, vehicle:exit, vehicle:damage, vehicle:impact, vehicle:hitPed,
+vehicle:exploded, vehicle:sunk, honk, pickup, player:respawn`. Combat owns the RATIO'D / DEPLATFORMED flows
+(`Combat.onPlayerDeath` / `onPlayerBusted`); the entity-side hospital fallback only runs when that hook is missing.
+Ped pose fields `firePoseT` (arm raised after a shot) and `punchT` (jab swing) are set by Combat and read by
+`syncMesh`; while `aiming`, `firePoseT > 0` or `punchT > 0` the ped faces `aimYaw` and strafes. Meshes are hidden beyond
+`QUALITY.pedDraw` / `QUALITY.vehicleDraw` metres from the camera.
 
 Physics (all custom, no library):
 - Peds: capsule on XZ, gravity on Y, `World.heightAt` for the floor,
@@ -237,6 +254,24 @@ spotlight and rotor sound circling above), busted detection, HOA patrols in
 buildings) for 4 s. Garages (`kind: 'garage'`) clear stars for $100 each when
 the player drives in.
 
+```js
+GTP.AI.update(dt); reset(); updateRespawn(dt)   // Game.step calls updateRespawn while the state is wasted/busted (the AI's fallback DEPLATFORMED flow, a no-op now that Combat defines onPlayerBusted)
+GTP.AI.wanted = { level, heat, lastSeen, lastKnown:{x,z}, addHeat(n, src), crime(name, src), set(n), clear(), see(cop) }   // mirrors player.wanted / player.heat; lastKnown is where the response converges
+GTP.AI.alarm(x, z, r, src, mild)          // Combat calls it on shots and blasts: peds within r flee (mild = honk: only hurries peds off the road)
+GTP.AI.drive(v, kind?) / release(v)       // hand a vehicle with a living non-player driver to the traffic ('traffic'|'cop'|'hoa') brain, or take it back; vehicles never get a brain by themselves
+GTP.AI.say(ped, text, color)              // bark: ped.speakLine + a 3D-anchored sprite above the head unless GTP.UI.drawsBarks is true (then the UI draws ped.line itself; GTP.UI.bark(ped, text) is also called when present)
+GTP.AI.spawner = { warmup(), update(dt), spawnPed(x,z,role,opts), spawnVehicle(x,z,type,opts), counts() }
+GTP.AI.police  = { roadblocks, heli, bustT }   // GTP.AI.Heli: the five-star helicopter entity (kind 'heli', spotlight cone)
+GTP.AI.debug   = { counts(), cops(), nearestCop(), vehicles() }
+GTP.C.AI       // knobs: cadences, cruise speeds, turn radii, gaps, sight ranges, bust range/time, response quotas per star, roadblock and heli settings; 01_config.js may override
+```
+
+Peds made elsewhere (debug.spawnPed, missions) get a brain (`ped.ai`) on sight;
+a vehicle only drives itself after `GTP.AI.drive(v)`. Events:
+`wanted {level, prev}`, `heat`, `busted {player, cop, level, fine}`, `bark {ped, text}`,
+`roadblock`, `heli {on}`, `garage {landmark, cost}`. Audio hook: `GTP.Audio.heli(on, x, z)`
+when defined (rotor loop). Long vehicles (bus, truck) never turn at street corners.
+
 ### GTP.Combat (08_combat.js)
 
 Weapons `fist pistol smg shotgun megaphone hottake` with the GDD's feel. Aim:
@@ -249,6 +284,31 @@ Damage flashes, knockback, ped death (fall, fade after 10 s, cash drop),
 vehicle bullet damage, player death → `wasted` ("RATIO'D") → hospital
 respawn after 3 s, lose weapons, lose 10% cash; busted → `busted`
 ("DEPLATFORMED") → police respawn, lose weapons, $500 fine.
+
+```js
+GTP.Combat.WEAPONS[id] -> {name, dmg, range, rate, spread?, pellets?, melee?, cone?, lobbed?, stun?}; ORDER; SPONSOR (pickup labels)
+GTP.Combat.update(dt)                          // also ticks the wasted/busted timers (Game.step calls it in those states)
+GTP.Combat.fire(ped, weaponId) -> bool         // rate-limited per ped; the player spends ammo; AI shooters aim at ped.aimTarget || player
+GTP.Combat.damage(target, n, src, type)
+GTP.Combat.onPlayerDeath(p, src, type)         // Player.die -> state 'wasted' (text from Content.radio.failTexts.wasted)
+GTP.Combat.onPlayerBusted(p, cop)              // AI bust() -> state 'busted'; respawn after Combat.RESPAWN_DELAY (3 s)
+GTP.Combat.respawn('hospital'|'police'), reset()
+GTP.Combat.projectileHit(proj, target)         // Projectile.hit: the hottake's 5 m stun blast
+GTP.Combat.collectPickup(pickup, p) -> bool    // Pickup.collect; false for 'mission' pickups (Missions handle them via the 'pickup' event)
+GTP.Combat.spawnPickup({type, value, weaponId, ammo, x, z, respawn, persistent, label}) -> Pickup
+GTP.Combat.pickupMesh(pickup)                  // Render.buildEntityMesh uses it: sponsor bottle (health/armor), crate + gun + relabeled bottle (weapon), cash
+GTP.Combat.pickups                             // Map of the world-table pickups (Content.world.spawn.pickups, `after` gated by Missions.state.completed)
+GTP.Combat.aim = { active, target, hover, point:{x,y,z}, screen:{sx,sy,visible}, targetScreen, inRange, weapon }  // UI crosshair + reticle hooks
+GTP.Combat.hud() -> { weapon:{id,name,ammo,infinite}, aim, death:{kind,t,text}|null, hurtFlash }
+GTP.Combat.drawAimOverlay(ctx, w, h)           // default crosshair/reticle drawer (the UI stub calls it; the full HUD may replace it)
+GTP.Combat.death                               // {kind:'wasted'|'busted', t, text} while a card shows
+```
+
+`player.lockTarget` is the lock-on target (peds and police cars in a 40° cone within range with line
+of sight; Tab = `lockOn` cycles). Without aim, a shot auto-targets the best ped in a 150° cone in front and
+turns the player. Events: `weapon {id, name, ammo}` on a switch, `player:wasted`, `player:respawn {at}`.
+Combat's randomness runs on `GTP.rng.fork(0xC0B)` (reseeded in `reset()`), so fights never perturb the
+city's spawn stream. Cops drop their gun half the time; peds drop cash sometimes.
 
 ### GTP.Missions (09_missions.js)
 
@@ -270,7 +330,8 @@ GTP.Render.frame(alpha)               // sync entity meshes, update rig, lights,
 GTP.Render.chunks                     // 16x16-tile static chunks: ground mesh (atlas), building mesh (facade materials by style), props InstancedMesh per kind; built lazily, frustum culled by three
 GTP.Render.sky                        // gradient dome + sun/moon; fog color follows time of day
 GTP.Render.lights                     // hemisphere + directional sun with a 120 m shadow box following the player (QUALITY.shadows), vehicle headlights (spot) for the player car, emissive windows and neon at night
-GTP.Render.fx.add({type:'puff'|'spark'|'smoke'|'fire'|'explosion'|'tracer'|'decal'|'text'|'skid', ...})
+GTP.Render.fx.add({type:'puff'|'spark'|'smoke'|'fire'|'explosion'|'ring'|'tracer'|'decal'|'text'|'skid', x,y,z, vx,vy,vz, size, life, color, rot, size2 ...})  // decals/skids are capped (oldest dropped)
+GTP.Render.syncVehicle(v)             // called by Vehicle.syncMesh: wheels (InstancedMesh), light material slots, siren, wreck look, the player's headlight SpotLight + beam quad
 GTP.Render.worldToScreen(x,y,z) -> {sx, sy, visible}
 GTP.Render.freeCam(enabled)           // tests: place camera anywhere via camera.position/lookAt
 ```
@@ -323,7 +384,7 @@ debug})`, states `title playing paused wasted busted cutscene minigame
 gameover`, `step()`, `advance(seconds)`, `render()`, `time {t, clock, day}`
 (1 game hour = 90 real s; start at 17:30 for a sunset first frame), `player`,
 `newGame(seed)`, `save()`, `load()`, `hasSave()`, and
-`debug = { teleport(x,z), spawnVehicle(x,z,type), giveWeapon(id, ammo), setWanted(n), setMoney(n), startMission(id), completeObjective(), completeMission(), godMode(b), listLandmarks(), setClock(h), snapshot() }`.
+`debug = { teleport(x,z,y?) (moves the vehicle the player sits in too), spawnVehicle(x,z,type,opts?) (opts: color, yaw, wrap:'pod', locked, y), spawnPed(x,z,look?,role?), giveWeapon(id, ammo), setWanted(n), setMoney(n), startMission(id), completeObjective(), completeMission(), godMode(b), listLandmarks(), setClock(h), freeCam(x,y,z,lx,ly,lz), followCam(), snapshot() }`.
 `snapshot()` returns a plain-object summary (player pos, state, wanted, mission,
 counts, fps) for tests and for `window.claude?.hot?.snapshot`.
 

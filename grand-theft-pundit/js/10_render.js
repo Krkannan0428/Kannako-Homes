@@ -11,7 +11,7 @@
   var TILE = C.TILE, CURB = C.CURB_H, DECK_Y = C.DECK_Y, THICK = C.DECK_THICK, WATER_Y = C.WATER_Y, FLOOR_H = C.FLOOR_H;
   var CH = C.CHUNK_TILES;
   var UNIT_H = { pillar: 1, flag: 1, mast: 1, stack: 1, antenna: 1, sign: 1, bin: 1, billboard: 1 };
-  var _v = null, _v2 = null, _m = null, _q = null, _col = null;
+  var _v = null, _v2 = null, _m = null, _q = null, _col = null, _e = null;
 
   var Render = GTP.Render = {
     renderer: null, scene: null, camera: null, canvas: null, hudCanvas: null, hudCtx: null,
@@ -25,7 +25,7 @@
     init: function (canvasGl) {
       var A = Render._A = GTP.Assets, W = Render._World = GTP.World;
       A.init();
-      _v = new THREE.Vector3(); _v2 = new THREE.Vector3(); _m = new THREE.Matrix4(); _q = new THREE.Quaternion(); _col = new THREE.Color();
+      _v = new THREE.Vector3(); _v2 = new THREE.Vector3(); _m = new THREE.Matrix4(); _q = new THREE.Quaternion(); _col = new THREE.Color(); _e = new THREE.Euler();
       Render.canvas = canvasGl;
       Render.headless = !!(GTP.game && GTP.game.headless);
       var r = Render.renderer = new THREE.WebGLRenderer({ canvas: canvasGl, antialias: !Render.headless, powerPreference: 'high-performance', alpha: false, stencil: false });
@@ -82,7 +82,11 @@
       s.add(hemi); s.add(sun); s.add(target); sun.target = target;
       var fill = new THREE.AmbientLight(0x202838, 0.0);
       s.add(fill);
-      Render.lights = { hemi: hemi, sun: sun, target: target, fill: fill, sunDir: new THREE.Vector3(0.5, 0.6, 0.4) };
+      // the player's car headlights (one spot, no shadows)
+      var head = new THREE.SpotLight(0xfff1d0, 4.5, 70, 0.55, 0.6, 1.0);
+      head.castShadow = false; head.visible = false;
+      s.add(head); s.add(head.target);
+      Render.lights = { hemi: hemi, sun: sun, target: target, fill: fill, headlight: head, headlightOwner: null, sunDir: new THREE.Vector3(0.5, 0.6, 0.4) };
     },
     _initSky: function () {
       var A = Render._A, s = Render.scene;
@@ -138,7 +142,9 @@
       if (dayFrac < 0 || dayFrac > 1) elev = -0.3;
       var az = Math.PI * U.clamp(dayFrac, -0.1, 1.1);
       var sunDir = L.sunDir.set(Math.cos(az), Math.max(Math.sin(elev), -0.2), 0.45).normalize();
-      var horizonW = U.clamp(1 - Math.abs(elev) / (24 * Math.PI / 180), 0, 1) * (1 - night);
+      // warm horizon blend: full once the sun is at/below the horizon, fading out above 32 degrees
+      var elevDeg = Math.max(0, elev) * 180 / Math.PI;
+      var horizonW = Math.pow(U.clamp(1 - elevDeg / 32, 0, 1), 0.6) * (1 - night);
       function mixc(key) {
         var d = new THREE.Color(SKY.day[key]), s = new THREE.Color(SKY.sunset[key]), n = new THREE.Color(SKY.night[key]);
         d.lerp(s, horizonW); d.lerp(n, night); return d;
@@ -163,6 +169,8 @@
       var sk = Render.sky;
       sk.sun.material.opacity = elev > -0.05 ? U.clamp(1 - night, 0, 1) : 0;
       sk.sun.material.color.copy(sunC);
+      var sunScale = 180 * (1 + horizonW * 0.7);   // the disc swells and reddens near the horizon
+      sk.sun.scale.set(sunScale, sunScale, 1);
       sk.moon.material.opacity = night * 0.9;
       sk.stars.material.opacity = Math.max(0, night - 0.2) * 0.9;
       // emissive windows / signs / lamp glow
@@ -181,7 +189,6 @@
       var t0 = U.now(), W = Render._World, cam = Render.camera, g = GTP.game;
       if (!Render.renderer) return;
       if (GTP.Entities && GTP.Entities.sync) GTP.Entities.sync(alpha == null ? 1 : alpha);
-      if (g && g.player && g.player.mesh && g.player.syncMesh) g.player.syncMesh(alpha == null ? 1 : alpha);
       if (!Render.free) Render.rig.apply(alpha);
       var clock = g && g.time ? g.time.clock : C.DAY.startClock;
       if (Math.abs(clock - (Render._envClock == null ? -99 : Render._envClock)) > 0.02) { Render._envClock = clock; Render.updateEnvironment(clock); }
@@ -712,46 +719,141 @@
       if (e.mesh && !e.mesh.parent) Render.entityGroup.add(e.mesh);
       if (e.mesh) { e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw || 0; }
     },
-    detach: function (e) { if (e.mesh && e.mesh.parent) e.mesh.parent.remove(e.mesh); },
+    detach: function (e) {
+      if (!e.mesh) return;
+      if (e.mesh.parent) e.mesh.parent.remove(e.mesh);
+      var ud = e.mesh.userData;
+      if (ud && ud.paint) ud.paint.dispose();
+      if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.visible = false; Render.lights.headlightOwner = null; }
+    },
     buildEntityMesh: function (e) {
       var A = Render._A;
       if (e.kind === 'ped' || e.kind === 'player') return A.pedParts(e.look || {});
-      if (e.kind === 'vehicle') {
-        var v = A.vehicleGeometry(e.type || 'sedan');
-        var paint = new THREE.MeshLambertMaterial({ vertexColors: true, color: new THREE.Color(e.color || '#c94040') });
-        var grp = new THREE.Group();
-        var body = new THREE.Mesh(v.body, [paint, A.propMaterial()]); body.castShadow = true; body.name = 'body'; grp.add(body);
-        v.wheelOffsets.forEach(function (o, i) { var wm = new THREE.Mesh(v.wheel, A.propMaterial()); wm.position.set(o.x, v.wheelRadius, o.z); wm.name = 'wheel' + i; wm.userData.steer = o.steer; grp.add(wm); });
-        return grp;
+      if (e.kind === 'vehicle') return Render.buildVehicleMesh(e);
+      if (e.kind === 'pickup') return (GTP.Combat && GTP.Combat.pickupMesh) ? GTP.Combat.pickupMesh(e) : A.pickupMesh(e.pickupType);
+      if (e.kind === 'projectile') {
+        var pm = new THREE.Mesh(new THREE.SphereGeometry(e.weaponId === 'hottake' ? 0.16 : 0.07, 6, 4), e.weaponId === 'hottake' ? Render._hotMat() : A.colorMaterial('#ffe08a'));
+        return pm;
       }
-      if (e.kind === 'pickup') return A.pickupMesh(e.pickupType);
-      if (e.kind === 'projectile') { var m = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 4), A.colorMaterial('#ffe08a')); return m; }
       return null;
+    },
+    _hotMat: function () { if (!Render._hm) Render._hm = new THREE.MeshBasicMaterial({ color: 0xff7a20 }); return Render._hm; },
+    // shared vehicle materials; the body mesh swaps slots between these by state
+    _vehicleMats: function () {
+      if (Render._vm) return Render._vm;
+      var A = Render._A;
+      function basic(col) { return new THREE.MeshBasicMaterial({ vertexColors: true, color: col }); }
+      function lamb(col) { return new THREE.MeshLambertMaterial({ vertexColors: true, color: col }); }
+      Render._vm = {
+        detail: A.propMaterial(),
+        glass: new THREE.MeshPhongMaterial({ vertexColors: true, color: 0xffffff, shininess: 90, specular: new THREE.Color(0x9fc0dd) }),
+        headOff: lamb(0xd6d6cc), headOn: basic(0xffffff),
+        tailOff: lamb(0x8a7a78), tailOn: basic(0x7a5050), tailBrake: basic(0xffffff),
+        barOff: lamb(0x555555), barDim: lamb(0xffffff), barOn: basic(0xffffff),
+        wreck: new THREE.MeshLambertMaterial({ color: 0x1f1d1b }), wreckGlass: new THREE.MeshLambertMaterial({ color: 0x15171a })
+      };
+      return Render._vm;
+    },
+    _beamMat: function () {
+      if (!Render._bmm) Render._bmm = new THREE.MeshBasicMaterial({ map: Render._A.glow, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.42, color: 0xffe3a8 });
+      return Render._bmm;
+    },
+    _wrapMat: function (name) {
+      Render._wm = Render._wm || {};
+      if (!Render._wm[name]) Render._wm[name] = new THREE.MeshLambertMaterial({ map: Render._A.wrapTexture(name), vertexColors: true });
+      return Render._wm[name];
+    },
+    buildVehicleMesh: function (e) {
+      var A = Render._A, rec = A.vehicleGeometry(e.type || 'sedan', e.wrap), M = Render._vehicleMats();
+      var paint = new THREE.MeshPhongMaterial({ vertexColors: true, color: new THREE.Color(e.color || '#c94040'), shininess: 32, specular: new THREE.Color(0x5a5a5a) });
+      var mats = [paint, M.detail, M.glass, M.headOff, M.tailOff, M.barDim, M.barDim, e.wrap ? Render._wrapMat(e.wrap) : M.detail];
+      var grp = new THREE.Group();
+      var body = new THREE.Mesh(rec.body, mats); body.castShadow = true; body.receiveShadow = false; body.name = 'body'; grp.add(body);
+      var n = rec.wheelOffsets.length;
+      var wheels = new THREE.InstancedMesh(rec.wheel, M.detail, n);
+      wheels.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+      wheels.castShadow = true; wheels.name = 'wheels'; wheels.frustumCulled = false;
+      grp.add(wheels);
+      // headlight pool on the road ahead (additive glow quad, shown when the lights are on)
+      var beam = new THREE.Mesh(Render._planeGeo(rec.size.width + 3, 15), Render._beamMat());
+      beam.rotation.x = -Math.PI / 2; beam.position.set(0, 0.05 - rec.wheelRadius * 0, -rec.size.length / 2 - 7.2); beam.visible = false; beam.renderOrder = 4; beam.name = 'beam';
+      grp.add(beam);
+      grp.userData = { rec: rec, mats: mats, paint: paint, wheels: wheels, beam: beam, wrecked: false };
+      _e = _e || new THREE.Euler();
+      for (var i = 0; i < n; i++) { var o = rec.wheelOffsets[i]; _m.compose(_v.set(o.x, rec.wheelRadius, o.z), _q.identity(), _v2.set(1, 1, 1)); wheels.setMatrixAt(i, _m); }
+      wheels.instanceMatrix.needsUpdate = true;
+      return grp;
+    },
+    // called from Vehicle.syncMesh: wheels, light states, wreck look, the player's headlight spot
+    syncVehicle: function (v) {
+      var m = v.mesh, ud = m && m.userData; if (!ud || !ud.rec) return;
+      var rec = ud.rec, mats = ud.mats, M = Render._vehicleMats(), wheels = ud.wheels, i, o;
+      for (i = 0; i < rec.wheelOffsets.length; i++) {
+        o = rec.wheelOffsets[i];
+        _e.set(v.wheelSpin, o.steer ? v.wheelSteer : 0, 0, 'YXZ'); _q.setFromEuler(_e);
+        _m.compose(_v.set(o.x, rec.wheelRadius, o.z), _q, _v2.set(1, 1, 1)); wheels.setMatrixAt(i, _m);
+      }
+      wheels.instanceMatrix.needsUpdate = true;
+      if (v.wreck) {
+        if (!ud.wrecked) { ud.wrecked = true; mats[0] = M.wreck; mats[1] = M.wreck; mats[2] = M.wreckGlass; mats[3] = M.wreck; mats[4] = M.wreck; mats[5] = M.wreck; mats[6] = M.wreck; mats[7] = M.wreck; if (ud.beam) ud.beam.visible = false; }
+      } else {
+        var night = Render.night || 0, driven = !!v.driver || v.lights;
+        var lightsOn = driven && night > 0.25 && !v.sinking;
+        if (ud.beam) ud.beam.visible = lightsOn && Render.lit > 0.05;
+        mats[3] = lightsOn ? M.headOn : M.headOff;
+        mats[4] = v.braking ? M.tailBrake : (lightsOn ? M.tailOn : M.tailOff);
+        if (v.isPolice) {
+          if (v.siren) { var ph = Math.floor(v.age * 5) % 2; mats[5] = ph ? M.barOn : M.barOff; mats[6] = ph ? M.barOff : M.barOn; }
+          else { mats[5] = M.barDim; mats[6] = M.barDim; }
+        }
+        // the player's car throws a real spotlight at night
+        var L = Render.lights;
+        if (L && L.headlight && v.hasPlayer()) {
+          L.headlightOwner = v;
+          L.headlight.visible = lightsOn;
+          if (lightsOn) {
+            var p = v.localToWorld(0, v.cls.length / 2 - 0.1), t = v.localToWorld(0, v.cls.length / 2 + 14);
+            L.headlight.position.set(p.x, v.y + rec.lightPoints.head.y, p.z);
+            L.headlight.target.position.set(t.x, v.y - 0.3, t.z);
+          }
+        } else if (L && L.headlightOwner === v) { L.headlight.visible = false; L.headlightOwner = null; }
+      }
     },
 
     // ------------------------------------------------------------------ fx --
     fx: {
-      list: [], texts: [], _pool: [], _lines: [],
+      list: [], texts: [], _pool: [], _lines: [], decals: 0, MAX_DECALS: 220,
       init: function () { },
       add: function (o) {
         o = o || {}; o.t = 0;
         var type = o.type || 'puff';
-        o.life = o.life || (type === 'explosion' ? 0.9 : type === 'smoke' ? 1.6 : type === 'tracer' ? 0.08 : type === 'decal' || type === 'skid' ? 12 : type === 'text' ? 1.2 : 0.5);
+        o.life = o.life || (type === 'explosion' ? 0.9 : type === 'smoke' ? 1.6 : type === 'tracer' ? 0.08 : type === 'decal' || type === 'skid' ? 12 : type === 'text' ? 1.2 : type === 'ring' ? 0.5 : type === 'fire' ? 0.45 : 0.5);
         if (type === 'text') { Render.fx.texts.push(o); return o; }
         if (type === 'tracer') {
           var g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([o.x, o.y, o.z, o.x2, o.y2, o.z2], 3));
           o.obj = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0.9 })); o.obj.userData.own = true;
         } else if (type === 'decal' || type === 'skid') {
-          o.obj = new THREE.Mesh(Render._planeGeo(o.size || 0.6, o.size2 || (o.size || 0.6)), new THREE.MeshBasicMaterial({ color: type === 'skid' ? 0x14161a : 0x303030, transparent: true, opacity: 0.6, depthWrite: false }));
-          o.obj.rotation.x = -Math.PI / 2; o.obj.rotation.z = o.rot || 0; o.obj.position.set(o.x, (o.y || 0) + 0.02, o.z);
+          if (Render.fx.decals >= Render.fx.MAX_DECALS) {
+            var L0 = Render.fx.list;
+            for (var di = 0; di < L0.length; di++) if (L0[di].type === 'decal' || L0[di].type === 'skid') { Render.fx._release(L0[di]); L0.splice(di, 1); break; }
+          }
+          Render.fx.decals++;
+          o.obj = new THREE.Mesh(Render._planeGeo(o.size || 0.6, o.size2 || (o.size || 0.6)), new THREE.MeshBasicMaterial({ color: o.color || (type === 'skid' ? 0x14161a : 0x303030), transparent: true, opacity: type === 'skid' ? 0.55 : 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+          o.obj.rotation.set(-Math.PI / 2, 0, o.rot || 0, 'YXZ'); o.obj.position.set(o.x, (o.y || 0) + 0.025, o.z);
+          o.obj.rotation.order = 'ZXY'; o.obj.rotation.set(-Math.PI / 2, 0, o.rot || 0);
+          o.obj.renderOrder = 3;
+        } else if (type === 'ring') {
+          o.obj = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 28), new THREE.MeshBasicMaterial({ color: o.color || 0xffb060, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+          o.obj.rotation.x = -Math.PI / 2; o.obj.position.set(o.x, (o.y || 0) + 0.08, o.z); o.obj.userData.own = true; o.size = o.size || 6;
         } else {
           var sp = Render.fx._pool.pop();
           if (!sp) sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: Render._A.particle, transparent: true, depthWrite: false }));
           sp.material.blending = (type === 'spark' || type === 'fire' || type === 'explosion') ? THREE.AdditiveBlending : THREE.NormalBlending;
           sp.material.color.set(o.color || (type === 'puff' ? 0xd8d8d8 : type === 'smoke' ? 0x444444 : type === 'spark' ? 0xffd080 : type === 'fire' ? 0xff7a20 : 0xffb050));
           sp.material.opacity = 1; sp.visible = true;
-          o.obj = sp; o.size = o.size || (type === 'explosion' ? 6 : type === 'smoke' ? 1.5 : 0.6);
-          o.vx = o.vx || 0; o.vy = o.vy == null ? (type === 'smoke' ? 1.2 : 0.4) : o.vy; o.vz = o.vz || 0;
+          o.obj = sp; o.size = o.size || (type === 'explosion' ? 6 : type === 'smoke' ? 1.5 : type === 'fire' ? 1.2 : 0.6);
+          o.vx = o.vx || 0; o.vy = o.vy == null ? (type === 'smoke' ? 1.2 : type === 'fire' ? 2 : 0.4) : o.vy; o.vz = o.vz || 0;
+          o.gravity = type === 'spark' ? 9 : 0;
         }
         if (o.obj) Render.fxGroup.add(o.obj);
         Render.fx.list.push(o);
@@ -761,7 +863,7 @@
         var L = Render.fx.list;
         for (var i = L.length - 1; i >= 0; i--) {
           var o = L[i]; o.t += dt;
-          if (o.vx != null) { o.x += o.vx * dt; o.y += o.vy * dt; o.z += o.vz * dt; }
+          if (o.vx != null) { if (o.gravity) o.vy -= o.gravity * dt; o.x += o.vx * dt; o.y += o.vy * dt; o.z += o.vz * dt; }
           if (o.t >= o.life) { Render.fx._release(o); L.splice(i, 1); }
         }
         var T = Render.fx.texts;
@@ -773,29 +875,37 @@
           var o = L[i], k = o.t / o.life;
           if (o.obj && o.obj.isSprite) {
             o.obj.position.set(o.x, o.y, o.z);
-            var s = o.size * (o.type === 'explosion' ? 0.4 + k * 1.2 : 0.6 + k * 0.8);
+            var s = o.size * (o.type === 'explosion' ? 0.4 + k * 1.2 : o.type === 'fire' ? 1.1 - k * 0.7 : o.type === 'spark' ? 1 - k * 0.6 : 0.6 + k * 0.8);
             o.obj.scale.set(s, s, 1);
-            o.obj.material.opacity = (1 - k) * (o.type === 'smoke' ? 0.6 : 1);
-          } else if (o.obj && o.obj.material && (o.type === 'decal' || o.type === 'skid')) o.obj.material.opacity = 0.6 * (1 - Math.max(0, k - 0.7) / 0.3);
+            o.obj.material.opacity = (1 - k) * (o.type === 'smoke' ? 0.55 : 1);
+          } else if (o.obj && o.type === 'ring') { var rs = o.size * (0.15 + k * 0.85); o.obj.scale.set(rs, rs, 1); o.obj.material.opacity = 0.9 * (1 - k); }
+          else if (o.obj && o.obj.material && (o.type === 'decal' || o.type === 'skid')) o.obj.material.opacity = (o.type === 'skid' ? 0.55 : 0.7) * (1 - Math.max(0, k - 0.7) / 0.3);
         }
       },
       _release: function (o) {
         if (!o.obj) return;
         Render.fxGroup.remove(o.obj);
+        if (o.type === 'decal' || o.type === 'skid') Render.fx.decals = Math.max(0, Render.fx.decals - 1);
         if (o.obj.isSprite) { o.obj.visible = false; Render.fx._pool.push(o.obj); }
         else { if (o.obj.geometry && o.obj.userData.own) o.obj.geometry.dispose(); if (o.obj.material && o.obj.material.dispose && !o.obj.isSprite) o.obj.material.dispose(); }
+        o.obj = null;
       },
-      clear: function () { var L = Render.fx.list; for (var i = 0; i < L.length; i++) Render.fx._release(L[i]); L.length = 0; Render.fx.texts.length = 0; }
+      clear: function () { var L = Render.fx.list; for (var i = 0; i < L.length; i++) Render.fx._release(L[i]); L.length = 0; Render.fx.texts.length = 0; Render.fx.decals = 0; }
     },
 
     // ----------------------------------------------------------------- rig --
-    // Third-person chase camera. Game.step calls update(dt) each fixed step;
-    // frame() applies the result (apply). Never snaps except on reset/teleport.
+    // Third-person chase camera. Game.step calls update(dt) each fixed step; frame()
+    // applies the result. Never snaps except on reset/teleport/respawn.
+    //   chase on foot: 4.2 m back, 1.9 m up, looks at the chest; yaw eases behind movement after 1.2 s without look input
+    //   chase in a vehicle: 7.5 m (bus 10, truck 9), 3 m up, yaw eases toward the velocity direction (reverse flips after 0.5 s),
+    //                       fov 60 -> 75 with speed, slight roll on hard turns, shake on impacts
+    //   close halves distances; first is at eye height (bonnet view in a car); aim is over the right shoulder
+    //   collision: raycast focus -> desired against buildings, pull in by 0.3 m; a final guard keeps the smoothed camera out of any AABB
     rig: {
-      mode: 'chase', yaw: 0, pitch: 0.2, dist: C.CAMERA.footDist, fov: C.CAMERA.fov,
-      pos: { x: 0, y: 2, z: 5 }, focus: { x: 0, y: 1.25, z: 0 }, shakeAmt: 0, _shakeT: 0, _snap: true, _target: null, _lastMoveYaw: 0,
+      mode: 'chase', yaw: 0, pitch: 0.2, dist: C.CAMERA.footDist, fov: C.CAMERA.fov, roll: 0,
+      pos: { x: 0, y: 2, z: 5 }, focus: { x: 0, y: 1.25, z: 0 }, shakeAmt: 0, _shakeT: 0, _snap: true, _target: null, _lastMoveYaw: 0, pulled: false,
       target: function (e) { Render.rig._target = e; Render.rig._snap = true; return e; },
-      reset: function () { var r = Render.rig; r.yaw = 0; r.pitch = 0.2; r._snap = true; r.shakeAmt = 0; r.fov = C.CAMERA.fov; },
+      reset: function () { var r = Render.rig; r.yaw = 0; r.pitch = 0.2; r._snap = true; r.shakeAmt = 0; r.fov = C.CAMERA.fov; r.roll = 0; },
       snap: function () { Render.rig._snap = true; },
       shake: function (a) { Render.rig.shakeAmt = Math.min(1.5, Render.rig.shakeAmt + a); },
       update: function (dt, input) {
@@ -803,57 +913,86 @@
         var t = r._target || (GTP.game && GTP.game.player);
         if (!t) return;
         var look = input ? input.look : null;
-        var inCar = t.vehicle || t.inVehicle;
+        var v = t.inVehicle || t.vehicle || null, inCar = !!v;
         var mode = (t.cameraMode || r.mode);
+        var speed = Math.sqrt((t.vx || 0) * (t.vx || 0) + (t.vz || 0) * (t.vz || 0));
+        var now = GTP.game ? GTP.game.time.t : 0;
         if (look && (look.dx || look.dy)) {
           r.yaw -= look.dx * CAM.lookSens; r.pitch = U.clamp(r.pitch + look.dy * CAM.lookSens, CAM.pitchMin, CAM.pitchMax);
         } else {
-          var speed = Math.sqrt((t.vx || 0) * (t.vx || 0) + (t.vz || 0) * (t.vz || 0));
-          var since = (GTP.game ? GTP.game.time.t : 0) - (input ? input.lastLookTime : -1e9);
-          if (speed > 0.6 && since > CAM.autoYawDelay) {
-            var moveYaw = U.dirToYaw(t.vx, t.vz);
-            if (inCar && (t.vehicle || t.inVehicle).reversing) moveYaw += Math.PI;
-            r.yaw = U.angleDamp(r.yaw, moveYaw, inCar ? CAM.autoYawRate * 1.6 : CAM.autoYawRate, dt);
-            r.pitch = U.damp(r.pitch, inCar ? 0.16 : 0.2, 1.5, dt);
+          var since = now - (input ? input.lastLookTime : -1e9);
+          if (inCar) {
+            if (since > CAM.carAutoYawDelay) {
+              var tgt;
+              if (v.reversing) tgt = v.reverseTime > CAM.reverseFlipDelay ? v.yaw + Math.PI : v.yaw;
+              else tgt = speed > 2.5 ? U.dirToYaw(t.vx, t.vz) : v.yaw;
+              r.yaw = U.angleDamp(r.yaw, tgt, CAM.carAutoYawRate * U.clamp(speed / 6, 0.45, 1), dt);
+              r.pitch = U.damp(r.pitch, CAM.carPitch, 1.5, dt);
+            }
+          } else if (speed > 0.6 && since > CAM.autoYawDelay && !t.aiming) {
+            r.yaw = U.angleDamp(r.yaw, U.dirToYaw(t.vx, t.vz), CAM.autoYawRate, dt);
+            r.pitch = U.damp(r.pitch, 0.2, 1.5, dt);
           }
         }
-        var dist = inCar ? ((t.vehicle || t.inVehicle).type === 'bus' ? CAM.busDist : CAM.carDist) : CAM.footDist;
-        var height = inCar ? CAM.carHeight : CAM.footHeight;
-        var lookH = inCar ? 1.0 : CAM.footLookHeight;
+        var dist, height, lookH;
+        if (inCar) { dist = v.type === 'bus' ? CAM.busDist : v.type === 'truck' ? CAM.truckDist : CAM.carDist; height = CAM.carHeight * U.clamp(v.cls.height / 1.5, 1, 1.5); lookH = Math.min(1.7, v.cls.height * 0.6); }
+        else { dist = CAM.footDist; height = CAM.footHeight; lookH = CAM.footLookHeight; }
         if (mode === 'close') { dist *= CAM.closeScale; height *= 0.8; }
-        var aiming = t.aiming && !inCar;
+        var aiming = !!t.aiming && !inCar;
         var fx = t.x, fy = t.y + lookH, fz = t.z;
         var d = U.yawToDir(r.yaw), rx = -d.z, rz = d.x;   // right vector
-        var desired;
-        if (mode === 'first') { desired = { x: t.x + d.x * 0.15, y: t.y + C.PLAYER.eye, z: t.z + d.z * 0.15 }; fx += d.x * 5; fy = desired.y + Math.sin(r.pitch) * 5; fz += d.z * 5; }
-        else if (aiming) { desired = { x: t.x - d.x * CAM.aimDist + rx * CAM.aimSide, y: t.y + 1.55 + Math.sin(r.pitch) * 1.2, z: t.z - d.z * CAM.aimDist + rz * CAM.aimSide }; fx = t.x + d.x * 8 + rx * CAM.aimSide; fy = t.y + 1.45 - Math.sin(r.pitch) * 6; fz = t.z + d.z * 8 + rz * CAM.aimSide; }
-        else {
-          var D = dist * Math.cos(r.pitch), H = dist * Math.sin(r.pitch) + (height - lookH);
-          desired = { x: fx - d.x * D, y: fy + H, z: fz - d.z * D };
-          // pull in when a building is between the focus and the camera
-          var ddx = desired.x - fx, ddy = desired.y - fy, ddz = desired.z - fz, len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz) || 1;
-          var hit = W.raycastBuildings(fx, fy, fz, ddx / len, ddy / len, ddz / len, len + CAM.collisionPad);
-          if (hit) { var tt = Math.max(0.6, hit.t - CAM.collisionPad); desired.x = fx + ddx / len * tt; desired.y = fy + ddy / len * tt; desired.z = fz + ddz / len * tt; }
+        var desired; r.pulled = false;
+        if (mode === 'first') {
+          if (inCar) {
+            var rec = Render._A.vehicleGeometry(v.type, v.wrap), eye = rec.lightPoints.eye, ep = v.localToWorld(eye.x, -eye.z);
+            desired = { x: ep.x, y: v.y + eye.y, z: ep.z };
+          } else desired = { x: t.x + d.x * 0.15, y: t.y + C.PLAYER.eye, z: t.z + d.z * 0.15 };
+          fx = desired.x + d.x * 6; fy = desired.y - Math.sin(r.pitch) * 3; fz = desired.z + d.z * 6;
+        } else if (aiming) {
+          desired = { x: t.x - d.x * CAM.aimDist + rx * CAM.aimSide, y: t.y + 1.55 + Math.sin(r.pitch) * 1.2, z: t.z - d.z * CAM.aimDist + rz * CAM.aimSide };
+          fx = t.x + d.x * 8 + rx * CAM.aimSide; fy = t.y + 1.45 - Math.sin(r.pitch) * 6; fz = t.z + d.z * 8 + rz * CAM.aimSide;
+          desired = Render.rig._pullIn(t.x, t.y + 1.5, t.z, desired, 0.4);
+        } else {
+          var D = dist * Math.cos(r.pitch), Hh = dist * Math.sin(r.pitch) + (height - lookH);
+          desired = { x: fx - d.x * D, y: fy + Hh, z: fz - d.z * D };
+          desired = Render.rig._pullIn(fx, fy, fz, desired, 0.6);
           var floor = W.heightAt(desired.x, desired.z, desired.y) + 0.45;
           if (desired.y < floor) desired.y = floor;
         }
-        var targetFov = inCar ? U.lerp(CAM.fov, CAM.fovSpeedMax, U.clamp(Math.sqrt((t.vx || 0) * (t.vx || 0) + (t.vz || 0) * (t.vz || 0)) / CAM.fovSpeedAt, 0, 1)) : (aiming ? CAM.aimFov : CAM.fov);
-        if (r._snap) { r.pos.x = desired.x; r.pos.y = desired.y; r.pos.z = desired.z; r.focus.x = fx; r.focus.y = fy; r.focus.z = fz; r.fov = targetFov; r._snap = false; }
+        var targetFov = inCar ? U.lerp(CAM.fov, CAM.fovSpeedMax, U.clamp(speed / CAM.fovSpeedAt, 0, 1)) : (aiming ? CAM.aimFov : CAM.fov);
+        if (r._snap) { r.pos.x = desired.x; r.pos.y = desired.y; r.pos.z = desired.z; r.focus.x = fx; r.focus.y = fy; r.focus.z = fz; r.fov = targetFov; r.roll = 0; r._snap = false; }
         else {
           var far = U.dist2d(r.pos.x, r.pos.z, desired.x, desired.z) > 40;
-          var k = far ? 1e3 : CAM.posDamp;
+          var k = far ? 1e3 : (mode === 'first' ? 60 : CAM.posDamp);
           r.pos.x = U.damp(r.pos.x, desired.x, k, dt); r.pos.y = U.damp(r.pos.y, desired.y, k, dt); r.pos.z = U.damp(r.pos.z, desired.z, k, dt);
           r.focus.x = U.damp(r.focus.x, fx, k * 1.5, dt); r.focus.y = U.damp(r.focus.y, fy, k * 1.5, dt); r.focus.z = U.damp(r.focus.z, fz, k * 1.5, dt);
           r.fov = U.damp(r.fov, targetFov, CAM.fovDamp, dt);
         }
+        // guard: the smoothed camera never sits inside a building (smoothing can cut a corner the raycast missed)
+        if (mode !== 'first') {
+          var gx = r.pos.x - fx, gy = r.pos.y - fy, gz = r.pos.z - fz, gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1;
+          var ghit = W.raycastBuildings(fx, fy, fz, gx / gl, gy / gl, gz / gl, gl + CAM.collisionPad);
+          if (ghit) { var gt = Math.max(0.5, ghit.t - CAM.collisionPad); r.pos.x = fx + gx / gl * gt; r.pos.y = fy + gy / gl * gt; r.pos.z = fz + gz / gl * gt; r.pulled = true; }
+        }
+        var rollT = inCar && mode !== 'first' ? U.clamp(-v.yawRate * speed * 0.0045, -CAM.rollMax, CAM.rollMax) : 0;
+        r.roll = U.damp(r.roll, rollT, CAM.rollDamp, dt);
         if (r.shakeAmt > 0) { r._shakeT += dt * 40; r.shakeAmt = Math.max(0, r.shakeAmt - dt * CAM.shakeDecay * r.shakeAmt - dt * 0.2); }
+      },
+      // pull the desired camera in to the first building face between the focus and the camera
+      _pullIn: function (fx, fy, fz, desired, minDist) {
+        var CAM = C.CAMERA, W = Render._World;
+        var ddx = desired.x - fx, ddy = desired.y - fy, ddz = desired.z - fz, len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz) || 1;
+        var hit = W.raycastBuildings(fx, fy, fz, ddx / len, ddy / len, ddz / len, len + CAM.collisionPad);
+        if (hit) { var tt = Math.max(minDist, hit.t - CAM.collisionPad); Render.rig.pulled = true; return { x: fx + ddx / len * tt, y: fy + ddy / len * tt, z: fz + ddz / len * tt }; }
+        return desired;
       },
       apply: function () {
         var r = Render.rig, cam = Render.camera;
-        var sx = 0, sy = 0;
-        if (r.shakeAmt > 0) { sx = Math.sin(r._shakeT * 1.3) * r.shakeAmt * 0.12; sy = Math.cos(r._shakeT) * r.shakeAmt * 0.1; }
+        var sx = 0, sy = 0, sr = 0;
+        if (r.shakeAmt > 0) { sx = Math.sin(r._shakeT * 1.3) * r.shakeAmt * 0.12; sy = Math.cos(r._shakeT) * r.shakeAmt * 0.1; sr = Math.sin(r._shakeT * 0.7) * r.shakeAmt * 0.012; }
         cam.position.set(r.pos.x + sx, r.pos.y + sy, r.pos.z);
         cam.lookAt(r.focus.x, r.focus.y, r.focus.z);
+        if (r.roll || sr) cam.rotateZ(r.roll + sr);
         if (Math.abs(cam.fov - r.fov) > 0.05) { cam.fov = r.fov; cam.updateProjectionMatrix(); }
       }
     }

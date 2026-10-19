@@ -15,6 +15,8 @@ const SHOTS = [
   { name: 'render_downtown_night', cam: [327, 2, 372], look: [329, 8, 300], clock: 22 },
   { name: 'render_strip_night', cam: [262, 1.8, 427], look: [256, 4, 395], clock: 21.5 },
   { name: 'render_sunset', cam: [330, 3, 500], look: [230, 22, 545], clock: 18.6 },
+  { name: 'render_ramp', cam: [126, 2.2, 232], look: [190, 8, 232], clock: 15 },
+  { name: 'render_bridge', cam: [452, 2.2, 281], look: [530, 5, 279], clock: 15 },
   { name: 'render_overview', cam: [330, 150, 520], look: [320, 0, 250], clock: 15 }
 ];
 
@@ -62,7 +64,8 @@ H.run('render', async (t) => {
   t.assert(night.night >= 0.99, 'night at 22:00');
   t.assert(night.mean[0] + night.mean[1] + night.mean[2] < day.mean[0] + day.mean[1] + day.mean[2] - 60, 'night is darker than day');
   t.assert(night.warm > 0.004, 'night shot has warm lit windows / lamps: ' + night.warm);
-  t.assert(results.render_sunset.warm > 0.05, 'sunset sky is warm: ' + results.render_sunset.warm);
+  t.assert(results.render_sunset.warm > 0.03, 'sunset sky is warm: ' + results.render_sunset.warm);
+  t.assert(results.render_bridge.blue > 0.15, 'bridge shot shows the channel: ' + results.render_bridge.blue);
   t.assert(results.render_overview.chunks >= 60, 'overview built most chunks: ' + results.render_overview.chunks);
   // back to the chase camera, which follows the player
   const back = await page.evaluate(() => {

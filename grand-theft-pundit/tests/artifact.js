@@ -15,7 +15,7 @@ H.run('artifact', async (t) => {
   t.assert(html.trimStart().startsWith('<title>Grand Theft Pundit</title>'), '<title> must come first');
   t.assert(html.indexOf('<meta name="claude:viewport-fit-sides" content="cover">') > 0, 'viewport-fit-sides meta');
   t.assert(!/<script\s+src=/.test(html), 'all scripts must be inlined');
-  t.assert(/window\.THREE|THREE\.REVISION|REVISION\s*[:=]\s*["']152/.test(html), 'three.js is inlined');
+  t.assert(html.indexOf('/* vendor/three.min.js */') > 0 && /WebGLRenderer/.test(html) && /"152"/.test(html), 'three.js r152 is inlined');
   t.assert(/padding-left:\s*max\(16px,\s*env\(safe-area-inset-left/.test(html) && /padding-right:\s*max\(16px,\s*env\(safe-area-inset-right/.test(html), 'safe-area gutters');
   t.assert(/color-scheme:\s*dark/.test(html) && /html,\s*body\s*\{\s*height:\s*100%/.test(html), 'theme + 100% height');
   t.assert(!/100vh/.test(html), 'never 100vh');
@@ -23,8 +23,8 @@ H.run('artifact', async (t) => {
   t.assert(html.length < 16 * 1024 * 1024, 'artifact too large');
   // repo rules on js/
   const jsFiles = fs.readdirSync(path.join(t.ROOT, 'js')).filter((f) => f.endsWith('.js'));
-  const bad = jsFiles.filter((f) => /Math\.random/.test(fs.readFileSync(path.join(t.ROOT, 'js', f), 'utf8')));
-  t.assert(bad.length === 0, 'Math.random used in ' + bad.join(','));
+  const bad = jsFiles.filter((f) => /Math\.random\s*\(/.test(fs.readFileSync(path.join(t.ROOT, 'js', f), 'utf8')));
+  t.assert(bad.length === 0, 'Math.random() called in ' + bad.join(','));
   const esm = jsFiles.filter((f) => /^\s*(import|export)\s/m.test(fs.readFileSync(path.join(t.ROOT, 'js', f), 'utf8')));
   t.assert(esm.length === 0, 'ES module syntax in ' + esm.join(','));
   const dialogs = jsFiles.filter((f) => /\b(alert|confirm|prompt)\s*\(/.test(fs.readFileSync(path.join(t.ROOT, 'js', f), 'utf8')));

@@ -25,13 +25,15 @@
     MAX_DPR: 2,
 
     // --- quality ----------------------------------------------------------
-    QUALITY: { shadows: true, drawDistance: 260, fogStart: 120, shadowMap: 2048, shadowBox: 120, anisotropy: 4 },
+    QUALITY: { shadows: true, drawDistance: 260, fogStart: 120, shadowMap: 2048, shadowBox: 120, anisotropy: 4, pedDraw: 130, vehicleDraw: 230 },
 
     // --- camera (the GTA feel lives here) ---------------------------------
     CAMERA: {
       fov: 60,
       footDist: 4.2, footHeight: 1.9, footLookHeight: 1.25,
-      carDist: 7.5, carHeight: 3.0, busDist: 10,
+      carDist: 7.5, carHeight: 3.0, busDist: 10, truckDist: 9,
+      carPitch: 0.14, carAutoYawDelay: 0.7, carAutoYawRate: 3.2, reverseFlipDelay: 0.5,
+      rollMax: 0.05, rollDamp: 4,
       closeScale: 0.5,
       aimDist: 1.6, aimSide: 0.6, aimFov: 50,
       pitchMin: -20 * Math.PI / 180, pitchMax: 60 * Math.PI / 180,
@@ -60,17 +62,31 @@
     PHYS: {
       gravity: 22,
       steerLerp: 10, drag: 0.012, rolling: 1.2,
+      gripRate: 12,             // lateral slip decay = grip * gripRate (1/s)
+      handbrakeBrake: 0.55,     // handbrake deceleration as a fraction of cls.brake
+      accelTaper: 0.25,         // acceleration lost at top speed (fraction)
+      maxYawRate: 2.4,          // rad/s steering cap
+      spinDamp: 3.5,            // collision spin decay (1/s)
+      spinKick: 0.9,            // collision spin per m/s of impact (scaled by lever arm)
+      scrape: 0.92,             // tangential velocity kept on a wall hit
       restitution: 0.3, carRestitution: 0.35,
       damageSpeed: 5, damagePerSpeed: 2.2,
+      occupantHurtSpeed: 14, occupantHurtPerSpeed: 1.2,
+      landDamageSpeed: 7, landDamagePerSpeed: 3,
       pedHitDamage: 8, pedHitDamagePerSpeed: 4,
-      burnSeconds: 3, explodeRadius: 8, explodePedDamage: 70, explodeVehicleDamage: 150,
-      corpseSeconds: 10, wreckSeconds: 60, offroadSpeed: 0.7
+      burnSeconds: 3, explodeRadius: 8, explodePedDamage: 70, explodeVehicleDamage: 150, explodeOccupantDamage: 35,
+      corpseSeconds: 10, wreckSeconds: 60, offroadSpeed: 0.7,
+      sinkSeconds: 3, swim: 1.3, swimRun: 1.9, climbOut: 1.6,
+      bailSpeed: 6,             // exiting faster than this knocks the ped down
+      enterWalk: 0.4,           // seconds of door walk before the seat
+      skidLateral: 3.5,         // lateral slip (m/s) that leaves skid marks
+      pedSeparation: 0.9
     },
 
     // --- vehicles ---------------------------------------------------------
     // accel m/s^2, maxSpeed m/s, steerMax rad, grip 0..1 lateral bleed per step scale.
     VEHICLES: {
-      sedan:  { accel: 9,  maxSpeed: 38, reverseMax: 10, brake: 22, steerMax: 0.62, steerSpeedFalloff: 0.55, grip: 0.9,  driftGrip: 0.25, mass: 1300, hp: 100, length: 4.5, width: 1.9, height: 1.45, seats: 4, wheelRadius: 0.33, colors: ['#c94040', '#3d6fcf', '#d8d8d8', '#2b2b2b', '#7a5c3a', '#2f9e6a', '#e8b53a'] },
+      sedan:  { accel: 10, maxSpeed: 38, reverseMax: 10, brake: 22, steerMax: 0.62, steerSpeedFalloff: 0.55, grip: 0.9,  driftGrip: 0.25, mass: 1300, hp: 100, length: 4.5, width: 1.9, height: 1.45, seats: 4, wheelRadius: 0.33, colors: ['#c94040', '#3d6fcf', '#d8d8d8', '#2b2b2b', '#7a5c3a', '#2f9e6a', '#e8b53a'] },
       sports: { accel: 14, maxSpeed: 52, reverseMax: 12, brake: 26, steerMax: 0.66, steerSpeedFalloff: 0.6,  grip: 0.94, driftGrip: 0.2,  mass: 1200, hp: 80,  length: 4.3, width: 1.9, height: 1.2,  seats: 2, wheelRadius: 0.34, colors: ['#ff2d6f', '#ffd400', '#15e0ff', '#1a1a1a', '#ff7a00'] },
       suv:    { accel: 8,  maxSpeed: 36, reverseMax: 10, brake: 20, steerMax: 0.58, steerSpeedFalloff: 0.5,  grip: 0.88, driftGrip: 0.3,  mass: 2100, hp: 140, length: 4.9, width: 2.0, height: 1.8,  seats: 4, wheelRadius: 0.38, colors: ['#1d1d1d', '#5c5c5c', '#8a2f2f', '#2a4a6e', '#e6e6e6'] },
       truck:  { accel: 5,  maxSpeed: 28, reverseMax: 7,  brake: 16, steerMax: 0.5,  steerSpeedFalloff: 0.45, grip: 0.85, driftGrip: 0.35, mass: 6000, hp: 220, length: 7.5, width: 2.4, height: 3.0,  seats: 2, wheelRadius: 0.5,  colors: ['#9c9c9c', '#b65a1f', '#2d5f8a', '#4c4c4c'] },
@@ -141,7 +157,7 @@
     // --- sky / lighting by time of day (Render interpolates) ---------------
     SKY: {
       day:    { top: '#3f7fd6', horizon: '#bcd7ee', sun: '#fff4d6', fog: '#b9cde0', hemiSky: '#9fc3f0', hemiGround: '#6c6a5c', sunI: 1.25, hemiI: 0.65, ambient: 0.0 },
-      sunset: { top: '#4b4f9a', horizon: '#ff9a5c', sun: '#ffb070', fog: '#e4a27c', hemiSky: '#c88aa8', hemiGround: '#5c4f44', sunI: 0.95, hemiI: 0.55, ambient: 0.0 },
+      sunset: { top: '#3f4790', horizon: '#ff8a44', sun: '#ff9a50', fog: '#e89a6c', hemiSky: '#c88aa8', hemiGround: '#5c4f44', sunI: 0.95, hemiI: 0.55, ambient: 0.0 },
       night:  { top: '#05070f', horizon: '#1b2240', sun: '#8aa0d8', fog: '#0c1020', hemiSky: '#263160', hemiGround: '#111318', sunI: 0.16, hemiI: 0.32, ambient: 0.0 }
     }
   };
