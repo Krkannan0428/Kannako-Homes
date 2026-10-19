@@ -121,8 +121,9 @@
     var sp = Wd.nearestSidewalkPoint(cx + rng.range(-rMax, rMax), cz + rng.range(-rMax, rMax)) || Wd.nearestSidewalkPoint(cx, cz);
     return sp ? { x: sp.x, z: sp.z, y: sp.y } : { x: cx, z: cz, y: Wd.heightAt(cx, cz, 0) };
   }
-  // a free slot for a vehicle near (cx, cz): parking bays first (unless prefer === 'road'), then road tiles away from junctions
-  function vehicleSpot(cx, cz, rMax, prefer, others) {
+  // a free slot for a vehicle near (cx, cz): parking bays first (unless prefer === 'road'), then road tiles away from junctions.
+  // length: the vehicle's length, so a nose-in bay keeps the overhang clear of the wall
+  function vehicleSpot(cx, cz, rMax, prefer, others, length) {
     var Wd = W(), T = Wd.T, M = Wd.M, TILE = C.TILE, best = null, bestS = 1e9;
     var rr = Math.ceil(rMax / TILE), tx0 = Math.floor(cx / TILE), tz0 = Math.floor(cz / TILE);
     for (var dz = -rr; dz <= rr; dz++) for (var dx = -rr; dx <= rr; dx++) {
@@ -142,9 +143,10 @@
       var near = E().hash.query(x, z, 5.5, scratch), blocked = false;
       for (var k = 0; k < near.length; k++) { var e = near[k]; if (!e.removed && (e.kind === 'vehicle' || e.kind === 'player') && Math.abs(e.y - Wd.heightAt(x, z, 0)) < 3) { blocked = true; break; } }
       if (blocked) continue;
-      var yaw = 0;
+      var yaw = 0, over = Math.max(0, (length || 4.5) / 2 - TILE / 2 + 0.35);
       if (kind === 'road') { var rd = Wd.roadDir(x, z, 0); if (rd) yaw = U.dirToYaw(rd.dx, rd.dz); }
-      else yaw = (bW || bE) ? Math.PI / 2 : (bN ? 0 : Math.PI);
+      else if (bW || bE) { yaw = Math.PI / 2; x += bW ? over : (bE ? -over : 0); }
+      else { yaw = bN ? 0 : Math.PI; z += bN ? over : (bS ? -over : 0); }
       best = { x: x, z: z, y: Wd.heightAt(x, z, 0), yaw: yaw, kind: kind, tx: tx, tz: tz }; bestS = s;
     }
     if (!best) { var rp = Wd.nearestRoadPoint(cx, cz); if (rp) best = { x: rp.x, z: rp.z, y: 0, yaw: U.dirToYaw(rp.dx, rp.dz), kind: 'road' }; }
@@ -585,7 +587,8 @@
       var sp = o.spawn || {}, at = resolvePoint(sp.at) || { x: player().x, z: player().z, y: player().y };
       var v = sp.tag ? taggedVehicle(sp.tag) : null;
       if (!v) {
-        var spot = vehicleSpot(at.x, at.z, 46, 'parking') || { x: at.x, z: at.z, y: at.y, yaw: 0 };
+        var cls = C.VEHICLES[sp.type] || C.VEHICLES.sedan;
+        var spot = vehicleSpot(at.x, at.z, 46, 'parking', null, cls.length) || { x: at.x, z: at.z, y: at.y, yaw: 0 };
         v = makeVehicle(spot, sp.type || 'sedan', { tag: sp.tag || null, wrap: sp.wrap || null, color: sp.color || null });
         if (sp.tag) run.tagged[sp.tag] = v;
       }
@@ -665,7 +668,6 @@
       c.t = 0;
     },
     check: function (o, c, p) {
-      c.t += C.STEP;
       if (c.t < 1) return null;
       var wd = GTP.AI && GTP.AI.wanted, lvl = wd ? wd.level : p.wanted;
       return lvl === 0 && p.wanted === 0 ? 'done' : null;
@@ -678,8 +680,8 @@
       c.quota = {}; c.spawned = {}; c.perWave = {};
       for (var role in waves) { c.quota[role] = waves[role] | 0; c.spawned[role] = 0; c.perWave[role] = Math.max(1, Math.ceil(waves[role] / n)); }
     },
-    update: function (o, c, p, dt) {
-      c.t += dt;
+    update: function (o, c, p) {
+      // c.t is the objective clock (ticked by the interpreter, paused during dialogue)
       if (c.t < c.nextWave) return;
       var live = 0;
       for (var i = 0; i < c.hostiles.length; i++) if (!pedOut(c.hostiles[i])) live++;
@@ -704,11 +706,11 @@
   H.destroy = {
     start: function (o, c) {
       var sp = o.spawn || {}, center = resolvePoint(sp.around) || { x: player().x, z: player().z, y: player().y };
-      var radius = metres(sp.radius, 30), count = sp.count || 1, driven = sp.driven || null;
+      var radius = metres(sp.radius, 30), count = sp.count || 1, driven = sp.driven || null, len = (C.VEHICLES[sp.vehicle] || C.VEHICLES.van).length;
       c.vehicles = []; c.tag = sp.tag || null;
       for (var i = 0; i < count; i++) {
         var a = R().random() * TAU, rr = radius * (0.35 + 0.65 * R().random());
-        var spot = vehicleSpot(center.x + Math.cos(a) * rr, center.z + Math.sin(a) * rr, Math.max(24, radius * 0.6), driven ? 'road' : 'parking', c.vehicles) || vehicleSpot(center.x, center.z, radius + 20, driven ? 'road' : null, c.vehicles);
+        var spot = vehicleSpot(center.x + Math.cos(a) * rr, center.z + Math.sin(a) * rr, Math.max(24, radius * 0.6), driven ? 'road' : 'parking', c.vehicles, len) || vehicleSpot(center.x, center.z, radius + 20, driven ? 'road' : null, c.vehicles, len);
         if (!spot) continue;
         var v = makeVehicle(spot, sp.vehicle || 'van', { tag: c.tag, color: sp.color || null, wrap: sp.wrap || null });
         v.target = true;
