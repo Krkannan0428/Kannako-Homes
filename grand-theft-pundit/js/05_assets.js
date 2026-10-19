@@ -182,7 +182,8 @@
       var m = Assets._facadeMats[style];
       if (m) return m;
       var f = Assets.facade(style);
-      m = new THREE.MeshLambertMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 });
+      // vertexColors: the chunk builder tints each building slightly so a style is not a row of clones
+      m = new THREE.MeshLambertMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true });
       m.userData.style = style;
       Assets._facadeMats[style] = m;
       return m;

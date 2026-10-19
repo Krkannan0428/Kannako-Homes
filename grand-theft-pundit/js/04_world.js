@@ -737,7 +737,9 @@
             var floors = R.int(st.floors[0], st.floors[1]);
             // downtown: a few landmark-scale towers
             if (st.facade === 'downtown' && R.chance(0.2)) floors = R.int(st.floors[1], st.floors[1] + 8);
-            var roof = st.roof === 'gable' ? (R.chance(0.8) ? 'gable' : 'flat') : (R.chance(0.08) ? 'gable' : 'flat');
+            // pitched roofs belong on houses, not on towers
+            var gableRoll = st.roof === 'gable' ? R.chance(0.8) : R.chance(0.08);
+            var roof = (gableRoll && floors <= 4) ? 'gable' : 'flat';
             World._addBuilding(x, z, cw, rh, { style: st.facade, floors: floors, roof: roof }, R);
             for (zz = z; zz < z + rh; zz++) for (xx = x; xx < x + cw; xx++) assigned[zz * w + xx] = 1;
           }

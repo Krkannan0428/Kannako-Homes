@@ -85,8 +85,8 @@ H.run('smoke', async (t) => {
   t.assert(states[0] === 'paused' && states[1] === 'playing', 'pause toggles');
   t.assert(states[2] === 'close', 'camera mode cycles');
   t.assert(Math.abs(states[3] - 0.1) < 0.002, 'clock rate: ' + states[3]);
-  t.assert(states[4] === 300 && states[7] === 300, 'teleport and load restore position');
-  t.assert(states[5] === true && states[6] === true, 'save works in file:// context or reports gracefully');
+  t.assert(states[4] === 300 && states[8] === 300, 'teleport and load restore position');
+  t.assert(states[5] === true && states[6] === true && states[7] === true, 'save / hasSave / load work in a file:// context');
 
   // a chase-camera screenshot with the player in frame
   await page.evaluate(() => { GTP.game.debug.teleport(GTP.World.landmark('campus_quad').door.x, GTP.World.landmark('campus_quad').door.z); GTP.Render.rig.yaw = 0; GTP.Render.rig.snap(); GTP.game.advance(0.5); });

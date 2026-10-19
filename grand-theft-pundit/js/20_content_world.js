@@ -226,7 +226,23 @@
           hills: { civ: 0.6, cop: 0.3, donor: 0.1 },
           marina: { civ: 0.9, thug: 0.1 }
         },
-        density: { campus: 1.2, downtown: 1.3, capitol: 0.9, strip: 1.1, industrial: 0.5, suburbs: 0.5, hills: 0.4, marina: 0.9 }
+        density: { campus: 1.2, downtown: 1.3, capitol: 0.9, strip: 1.1, industrial: 0.5, suburbs: 0.5, hills: 0.4, marina: 0.9 },
+        // The spawner asks here for looks. When 21_content_cast.js is present its per-district
+        // pools (GTP.Content.looks) win; otherwise the placeholders above are used.
+        lookPool: function (districtId) {
+          var L = GTP.Content.looks;
+          if (L && L.byDistrict && L.byDistrict[districtId]) return [L.byDistrict[districtId]];
+          return GTP.Content.world.spawn.peds.looks;
+        },
+        rollLook: function (districtId, role) {
+          var L = GTP.Content.looks;
+          if (L && typeof L.roll === 'function') return L.roll(districtId, role);
+          var looks = GTP.Content.world.spawn.peds.looks;
+          var base = GTP.rng.pick(looks), out = {};
+          for (var k in base) out[k] = base[k];
+          out.role = role || 'civ'; out.district = districtId || null;
+          return out;
+        }
       },
       vehicles: {
         byDistrict: {
