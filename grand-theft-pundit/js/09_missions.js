@@ -40,7 +40,7 @@
     minigameFallback: 2,      // seconds until a minigame auto-resolves as a win when the UI has none (0 = never)
     brainTick: 3,             // mission brains run every n fixed steps
     weaponAmmo: { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16 },
-    colors: { mission: 0x3fa8ff, objective: 0xffd45a }
+    colors: { mission: 0x2f6cff, objective: 0xffd45a }
   }, C.MISSIONS || {});
 
   // ------------------------------------------------------------- helpers --
@@ -538,6 +538,7 @@
         if (ai.mission === 'hostile') hostileTick(p, ai, dt);
         else if (ai.mission === 'follower') followerTick(p, ai, dt);
         else if (ai.mission === 'giver' || ai.mission === 'actor') giverTick(p, ai, dt);
+        if (GTP.AI && GTP.AI.syncBark && p.mesh) GTP.AI.syncBark(p);
       } catch (e) { U.reportError(e, 'missions.brain ' + ai.mission + '#' + p.id); }
     }
   }

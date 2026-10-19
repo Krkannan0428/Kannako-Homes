@@ -266,8 +266,11 @@ GTP.AI.debug   = { counts(), cops(), nearestCop(), vehicles() }
 GTP.C.AI       // knobs: cadences, cruise speeds, turn radii, gaps, sight ranges, bust range/time, response quotas per star, roadblock and heli settings; 01_config.js may override
 ```
 
-Peds made elsewhere (debug.spawnPed, missions) get a brain (`ped.ai`) on sight;
-a vehicle only drives itself after `GTP.AI.drive(v)`. Events:
+Peds made elsewhere (debug.spawnPed, missions) get a brain (`ped.ai`) on sight
+unless the brain they carry has `ai.mission` set (a mission brain the AI leaves
+alone); a vehicle only drives itself after `GTP.AI.drive(v)`. A `persistent`
+vehicle is never recycled by the traffic brain. Hurting or killing a ped with
+`ped.hostile` set (mission goons) adds no heat. Events:
 `wanted {level, prev}`, `heat`, `busted {player, cop, level, fine}`, `bark {ped, text}`,
 `roadblock`, `heli {on}`, `garage {landmark, cost}`. Audio hook: `GTP.Audio.heli(on, x, z)`
 when defined (rotor loop). Long vehicles (bus, truck) never turn at street corners.
@@ -315,11 +318,77 @@ city's spawn stream. Cops drop their gun half the time; peds drop cash sometimes
 Identical data shape and runtime to the 2D contract (`goto drive_to
 enter_vehicle pickup follow escape_wanted survive destroy defeat dialogue
 minigame timer_wrap`), with 3D targets `{x, z}` or `{landmark}` (door point).
-Markers: a translucent vertical cylinder of light at the door point (blue for
-available missions, yellow for objectives) plus minimap icons and a HUD arrow
-toward the objective when it is off screen. Mission starts when the player
-stands in the marker on foot for 0.5 s. Objectives pause while a dialogue
-line shows. `GTP.Missions._resolveMinigame(win)` exists for tests.
+**Distances in mission data (`radius`, `maxDist`, pickup/defeat/destroy
+`radius`) are GDD units: 8 per metre** (`C.MISSIONS.unit = 0.125`), so the
+GDD's literal numbers stay in the content file; everything else is metres.
+Optional content fields the runtime honours: a vehicle spawn's `wrap` and
+`color`, a pickup spawn's `label` (string or array, printed on the crates), a
+destroy spawn's `driven: 'traffic'|'hoa'` (targets drive around with a driver).
+
+```js
+GTP.Missions.state = { active: id|null, mission, objective (top-level index), objectiveText, hint, progress ({n,total}|{seconds,total}|null),
+                       timer: {remaining, total}|null, dialogue: [line, ...] (current first), minigame: {game, params}|null,
+                       phase: 'intro'|'play'|'outro'|null, completed: Set, flags: {}, failed: {id: count} }
+GTP.Missions.init(); update(dt)              // Game.step calls update in playing / cutscene / minigame
+GTP.Missions.available() -> [mission]        // requires complete and not done; both endings stay available after one is finished
+GTP.Missions.start(id, {skipIntro}) -> bool; abort(); fail(reason); completeObjective() (debug: forces the current objective, dialogue or minigame through)
+GTP.Missions.prep(id, {intro}) -> bool       // the ?mission= jump-in: prerequisites completed with their flags and weapons, player teleported to the giver's door, intro skipped unless intro
+GTP.Missions.markers() -> [{id, kind:'mission'|'objective', x, z, y, missionId, title, giver?, landmark?, color}]   // minimap icons
+GTP.Missions.objectiveTarget() -> {x, y, z, dist, text, type} | null   // HUD arrow (nearest pickup / target / the tailed ped / the vehicle)
+GTP.Missions.hud() -> { active, title, giver, phase, objective, hint, progress, timer, dialogue, minigame, flags }
+GTP.Missions.advanceDialogue(); skipDialogue()   // the UI calls advanceDialogue on confirm (or uses the showDialogue callback)
+GTP.Missions._resolveMinigame(win)          // the UI minigame (or a test) reports the result
+GTP.Missions.registerTest(mission)          // tests: a mission startable by id but never listed
+GTP.Missions.current() -> {def, ctx, index, depth} | null   // the running objective (ctx holds its spawned pickups / peds / vehicles / ped)
+GTP.Missions.on(ev, fn)                     // sugar for GTP.Events.on('mission:' + ev)
+GTP.C.MISSIONS                               // knobs: unit, markerRadius 1.9, startHold 0.5, lineSeconds 2.5, gotoRadius 6, driveRadius 12, followTooClose 6 / followCloseTime 3 / followFarTime 5, waveEvery 10, maxHostiles 14, defeatHold 3, giverRange, minigameFallback 2, weaponAmmo, colors
+```
+
+Flow: an available mission's blue light stands at its giver landmark door with
+the giver (cast look) and Kip beside it (within `giverRange`); the player stands
+in it on foot for 0.5 s (the trigger arms once the player has been outside it,
+so a new game spawning inside the first marker does not auto-start) → banner
+(`UI.banner`) → state `cutscene` while the intro plays (the camera eases to a
+two-shot over the player's shoulder: `Render.rig.target(giver, true)`; the
+player's vehicle is braked) → objectives in order, `timer_wrap` pushing a timer
+frame (`state.timer` for the HUD; expiry fails with `timer`) → outro dialogue →
+reward, `completed`, `onComplete` flags / `unlockWeapon` (ammo from
+`C.MISSIONS.weaponAmmo`), `UI.card('passed', ...)`, `UI.credits()` after an
+ending. Objectives and timers pause while a dialogue line shows; the world is
+paused during a minigame (Game.step). Spawns are persistent, tracked per run
+and cleaned up: on complete, surviving goons are released to the AI (they flee),
+parked mission cars stay (no longer persistent) and the car the player sits in
+stays; on fail / abort everything but the player's car is removed. Objective
+types: `goto` on foot within radius of the door; `drive_to` in `'any'` vehicle or
+the `'spawned:<tag>'` one; `enter_vehicle` spawns the tagged vehicle in a free
+bay (or on the road) near `at`, marker follows it; `pickup` spawns `count`
+mission crates around the landmark, collectable on foot or from a vehicle,
+progress in the objective text; `follow` spawns the cast ped at `at` walking the
+`path` of landmark doors (A* on sidewalks, brisk walk) and fails when the player
+is within 6 m for 3 s (`spotted`) or beyond `maxDist` for 5 s (`target_escaped`);
+`escape_wanted` sets the stars (`AI.wanted.set`) and completes at 0;
+`survive` spawns waves of the given roles (totals spread over `seconds/10`
+waves, capped at `maxHostiles` live) around the player and completes when the
+seconds elapse; `destroy` completes when every tagged vehicle is a wreck;
+`defeat` when every spawned ped is dead, fled or down for 3 s (a goon under 35%
+hp that gets knocked down gives up and runs); `dialogue` queues lines;
+`minigame` hands `{game, params}` to `UI.startMinigame` and fails the mission on
+a loss. `failOn`: `player_dead` (the `player:wasted` event; `busted` also fails),
+`vehicle_lost:<tag>`, plus the follow / timer / minigame reasons. Mission peds
+carry a mission brain (`ped.ai.mission` = `hostile` | `follower` | `giver`; the
+AI never ticks them) and goons are `ped.hostile` (no wanted heat for fighting
+them). Dialogue: lines are `{who, name, color, text, ticker, voice}`; with no
+`UI.showDialogue` a line auto-advances after `lineSeconds` or on confirm/action;
+`ticker: true` lines go to `UI.ticker` and never block. With no
+`UI.startMinigame` a minigame auto-resolves as a win after `minigameFallback` s.
+
+UI hooks (all optional): `banner(title, sub)`, `card('passed'|'failed', title,
+sub)`, `showDialogue(line, next)`, `hideDialogue()`, `ticker(text)`,
+`startMinigame(game, params, done)`, `endMinigame()`, `credits(id)`, `toast`.
+Events on `GTP.Events`: `mission:start`, `mission:objective`,
+`mission:objectiveDone`, `mission:complete`, `mission:fail {reason, text}`,
+`mission:abort`, `mission:dialogue`, `mission:ticker`, `mission:minigame`,
+`mission:minigameDone`, `mission:wave`, `mission:ending`.
 
 ### GTP.Render (10_render.js)
 
@@ -334,6 +403,9 @@ GTP.Render.fx.add({type:'puff'|'spark'|'smoke'|'fire'|'explosion'|'ring'|'tracer
 GTP.Render.syncVehicle(v)             // called by Vehicle.syncMesh: wheels (InstancedMesh), light material slots, siren, wreck look, the player's headlight SpotLight + beam quad
 GTP.Render.worldToScreen(x,y,z) -> {sx, sy, visible}
 GTP.Render.freeCam(enabled)           // tests: place camera anywhere via camera.position/lookAt
+GTP.Render.markerMesh(color) -> Group // a mission marker: translucent additive cylinder of light + core + ground ring; userData.pulse(k) breathes it
+GTP.Render.addMarker(mesh); removeMarker(mesh)   // Missions owns positions and the list (Render.markerGroup)
+GTP.Render.rig.target(entity, ease)   // ease = glide to the new target instead of snapping (cutscenes)
 ```
 
 Camera rig rules (this is where GTA feel lives):
@@ -388,7 +460,12 @@ gameover`, `step()`, `advance(seconds)`, `render()`, `time {t, clock, day}`
 `snapshot()` returns a plain-object summary (player pos, state, wanted, mission,
 counts, fps) for tests and for `window.claude?.hot?.snapshot`.
 
-URL params: `headless=1 seed=<int> mission=<id> skipTitle=1 mute=1 low=1 debug=1 clock=<h>`.
+URL params: `headless=1 seed=<int> mission=<id> intro=1 skipTitle=1 mute=1 low=1 debug=1 clock=<h>`.
+`mission=<id>` boots straight into that mission (`Missions.prep`: prerequisites
+complete with their flags and weapons, player at the giver's door, intro
+skipped unless `intro=1`). `step()` runs the full simulation in `playing` and
+`cutscene`; in `minigame` only `Missions.update` and fx tick (the world is
+paused); in `wasted` / `busted` only Combat, the AI respawn fallback and fx.
 
 ## 4. Save format
 

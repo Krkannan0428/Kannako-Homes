@@ -1547,6 +1547,7 @@
     // stop driving a vehicle (missions take the wheel back)
     release: function (v) { if (v && v.ai) { v.ai = null; v.setControls(0, 0, false, 0); } },
     say: say,
+    syncBark: syncBark,   // missions call it for peds with a mission brain (the AI never ticks those)
     update: function (dt) {
       var t0 = U.now();
       stepN++;

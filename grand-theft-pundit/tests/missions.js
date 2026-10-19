@@ -132,9 +132,10 @@ H.run('missions', async (t) => {
     const c = T_.ctx(), v = c && c.vehicle, g = T_.door('pod_garage');
     if (!v) return { noVehicle: true };
     const x0 = v.x, z0 = v.z;
-    // a look at the van and its light for the screenshot
+    // a look at the van and its light for the screenshot: a free camera off the van's rear corner, the player in frame
     const f = GTP.util.yawToDir(v.yaw), side = { x: -f.z, z: f.x };
-    T_.tp(v.x + side.x * 7 + f.x * 3, v.z + side.z * 7 + f.z * 3); T_.lookAt(v.x, v.z + 0.5);
+    T_.tp(v.x + side.x * 4.5 - f.x * 6, v.z + side.z * 4.5 - f.z * 6); GTP.game.advance(0.4);
+    GTP.game.debug.freeCam(v.x - side.x * 5 - f.x * 12, v.y + 4.6, v.z - side.z * 5 - f.z * 12, v.x, v.y + 1.4, v.z);
     const mk = GTP.Missions.markers();
     return { tag: v.tag, type: v.type, wrap: v.wrap, persistent: v.persistent, distToDoor: Math.hypot(v.x - g.x, v.z - g.z), onTile: GTP.World.tileAt(v.x, v.z), mk, drift: +Math.hypot(v.x - x0, v.z - z0).toFixed(2), markerOnVan: mk.length === 1 && Math.hypot(mk[0].x - v.x, mk[0].z - v.z) < 0.5 };
   });
@@ -145,6 +146,7 @@ H.run('missions', async (t) => {
   const shot2 = await t.shot(page, 'missions_objective_van');
   console.log('  shot: ' + shot2);
   r = await page.evaluate(() => {
+    GTP.game.debug.followCam();
     const v = T_.ctx().vehicle;
     const inCar = T_.enter(v);
     const s = T_.until(T_.done, 4);
