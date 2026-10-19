@@ -820,6 +820,52 @@
       }
     },
 
+    // ------------------------------------------------------------- markers --
+    // Mission markers: a translucent cylinder of light (blue: an available mission at a giver's door,
+    // yellow: the current objective) with a bright core and a ground ring. Missions owns the list and
+    // positions; Render owns the look. userData.pulse(k) breathes the opacity (k 0..1).
+    markerGroup: null,
+    _markerTex: function () {
+      if (Render._mtex) return Render._mtex;
+      var cv = document.createElement('canvas'); cv.width = 8; cv.height = 128;
+      var ctx = cv.getContext('2d'), g = ctx.createLinearGradient(0, 0, 0, 128);
+      g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.45, 'rgba(255,255,255,0.35)'); g.addColorStop(0.92, 'rgba(255,255,255,0.95)'); g.addColorStop(1, 'rgba(255,255,255,0.6)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 8, 128);
+      var tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+      Render._mtex = tex;
+      return tex;
+    },
+    markerMesh: function (color, opts) {
+      opts = opts || {};
+      var r = opts.radius || 1.6, h = opts.height || 7.5, tex = Render._markerTex();
+      function mat(op) { return new THREE.MeshBasicMaterial({ map: tex, color: color, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }); }
+      var cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 28, 1, true), mat(0.5)); cyl.position.y = h / 2; cyl.name = 'cyl';
+      var core = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.45, r * 0.45, h * 0.8, 16, 1, true), mat(0.35)); core.position.y = h * 0.4; core.name = 'core';
+      var ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.78, r * 1.18, 40), new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.07; ring.name = 'ring';
+      var disc = new THREE.Mesh(new THREE.CircleGeometry(r * 0.8, 32), new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+      disc.rotation.x = -Math.PI / 2; disc.position.y = 0.06; disc.name = 'disc';
+      var grp = new THREE.Group();
+      grp.add(cyl); grp.add(core); grp.add(ring); grp.add(disc);
+      [cyl, core, ring, disc].forEach(function (m) { m.renderOrder = 8; m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; });
+      grp.userData = {
+        color: color, cyl: cyl, core: core, ring: ring, disc: disc,
+        pulse: function (k) { cyl.material.opacity = 0.4 + 0.22 * k; core.material.opacity = 0.25 + 0.25 * k; ring.material.opacity = 0.6 + 0.4 * k; var s = 1 + 0.06 * k; ring.scale.set(s, s, 1); }
+      };
+      grp.name = 'marker';
+      return grp;
+    },
+    addMarker: function (mesh) {
+      if (!mesh || !Render.scene) return;
+      if (!Render.markerGroup) { Render.markerGroup = new THREE.Group(); Render.markerGroup.name = 'markers'; Render.scene.add(Render.markerGroup); }
+      Render.markerGroup.add(mesh);
+    },
+    removeMarker: function (mesh) {
+      if (!mesh) return;
+      if (mesh.parent) mesh.parent.remove(mesh);
+      mesh.traverse(function (o) { if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.dispose) o.material.dispose(); } });
+    },
+
     // ------------------------------------------------------------------ fx --
     fx: {
       list: [], texts: [], _pool: [], _lines: [], decals: 0, MAX_DECALS: 220,
@@ -904,7 +950,8 @@
     rig: {
       mode: 'chase', yaw: 0, pitch: 0.2, dist: C.CAMERA.footDist, fov: C.CAMERA.fov, roll: 0,
       pos: { x: 0, y: 2, z: 5 }, focus: { x: 0, y: 1.25, z: 0 }, shakeAmt: 0, _shakeT: 0, _snap: true, _target: null, _lastMoveYaw: 0, pulled: false,
-      target: function (e) { Render.rig._target = e; Render.rig._snap = true; return e; },
+      // follow an entity; ease = glide there instead of snapping (cutscenes)
+      target: function (e, ease) { Render.rig._target = e; if (!ease) Render.rig._snap = true; return e; },
       reset: function () { var r = Render.rig; r.yaw = 0; r.pitch = 0.2; r._snap = true; r.shakeAmt = 0; r.fov = C.CAMERA.fov; r.roll = 0; },
       snap: function () { Render.rig._snap = true; },
       shake: function (a) { Render.rig.shakeAmt = Math.min(1.5, Render.rig.shakeAmt + a); },

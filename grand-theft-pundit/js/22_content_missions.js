@@ -11,7 +11,12 @@
  * Objective types are the twelve engine types: goto drive_to enter_vehicle
  * pickup follow escape_wanted survive destroy defeat dialogue minigame
  * timer_wrap. Targets are {landmark} door points. A `ticker:true` dialogue
- * line is shown on the news ticker instead of the dialogue box.
+ * line is shown on the news ticker instead of the dialogue box. Distances
+ * (radius, maxDist) are the GDD's units: 8 per metre (GTP.C.MISSIONS.unit).
+ * Optional presentation fields the runtime honours: a vehicle spawn's `wrap`
+ * (livery) and `color`; a pickup spawn's `label` (string or array, printed on
+ * the crates); a destroy spawn's `driven` ('traffic' | 'hoa': the targets drive
+ * around with a driver instead of sitting parked).
  *
  * Also here: GTP.Content.debate (opponents and their point cards),
  * GTP.Content.debateCounters (the player's counter lines), GTP.Content.ratio
@@ -40,7 +45,7 @@
       ],
       objectives: [
         { type: 'goto', target: { landmark: 'dorm_studio' }, radius: 48, text: 'Get to Dorm 4B' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 3, around: { landmark: 'dorm_studio' }, radius: 160 }, text: 'Grab the table legs, top and sign' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 3, around: { landmark: 'dorm_studio' }, radius: 160, label: ['TABLE LEGS', 'TABLE TOP', 'THE SIGN'] }, text: 'Grab the table legs, top and sign' },
         { type: 'goto', target: { landmark: 'campus_quad' }, radius: 48, text: 'Set up on the Quad' },
         { type: 'minigame', game: 'debate', params: { rounds: 1, points: 4, timer: 6, bluff: 0, opponent: 'freshman' }, text: 'Win your first debate' }
       ],
@@ -63,9 +68,9 @@
         { who: 'gus', text: 'The battery lasts ninety seconds. I didn\'t fix it. I\'m sound.' }
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'podvan', at: { landmark: 'pod_garage' } }, text: 'Get in the pod van' },
+        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'podvan', at: { landmark: 'pod_garage' }, wrap: 'pod', color: '#f2f2f2' }, text: 'Get in the pod van' },
         { type: 'timer_wrap', seconds: 90, objectives: [
-          { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'campus_quad' }, radius: 400 }, text: 'Collect 6 subscribers before the battery dies' }
+          { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'campus_quad' }, radius: 400, label: 'SUBSCRIBER' }, text: 'Collect 6 subscribers before the battery dies' }
         ] },
         { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'spawned:podvan', text: 'Bring the van back to Gus' }
       ],
@@ -89,7 +94,7 @@
         { who: 'firmness', text: 'Sorry, Kip, code NOPE.' }
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'mattress', at: { landmark: 'nap_depot' } }, text: 'Get in the Nap Dynasty demo truck' },
+        { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'mattress', at: { landmark: 'nap_depot' }, color: '#2d5f8a' }, text: 'Get in the Nap Dynasty demo truck' },
         { type: 'timer_wrap', seconds: 120, objectives: [
           { type: 'drive_to', target: { landmark: 'green_room' }, vehicle: 'spawned:mattress', text: 'Deliver the mattress before code TAKES20 expires' }
         ] },
@@ -171,7 +176,7 @@
       ],
       objectives: [
         { type: 'follow', spawn: { ped: 'footnote', at: { landmark: 'fulcrum' }, path: [{ landmark: 'char_charter' }, { landmark: 'capitol_dome' }, { landmark: 'fulcrum' }] }, maxDist: 300, text: 'Tail Dr. Footnote around Lobby Row' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 5, around: { landmark: 'fulcrum' }, radius: 250 }, text: 'Collect 5 independent studies' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 5, around: { landmark: 'fulcrum' }, radius: 250, label: 'STUDY' }, text: 'Collect 5 independent studies' },
         { type: 'survive', seconds: 45, waves: { thug: 6 }, text: 'Hold the lobby against the rival interns' }
       ],
       outro: [
@@ -196,7 +201,7 @@
       objectives: [
         { type: 'goto', target: { landmark: 'stadium' }, radius: 48, text: 'Get to the rally stage' },
         { type: 'survive', seconds: 60, waves: { protester: 8, thug: 4 }, text: 'Hold the stage for 60 s' },
-        { type: 'destroy', spawn: { vehicle: 'van', count: 3, tag: 'newsvans', around: { landmark: 'stadium' }, radius: 260 }, text: 'Wreck the three TYN vans filming the empty seats' },
+        { type: 'destroy', spawn: { vehicle: 'van', count: 3, tag: 'newsvans', around: { landmark: 'stadium' }, radius: 260, color: '#2b2b2b' }, text: 'Wreck the three TYN vans filming the empty seats' },
         { type: 'escape_wanted', setWanted: 2, text: 'Lose the cops' }
       ],
       outro: [
@@ -219,7 +224,7 @@
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'van', tag: 'merch', at: { landmark: 'warehouse_42' } }, text: 'Get in the merch van at Warehouse 42' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 5, around: { landmark: 'warehouse_42' }, radius: 220 }, text: 'Load 5 crates of merch' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 5, around: { landmark: 'warehouse_42' }, radius: 220, label: 'MERCH' }, text: 'Load 5 crates of merch' },
         { type: 'drive_to', target: { landmark: 'velvetine_pier' }, vehicle: 'spawned:merch', text: 'Deliver the crates to the Listening Pier' },
         { type: 'dialogue', lines: [
           { who: 'velvetine', text: 'To the crates! Nobody open them. To not opening them!' },
@@ -277,7 +282,7 @@
       ],
       objectives: [
         { type: 'follow', spawn: { ped: 'courier', at: { landmark: 'ova_hq' }, path: [{ landmark: 'protest_plaza' }, { landmark: 'char_charter' }, { landmark: 'bridge_main' }] }, maxDist: 350, text: 'Tail the courier to the dead drop' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'bridge_main' }, radius: 60 }, text: 'Lift the Monday Memo from under the bridge' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'bridge_main' }, radius: 60, label: 'MONDAY MEMO' }, text: 'Lift the Monday Memo from under the bridge' },
         { type: 'escape_wanted', setWanted: 3, text: 'The weather balloons have noticed. Lose them' }
       ],
       outro: [
@@ -301,7 +306,7 @@
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'suv', tag: 'pellets', at: { landmark: 'clarity_barn' } }, text: 'Get in the pellet SUV' },
         { type: 'drive_to', target: { landmark: 'hoa_hall' }, vehicle: 'spawned:pellets', text: 'Deliver the pellets to the HOA Hall' },
-        { type: 'destroy', spawn: { vehicle: 'suv', count: 2, tag: 'hoa', around: { landmark: 'hoa_hall' }, radius: 240 }, text: 'Two HOA patrol SUVs want your paperwork. Wreck them' },
+        { type: 'destroy', spawn: { vehicle: 'suv', count: 2, tag: 'hoa', around: { landmark: 'hoa_hall' }, radius: 240, driven: 'hoa', color: '#f4ead8' }, text: 'Two HOA patrol SUVs want your paperwork. Wreck them' },
         { type: 'escape_wanted', setWanted: 3, text: 'The HOA has called its liaison. Lose the cops' }
       ],
       outro: [
@@ -324,14 +329,14 @@
       ],
       objectives: [
         { type: 'timer_wrap', seconds: 120, objectives: [
-          { type: 'pickup', spawn: { pickupType: 'mission', count: 8, around: { landmark: 'moon_mine' }, radius: 500 }, text: 'Collect 8 GPUs to secure the chain' }
+          { type: 'pickup', spawn: { pickupType: 'mission', count: 8, around: { landmark: 'moon_mine' }, radius: 500, label: 'GPU' }, text: 'Collect 8 GPUs to secure the chain' }
         ] },
         { type: 'dialogue', lines: [
           { who: 'moonsworth', text: 'Chain secured. Your coins are in my car. My car is leaving. That is the roadmap.' },
           { who: 'player', text: 'Respectfully, that\'s theft.' },
           { who: 'moonsworth', text: 'It\'s liquidity.' }
         ] },
-        { type: 'destroy', spawn: { vehicle: 'sports', count: 1, tag: 'kyler', around: { landmark: 'moon_mine' }, radius: 200 }, text: 'Total Kyler\'s car. Your coins are inside' }
+        { type: 'destroy', spawn: { vehicle: 'sports', count: 1, tag: 'kyler', around: { landmark: 'moon_mine' }, radius: 200, driven: 'traffic', color: '#ff2d6f' }, text: 'Total Kyler\'s car. Your coins are inside' }
       ],
       outro: [
         { who: 'moonsworth', text: 'The car was the cold wallet. You\'ve burned the supply. Which is... bullish, actually.' },
@@ -356,7 +361,7 @@
       objectives: [
         { type: 'drive_to', target: { landmark: 'ova_hq' }, vehicle: 'any', text: 'Get to the Office of Vibes Assessment' },
         { type: 'defeat', spawn: { ped: 'thug', count: 6, around: { landmark: 'ova_hq' }, radius: 160 }, text: 'Clear the lobby of agents in balloon-repair coveralls' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'ova_hq' }, radius: 80 }, text: 'Take the subscriber ledger' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'ova_hq' }, radius: 80, label: 'THE LEDGER' }, text: 'Take the subscriber ledger' },
         { type: 'escape_wanted', setWanted: 4, text: 'Every balloon in the city is up. Lose them' },
         { type: 'goto', target: { landmark: 'pod_garage' }, radius: 48, text: 'Get the ledger back to Gus' }
       ],

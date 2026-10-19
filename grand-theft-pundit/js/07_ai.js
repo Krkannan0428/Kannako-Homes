@@ -263,12 +263,13 @@
       var p = player(); if (!p || !e || !e.target || e.target === p) return;
       var src = e.src;
       if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
-      if (e.target.kind === 'ped') { if (isCop(e.target)) wanted.crime('attackCop', 'attackCop'); else if (e.type !== 'vehicle') wanted.crime('hitPed', e.type || 'hit'); }
+      // self-defence: a ped flagged hostile (mission goons that attack the player) earns no heat
+      if (e.target.kind === 'ped') { if (e.target.hostile) { /* no crime */ } else if (isCop(e.target)) wanted.crime('attackCop', 'attackCop'); else if (e.type !== 'vehicle') wanted.crime('hitPed', e.type || 'hit'); }
       else if (e.target.kind === 'vehicle' && e.target.isPolice) wanted.addHeat(1, 'hitCopCar');
       // gunfire scares the street
       if (e.type && /pistol|smg|shotgun|hottake|megaphone/.test(String(e.type))) AI.alarm(e.target.x, e.target.z, 26, p);
     });
-    Ev.on('ped:dead', function (e) { var p = player(); if (!p || !e.ped || e.ped === p) return; var s = e.src; if (s === p || (s && s.driver === p) || (s && s.owner === p)) wanted.crime(isCop(e.ped) ? 'attackCop' : 'killPed', 'kill'); AI.alarm(e.ped.x, e.ped.z, 22, s); });
+    Ev.on('ped:dead', function (e) { var p = player(); if (!p || !e.ped || e.ped === p) return; var s = e.src; if (!e.ped.hostile && (s === p || (s && s.driver === p) || (s && s.owner === p))) wanted.crime(isCop(e.ped) ? 'attackCop' : 'killPed', 'kill'); AI.alarm(e.ped.x, e.ped.z, 22, s); });
     Ev.on('vehicle:exploded', function (e) { var p = player(); var v = e.vehicle; if (!v) return; AI.alarm(v.x, v.z, 40, e.src); if (p && (e.src === p || (e.src && e.src.driver === p) || v.lastDamageSrc === p)) wanted.crime('destroyVehicle', 'explode'); if (v.isPolice && p) wanted.addHeat(2, 'copCarLost'); });
     Ev.on('vehicle:impact', function (e) { if (e.impact > 9) AI.alarm(e.x, e.z, 14, e.vehicle); });
     Ev.on('honk', function (e) { var v = e.vehicle; if (v && v.hasPlayer && v.hasPlayer()) AI.alarm(v.x, v.z, 7, v, true); });
@@ -1064,7 +1065,7 @@
       if (ai.blockedT > K.honkAfter && ai.honkT <= 0 && ai.kind !== 'cop') { v.honk(); ai.honkT = R().range(2.5, 5.5); }
     } else ai.blockedT = Math.max(0, ai.blockedT - dt * 2);
   }
-  function recycle(v) { if (v.hasPlayer()) return; v.destroy(); }
+  function recycle(v) { if (v.hasPlayer() || v.persistent) return; v.destroy(); }   // mission cars are never recycled
   // pursuit driving: a direct goal with light avoidance (police only)
   function driveToward(v, ai, gx, gz, speed, dt) {
     var dx = gx - v.x, dz = gz - v.z, d = Math.sqrt(dx * dx + dz * dz) || 1;

@@ -9,7 +9,7 @@
   var GTP = window.GTP = window.GTP || {};
   var C = GTP.C, U = GTP.util;
   var SAVE_KEY = 'gtp.save.v2';
-  var SIM_STATES = { playing: 1, cutscene: 1, minigame: 1 };
+  var SIM_STATES = { playing: 1, cutscene: 1 };   // the world keeps running through dialogue; it pauses for a minigame
   var RESPAWN_STATES = { wasted: 1, busted: 1 };
 
   function parseParams() {
@@ -64,8 +64,9 @@
       this.newGame(this.seed);
       if (opts.clock != null && opts.clock !== '') this.debug.setClock(parseFloat(opts.clock));
       GTP.UI.init();
-      if (opts.mission && GTP.Missions.start) { try { this._prepMission(String(opts.mission)); } catch (e) { U.reportError(e, 'boot.mission'); } }
       this.setState(skipTitle ? 'playing' : 'title');
+      // ?mission=<id> starts that mission right away (prerequisites complete, flags and weapons applied, intro skipped unless &intro=1)
+      if (opts.mission && GTP.Missions.start) { try { this._prepMission(String(opts.mission), truthy(opts.intro)); } catch (e) { U.reportError(e, 'boot.mission'); } }
       try { GTP.Render.frame(1); } catch (e) { U.reportError(e, 'boot.render'); }
     } catch (e) { U.reportError(e, 'boot'); }
     this.booted = true;
@@ -79,7 +80,8 @@
     return this;
   };
 
-  Game.prototype._prepMission = function (id) {
+  Game.prototype._prepMission = function (id, intro) {
+    if (GTP.Missions.prep) { GTP.Missions.prep(id, { intro: !!intro }); return; }
     var all = GTP.Content.missions || [], byId = {};
     all.forEach(function (m) { byId[m.id] = m; });
     var m = byId[id]; if (!m) return;
@@ -177,6 +179,10 @@
         this.time.t += dt;
         this.time.clock += dt / C.DAY.secondsPerHour;
         if (this.time.clock >= 24) { this.time.clock -= 24; this.time.day++; }
+      } else if (this.state === 'minigame') {
+        // the world is paused: only the mission runtime (minigame hooks, fallback) and fx tick
+        GTP.Missions.update(dt);
+        GTP.Render.fx.update(dt);
       } else if (RESPAWN_STATES[this.state]) {
         GTP.Combat.update(dt);
         if (GTP.AI.updateRespawn) GTP.AI.updateRespawn(dt);   // the AI's fallback DEPLATFORMED flow until Combat owns it
