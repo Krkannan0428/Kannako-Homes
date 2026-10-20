@@ -248,6 +248,34 @@ H.run('interiors', async (t) => {
   console.log('  night stats: ' + JSON.stringify(night));
   t.assert(night.mean[0] + night.mean[1] + night.mean[2] > 150, 'the armory is lit at night');
 
+  // ---- 7. the v0.3 shop API (Combat.catalog / Combat.buy) with parity weapons that have no mesh of their own ----
+  const v3 = await page.evaluate(() => {
+    const CB = GTP.Combat, I = GTP.Interiors, p = GTP.game.player, bought = [];
+    const extra = [{ id: 'carbine_x', name: 'Talking Point Carbine', price: 1900, class: 'rifle' }, { id: 'pocket_x', name: 'Pocket Rebuttal', price: 300, class: 'pistol' }];
+    CB.catalog = function () {
+      return CB.shop.items('weapons').map((it) => ({ id: it.id, kind: 'weapon', weaponId: it.weapon, name: it.name, price: it.price, owned: it.owned, locked: it.locked, lockReason: it.lockedBy }))
+        .concat(extra.map((e) => ({ id: e.id, kind: 'weapon', weaponId: e.id, name: e.name, price: e.price, class: e.class, owned: !!p.weapons[e.id], locked: false })));
+    };
+    CB.buy = function (id) { bought.push(id); p.weapons[id] = 30; return { ok: true }; };
+    I.enter('armory', { branch: 'v3test', instant: true }); GTP.game.advance(0.4);
+    const items = I.debug.items(), car = items.find((i) => i.weaponId === 'carbine_x'), pocket = items.find((i) => i.weaponId === 'pocket_x');
+    const r = I.room(), carMesh = car && r.items.find((it) => it.entry.weaponId === 'carbine_x');
+    let held = 0; if (carMesh) carMesh.mesh.traverse((o) => { if (o.isMesh && o.name === 'held') held++; });
+    GTP.game.debug.teleport(car.x + (car.face === 'w' ? -1.3 : 1.3), car.z);
+    GTP.game.debug.freeCam(car.x + (car.face === 'w' ? -3.2 : 3.2), car.y + 0.5, car.z + 0.3, car.x, car.y, car.z);
+    GTP.game.advance(0.2);
+    const look = I.debug.browse();
+    window.__ev = [];
+    GTP.Input.press('action'); GTP.game.advance(0.05); GTP.Input.press('action'); GTP.game.advance(0.05);
+    const inspect = window.__ev.find((e) => e.n === 'armory:inspect');
+    GTP.game.debug.followCam(); I.exit({ instant: true });
+    delete CB.catalog; delete CB.buy;
+    return { car: !!car, pocket: !!pocket, held, look, inspect: inspect && inspect.e, bought };
+  });
+  console.log('  v3 shop: ' + JSON.stringify(v3));
+  t.assert(v3.car && v3.pocket && v3.held > 0, 'catalog weapons without a mesh hang with their class mesh');
+  t.assert(v3.look && v3.look.weaponId === 'carbine_x' && v3.inspect && v3.inspect.weaponId === 'carbine_x' && v3.bought[0] === 'carbine_x', 'browse and the prompt buy through Combat.buy: ' + JSON.stringify(v3));
+
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'no errors:\n' + errs.join('\n'));
   console.log('  screenshots: ' + shots.join(', '));
