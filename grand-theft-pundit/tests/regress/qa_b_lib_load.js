@@ -3,7 +3,7 @@
  * tests/content_audit.js reads files from disk (no browser). Also extracts single named
  * functions from a game file so a test can run them against stubs.
  *
- *   const L = require('./_qa_b_load');
+ *   const L = require('./qa_b_lib_load');
  *   const C = L.content();                 // GTP.Content after 20..24 loaded
  *   L.dialogueLines(C)                     // every story dialogue line [{src, who, text, ticker}]
  *   L.fnSource('js/09_missions.js', 'failText')   // the source text of `function failText(...) {...}`

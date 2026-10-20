@@ -7,7 +7,7 @@
  * Run: node tests/regress/qa_b_txt_02.js
  */
 'use strict';
-const L = require('./_qa_b_load');
+const L = require('./qa_b_lib_load');
 const C = L.content();
 const X = C.expansion || {};
 const problems = [];

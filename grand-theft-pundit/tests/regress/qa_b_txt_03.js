@@ -8,7 +8,7 @@
  * Run: node tests/regress/qa_b_txt_03.js
  */
 'use strict';
-const L = require('./_qa_b_load');
+const L = require('./qa_b_lib_load');
 const C = L.content();
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 const m = C.missions.find((x) => x.id === 'm01_van');

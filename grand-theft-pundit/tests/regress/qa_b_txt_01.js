@@ -9,7 +9,7 @@
  * Run: node tests/regress/qa_b_txt_01.js
  */
 'use strict';
-const L = require('./_qa_b_load');
+const L = require('./qa_b_lib_load');
 const MAX = 150;
 const C = L.content();
 const problems = [];
