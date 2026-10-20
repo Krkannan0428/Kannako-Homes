@@ -127,9 +127,7 @@ function installPlayer(budget) {
         if (p.inVehicle) { NP.releaseAll(); return { ok: false, why: 'in a vehicle' }; }
         const pts = route.pts;
         while (i < pts.length - 1 && U.dist2d(p.x, p.z, pts[i].x, pts[i].z) < 2.6) i++;
-        // look one node ahead when the next one is close (cuts corners a little, like a player)
-        let k = i; while (k < pts.length - 1 && U.dist2d(p.x, p.z, pts[k].x, pts[k].z) < 4) k++;
-        const tg = pts[k], d = U.dist2d(p.x, p.z, tg.x, tg.z);
+                const k = i, tg = pts[k], d = U.dist2d(p.x, p.z, tg.x, tg.z);
         NP.lookToward(U.dirToYaw(tg.x - p.x, tg.z - p.z));
         NP.hold('forward', true); NP.hold('run', d > 3 && !opts.walk);
         if (sideT > 0) { NP.hold(stuck % 2 ? 'left' : 'right', true); sideT -= 1 / 30; } else { NP.hold('left', false); NP.hold('right', false); }
@@ -141,7 +139,12 @@ function installPlayer(budget) {
           stuck++; lastProg = t; NP.press('jump'); sideT = 0.5;
           if (stuck % 3 === 0 && reroutes < 12) { route = getRoute(); i = 0; best = 1e9; reroutes++; }
         }
-        if (i >= pts.length - 1 && d < 1.2 && !opts.keepGoing) { NP.releaseAll(); NP.adv(0.2); t += 0.2; if (stop()) return { ok: true, t }; route = getRoute(); i = 0; }
+        // at the end of the route: stand still there (a mission light needs the player to stay inside it for a moment)
+        if (i >= pts.length - 1 && d < 1.0) {
+          NP.releaseAll(); NP.adv(0.8); t += 0.8; if (stop()) return { ok: true, t };
+          if (opts.keepGoing) { NP.releaseAll(); return { ok: stop(), t, why: 'stood at the end of the route, nothing happened' }; }
+          route = getRoute(); i = 0;
+        }
       }
       NP.releaseAll();
       return { ok: stop(), t, why: NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s' };
@@ -272,7 +275,13 @@ function installPlayer(budget) {
       const started = () => !!NP.hud().active;
       const r = NP.walk(() => NP.routeTo(target, 'ped', 'story'), started, maxSec, { keepGoing: true });
       if (!started()) {   // circle the light once: a marker may arm only on entry
-        for (const a of [0, 1.6, 3.2, 4.8]) { if (started()) break; NP.walk(() => ({ pts: [{ x: target.x + Math.cos(a) * 3, z: target.z + Math.sin(a) * 3 }, { x: target.x, z: target.z }] }), started, 6); }
+        // (a New Game spawns the player inside the first light, which arms only once they have stepped out of it)
+        for (const a of [0, 1.6, 3.2, 4.8]) {
+          if (started()) break;
+          NP.walk(() => ({ pts: [{ x: target.x + Math.cos(a) * 4.5, z: target.z + Math.sin(a) * 4.5 }] }), () => started() || GTP.util.dist2d(p.x, p.z, target.x + Math.cos(a) * 4.5, target.z + Math.sin(a) * 4.5) < 0.8, 8);
+          NP.walk(() => ({ pts: [{ x: target.x, z: target.z }] }), started, 8, { keepGoing: true });
+          NP.notes.steppedOutOfLight = (NP.notes.steppedOutOfLight || 0) + 1;
+        }
       }
       return { ok: started(), id: NP.hud().active, t: NP.now() - t0, why: r.why };
     },
@@ -326,7 +335,8 @@ function installPlayer(budget) {
 }
 
 // ------------------------------------------------------------------------------------------------------ the run --
-H.run('newplayer', async (t) => {
+module.exports = { installPlayer };
+if (require.main === module) H.run('newplayer', async (t) => {
   const steps = {}; STEPS.forEach(([id, desc]) => { steps[id] = { id, desc, status: 'SKIP', note: 'not reached' }; });
   const set = (id, ok, note, extra) => { steps[id] = Object.assign({}, steps[id], { status: ok ? 'PASS' : 'FAIL', note }, extra || {}); console.log('  ' + (ok ? 'PASS' : 'FAIL') + ' ' + id + ': ' + note); };
   const shots = [];
@@ -407,7 +417,7 @@ H.run('newplayer', async (t) => {
       return { text, arrow: arrow && { x: Math.round(arrow.x), z: Math.round(arrow.z), dist: Math.round(arrow.dist) }, gps: gps && { label: gps.label, kind: gps.kind }, gpsLine, done: r.ok, t: r.t, fallback: Object.keys(NP.usedFallback), routeSrc: NP.routeSrc, waypoint: GTP.game.waypoint || null, next: NP.objectiveText(), fb0 };
     });
     await shot('first_objective');
-    const noManual = firstObj.done && !firstObj.fallback.length && !firstObj.waypoint;
+    const noManual = firstObj.done && !!firstObj.text && !firstObj.fallback.length && !firstObj.waypoint;
     set('gps_first', noManual, firstObj.done
       ? (noManual ? '"' + firstObj.text + '" reached in ' + firstObj.t.toFixed(1) + ' s on the GPS line (' + firstObj.routeSrc + ')'
         : '"' + firstObj.text + '" reached in ' + firstObj.t.toFixed(1) + ' s only with the test\'s own path search: the game drew no GPS route (GTP.World.route ' + (firstObj.gpsLine ? 'present' : 'missing') + ', gps:set ' + (firstObj.gps ? JSON.stringify(firstObj.gps) : 'never emitted') + ')')
