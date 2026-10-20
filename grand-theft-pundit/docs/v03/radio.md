@@ -18,11 +18,11 @@ Branch `v03/radio`. Owns `js/23_content_radio.js` and `tests/radio.js`. No other
   | station | songs | bars | minutes | key shifts | what it does |
   |---|---|---|---|---|---|
   | wail_101 | 6 | 72 | 2.9 | 0 | brass bumpers (four bars) + eight bars of talk, a different stinger note per bumper |
-  | pennant_fm | 4 | 164 | 5.9 | 9 | smooth sax theme, a bossa with a 3-2 clave, a half-time slow jam, a swung shuffle |
+  | pennant_fm | 4 | 164 | 5.9 | 7 | smooth sax theme, a bossa with a 3-2 clave, a half-time slow jam, a swung shuffle |
   | velvetine_888 | 4 | 175 | 5.7 | 4 | deep house: groove, stabs, breakdown, a build, then the drop does not come |
   | quiet_signal | 4 | 76 | 5.1 | 2 | ambient: hold-music chimes, a dial tone over moving chords, arpeggios, a clock tick |
   | office_hours | 4 | 122 | 4.8 | 3 | boom-bap vamps (i7 to IV7), descending sequences, a half-time ii v i, drop-outs |
-  | loop_174 | 4 | 192 | 4.4 | 6 | intro, snare-roll build, drop, bell breakdown, second build, a lifted second drop |
+  | loop_174 | 4 | 192 | 4.4 | 8 | intro, snare-roll build, drop, bell breakdown, second build, a lifted second drop |
 
 - **Talk radio.** WAIL 101 carries the call-in show *Uproar at Large* with host Thad Uproar: seven segments (Open
   Lines (One Side), Ask a Fulcrum Fellow, The Hoax Hour, HOA Hotline, Sponsor Confessional, The Weather Is an
@@ -117,14 +117,25 @@ Consumed:
 
 `tests/radio.js` measures each station. Current values:
 
-- **distinct bars**: wail 36/72, pennant 93/164, velvetine 87/175, quiet 41/76, office 64/122, loop 95/192.
+- **distinct bars**: wail 36/72, pennant 93/164, velvetine 87/175, quiet 50/76, office 64/122, loop 95/192.
 - **longest run of identical bars**: 1 to 3.
 - **drum-pattern variety**: 13 to 24 distinct drum bars (quiet: 3).
-- **strong-beat melody notes on chord tones**: 85 to 100%. The rest are passing tones, sus4 resolutions and 6ths/9ths
+- **strong-beat melody notes on chord tones**: 87 to 98% per station. The rest are passing tones, sus4 resolutions and 6ths/9ths
   on smooth jazz and ambient.
 
-Every song renders through the engine audible, unclipped, and with a varying envelope, and no two songs on a station
-render alike. While writing, I fixed every line that clashed with its chord: a siren riff a whole step off, a reese
+Every song renders through the engine audible and with a varying envelope, and no two songs on a station render
+alike.
+
+**Headroom.** `Audio.render` sums voices raw, before the engine's music bus (gain 0.6 at full level) and its
+compressor.
+- **Raw peaks**: 0.5 to 0.97 for most songs. Loop 174's drops reach about 1.05 (house kick plus clap, sawtooth bass
+  and square stabs together).
+- **In game**: at most about 0.63 into the compressor, so nothing clips.
+- **What the test asserts**: every song's opening, which is the window `tests/audio.js` renders (6 s, or 14 s on
+  WAIL), stays under 0.995; the whole render stays under 1.25.
+
+I removed kick/snare coincidences from the WAIL bumpers, which use the loudest kit, and from the roll bars. I also
+trimmed the 16th-note clap rolls in the Loop 174 builds and the pad overlap in two half-time songs. While writing, I fixed every line that clashed with its chord: a siren riff a whole step off, a reese
 stab over the wrong chord, hold-music dings landing on the wrong bar.
 
 ## Tests
