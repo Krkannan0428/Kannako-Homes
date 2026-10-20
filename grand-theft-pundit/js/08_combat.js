@@ -233,13 +233,32 @@
     if (c === 'thrown') return w.blast ? 10 : 9;
     return 11;
   }
+  // The fallback table's additions that the content track's parity table also has under its own id: when the parity table is
+  // loaded the parity id wins, takes the fallback entry's engine-only fields as its base, and the fallback id leaves the table
+  // (one minigun, one Filibuster). Meshes follow the same map (05b).
+  var LEGACY = { selfie_stick: 'selfie', heavy_pistol: 'filibuster', machine_pistol: 'threadpistol', pdw: 'liveblog', battle_rifle: 'battlerifle',
+    both_barrels: 'doublebarrel', auto_shotgun: 'autoshotgun', heavy_sniper: 'heavysniper', sticky: 'stickynote', spin_smoke: 'smoke', minigun: 'spin' };
+  // engine fields a parity row may carry beside the plan's schema (copied as they are)
+  var ENGINE_KEYS = ['melee', 'lunge', 'knock', 'cone', 'arc', 'push', 'heat', 'stun', 'speed', 'fuse', 'blast', 'ring', 'vehicleDmg', 'restitution', 'bounces',
+    'scope', 'scopedSpread', 'headMul', 'vehicleMul', 'noAuto', 'casingDelay', 'aimSpread', 'pointShots', 'shellReload', 'driveBy', 'floors', 'flipWindow',
+    'spinUp', 'splash', 'burn', 'launch', 'zoom', 'mobility', 'cook'];
   // a parity weapon (the content track's schema) as an engine entry: known ids keep their engine-only fields
   function normalize(src, base) {
     var o = base ? Object.assign({}, base) : {};
     var cls = String(src.class || src.cls || (base && base.cls) || 'pistol').toLowerCase(); cls = CLS_ALIAS[cls] || cls;
+    // a heavy rifle is a machine gun; a heavy special (the minigun) keeps its base's class
+    if (src.heavy && cls === 'rifle') cls = 'lmg';
+    if (src.heavy && cls === 'special') cls = base ? base.cls : 'launcher';
     o.name = src.name || o.name || src.id; o.cls = cls;
     var nums = ['dmg', 'rate', 'mag', 'reserve', 'reload', 'spread', 'recoil', 'range', 'price'];
     for (var i = 0; i < nums.length; i++) if (typeof src[nums[i]] === 'number' && isFinite(src[nums[i]])) o[nums[i]] = src[nums[i]];
+    for (i = 0; i < ENGINE_KEYS.length; i++) if (src[ENGINE_KEYS[i]] != null) o[ENGINE_KEYS[i]] = src[ENGINE_KEYS[i]];
+    if (src.sticks) o.stick = true;
+    if (src.remote && !(o.fuse > 0)) o.fuse = 3;   // no detonator button: a sticky goes off on a timer
+    if (src.smokeSeconds) { o.smoke = src.smokeSeconds; o.fuse = o.fuse || 1.2; o.bounces = o.bounces || 2; }
+    // a lobbed thing that only shoves (the merch cannon's shirts) knocks over what it lands on instead of exploding
+    if (src.projectile === 'lobbed' && !src.blast && !src.stun && !src.fuse && !src.smokeSeconds && (src.knock || 0) >= 5) { o.stun = 1.6; o.shove = true; }
+    if (src.glow) o.glow = src.glow;
     if (src.bloom && typeof src.bloom === 'object') o.bloom = { add: +src.bloom.add || 0, max: +src.bloom.max || 0, decay: +src.bloom.decay || 0.1 };
     if (src.hold === 'one' || src.hold === 'two') o.hold = src.hold;
     if (src.attachments && src.attachments.length) o.attachments = src.attachments.slice();
@@ -268,12 +287,24 @@
     // shell-by-shell reload takes the table's whole-magazine time per shell
     if ((o.lobbed && !o.impact) || o.cone || o.melee) delete o.mag;
     if (o.mag > 0 && !(o.reload > 0)) o.reload = base && base.reload > 0 ? base.reload : 1.8;
+    if (o.melee) { delete o.reload; delete o.reserve; }
     if (o.shellReload && o.mag > 0 && typeof src.reload === 'number' && src.reload > 0) o.reload = base && base.reload > 0 && Math.abs(src.reload - base.reload) < 1e-6 ? base.reload : Math.max(0.25, src.reload / o.mag);
     o.slot = base && base.slot != null && base.cls === cls ? base.slot : slotForClass(o);
     o.parity = true;
     return o;
   }
-  var arsenal = { sig: null, parity: 0 };
+  var arsenal = { sig: null, parity: 0 }, LEGACY_ENTRIES = {}, LEGACY_OF = {};
+  for (var lk in LEGACY) LEGACY_OF[LEGACY[lk]] = lk;
+  function migrateLegacy(p) {
+    for (var old in LEGACY_OF) {
+      if (WEAPONS[old] || !(old in p.weapons)) continue;
+      var nu = LEGACY_OF[old], n = p.weapons[old]; delete p.weapons[old];
+      if (WEAPONS[nu]) p.weapons[nu] = Math.max(p.weapons[nu] || 0, n || 0);
+      if (p.ammo && p.ammo[old]) { if (WEAPONS[nu] && !p.ammo[nu]) p.ammo[nu] = p.ammo[old]; delete p.ammo[old]; }
+      if (p.weapon === old) p.weapon = WEAPONS[nu] ? nu : 'fist';
+      if (p.weaponMods && p.weaponMods[old]) { p.weaponMods[nu] = p.weaponMods[nu] || p.weaponMods[old]; delete p.weaponMods[old]; }
+    }
+  }
   function rebuildOrder() {
     var ids = Object.keys(WEAPONS);
     ids.sort(function (a, b) { var wa = WEAPONS[a], wb = WEAPONS[b]; return (wa.slot - wb.slot) || ((wa.price || 0) - (wb.price || 0)) || (a < b ? -1 : 1); });
@@ -293,9 +324,15 @@
     arsenal.sig = sig; arsenal.parity = 0;
     if (arr) for (var i = 0; i < arr.length; i++) {
       var s = arr[i]; if (!s || !s.id || s.id === 'fist') continue;
-      try { var n = normalize(s, WEAPONS[s.id] || null); WEAPONS[s.id] = n; arsenal.parity++; } catch (e) { U.reportError(e, 'combat.arsenal ' + s.id); }
+      try {
+        var leg = LEGACY[s.id], base = WEAPONS[s.id] || (leg && (WEAPONS[leg] || LEGACY_ENTRIES[leg])) || null;
+        if (leg && WEAPONS[leg]) { LEGACY_ENTRIES[leg] = WEAPONS[leg]; delete WEAPONS[leg]; delete UNLOCK[leg]; delete PITCH[leg]; }
+        WEAPONS[s.id] = normalize(s, base); arsenal.parity++;
+      } catch (e) { U.reportError(e, 'combat.arsenal ' + s.id); }
     }
     rebuildOrder();
+    // a legacy id still in a pocket (an old test or save) becomes its parity weapon
+    var pl = player(); if (pl && pl.weapons) migrateLegacy(pl);
   }
   rebuildOrder();
 
@@ -922,6 +959,7 @@
       e.applyDamage(dmg, shooter, id);
       if (e.alive && !e.knockedDown && !e.inVehicle) {
         if (w.floors && zone !== 'head' && isPlayer && e.kind !== 'player') e.knockDown(d.x * w.knock, d.z * w.knock, 0, shooter, id);   // the Rebuttal puts a body hit on the floor
+        else if (w.stun && !w.lobbed && e.kind !== 'player') e.knockDown(d.x * 0.5, d.z * 0.5, 0, shooter, id);   // the Mute Button: down and quiet
         else { e.vx += d.x * (w.knock || 1); e.vz += d.z * (w.knock || 1); }
         // a hit reaction the anim reads (pose.hit): the zone, which way it came from
         var hr = e._hitReact || (e._hitReact = { t: 0, zone: null, dx: 0, dz: 0 }); hr.t = 0.3; hr.zone = zone; hr.dx = d.x; hr.dz = d.z;
@@ -1257,7 +1295,7 @@
       var m = this.mesh; if (!m) return;
       var a = alpha == null ? 1 : alpha;
       m.position.set(this._px + (this.x - this._px) * a, this._py + (this.y - this._py) * a, this._pz + (this.z - this._pz) * a);
-      if (this.rest || this.stuck) m.rotation.set(this.weaponId === 'stickynote' ? 0 : Math.PI / 2, 0, 0.3);
+      if (this.rest || this.stuck) { var ww = WEAPONS[this.weaponId]; m.rotation.set(ww && ww.stick ? 0 : Math.PI / 2, 0, 0.3); }
       else { m.rotation.x = this.age * this.spin; m.rotation.z = this.age * this.spin * 0.4; }
     }
     land() {
@@ -1369,8 +1407,9 @@
     }
   }
   // the hottake's 5 m stun
+  var TAKE_TEXT = { flashbang: 'BREAKING NEWS', flare_gun: 'SIGNAL BOOST', merch_cannon: 'FREE SHIRT' };
   function takeBlast(proj, owner) {
-    var w = WEAPONS.hottake, r = R();
+    var pw = WEAPONS[proj.weaponId], w = pw && pw.stun ? pw : WEAPONS.hottake, r = R(), pid = pw ? proj.weaponId : 'hottake';
     var x = proj.x, y = proj.y, z = proj.z, Wd = W();
     var gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
     var rad = w.stun || 5, i;
@@ -1380,7 +1419,7 @@
     for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: 0x553322 });
     for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: 0xffb060 }); }
     fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
-    textFx('RESPECTFULLY.', x, y + 1.6, z, '#ff7a20', 1.3);
+    textFx(TAKE_TEXT[pid] || 'RESPECTFULLY.', x, y + 1.6, z, '#ff7a20', 1.3);
     var list = E().hash.query(x, z, rad + 2.5, scratch);
     for (i = 0; i < list.length; i++) {
       var e = list[i]; if (e === proj || e.removed) continue;
@@ -1390,7 +1429,7 @@
       if (e.kind === 'ped' || e.kind === 'player') {
         if (!e.alive || e.inVehicle) continue;
         var dmg = proj.dmg * fall * (e === owner ? 0.5 : 1), was = e.alive;
-        e.knockDown(nx * 6 * fall, nz * 6 * fall, dmg, owner, 'hottake');
+        e.knockDown(nx * 6 * fall, nz * 6 * fall, dmg, owner, pid);
         e.lastHitBy = owner || e.lastHitBy;
         if (e.kind === 'player') { Combat.hurtFlash = 0.7; }
         blastCredit(owner, e, was, 'hottake', e.x, e.y + 1, e.z);
@@ -1404,7 +1443,7 @@
   }
   // the big ones: the hot mic's 6 m blast (+ a 5 m knockdown ring), the sticky note's 5 m, the confetti shell's 4 m, the firework's
   // 6 m and the rocket's 8 m blast that flips cars
-  var BLAST_COL = { ratio: [0xff9ad0, 0xff3fa4, 0x2a1a24], firework: [0xb0e8ff, 0x7a4aff, 0x221a2a], confetti: [0xfff0a0, 0xff3fa4, 0x2a2420], hotmic: [0xffb040, 0xff4a2a, 0x1e1a18], stickynote: [0xffe070, 0xff8a2a, 0x1e1a18] };
+  var BLAST_COL = { ratio: [0xff9ad0, 0xff3fa4, 0x2a1a24], firework: [0xb0e8ff, 0x7a4aff, 0x221a2a], confetti: [0xfff0a0, 0xff3fa4, 0x2a2420], hotmic: [0xffb040, 0xff4a2a, 0x1e1a18], stickynote: [0xffe070, 0xff8a2a, 0x1e1a18], sticky: [0xffe070, 0xff8a2a, 0x1e1a18], grenade_launcher: [0xffd0a0, 0xff6a2a, 0x1e1a18] };
   function areaBlast(proj, owner, kind) {
     var w = WEAPONS[kind] || WEAPONS.hotmic, r = R(), Wd = W();
     var x = proj.x, y = proj.y, z = proj.z, gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
@@ -1420,7 +1459,7 @@
     var confettiCols = [0xff3fa4, 0x2ee6ff, 0xffd84a, 0x9dff3c, 0xff7a20];
     for (i = 0; i < (kind === 'confetti' || kind === 'firework' ? 26 : 14); i++) { var a = r.random() * Math.PI * 2, sp = r.range(4, 13); fx({ type: 'spark', x: x, y: y + 0.6, z: z, vx: Math.cos(a) * sp, vy: r.range(3, 9), vz: Math.sin(a) * sp, size: 0.45, life: r.range(0.3, 0.9), color: kind === 'confetti' || kind === 'firework' ? confettiCols[i % 5] : (rocket ? 0xffb0e0 : 0xffc060) }); }
     fx({ type: 'decal', x: x, y: gy, z: z, size: rad * 0.7, size2: rad * 0.7, life: 60, color: 0x16120f });
-    textFx(kind === 'ratio' ? failText('wasted') : kind === 'confetti' ? 'CONGRATULATIONS' : kind === 'firework' ? 'TRENDING' : kind === 'stickynote' ? 'REMINDER' : 'HOT MIC', x, y + 2.2, z, kind === 'ratio' ? '#ff3fa4' : '#ff4a2a', 1.4);
+    textFx(kind === 'ratio' ? failText('wasted') : kind === 'confetti' ? 'CONGRATULATIONS' : kind === 'firework' ? 'TRENDING' : kind === 'stickynote' || kind === 'sticky' ? 'REMINDER' : kind === 'grenade_launcher' ? 'FOLLOW-UP' : 'HOT MIC', x, y + 2.2, z, kind === 'ratio' ? '#ff3fa4' : '#ff4a2a', 1.4);
     var list = E().hash.query(x, z, ring + 4, scratch), direct = proj._direct || null;
     for (i = 0; i < list.length; i++) {
       var e = list[i]; if (e === proj || e.removed) continue;
@@ -1723,6 +1762,7 @@
     if (p && ids.indexOf(p.weapon) >= 0) return p.weapon;
     if (pk && owns(p, pk)) return pk;
     for (var i = 0; i < ids.length; i++) if (owns(p, ids[i])) return ids[i];
+    for (i = 0; i < ids.length; i++) if (BASE_ORDER.indexOf(ids[i]) >= 0) return ids[i];
     return ids[0] || 'fist';
   }
   function openWheel(p, source) {
@@ -2638,7 +2678,7 @@
   function moveScale(p) {
     if (!p || p.kind !== 'player') return 1;
     var w = WEAPONS[p.weapon]; if (!w) return 1;
-    var mob = MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.8;
+    var mob = w.mobility != null ? w.mobility : MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.8;
     if (w.spinUp) return p.aiming || p._spin > 0.2 ? 0.45 : 0.85;
     return p.aiming ? 0.7 + 0.3 * mob : 1;
   }
@@ -2735,7 +2775,7 @@
     var vol = w.pellets ? w.dmg : w.dmg, dps = w.melee ? w.dmg * w.rate : w.cone ? 0 : vol * Math.min(w.rate, 18);
     var acc = w.melee ? 1 : w.cone || w.lobbed && !w.rocket ? 0.45 : U.clamp(1 - ((w.aimSpread != null ? w.aimSpread : w.spread || 0) + (w.bloom ? w.bloom.max * 0.5 : 0)) / 0.12, 0.08, 1);
     if (w.scope) acc = Math.max(acc, 0.92);
-    var mob = MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.7;
+    var mob = w.mobility != null ? w.mobility : MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.7;
     if (p && modsOf(p, id) && modsOf(p, id).optic === 'scope') mob *= 0.95;
     return { damage: U.clamp(vol / 160, 0.04, 1), rate: U.clamp(w.rate / 14, 0.03, 1), range: U.clamp(w.range / 160, 0.02, 1), accuracy: acc, mobility: U.clamp(mob, 0.05, 1), volume: U.clamp((w.mag || w.reserve || 1) / 30, 0.05, 1), dps: dps };
   }

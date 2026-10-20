@@ -1077,7 +1077,7 @@ H.run('combat', async (t) => {
   t.assert(melee.prompt === 'counter' && melee.counter.types.indexOf('counter') >= 0 && melee.counter.hpLost === 0 && melee.counter.goonDown, 'jump during a wind-up counters: no damage taken, the goon floored: ' + JSON.stringify([melee.prompt, melee.counter]));
 
   // ---- screenshots: every weapon in the hand (a free camera in front of the aim pose) ----
-  for (const id of ['tableleg', 'bat', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'carbine', 'shotgun', 'doublebarrel', 'lmg', 'sniper', 'hottake', 'hotmic', 'ratio', 'spin']) {
+  for (const id of ['tableleg', 'bat', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'carbine', 'shotgun', 'both_barrels', 'lmg', 'sniper', 'hottake', 'hotmic', 'ratio', 'minigun', 'grenade_launcher', 'micro_smg', 'clipboard', 'golf_club']) {
     const held = await page.evaluate(({ EAST, spot, id }) => {
       const p = GTP.game.player, R = GTP.Render, U = GTP.util;
       GTP.game.debug.setClock(14);
