@@ -7,6 +7,10 @@
  *    a siren car next to the player drives the siren loop with a pan; wanted 2 runs with no errors; the helicopter hook;
  *    mute silences (no voices, loops stop) and unmute restores
  *  3 a muted boot (mute=1): no voices are ever created, no errors
+ *  4 v0.3 (vehicles track): every v0.3 event plays its cue (counts, headless); a shot is routed to the report of the
+ *    gun in the shooter's hands (smg, shotgun, sniper, a suppressed pistol); each new vehicle's engine voice and each
+ *    weapon class's report renders continuous / audible and distinct from the others (envelope, length, brightness);
+ *    flying a heli live runs the rotor voice
  * Screenshot in tests/out: audio_radio_car (look at it). */
 'use strict';
 const H = require('./_harness');
@@ -82,6 +86,36 @@ H.run('audio', async (t) => {
   t.assert(!headless.radioOff, 'the radio stops on exit');
   t.assert(headless.counts.enter >= 1 && headless.counts.horn >= 1 && headless.counts.exit >= 1 && headless.counts.shot >= 1, 'the engine emits enter / horn / exit / shot: ' + JSON.stringify(headless.counts));
   t.assert(headless.played.every((r) => !r) && headless.state.voices === 0, 'play() creates nothing in headless');
+  // ---- 4a. v0.3 event wiring and the class-aware report (headless: play() still counts) ----
+  const wiring = await hctx.page.evaluate(() => {
+    const A = GTP.Audio, E = GTP.Events, p = GTP.game.player, out = {};
+    const before = Object.assign({}, A.counts), d = (n) => (A.counts[n] | 0) - (before[n] | 0);
+    E.emit('phone:call', { from: 'merle', lines: [] }); E.emit('chapter', { act: 2, title: 'Act Two' });
+    E.emit('boss:phase', { id: 'b01', phase: 1, hp: 100, maxHp: 100, name: 'x' }); E.emit('boss:phase', { id: 'b01', phase: 2, hp: 50, maxHp: 100, name: 'x' }); E.emit('boss:defeated', { id: 'b01' });
+    E.emit('special:state', { id: 'focus', meter: 1, active: false }); E.emit('special:state', { id: 'focus', meter: 0.9, active: true }); E.emit('special:state', { id: 'focus', meter: 0.2, active: false });
+    E.emit('special:state', { id: 'shout', meter: 0.5, active: true }); E.emit('special:state', { id: 'chatmob', meter: 0.5, active: true }); E.emit('special:state', { id: 'boost', meter: 0.5, active: true });
+    E.emit('shop:buy', { item: 'ammo_pistol', price: 50 }); E.emit('shop:buy', { item: 'mod:engine:2', price: 900 }); E.emit('armory:inspect', { weaponId: 'pistol' });
+    E.emit('golf:shot', { power: 0.9, angle: 0.1 }); E.emit('golf:shot', { power: 0.1, angle: 0, club: 'putter' }); E.emit('golf:end', { strokes: 3, par: 3 });
+    E.emit('achievement', { id: 'a1', name: 'First' }); E.emit('range:start', {}); E.emit('range:hit', { points: 100 }); E.emit('range:end', { score: 900, medal: 'gold' });
+    E.emit('interior:enter', { id: 'armory', kind: 'armory' }); E.emit('cover:enter', {}); E.emit('melee', { type: 'heavy' }); E.emit('melee', { type: 'counter' }); E.emit('gps:set', { x: 0, z: 0, label: 'x', kind: 'story' }); E.emit('heist:plan', { approach: 'loud', crew: [] });
+    out.cues = { phoneRing: d('phoneRing'), chapter: d('chapter'), bossStinger: d('bossStinger'), bossPhase: d('bossPhase'), bossDefeat: d('bossDefeat'), specialReady: d('specialReady'), special_focus: d('special_focus'), special_focusEnd: d('special_focusEnd'), special_shout: d('special_shout'), special_chatmob: d('special_chatmob'), special_boost: d('special_boost'), shopBuy: d('shopBuy'), shopBrowse: d('shopBrowse'), golfSwing: d('golfSwing'), golfPutt: d('golfPutt'), golfCup: d('golfCup'), achievement: d('achievement'), rangeStart: d('rangeStart'), rangeHit: d('rangeHit'), rangeMedal: d('rangeMedal'), door: d('door'), cover: d('cover'), melee_heavy: d('melee_heavy'), melee_counter: d('melee_counter'), gps: d('gps') };
+    // the report follows the gun in the shooter's hands
+    const mk = (w, dx) => { const q = new GTP.Ped({ x: p.x + dx, z: p.z + 30 }); q.weapon = w; GTP.Entities.add(q); return q; };
+    const smg = mk('smg', 0), sg = mk('shotgun', 6), sn = mk('sniper', 12), sup = mk('pistol', 18); sup.weaponMods = { pistol: { muzzle: 'suppressor' } };
+    const b2 = Object.assign({}, A.counts), d2 = (n) => (A.counts[n] | 0) - (b2[n] | 0);
+    [smg, sg, sn, sup].forEach((q) => A.play('shot', { x: q.x + 0.4, z: q.z, gain: 0.8 }));
+    A.play('shot', { cls: 'launcher' });
+    out.reports = { smg: d2('shot_smg'), shotgun: d2('shot_shotgun'), sniper: d2('shot_sniper'), suppressed: d2('shot_suppressed'), launcher: d2('shot_launcher'), shot: d2('shot') };
+    out.classOf = { revolver: A.shotClass({ weapon: 'revolver' }), rifle: A.shotClass({ weapon: 'rifle' }), lmg: A.shotClass({ cls: 'lmg' }), minigun: A.shotClass({ cls: 'minigun' }) };
+    [smg, sg, sn, sup].forEach((q) => q.destroy());
+    return out;
+  });
+  console.log('  v0.3 wiring: ' + JSON.stringify(wiring));
+  const silent = Object.keys(wiring.cues).filter((k) => !(wiring.cues[k] >= 1));
+  t.assert(silent.length === 0, 'every v0.3 event plays its cue; silent: ' + silent.join(','));
+  t.assert(wiring.cues.bossStinger === 1 && wiring.cues.bossPhase === 1 && wiring.cues.shopBuy === 1, 'the first boss phase stings, later ones hit; a mod purchase leaves the register to the mod shop');
+  t.assert(wiring.reports.smg === 1 && wiring.reports.shotgun === 1 && wiring.reports.sniper === 1 && wiring.reports.suppressed === 1 && wiring.reports.launcher === 1 && wiring.reports.shot === 5, 'shots route to the gun class in hand: ' + JSON.stringify(wiring.reports));
+  t.assert(wiring.classOf.revolver === 'revolver' && wiring.classOf.rifle === 'rifle' && wiring.classOf.lmg === 'lmg' && wiring.classOf.minigun === 'heavy', 'class names map: ' + JSON.stringify(wiring.classOf));
   const herrs = await t.errors(hctx);
   t.assert(herrs.length === 0, 'headless errors:\n' + herrs.join('\n'));
   await hctx.page.close();
@@ -242,6 +276,32 @@ H.run('audio', async (t) => {
   t.assert(badEng.length === 0, 'engine loops render continuous sound per class: ' + badEng.join(','));
   t.assert(render.sirenLoop.rms > 0.05 && render.sirenLoop.loudUntil >= 2.9 && render.heliLoop.rms > 0.02 && render.heliLoop.loudUntil >= 1.9, 'siren and rotor loops are continuous');
 
+  // ---- 4b. v0.3: every new vehicle voice and weapon report renders and sounds like itself ----
+  const v03 = await page.evaluate(async () => {
+    const A = GTP.Audio, out = { engine: {}, shots: {} };
+    for (const c of ['moto', 'heli', 'plane', 'jet', 'speedboat', 'jetski', 'parachute', 'sedan']) out.engine[c] = await A.render('engine', { cls: c, level: 0.7, seconds: 2 });
+    for (const c of A.shotClasses) out.shots[c] = await A.render('shot_' + c, { seconds: 2, gain: 0.8 });
+    // fly a heli: the rotor voice runs
+    const p = GTP.game.player; if (p.inVehicle) { p.inVehicle.vx = p.inVehicle.vz = 0; p.inVehicle.speed = 0; p.inVehicle.exit(p); }
+    const h = GTP.Vehicles.spawn('heli', p.x + 14, p.z + 14, {}); h.enter(p, 0); GTP.game.advance(2.6);
+    GTP.Input.set('run', true); GTP.game.advance(1.5); GTP.Input.set('run', false);
+    out.heli = A.state().engine; out.radioInHeli = A.radio.isPlaying();
+    return out;
+  });
+  const fp = (r) => { const m = Math.max.apply(null, r.env) || 1; return { env: r.env.slice(0, 20).map((x) => x / m), z: r.zcr, loud: r.loudUntil }; };
+  const dist = (a, b) => { const A1 = fp(a), B1 = fp(b); let d = 0; for (let i = 0; i < 20; i++) d += Math.abs((A1.env[i] || 0) - (B1.env[i] || 0)); return d / 4 + Math.abs(A1.z - B1.z) / Math.max(A1.z, B1.z, 1) + Math.abs(A1.loud - B1.loud); };
+  const rowZ = (k, r) => k.padEnd(14) + ' peak ' + r.peak.toFixed(2) + '  rms ' + r.rms.toFixed(3) + '  loud ' + r.loudUntil.toFixed(1) + 's  zcr ' + r.zcr;
+  console.log('  v0.3 renders:\n    ' + Object.keys(v03.engine).map((k) => rowZ('eng:' + k, v03.engine[k])).join('\n    ') + '\n    ' + Object.keys(v03.shots).map((k) => rowZ('shot_' + k, v03.shots[k])).join('\n    '));
+  const badV = Object.keys(v03.engine).filter((k) => { const r = v03.engine[k]; return !r || !(r.rms > 0.01) || r.peak > 0.995 || r.loudUntil < 1.9; });
+  t.assert(badV.length === 0, 'every vehicle voice renders continuous sound: ' + badV.join(','));
+  const close = [];
+  const ek = Object.keys(v03.engine); for (let i = 0; i < ek.length; i++) for (let j = i + 1; j < ek.length; j++) { const dd = dist(v03.engine[ek[i]], v03.engine[ek[j]]); if (dd < 0.12) close.push(ek[i] + '~' + ek[j] + ':' + dd.toFixed(2)); }
+  const sk = Object.keys(v03.shots); for (let i = 0; i < sk.length; i++) for (let j = i + 1; j < sk.length; j++) { const dd = dist(v03.shots[sk[i]], v03.shots[sk[j]]); if (dd < 0.12) close.push(sk[i] + '~' + sk[j] + ':' + dd.toFixed(2)); }
+  t.assert(close.length === 0, 'every vehicle voice and weapon report is distinct: ' + close.join(' '));
+  const badS = sk.filter((k) => { const r = v03.shots[k]; return !r || !(r.peak > 0.05) || r.peak > 0.995; });
+  t.assert(badS.length === 0, 'every report is audible and unclipped: ' + badS.join(','));
+  t.assert(v03.shots.sniper.loudUntil > v03.shots.pistol.loudUntil && v03.shots.suppressed.rms < v03.shots.pistol.rms && v03.shots.smg.loudUntil <= v03.shots.rifle.loudUntil, 'the sniper rolls longer than a pistol, the suppressor is quieter, the SMG is short');
+  t.assert(v03.heli.on && v03.heli.cls === 'heli' && v03.heli.kind === 'rotor' && v03.heli.rpm > 0.5, 'the heli plays its rotor voice: ' + JSON.stringify(v03.heli));
   const final = await page.evaluate(() => GTP.Audio.state());
   t.assert(final.errors === 0 && !final.disabled && (final.ctx === 'running' || final.ctx === 'suspended'), 'audio healthy at the end: ' + JSON.stringify({ errors: final.errors, ctx: final.ctx }));
   const errs = await t.errors(ctx);
