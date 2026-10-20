@@ -1,1 +1,243 @@
-[]
+[
+ {
+  "id": "QA-A-GEO-01",
+  "severity": "high",
+  "area": "world generation: landmark lots vs roads (memo_press / Coupon Code Circle)",
+  "title": "Monday Memo Print Works is built on top of Coupon Code Circle: the road's lanes run straight into the warehouse wall",
+  "repro": "index.html?seed=7 (same on seed 11; the layout is seed-independent). GTP.World: tiles x 36..42, z 121..122 are BUILDING (memo_press) but carry laneH bytes and roadId of Coupon Code Circle (h 122, x 8..117). Drive: spawn a sedan at (100,490) yaw -PI/2, enter it, hold forward 5 s: it hits the wall at x 140. AI: GTP.AI.spawner.placeTraffic({x:100,z:490,y:0,axis:'h',dir:1,laneC:490},'sedan') drives into the wall, swerves and is removed after ~4 s. Scripts: geo/audit1.js 7 (buildingOnRoad), geo/drive.js 7 (coupon_east_player / coupon_east_ai). Screenshot: freeCam(112,5,488, 150,4,490).",
+  "expected": "Coupon Code Circle stays a continuous road from x 8 to 117 (the lot generator skips road tiles), or the street is cut with a dead end before the lot.",
+  "actual": "14 road tiles (x 36..42, z 121..122) are BUILDING; their lane field still points east/west into the wall. Player sedan at 23.9 m/s stops dead at x 140 (hp 100 -> 57); an AI car drives into it and is despawned. The screenshot shows the crosswalk and both lanes ending at the PRINT WORKS facade.",
+  "hint": "js/04_world.js generate step 5 / _addBuilding: the lot loop skips ROAD tiles but _addBuilding stamps T.BUILDING unconditionally; js/20_content_world.js memo_press lot (35,115,10,15) with footprint 7x9 centred over z 121..122 (move fpOffset or the lot, or refuse footprints over road tiles).",
+  "lens": "qa-a:geo",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/shots/s7_memo_press_road.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed11.json"
+  ],
+  "regress": "qa_a_geo_01.js"
+ },
+ {
+  "id": "QA-A-GEO-02",
+  "severity": "high",
+  "area": "world generation: Manifest Ramp / Departures Drive (lane field + heights)",
+  "title": "Departures Drive runs under the Lower Loop straight into the 7 m top end of the Manifest Ramp: AI cars jam there forever and a player car is lifted 7 m in one frame",
+  "repro": "seed 7 and 11. Departures Drive (h 158, x 8..107) ends at x 107 under the east leg; tile x 108 is the Manifest Ramp's deck end (rampY 6.6, heightAt 7). Lane field: laneH on (107,157/158) continues onto the ramp tile and AI stepLayer treats RAMP as road. (1) Player: spawn sedan at (380,634) yaw -PI/2, enter, hold forward: at x 430.5 v.y goes 0 -> 6.95 in a single 1/30 s step, then the car rolls down the ramp to x 469 (geo/p_dep.js). (2) AI: placeTraffic({x:380,z:634,y:0,axis:'h',dir:1,laneC:634},'sedan'): stops at x 422 and stays at speed 0 for the remaining 10 s (geo/drive.js departures_east_ai). heightAt step check: geo/audit1.js heightSteps (6 samples ROAD(107,157..158) 0 -> RAMP 7). Screenshot: freeCam(412,2.5,636, 434,3,634) shows the road continuing under the deck into a pale ramp face.",
+  "expected": "A ground road never feeds a ramp's high end: Departures Drive ends (DEAD, kerb/barrier) before the deck, or is offset so the ramp foot is where traffic enters; cars cannot pass through the 7 m face.",
+  "actual": "Eastbound lane leads into the ramp end; AI traffic stalls permanently at x 422; a player car at 26 m/s is teleported from y 0.00 to 6.95 at x 430.5 and comes out on the ramp. Same on seed 11.",
+  "hint": "js/20_content_world.js road('h',158,8,107,'Departures Drive') vs loop.ramps Manifest Ramp (start 116, end 108); js/04_world.js heightAt returns rampHeight on a RAMP tile regardless of yHint (so wheel samples under the top end read 7), and js/07_ai.js stepLayer returns 'ground' for any RAMP neighbour, including the high end.",
+  "lens": "qa-a:geo",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/shots/s7_departures_ramp.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed11.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/p_dep.js"
+  ],
+  "regress": "qa_a_geo_02.js"
+ },
+ {
+  "id": "QA-A-GEO-03",
+  "severity": "high",
+  "area": "world generation: Velvetine Pier dock props vs the Sponsor Span",
+  "title": "Two of the Velvetine Pier's moored boats sit on the Sponsor Span's west lane: cars crash into them and are shoved off the bridge into the bay",
+  "repro": "seed 7 and 11. World.props boat at (322.4,528) and (322.4,552): kind 'boat', solid, r 1.8, y -0.85, h 2.2 (top +1.35), on BRIDGE tiles x 80 (the dock case in _landmarkProps puts boats at pier x + 2.6 tiles, the bridge starts 1 tile east of the pier). Spawn a sedan at (322,500) yaw PI, enter, hold forward: stops at z 524 hp 100 -> 68. Northbound from (322,580) yaw 0: stops at z 557 and is pushed to (309.9,562.2) y -2.37 - into the water. Script geo/drive.js (span_south_player_x322 / span_north_player_x322). Screenshot freeCam(332,6,505, 322,0,528): white and blue boats standing on the asphalt.",
+  "expected": "Boats are moored in the water beside the pier, clear of the bridge deck.",
+  "actual": "Boat hulls stand on the bridge's west lane, visible on the asphalt; a car hits them at 19 m/s (31.8 hp lost) and northbound traffic is pushed sideways off the 0 m deck into the bay (y -2.37).",
+  "hint": "js/04_world.js _landmarkProps case 'dock': boats at (px + 1 + sd*2.6) tiles with sd = +1 land on the Sponsor Span (x 80..83) because velvetine_pier's second pier is at lot.x+2..; skip boats whose circle touches a non-water tile, or flip them to the west side.",
+  "lens": "qa-a:geo",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/shots/s7_span_boat.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed11.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json"
+  ],
+  "regress": "qa_a_geo_03.js"
+ },
+ {
+  "id": "QA-A-GEO-04",
+  "severity": "medium",
+  "area": "world generation: Goldplate Links lot props vs Clubhouse Drive",
+  "title": "A Goldplate Links flag pole (and on seed 11 a tree) stands in the westbound lane of the road through the course, and the PAR 10 sign's post stands in the lane too",
+  "repro": "seed 7: World.props flag at (528,182) (solid, r 0.2, h 3) and sign 'GOLDPLATE LINKS: PAR 10' (standing, post) at (551.4,182), both on ROAD tiles of the road at z tiles 45..46 that crosses the goldplate_links lot. Seed 11 adds a lot tree at (523.9,183.86) on the same lane. Spawn a sedan at (580,182) yaw PI/2 (west), hold forward 4 s: at 24 m/s it hits the pole at x 531 and stops (hp 100 -> 54). The sign's post is non-solid, so cars drive through it. Scripts geo/audit1.js (propOnRoad), geo/drive.js (clubhouse_west_player). Screenshot freeCam(548,3,184, 528,1.5,182): yellow pole in the middle of the lane.",
+  "expected": "Course flags, trees and the course sign stand on the grass, never on the road through the lot.",
+  "actual": "Solid flag pole in the lane (car stopped from 25.2 to 2.6 m/s, 46 hp lost); sign post in the lane with no collision; seed 11 also has a solid tree on the road.",
+  "hint": "js/04_world.js _landmarkProps case 'park' goldplate_links: flags at cxm +-8, z = lz + 12 + k*..., the sign at lx+lw-TILE-0.6, czm and the random trees ignore that the lot includes road tiles (the lot loop skips them); place only on GRASS tiles.",
+  "lens": "qa-a:geo",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/shots/s7_links_flag.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed11.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json"
+  ],
+  "regress": "qa_a_geo_04.js"
+ },
+ {
+  "id": "QA-A-GEO-05",
+  "severity": "medium",
+  "area": "AI parked-car spawner tiles vs solid props",
+  "title": "Parked cars spawn inside solid props: a hangar-row van around the windsock pole, cars under the airliners and jetbridges, on the gas pumps, crates and the stadium floodlight mast",
+  "repro": "seed 7: 59 of the 1527 GTP.AI.spawner.parkTiles overlap a solid ground prop (39 airliner 'plane', 4 jetbridge, 4 crate, 2 pump, 2 pallet, 2 windsock, 2 jet, mast, flag, podium, luggage) - geo/p_parktiles.js. In play: teleport to the hangar_row door and advance 1.5 s: a beige fleet van is parked at (66,650) with the windsock (66,650) through its roof (seed 7 and seed 11); seed 7 also parks a sports car at (610,174) on the stadium mast (609.5,173.5), seed 11 a van at (770,662) on a crate (771,662.7). geo/p_park.js. Screenshot: freeCam(56,5,640, 66,1,650).",
+  "expected": "Parking bays and fleet tiles exclude tiles under props (planes, pumps, jetbridges, windsocks, masts, crates); a parked car never overlaps a solid prop.",
+  "actual": "Windsock pole sticks out of the parked van's roof (both seeds); cars are placed under the parked airliners' collision circles and on the gas pumps.",
+  "hint": "js/07_ai.js spawner.reset builds parkTiles from every PARKING tile (and the fleet lots) without consulting World._propGrid; drop tiles whose 5.4 x 2.2 footprint meets a solid prop (or check at spawnParked).",
+  "lens": "qa-a:geo",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/shots/s7_hangar_windsock_van.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/p_parktiles.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/p_park.js"
+  ],
+  "regress": "qa_a_geo_05.js"
+ },
+ {
+  "id": "QA-A-GEO-06",
+  "severity": "low",
+  "area": "districts: ferry pier outside the port rectangle",
+  "title": "The Ferry to Elsewhere's pier has no district: World.districtAt returns null and the minimap chip reads OPEN WATER while you stand on it",
+  "repro": "seed 7 and 11: tiles x 192..193, z 216..221 (the 2 x 6 ferry pier the dock rule turns from water into PLAZA) have zone 0; World.districtAt(770,870) === null. ui.js minimap chip: line1 = d ? name : 'OPEN WATER'. geo/audit2.js (noDistrictTiles, 12 tiles, both seeds).",
+  "expected": "The pier reads MANIFEST HARBOR like the rest of the ferry terminal (district-keyed spawn tables and the chip agree).",
+  "actual": "12 walkable PLAZA tiles with no district on both seeds; the only land tiles in the map without one.",
+  "hint": "js/20_content_world.js port district rect ends at z 215 while ferry_terminal's pier (04_world.js _landmarkProps case 'ferry', fz = lot.z + lot.d = 216, flen 6) extends to z 221; extend the rect or assign zone when the pier is laid.",
+  "lens": "qa-a:geo",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit2_seed7.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit2_seed11.json"
+  ],
+  "regress": "qa_a_geo_06.js"
+ },
+ {
+  "id": "QA-A-DRV-01",
+  "severity": "high",
+  "area": "vehicles / exit on the Lower Loop viaduct",
+  "title": "Getting out of a car anywhere on the Lower Loop viaduct over the bay drops the player into the sea under it",
+  "repro": "seed=7. debug.spawnVehicle(424,540,'sedan',{yaw:PI,y:7}), teleport(424,540,7), enter, then press F (or p.exitVehicle()). Also at (184,560) on the west viaduct and (187.9,536.7) after driving a van south along the lower west leg. Scripts: drv/exit_deck.js, drv/exit_edge.js (cases 3-4).",
+  "expected": "The player steps out onto the deck at y 7, like anywhere else on the Loop.",
+  "actual": "The player appears at y -0.91..-0.99, swimming in the bay under the deck (exit point (425.65,540.34) is a deck tile in the middle of the 16 m deck). Reproduced 4 times at 2 legs. AI drivers (cops at a roadblock, carjacked drivers) take the same path.",
+  "hint": "js/06_entities.js Vehicle.exit: `if (this.sinking || isWaterTile(ped.x, ped.z))` tests the ground tile and ignores the deck (should test ped.y / World.heightAt(..., this.y) > WATER_Y); the same isWaterTile ground test is used by Ped._down for a knocked-down ped",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/exit_edge_3.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/exit_edge.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/exit_deck.js"
+  ],
+  "regress": "qa_a_drv_01.js"
+ },
+ {
+  "id": "QA-A-DRV-02",
+  "severity": "medium",
+  "area": "vehicles / exit on the Loop deck",
+  "title": "Getting out of a car parked against a Loop deck barrier teleports the player down to the street 7 m below",
+  "repro": "seed=7. Sedan at (177.2,300,y 7) yaw 0 (upper west leg, driver side against the outer barrier x=176; the barrier itself lets the car sit there), enter, press F. Same at (300,129.2) yaw -PI/2 (north leg), (430.8,250) yaw PI (east leg), (177.2,450), (300,670.8) yaw PI/2 (lower h leg). Script: drv/exit_edge2.js.",
+  "expected": "The player gets out on the deck (passenger side if the driver door is over the edge).",
+  "actual": "The player is placed at the driver door point 0.45 m past the deck edge, at y 0.12 on the street under the Loop (5/5 cases), with no fall.",
+  "hint": "js/06_entities.js Vehicle.doorSpot: the candidate is only checked with solidAt and resolveCapsule; resolveCapsule applies the deck barrier only when the point's own tile is a deck tile, so a point just off the deck passes; exit() then takes heightAt(spot, y+0.5) = ground. Reject candidates whose surface is more than ~1 m below the car",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/exit_edge2_0.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/exit_edge2.js"
+  ],
+  "regress": "qa_a_drv_02.js"
+ },
+ {
+  "id": "QA-A-DRV-03",
+  "severity": "medium",
+  "area": "world / bridges",
+  "title": "Bridge walkway railings are not solid: cars and pedestrians go straight through them into the water on every bridge",
+  "repro": "seed=7, no traffic. Sedan at (330,530) yaw PI on the Sponsor Span: hold W 2.2 s, then W+A 2.5 s. Same on bridge_main (460,280) yaw -PI/2 with W+D and the causeway (605,280) with W+A. On foot: teleport(334,560) and walk east 3 s (also (322,560) west, (492,268) north). Script: drv/bridges.js, drv/misc.js.",
+  "expected": "The white railings drawn along the walkways stop a car (a crash) and a walking player, like the Loop's barriers.",
+  "actual": "At 18-19 m/s the car crosses the walkway and the railing with no impact and sinks (e.g. Sponsor Span: x 338.3 -> 343.2, y -1.3, sinking); the player walks through the railing and swims (341,-0.91,560). 6/6 car runs and 3/3 walks on three bridges. The screenshot shows the car past the railing in the water.",
+  "hint": "js/04_world.js: the walkway railing is only drawn (Render._rail in js/10_render.js for M.WALKWAY tiles next to WATER) and the 'railing' props are solid:false; resolveCapsule has no edge rule for WALKWAY/BRIDGE tiles next to WATER (the deck-barrier rule could be reused)",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/span_railing.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/bridges.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/misc.js"
+  ],
+  "regress": "qa_a_drv_03.js"
+ },
+ {
+  "id": "QA-A-DRV-04",
+  "severity": "medium",
+  "area": "world / port container maze",
+  "title": "The container maze's walls can be driven and walked through: each 6 m container collides as one 1.3 m circle",
+  "repro": "seed=7, no traffic. Sedan at (498,650) yaw east (the seam between two containers of the first column, x 511.35..516.65), hold W 2.5 s; also z 656 (sports), 662 (bike), 650 (truck). On foot: teleport(508,650), walk east. Script: drv/maze.js, drv/maze_shot.js, drv/clip.js.",
+  "expected": "The container columns are solid walls (the maze is the point of the yard).",
+  "actual": "The car drives through the column with no impact (x 508.8 -> 516.7 -> 526.4 at 15-21 m/s) and can stop inside it (514.4,650: hidden inside the boxes, see the top-down shot); the player walks through (508 -> 523.9). Only the middle 2.6 m of each 6 m box blocks (z 647 stops the car at x 508.9).",
+  "hint": "js/04_world.js layout case 'yard' (and 'quay'): P({kind:'container', r:1.3}) for a 2.4 x 6 m box; resolveCapsule only knows circles. Give long props an oriented box (sx/sz) or several circles along their length",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/maze_car_in_containers.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/maze_car_in_containers_top.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/cam_maze_0.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/maze.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/clip.js"
+  ],
+  "regress": "qa_a_drv_04.js"
+ },
+ {
+  "id": "QA-A-DRV-05",
+  "severity": "low",
+  "area": "world / mansion hedge maze",
+  "title": "The mansion hedge maze can be walked through: each 14-22 m hedge collides only as a 1 m circle at its centre",
+  "repro": "seed=7. The hedges at x 604..613.6, z 228.5/231.5 (sz 14-17) and x 570 (sz 22). teleport(600,233.5), walk east 2.5 s; or teleport(566,235) and walk east. Script: drv/clip.js, regress qa_a_drv_05.js.",
+  "expected": "The hedges (drawn 1 m wide, 1.2-1.8 m tall) block the player.",
+  "actual": "The player walks straight through all five maze hedges (x 600 -> 616.3 at z 233.5) and through the 22 m boundary hedge (566 -> 571.6).",
+  "hint": "js/04_world.js case 'mansion': P({kind:'hedge', r:1, sx:1, sz:...}); the collider ignores sx/sz (same root as QA-A-DRV-04)",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/clip.js"
+  ],
+  "regress": "qa_a_drv_05.js"
+ },
+ {
+  "id": "QA-A-DRV-06",
+  "severity": "medium",
+  "area": "stunt jumps / sj_07 and the map edge",
+  "title": "Flat out down Runway 10/10, sj_07 throws the fast cars into the sea; the sports car flies 10 m high into the invisible map edge and explodes",
+  "repro": "seed=7, no traffic. Spawn each class at airport_runway.points.east (406,826) yaw west, hold W until it comes down. Scripts: drv/sj07.js, drv/runway_end.js.",
+  "expected": "GDD_EXPANSION 5.7 (sj_07): the landing is the 48 m beach and 'nothing on wheels reaches the sea'; the map edge should never be met in the air.",
+  "actual": "Launch speed / apex / landing: sports 50.6 m/s, apex 10 m, never lands: hits the map-edge wall at x 0 in mid-air at 50.6 m/s (hp 80 -> -18, burns) and sinks at x 8; cop 45 m/s apex 8.2 -> lands in the sea (x 2.4); bike 44 m/s -> sea, then slides on to x -6.9 outside the map while sinking; taxi 38 m/s -> lands in the water (stunt result 'water'); sedan lands at x 26 two metres from the water. Truck, van, suv, bus land on the beach. Reproduced in two runs.",
+  "hint": "js/09_missions.js stunts.update: lift = speed * sin(SK.stuntLaunchAngle) with no cap, so apex grows with speed squared; cap the lift (or the take-off speed) per ramp, or lengthen the beach; js/04_world.js resolveCapsule's map-edge clamp also applies to airborne cars (an invisible wall over the sea)",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/sj07.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/runway_end.js"
+  ],
+  "regress": "qa_a_drv_06.js"
+ },
+ {
+  "id": "QA-A-DRV-07",
+  "severity": "low",
+  "area": "camera / under the Loop",
+  "title": "Under the Loop, looking up in a car puts the chase camera through the deck: the screen shows only the deck's asphalt",
+  "repro": "seed=7. Sedan on the street under the upper west leg at (184,186,y 0) yaw east (or under the z-94 leg at (300,376) yaw 0); move the mouse up (Input.setLook(0,30) x10). Script: drv/cam_deck.js.",
+  "expected": "The camera stays under the slab (pulled in against it) so the car stays in view.",
+  "actual": "The camera rises to y 8.6-9.6 above the 6.3-7 m slab (pitch 1.05) and the frame is filled by the top of the deck; the car is not visible (cam_deck_4.png). On foot the same pitch stays under (5.5 m).",
+  "hint": "js/10_render.js Render.rig.update/_pullIn: the pull-in and the guard only raycast World.raycastBuildings; add the deck slab (World.deck tiles, y 6.3..7) to the camera ray test, or clamp the camera height under a deck tile when the focus is below it",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/cam_deck_4.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/cam_deck_2.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/cam_deck.js"
+  ],
+  "regress": "qa_a_drv_07.js"
+ },
+ {
+  "id": "QA-A-DRV-08",
+  "severity": "low",
+  "area": "stunt ramps / wedge collision",
+  "title": "Cars drive straight up the 1.3 m vertical front and the sides of a stunt wedge with no impact",
+  "repro": "seed=7. Sedan 14 m in front of sj_01's tall end (stuntRamps[0], driving back toward the wedge), hold W 2.5 s; same for sj_02 and sj_04, and from the side (12 m off, perpendicular). Script: drv/wedge.js.",
+  "expected": "The tall end (a 1.3 m wall) stops the car like a kerb wall / crash; the sides likewise.",
+  "actual": "The car hits the face at 9-13 m/s, is snapped up to y 1.0 on top of the wedge without an impact event or speed loss, and rolls off the low end (3/3 wedges); from the side it rides up 0.45 m onto the wedge (3/3). Peds are correctly blocked by the 0.5 m step-up.",
+  "hint": "js/06_entities.js Vehicle.update: on the ground `this.y = |g.c - y| > 0.4 ? g.c : damp(...)` accepts any step up; js/04_world.js resolveCapsule handles RAMP tiles but not wedges (World._wedges). Treat a wheel height jump above ~0.5 m as a wall (push back) or add the wedge's front and sides to resolveCapsule",
+  "lens": "qa-a:drv",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/shots/wedge_climb_tall_end.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/wedge.js"
+  ],
+  "regress": "qa_a_drv_08.js"
+ }
+]
