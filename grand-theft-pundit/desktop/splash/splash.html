@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Grand Theft Pundit</title>
+<style>
+  /* the boot splash: shown by main.js while the game window loads, closed once the game has booted */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #06070d; color: #f2e6c9;
+    font: 13px/1.4 -apple-system, "Segoe UI", Ubuntu, Roboto, sans-serif; user-select: none; cursor: default; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    border: 1px solid #2a2418; box-sizing: border-box; border-radius: 10px;
+    background: radial-gradient(ellipse at 50% 30%, #1d1a2b 0%, #06070d 70%); -webkit-app-region: drag; }
+  img { width: 112px; height: 112px; filter: drop-shadow(0 6px 18px rgba(0,0,0,.6)); }
+  h1 { margin: 0; font: 900 26px/1 Impact, "Arial Black", "Helvetica Neue", sans-serif; letter-spacing: .06em;
+    color: #f5c542; text-transform: uppercase; text-shadow: 0 2px 0 #7a4b00, 0 0 22px rgba(245,197,66,.25); }
+  .bar { width: 220px; height: 4px; border-radius: 2px; background: #1c1d27; overflow: hidden; }
+  .bar i { display: block; width: 35%; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #f5c542, #ff7a2f);
+    animation: slide 1.1s ease-in-out infinite alternate; }
+  @keyframes slide { from { transform: translateX(-10%); } to { transform: translateX(195%); } }
+  #status { color: #9a917c; font-size: 12px; min-height: 1.4em; }
+  #ver { position: absolute; bottom: 10px; right: 14px; color: #5d5747; font-size: 11px; }
+</style>
+</head>
+<body>
+  <img src="icon.png" alt="">
+  <h1>Grand Theft Pundit</h1>
+  <div class="bar"><i></i></div>
+  <div id="status">Booting the city...</div>
+  <div id="ver"></div>
+<script>
+  // main.js passes the version and a status line in the URL hash: #v=0.3.0&s=...
+  (function () {
+    var q = new URLSearchParams(location.hash.slice(1));
+    if (q.get('v')) document.getElementById('ver').textContent = 'v' + q.get('v');
+    if (q.get('s')) document.getElementById('status').textContent = q.get('s');
+    var lines = ['Booting the city...', 'Warming up the hot takes...', 'Polishing the folding table...', 'Counting the ratio...'];
+    var i = 0;
+    setInterval(function () { i = (i + 1) % lines.length; document.getElementById('status').textContent = lines[i]; }, 1600);
+  })();
+</script>
+</body>
+</html>
