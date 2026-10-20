@@ -54,16 +54,19 @@ grand-theft-pundit/
   js/03_audio.js             GTP.Audio: SFX synth, engine loop, siren, radio sequencer
   js/04_world.js             GTP.World: tile map, height layers, districts, landmarks, lane field, collision, pathing
   js/05_assets.js            GTP.Assets: procedural textures (atlas, facades, decals, billboards) and geometry builders (vehicle classes, ped parts, props)
+  js/05b_assets_weapons.js   expansion: weapon meshes and pickup visuals for the 12-weapon arsenal (registers into GTP.Assets)
   js/06_entities.js          GTP.Entity base + Ped, Vehicle, Player, Projectile, Pickup; physics
   js/07_ai.js                GTP.AI: spawner, ped brains, traffic, police + wanted
   js/08_combat.js            GTP.Combat: weapons, lock-on, damage, death, respawn, pickups
   js/09_missions.js          GTP.Missions: objective interpreter, markers, dialogue queue, flags, minigame hooks
   js/10_render.js            GTP.Render: three scene, chunked static meshes, lighting, sky, fog, day/night, camera rig, fx
   js/11_ui.js                GTP.UI: HUD overlay (2D canvas), minimap, dialogue, title, pause, phone, cards, touch controls, minigames
+  js/12_cutscenes.js         GTP.Cutscenes: data-driven cutscene player (letterbox, camera keyframes, actors, dialogue, skip); see GDD_EXPANSION.md §4
   js/20_content_world.js     GTP.Content.world: district layout, landmark placements, spawn tables, street names, billboards
   js/21_content_cast.js      GTP.Content.cast
   js/22_content_missions.js  GTP.Content.missions
   js/23_content_radio.js     GTP.Content.radio (stations, ads, DJ lines, ticker, barks)
+  js/24_content_expansion.js GTP.Content.expansion: new story missions, cutscene scripts, side strands, shop, hints, loading tips, new radio lines
   js/30_game.js              GTP.Game: boot, state machine, fixed-step loop, save/load, debug API
   tests/_harness.js          shared Playwright helpers (launch flags, boot(url), waitPlaying, errors capture, shot(name))
   tests/*.js                 one file per subsystem; tests/all.js runs them all; tests/content_audit.js scans content
