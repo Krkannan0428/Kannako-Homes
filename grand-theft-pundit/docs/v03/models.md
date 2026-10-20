@@ -42,9 +42,10 @@ models and a real procedural animation system, inside the frame budget (LODs, on
   shorts, skirt. Shoes: sneakers, dress, boots. Without an outfit the v0.2 look decides: a tie on a dark shirt is a
   suit, a tie on a light shirt a dress shirt, `role: 'cop'` / `badge` a uniform, `uniform: 'swat'` swat, else a
   stable hash of the look; the v0.2 colours are kept.
-- **LODs**: `root.userData.lods = [near, mid, far]` (~5.5k / 2.3k / 0.9k triangles), swapped by `GTP.Models.setLod`
-  (near < 14 m, mid < 40 m; `GTP.Models.LOD_NEAR / LOD_MID`). Far peds animate at a third of the frame rate and skip
-  IK; LOD 2 casts no shadow.
+- **LODs**: three per look (~3.9k / 1.8k / 0.7k triangles), swapped by `GTP.Models.setLod` (near < 14 m, mid < 40 m;
+  `GTP.Models.LOD_NEAR / LOD_MID`); `GTP.Models.lodGeometry(root, i)` builds one on demand. Far peds animate at a third
+  of the frame rate and skip IK; LOD 2 casts no shadow. Geometry is shared per look key and ref-counted (released
+  through a wrapper on `GTP.Render.detach`); up to 48 idle looks stay cached, older ones are disposed.
 - Colours are authored in sRGB and converted to linear vertex colours; the atlas is an sRGB texture.
 - `look.flat` (the cardboard cutout) flattens the body to 14 % depth. `look.scale` scales the root as before.
 
@@ -67,6 +68,10 @@ bat-like melee weapons on the shoulder and swung), aim (spine, chest and head sh
 melee (guard; light jab, heavy hook, counter uppercut), cover (crouch, lean out to peek on high cover), drive (seated,
 hands on the steering wheel turning with `vehicle.wheelSteer`, a drive-by arm) and ride poses, and a head that looks
 at the player within 5 m.
+
+Blend weights (aim, crouch, air, hold) ease on the game clock's step (the wall clock when the game is paused) and land
+at once after a gap over 0.25 s, so a ped that was off screen or a test that advanced the world without frames shows the
+settled pose.
 
 The held gun Combat hangs on `armR` is re-parented to `handR` every frame and placed at the grip; its orientation is
 set so the barrel follows the aim. Car occupants are drawn through the glass at their seat (the record's `seats`);
@@ -91,7 +96,10 @@ The record keeps the v0.2 shape (`body` with material groups paint 0, detail 1, 
 barBlue 6, wrap 7, chrome 8; `wheel`, `wheelRadius`, `wheelWidth`, `wheelOffsets`, `lightPoints`, `doorPoints`,
 `size`, `wrap`), with the same dimensions, wheel positions and door points, plus `lods[3]`, `wheelLods[3]`,
 `seats[{x, y, z}]` (hip points, mesh frame, forward -z), `wheelPoint` (steering wheel centre), `bars` (scooter),
-`mods` (normalised), `modsKey`, `finish`, `models: true`, `tris`.
+`mods` (normalised), `modsKey`, `finish`, `models: true`, `tris`. Body LODs (near < 22 m, mid < 55 m): sedan
+8.3k / 4.8k / 1.6k triangles, bus 11.9k / 5.3k / 2.4k; wheels 0.9-1.4k / 0.4k / 0.2k. In the perf test scene the
+frame's triangles went from 482k (first cut) to 306k, under the 450k bound; the crowd test (60 peds, 24 cars) draws
+479 calls.
 
 **mods**: `{paint: {primary, secondary, finish}, wheels 0..5, spoiler 0..3, tint 0..3}` (other fields ignored here).
 wheels: 0 class default, 1 multi-spoke, 2 mesh, 3 chrome deep dish, 4 turbine, 5 black off-road; spoiler: 1 lip,
@@ -102,7 +110,8 @@ material. Geometry is cached per `cls|wrap|modsKey`.
 ## Interfaces exposed
 - `GTP.Assets.pedParts(look)`, `GTP.Assets.vehicleGeometry(cls, wrap, mods)` (overrides; v0.2 versions as `...V02`).
 - `GTP.Models`: `BONES`, `PARENT`, `ALIAS`, `bones(root)`, `outfitOf(look)`, `lookKey(look)`, `buildBody(look, lod)`,
-  `pedMaterial()`, `atlas()`, `clothingItem(id)`, `LOD_NEAR`, `LOD_MID`, `lodFor(d)`, `setLod(root, i)`, `stats()`,
+  `pedMaterial()`, `atlas()`, `clothingItem(id)`, `LOD_NEAR`, `LOD_MID`, `lodFor(d)`, `setLod(root, i)`,
+  `lodGeometry(root, i)`, `release(root)`, `stats()`,
   `vehicleGeometry`, `syncVehicle(v, mesh, userData)`, `VLOD_NEAR` (30 m), `VLOD_MID` (80 m), `normMods`, `modsKey`,
   `wheelGeometry`, `vehicleStats()`.
 - Ped root `userData`: `models: true`, `bones`, `boneList`, `skin` (the SkinnedMesh), `lods`, `lod`, `rest` (joint
@@ -133,6 +142,8 @@ material. Geometry is cached per `cls|wrap|modsKey`.
   paint finish / primary, and tones the default paint down (metalness <= 0.28, roughness >= 0.36) so roofs no longer
   mirror the sky like glass. Integration can fold this into `Render.syncVehicle`.
 - `GTP.Assets.pedParts` and `GTP.Assets.vehicleGeometry` replaced (from `05d`).
+- `GTP.Render.detach` wrapped (from `05d`, installed lazily on the first `pedParts` call because Render loads later):
+  the original runs, then the ped's look geometry is released.
 
 ## Decisions
 - One skinned mesh per ped instead of rigid parts: 1 draw call (v0.2: 6), smooth joints; the crowd lowered the frame's
@@ -143,6 +154,9 @@ material. Geometry is cached per `cls|wrap|modsKey`.
 
 ## Tests
 `cd grand-theft-pundit && NODE_PATH=/opt/node-tools/node_modules node tests/characters.js`
+Full suite on this branch: all 20 files pass (`tests/all.js`; `actors`, `combat` and `perf` were re-run after the
+fixes that keep their v0.2 expectations: the player hidden in cars, the arm raised in the pistol aim, the triangle
+bound).
 Covers the rig, aliases, proportions, LOD budgets, hair / hat variety, outfits and parity clothing ids, locomotion,
 rifle and pistol IK holds (gun in the hand along the aim, the left hand on the foregrip), the pose contract (pitch,
 reload), melee, cover, swim, knockdown tilt, first-person hide, LOD and distance cull, the cutscene pose wrapper, the

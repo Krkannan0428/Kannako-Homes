@@ -208,8 +208,8 @@ H.run('characters', async (t) => {
     window._cs = looks.map((look, i) => { const e = new GTP.Ped({ x: o.x - 4 + i * 1.6, z: o.z + 15, look, persistent: true }); e.y = W.heightAt(e.x, e.z, o.y); e.yaw = 0; e.snap(); E.add(e); e.ai = { mode: 'mission', mission: 'cutscene', ambient: false }; e.update = function (dt) { this.age += dt; this.animTime += dt; }; return e; });
     _cs[2].weapon = 'pistol'; _cs[2].aiming = true; _cs[2].aimYaw = 0; _cs[3].weapon = 'rifle'; _cs[3].aiming = true; _cs[3].aimYaw = 0;
     p.x = o.x + 6; p.z = o.z + 15; p.yaw = 0; p.snap(); p.update = function (dt) { this.age += dt; this.animTime += dt; }; p.state = 'walk'; p.speed = 1.6;
-    const v = new GTP.Vehicle({ type: 'sports', x: o.x, z: o.z + 25, color: '#ff2d6f' }); v.y = W.heightAt(v.x, v.z, o.y); v.yaw = Math.PI / 2; v.snap(); E.add(v);
-    const v2 = new GTP.Vehicle({ type: 'cop', x: o.x - 7, z: o.z + 25 }); v2.y = W.heightAt(v2.x, v2.z, o.y); v2.yaw = Math.PI / 2; v2.snap(); E.add(v2);
+    const v = new GTP.Vehicle({ type: 'sports', x: o.x, z: o.z + 20.5, color: '#ff2d6f' }); v.y = W.heightAt(v.x, v.z, o.y); v.yaw = Math.PI / 2; v.snap(); E.add(v);
+    const v2 = new GTP.Vehicle({ type: 'cop', x: o.x - 6, z: o.z + 20.5 }); v2.y = W.heightAt(v2.x, v2.z, o.y); v2.yaw = Math.PI / 2; v2.snap(); E.add(v2);
     for (let i = 0; i < 40; i++) { GTP.game.advance(1 / 60); p.animPhase += 0.1; E.sync(1); }
   }, shots);
   const o = shots;
@@ -218,7 +218,7 @@ H.run('characters', async (t) => {
     { n: 'characters_face', cam: [o.x - 4 + 0.08, o.y + 1.68, o.z + 14.3], look: [o.x - 4, o.y + 1.63, o.z + 15], clock: 13 },
     { n: 'characters_far', cam: [o.x + 30, o.y + 2.5, o.z + 6], look: [o.x - 2, o.y + 1, o.z + 15], clock: 13 },
     { n: 'characters_night', cam: [o.x - 0.5, o.y + 1.6, o.z + 9.8], look: [o.x - 0.5, o.y + 1.05, o.z + 15], clock: 22 },
-    { n: 'characters_cars', cam: [o.x - 3, o.y + 1.7, o.z + 19.5], look: [o.x - 3, o.y + 0.7, o.z + 25], clock: 13 }
+    { n: 'characters_cars', cam: [o.x - 12, o.y + 1.7, o.z + 17.2], look: [o.x - 3, o.y + 0.7, o.z + 20.5], clock: 13 }
   ];
   for (const s of views) {
     await page.evaluate((s) => { GTP.game.debug.setClock(s.clock); GTP.game.advance(0.02); GTP.game.debug.freeCam(s.cam[0], s.cam[1], s.cam[2], s.look[0], s.look[1], s.look[2]); }, s);
