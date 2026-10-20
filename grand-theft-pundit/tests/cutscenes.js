@@ -217,6 +217,39 @@ H.run('cutscenes', async (t) => {
   t.assert(hints.during.fired.length === 1 && hints.later.fired.indexOf('h_wanted') === 1 && hints.again === false, 'the second hint waits for the first to expire plus the gap: ' + hints.later.fired.join(','));
   t.assert(hints.near.indexOf('h_enter') >= 0 && hints.errors === 0, 'h_enter fires within 3 m of a car on foot: ' + hints.near.join(','));
 
+  // ---- 9. QA-C1-04: an intro's second shot is over the player's shoulder at the giver, who faces the player;
+  //          QA-C1-12: a script's clock is honoured and given back; QA-C1-11: a roof spot for the player is undone ----
+  const ots = await page.evaluate(() => {
+    const M = GTP.Missions, Cs = GTP.Cutscenes, g = GTP.game, p = g.player, U = GTP.util, out = {};
+    if (M.state.active) M.abort(); g.advance(0.2);
+    M.prep('m02_read', { intro: true }); g.advance(0.3);
+    if (!Cs.active) return { scripted: false };
+    GTP.Input.press('back'); g.advance(1.2);
+    const c = Cs.debug.cur(), cam = GTP.Render.camera, acts = Cs.actors(), giver = acts[M.state.mission.giver] || acts.sloane;
+    out.shot = c ? c.i : -1;
+    if (giver) {
+      out.camToGiver = +Math.hypot(cam.position.x - giver.x, cam.position.z - giver.z).toFixed(2);
+      out.playerToGiver = +Math.hypot(p.x - giver.x, p.z - giver.z).toFixed(2);
+      out.giverFaces = +Math.abs(U.wrapAngle(giver.yaw - U.dirToYaw(p.x - giver.x, p.z - giver.z))).toFixed(2);
+    }
+    Cs.skip(); g.advance(0.3); M.abort(); g.advance(0.3);
+    // clock + roof
+    const clock0 = g.time.clock, x0 = p.x, z0 = p.z;
+    Cs.play({ id: 't_roof', clock: 6.4, shots: [{ cam: { from: { landmark: 'goldplate_tower', offset: { x: -20, y: 50, z: 20 } }, to: { landmark: 'goldplate_tower', offset: { x: 0, y: 40, z: 0 } }, seconds: 1 }, actors: [{ castId: 'player', at: { landmark: 'goldplate_tower', offset: { x: 0, z: 0 }, roof: true } }] }] });
+    g.advance(0.2); out.clockDuring = +g.time.clock.toFixed(2); out.yDuring = +p.y.toFixed(1);
+    Cs.skip(); g.advance(0.3);
+    out.clockAfter = +g.time.clock.toFixed(2); out.clock0 = +clock0.toFixed(2); out.back = +Math.hypot(p.x - x0, p.z - z0).toFixed(1); out.yAfter = +p.y.toFixed(1);
+    out.scripted = true;
+    return out;
+  });
+  console.log('  ots/clock/roof: ' + JSON.stringify(ots));
+  if (ots.scripted) {
+    t.assert(ots.shot === 1 && ots.camToGiver > ots.playerToGiver, 'QA-C1-04: shot 2 looks at the giver from behind the player: ' + JSON.stringify(ots));
+    t.assert(ots.giverFaces < 0.5, 'QA-C1-04: the giver faces the player in shot 2: ' + ots.giverFaces);
+  }
+  t.assert(Math.abs(ots.clockDuring - 6.4) < 0.05 && Math.abs(ots.clockAfter - ots.clock0) < 0.2, 'QA-C1-12: the script\'s clock for its duration, the game\'s back after: ' + JSON.stringify(ots));
+  t.assert(ots.yDuring > 10 && ots.back < 1.5 && ots.yAfter < 3, 'QA-C1-11: the roof spot is undone when the script ends: ' + JSON.stringify(ots));
+
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
 });
