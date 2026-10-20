@@ -37,6 +37,13 @@ GTP.Story = {
   also merges **`GTP.Content.parity.missions`** (anything with an `objectives` array), so `m01c_both_sides`, the boss
   missions and the heist join the chain as soon as the content track's `requires` edits land. Nothing is hard-coded per
   mission id.
+- **Side missions never join the story.** `allMissions()` also merges `GTP.Content.strangers.missions` (from
+  `js/26_content_strangers.js`), and those are always side missions. A mission is not story if it is flagged
+  (`story:false`, `side`, `stranger`, `strand`, or `kind`/`category` set to `side`, `stranger`, `strands`, `strand` or
+  `oddjob`), or if it sits in `Content.expansion.missions` but outside `expansion.chain` (a side mission registered the
+  expansion's way). `story:true` overrides all of these. Side missions keep their blue lights and play normally, but
+  `Story.order()` and `Story.next()` skip them and they never fire chapters or calls. Completing one points the GPS back
+  at the story. The campaign test plays `Story.order()`, so it ignores them.
 - Acts: a mission's numeric `act`, else `GTP.Content.parity.chapters` (`[{act, title, from?}]` or `{act: title}`), else the
   GDD: Act I from m00, Act II from m05_peer, Act III from m12_memo; titles "Folding Table", "Four Clients", "The Monday Memo".
 - After a non-replay story mission completes: `gps:set` to the next one, and once the MISSION PASSED card, any act

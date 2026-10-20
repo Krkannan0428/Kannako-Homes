@@ -100,18 +100,21 @@
   var registry = {};
   function expansion() { return (GTP.Content && GTP.Content.expansion) || {}; }
   // the story: the base seventeen plus the expansion's missions, in content order (the expansion's slot in by `requires`)
-  var _all = null, _allKey = null;
+  var _all = null, _allKey = null, sideIds = {};
   // v0.3: plus GTP.Content.parity.missions (m01c, the boss missions, the heist), which the content track slots into the chain
   // through `requires`
   function parityMissions() { var P = GTP.Content && GTP.Content.parity; return (P && Array.isArray(P.missions)) ? P.missions : []; }
+  // the strangers strands (js/26_content_strangers.js): side missions with their own markers, never part of the story chain
+  function strangerMissions() { var X = GTP.Content && GTP.Content.strangers; return (X && Array.isArray(X.missions)) ? X.missions : []; }
   function allMissions() {
-    var Ct = GTP.Content, base = (Ct && Ct.missions) || [], ext = expansion().missions || [], par = parityMissions();
-    var key = base.length + ':' + ext.length + ':' + par.length;
+    var Ct = GTP.Content, base = (Ct && Ct.missions) || [], ext = expansion().missions || [], par = parityMissions(), str = strangerMissions();
+    var key = base.length + ':' + ext.length + ':' + par.length + ':' + str.length;
     if (_all && _allKey === key) return _all;
     var out = base.slice(), seen = {};
     for (var i = 0; i < out.length; i++) seen[out[i].id] = true;
     for (i = 0; i < ext.length; i++) if (ext[i] && ext[i].id && !seen[ext[i].id]) { out.push(ext[i]); seen[ext[i].id] = true; }
     for (i = 0; i < par.length; i++) if (par[i] && par[i].id && !seen[par[i].id] && Array.isArray(par[i].objectives)) { out.push(par[i]); seen[par[i].id] = true; }
+    for (i = 0; i < str.length; i++) if (str[i] && str[i].id && !seen[str[i].id] && Array.isArray(str[i].objectives)) { out.push(str[i]); seen[str[i].id] = true; sideIds[str[i].id] = true; }
     _all = out; _allKey = key;
     return out;
   }
@@ -1678,7 +1681,7 @@
     if (cs) pendingCut = { id: cs, t: K.cutsceneAfterDelay, then: finish };
     else finish();
     clearGps();
-    storyAfterComplete(m, replay);
+    if (storyMission(m) && !replay) storyAfterComplete(m, replay); else storyGps(true);   // after a side job or a replay: back to the story
   }
   var FAIL_TEXT = {
     player_dead: 'You got ratio\'d.', busted: 'You got deplatformed.', timer: 'Out of time.', target_escaped: 'You lost them.',
@@ -1871,7 +1874,18 @@
     'Pick up. You did. Great. {landmark}, now, for {title}. Bring the table energy, not the table.'
   ];
   function parity() { return (GTP.Content && GTP.Content.parity) || {}; }
-  function storyMission(m) { return !!m && m.story !== false && !m.side && !registry[m.id]; }
+  // story = the base missions, the expansion's chain and the content track's parity missions. Not story: anything flagged
+  // (story:false, side, stranger, strand, kind 'side' / 'stranger' / 'strand'), the strangers module's list, an expansion
+  // mission outside the chain (a side mission registered the expansion's way), test missions
+  var SIDE_KINDS = { side: 1, stranger: 1, strangers: 1, strand: 1, oddjob: 1 };
+  function storyMission(m) {
+    if (!m || registry[m.id] || sideIds[m.id]) return false;
+    if (m.story === true) return true;
+    if (m.story === false || m.side || m.stranger || m.strand || SIDE_KINDS[m.kind] || SIDE_KINDS[m.category]) return false;
+    var X = expansion(), chain = X.chain || [];
+    if (chain.length && chain.indexOf(m.id) < 0 && (X.missions || []).indexOf(m) >= 0) return false;
+    return true;
+  }
   var _order = null, _orderKey = null;
   // the story missions in play order: a topological sort over `requires`, ranked by the content's chain (new missions without
   // a rank slot in wherever their prerequisites put them)

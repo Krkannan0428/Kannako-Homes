@@ -163,10 +163,20 @@ H.run('story', async (t) => {
     let s = 0; while (M.state.active && s < 10) { g.advance(0.2); s += 0.2; }
     out.seen = seen; out.done = M.state.completed.has('t_types'); out.plan = GTP.Heist.plan(); out.paid = p.money - money0; out.cleanups = hit;
     out.expected = GTP.Heist.payout({ id: 't_types', heist: true }, 1000);
+    // side missions (the strangers module's list, an expansion mission outside the chain) never join the story, and finishing
+    // one puts the GPS back on the story
+    GTP.Content.strangers = GTP.Content.strangers || {}; GTP.Content.strangers.missions = GTP.Content.strangers.missions || [];
+    GTP.Content.strangers.missions.push({ id: 't_stranger', title: 'A Stranger', giver: 'kip', marker: 'fish_shack', requires: [], reward: 5, intro: [], outro: [], objectives: [{ type: 'dialogue', lines: [{ who: 'kip', text: 'Hi.' }] }], failOn: [] });
+    GTP.Content.expansion.missions.push({ id: 't_side', title: 'A Side Job', giver: 'gus', marker: 'fish_shack', requires: [], reward: 5, intro: [], outro: [], objectives: [{ type: 'dialogue', lines: [{ who: 'gus', text: 'Side.' }] }], failOn: [] });
+    M.refreshMarkers(); const ord = GTP.Story.order();
+    out.side = { inAll: M.allMissions().some((m) => m.id === 't_stranger') && M.allMissions().some((m) => m.id === 't_side'), inStory: ord.indexOf('t_stranger') >= 0 || ord.indexOf('t_side') >= 0, lit: M.markers().some((m) => m.missionId === 't_stranger') };
+    M.start('t_stranger', { skipIntro: true }); let ss = 0; while (M.state.active && ss < 10) { g.advance(0.25); ss += 0.25; }
+    out.side.gps = GTP.Story.gpsTarget && GTP.Story.gpsTarget.kind; out.side.next = GTP.Story.next() && GTP.Story.next().missionId;
     out.types = M.objectiveTypes().filter((x) => ['interior', 'buy', 'range', 'heist_board', 'boss', 't_ping'].indexOf(x) >= 0);
     return out;
   });
   console.log('  types: ' + JSON.stringify(types));
+  t.assert(types.side.inAll && !types.side.inStory && types.side.lit && types.side.gps === 'story' && types.side.next === 'm05b_provenance', 'side missions (strangers, off-chain expansion) are playable but never in the story; the GPS returns to the story after one: ' + JSON.stringify(types.side));
   t.assert(types.registered && types.types.length === 6, 'registerObjectiveType and the v0.3 types exist: ' + types.types.join(','));
   t.assert(types.seen.join(',') === 't_ping,interior,buy,range,heist_board', 'each type completes on its event in turn: ' + types.seen.join(','));
   t.assert(types.wrongInterior === 'interior' && types.wrongBuy === 'buy' && types.bronze === 'range', 'the wrong interior, item or medal does not count');
