@@ -245,7 +245,8 @@
       var key = (neon ? 'n:' : 'd:') + (ar || 2) + ':' + text;
       if (Assets._signMats[key]) return Assets._signMats[key];
       var tex = Assets.billboard(text, { neon: neon, w: ar || 2 });
-      var m = new THREE.MeshLambertMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: neon ? 0.5 : 0.1, side: THREE.DoubleSide });
+      // front face only: a double-sided plane reads mirrored from behind; the renderer adds a backing board where a back is visible
+      var m = new THREE.MeshLambertMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: neon ? 0.5 : 0.1, side: THREE.FrontSide });
       m.userData.neon = !!neon;
       Assets._signMats[key] = m;
       return m;

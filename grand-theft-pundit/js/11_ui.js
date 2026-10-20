@@ -599,7 +599,7 @@
     }
     if (t && ts && ts.visible) {
       var k = Math.min(1, (now - (aim.lockT || 0)) / 0.25), size = px(32) + (1 - k) * px(28), half = size / 2, c = px(9);
-      var hostile = t.role === 'cop' || t.role === 'swat' || t.role === 'thug' || t.hostile || (t.kind === 'vehicle' && t.isPolice);
+      var hostile = t.role === 'cop' || t.role === 'swat' || t.role === 'thug' || t.hostile || (t.kind === 'vehicle' && t.isPolice) || t.kind === 'heli';
       ctx.save(); ctx.translate(ts.sx, ts.sy); ctx.rotate((1 - k) * 0.6);
       var bracket = function () { ctx.beginPath(); ctx.moveTo(-half, -half + c); ctx.lineTo(-half, -half); ctx.lineTo(-half + c, -half); ctx.moveTo(half - c, -half); ctx.lineTo(half, -half); ctx.lineTo(half, -half + c); ctx.moveTo(half, half - c); ctx.lineTo(half, half); ctx.lineTo(half - c, half); ctx.moveTo(-half + c, half); ctx.lineTo(-half, half); ctx.lineTo(-half, half - c); ctx.stroke(); };
       ctx.lineWidth = px(5); ctx.strokeStyle = 'rgba(0,0,0,0.55)'; bracket();
@@ -607,7 +607,7 @@
       var hp = U.clamp((t.hp || 0) / (t.maxHp || 1), 0, 1);
       ctx.fillStyle = 'rgba(10,12,20,0.75)'; rr(ctx, -half, half + px(6), size, px(6), px(3)); ctx.fill();
       ctx.fillStyle = hp > 0.5 ? COL.lime : hp > 0.25 ? COL.amber : COL.red; rr(ctx, -half, half + px(6), size * hp, px(6), px(3)); ctx.fill();
-      var label = t.kind === 'vehicle' ? (t.isPolice ? 'CRUISER' : String(t.type || 'car').toUpperCase()) : (t.castId ? castName(t.castId) : roleLabel(t.role));
+      var label = t.kind === 'vehicle' ? (t.isPolice ? 'CRUISER' : String(t.type || 'car').toUpperCase()) : t.kind === 'heli' ? 'WEATHER BALLOON' : (t.castId ? castName(t.castId) : roleLabel(t.role));
       txt(ctx, label, 0, half + px(24), { font: F(11, 'bold'), color: COL.ink, align: 'center' });
       ctx.restore();
     }
@@ -643,7 +643,7 @@
     var n = Math.min(cands.length, 8), font = F(12, 'bold', FONT_TEXT);
     for (i = 0; i < n; i++) {
       var p = cands[i].e, sc = (p.look && p.look.scale) || 1, s = Rd.worldToScreen(p.x, p.y + (p.height || 1.8) * sc + 0.45, p.z);
-      if (!s.visible || s.depth > 1) continue;
+      if (!s.visible || s.depth > 1 || s.sx < px(20) || s.sx > W - px(20) || s.sy < px(40) || s.sy > H - px(20)) continue;   // off-screen peds keep their lines to themselves
       var fade = p.lineTime < 0.4 ? p.lineTime / 0.4 : 1, scale = U.clamp(1.25 - cands[i].d / 60, 0.7, 1);
       var tw = Math.min(measure(ctx, p.line, font) * scale, px(300)), bw = tw + px(16), bh = px(22) * scale;
       var bx = U.clamp(s.sx - bw / 2, px(4), W - bw - px(4)), by = s.sy - bh - px(8);

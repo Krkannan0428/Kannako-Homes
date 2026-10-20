@@ -679,8 +679,8 @@
         mesh.castShadow = false; mesh.name = 'sign';
         ch.group.add(mesh);
         if (p.double) { var back = new THREE.Mesh(geo, mat); back.position.set(p.x - dir.x * 0.05, p.y, p.z - dir.z * 0.05); back.rotation.y = faceRot + Math.PI; ch.group.add(back); }
-        if (p.kind === 'billboard' && !p.double) {
-          // a dark backing board facing away from the text
+        else if (p.kind === 'billboard' || p.standing || p.pole) {
+          // a grey backing board with a frame where the back of a free-standing sign can be seen (wall signs have the wall)
           var backing = new THREE.Mesh(Render._planeGeo((p.w || 4) + 0.3, (p.h || 1) + 0.3), Render._backMat());
           backing.position.set(p.x - dir.x * 0.08, p.y, p.z - dir.z * 0.08); backing.rotation.y = faceRot + Math.PI; ch.group.add(backing);
         }
@@ -735,7 +735,20 @@
       if (!Render._planes[key]) Render._planes[key] = new THREE.PlaneGeometry(w, h);
       return Render._planes[key];
     },
-    _backMat: function () { if (!Render._bmat) Render._bmat = new THREE.MeshLambertMaterial({ color: 0x2a2d33 }); return Render._bmat; },
+    // the back of a sign: painted steel with a frame and struts (a canvas texture, so it never reads as a flat black slab)
+    _backMat: function () {
+      if (Render._bmat) return Render._bmat;
+      var cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
+      var c = cv.getContext('2d');
+      c.fillStyle = '#6e737d'; c.fillRect(0, 0, 256, 128);
+      c.fillStyle = '#5a5f68'; for (var i = 0; i < 6; i++) c.fillRect(0, 20 + i * 18, 256, 2);
+      c.fillStyle = '#4a4e57'; c.fillRect(0, 0, 256, 8); c.fillRect(0, 120, 256, 8); c.fillRect(0, 0, 8, 128); c.fillRect(248, 0, 8, 128);
+      c.fillRect(84, 0, 6, 128); c.fillRect(166, 0, 6, 128);
+      c.fillStyle = '#8a8f99'; c.fillRect(0, 8, 256, 2); c.fillRect(8, 0, 2, 128);
+      var tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      Render._bmat = new THREE.MeshLambertMaterial({ map: tex, emissive: new THREE.Color(0x1a1c22), emissiveIntensity: 0.6 });
+      return Render._bmat;
+    },
     _glowMat: function () {
       if (!Render._glmat) Render._glmat = new THREE.MeshBasicMaterial({ map: Render._A.glow, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0, color: 0xffc070 });
       return Render._glmat;
@@ -1024,8 +1037,11 @@
               r.yaw = U.angleDamp(r.yaw, tgt, CAM.carAutoYawRate * U.clamp(speed / 6, 0.45, 1), dt);
               r.pitch = U.damp(r.pitch, CAM.carPitch, 1.5, dt);
             }
-          } else if (speed > 0.6 && since > CAM.autoYawDelay && !t.aiming) {
-            r.yaw = U.angleDamp(r.yaw, U.dirToYaw(t.vx, t.vz), CAM.autoYawRate, dt);
+          } else if (speed > 0.6 && since > CAM.autoYawDelay && !t.aiming && !t.knockedDown && t.alive !== false) {
+            // ease behind where the player is going: the move intent, so a bump from a car or a crowd does not swing the
+            // camera (and a knockdown slide never does: the camera holds until the player is up and moving again)
+            var it = t.intent, useIntent = it && (it.x * it.x + it.z * it.z) > 0.09;
+            if (useIntent) r.yaw = U.angleDamp(r.yaw, U.dirToYaw(it.x, it.z), CAM.autoYawRate, dt);
             r.pitch = U.damp(r.pitch, 0.2, 1.5, dt);
           }
         }

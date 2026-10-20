@@ -67,7 +67,10 @@ grand-theft-pundit/
   js/30_game.js              GTP.Game: boot, state machine, fixed-step loop, save/load, debug API
   tests/_harness.js          shared Playwright helpers (launch flags, boot(url), waitPlaying, errors capture, shot(name))
   tests/*.js                 one file per subsystem; tests/all.js runs them all; tests/content_audit.js scans content
-  README.md
+                             integration: campaign.js (a new game through all 17 missions and both endings on real inputs),
+                             feel.js (the Loop flat out, pay-and-spray, death, bust, save + Continue), tune.js (heat limits,
+                             knock-over props, drive-by, the shootable helicopter, the aim camera)
+  README.md                  what it is, how to run, controls, tests, the content rules pointer, credits
 ```
 
 Engine files never hard-code content; they read `GTP.Content`. Content files are
@@ -106,11 +109,16 @@ Tunables with comments: movement, camera (distances, heights, lag, fov by
 speed, collision radius), vehicle classes
 `sedan sports suv truck van cop taxi bus bike` each with
 `{accel, maxSpeed, reverseMax, brake, steerMax, steerSpeedFalloff, grip, driftGrip, mass, hp, length, width, height, seats, colors[], wheelRadius}`,
-AI counts (`PEDS_TARGET 70, CARS_TARGET 35, ACTIVE_RADIUS 220 m`), wanted
-thresholds, economy, palette tokens for textures
+AI counts (`PEDS_TARGET 76, CARS_TARGET 40, ACTIVE_RADIUS 220 m`), wanted
+thresholds and heat per crime (`WANTED.heat`, including `ramCop 3` for a cop
+knocked over by the player's car), economy, palette tokens for textures
 (`GTP.C.PAL = { asphalt, laneWhite, laneYellow, sidewalk, curb, grass, water, sand, concrete, facades: {downtown:[...], campus:[...], ...}, roofs: [...], neon: [...] }`),
-and `GTP.C.QUALITY = { shadows: true, drawDistance: 260, fogStart: 120 }`
-(`?low=1` sets shadows off / draw distance 160).
+and `GTP.C.QUALITY = { shadows: true, drawDistance: 260, fogStart: 120, pedDraw: 110, vehicleDraw: 200 }`
+(`?low=1` sets shadows off / draw distance 160; the entity draw ranges sit
+inside the fog so the denser street stays under the ~500 draw-call budget).
+`PHYS.knockSpeed 5.5` / `knockSlow 0.78`: the speed at which a car knocks a
+small prop over and the speed it keeps through it. `CAMERA.aimDist 2.0,
+aimSide 0.7, aimHeight 1.85, aimLookHeight 1.5, aimFov 50` is the aim rig.
 
 ### GTP.Input (02_input.js)
 
@@ -184,8 +192,9 @@ GTP.World.heightAt(x, z, yHint)      // surface height under (x,z) nearest at/be
 GTP.World.surfaces(tx,tz)            // [{y, kind}] layers at a tile (ground always; deck when elevated)
 GTP.World.solidAt(x, z, y)           // blocks movement at that height (building volumes, void, walls)
 GTP.World.buildings                  // [{x, z, w, d, h, style, roof, landmark|null, aabb}]  (meters)
-GTP.World.props                      // [{kind:'tree'|'lamp'|'signal'|'bench'|'hydrant'|'billboard'|'table'|'sign', x, z, y, rot, r, solid, text?}]
-GTP.World.resolveCapsule(x, z, y, r) -> {x, z, hitX, hitZ, normal}  // XZ push-out vs building AABBs, props, map edge
+GTP.World.props                      // [{kind:'tree'|'lamp'|'signal'|'bench'|'hydrant'|'billboard'|'table'|'sign', x, z, y, rot, r, solid, text?, fallen?}]
+                                     // fallen = {t, dx, dz, by}: a lamp / hydrant / bin / bench / table a car knocked over; no longer solid
+GTP.World.resolveCapsule(x, z, y, r) -> {x, z, hitX, hitZ, normal, prop}  // XZ push-out vs building AABBs, props, map edge; prop = the last solid prop that pushed
 GTP.World.roadDir(x, z)              // {dx, dz, lane, laneCenterOffset} lane direction field on ROAD/BRIDGE/HIGHWAY/RAMP tiles or null
 GTP.World.isIntersection(tx,tz), signalPhase(tx,tz,t) -> 'ns'|'ew'
 GTP.World.districts, landmarks, landmark(id), districtAt(x,z)
@@ -250,7 +259,12 @@ forward = `yawToDir(yaw)`, right = (-f.z, f.x); `v.localToWorld(right, forward)`
 `v.doorWorld(0|1|2)`, `v.pushCircle(x, z, r)`, `v.edgeDistance(x, z)`. State flags: `onGround, burning, exploded,
 wreck, sinking, reversing, reverseTime, braking, lights, siren, offroad, yawRate, pitch, roll, wheelSpin, wheelSteer`.
 Events (GTP.Events): `damage, ped:dead, vehicle:enter, vehicle:exit, vehicle:damage, vehicle:impact, vehicle:hitPed,
-vehicle:exploded, vehicle:sunk, honk, pickup, player:respawn`. Combat owns the RATIO'D / DEPLATFORMED flows
+vehicle:exploded, vehicle:sunk, honk, pickup, player:respawn, prop:knocked {prop, vehicle}`. A car faster than
+`PHYS.knockSpeed` knocks a lamp post, hydrant, bin, bench or table over (`v._knockProp`: the prop goes `fallen`, the car
+keeps `knockSlow` of its speed, a little damage, sparks, `Render.knockProp`); trees and signals still stop it. A ped in a
+car is hidden; the driver of a `bike` is drawn seated on the saddle (`Ped._syncRider`, legs and arms posed). The player
+fires a pistol / SMG / shotgun from the driver's seat while `aim` is held (`Player.control` -> `Combat.fire`, a drive-by;
+`[` `]` / the wheel cycle weapons in a car too). Combat owns the RATIO'D / DEPLATFORMED flows
 (`Combat.onPlayerDeath` / `onPlayerBusted`); the entity-side hospital fallback only runs when that hook is missing.
 Ped pose fields `firePoseT` (arm raised after a shot) and `punchT` (jab swing) are set by Combat and read by
 `syncMesh`; while `aiming`, `firePoseT > 0` or `punchT > 0` the ped faces `aimYaw` and strafes. Meshes are hidden beyond
@@ -305,10 +319,20 @@ Peds made elsewhere (debug.spawnPed, missions) get a brain (`ped.ai`) on sight
 unless the brain they carry has `ai.mission` set (a mission brain the AI leaves
 alone); a vehicle only drives itself after `GTP.AI.drive(v)`. A `persistent`
 vehicle is never recycled by the traffic brain. Hurting or killing a ped with
-`ped.hostile` set (mission goons) adds no heat. Events:
+`ped.hostile` set (mission goons) adds no heat, and hostile cops in a mission's
+waves are not witnesses for `shootNearCop`. Heat per hit is rate-limited
+(`C.AI.heatEvery 0.6 s` for hitPed / attackCop / ramCop, `heatEveryCar 2.5 s`
+for denting a cruiser), so an SMG burst or a roadblock ram is one crime, not
+one per bullet or contact step; kills count in full. Events:
 `wanted {level, prev}`, `heat`, `busted {player, cop, level, fine}`, `bark {ped, text}`,
-`roadblock`, `heli {on}`, `garage {landmark, cost}`. Audio hook: `GTP.Audio.heli(on, x, z)`
+`roadblock`, `heli {on}`, `heli:down {heli, src}`, `garage {landmark, cost}`. Audio hook: `GTP.Audio.heli(on, x, z)`
 when defined (rotor loop). Long vehicles (bus, truck) never turn at street corners.
+The helicopter (`GTP.AI.Heli`, kind `heli`, 400 hp) can be locked and shot:
+`applyDamage` smokes it under half health and at 0 sets `down` (a spin to the
+ground, a blast with area damage, `police.heli = null`); another one comes after
+`C.AI.heli.respawn` (45 s). Its lookup through the Loop deck is a known gap: the
+deck is not in `raycastBuildings`, so at five stars the player loses the heli by
+outrunning it (26 m/s) or a respray, not by hiding under the Loop.
 
 ### GTP.Combat (08_combat.js)
 
@@ -342,9 +366,12 @@ GTP.Combat.drawAimOverlay(ctx, w, h)           // default crosshair/reticle draw
 GTP.Combat.death                               // {kind:'wasted'|'busted', t, text} while a card shows
 ```
 
-`player.lockTarget` is the lock-on target (peds and police cars in a 40° cone within range with line
-of sight; Tab = `lockOn` cycles). Without aim, a shot auto-targets the best ped in a 150° cone in front and
-turns the player. Events: `weapon {id, name, ammo}` on a switch, `player:wasted`, `player:respawn {at}`.
+`player.lockTarget` is the lock-on target (peds, police cars and the helicopter in a 40° cone within range with line
+of sight; Tab = `lockOn` cycles; the helicopter is reached at 1.9x the weapon's range, `reachFor`). Without aim, a shot
+auto-targets the best ped in a 150° cone in front and turns the player. From a driver's seat `fire` works only with
+`aim` held and a gun (`Combat.driveByWeapon(id)`: pistol, smg, shotgun); the muzzle is the driver's window, the trace
+never hits the shooter's own car, the chase camera holds where the mouse put it (no camera change). Events:
+`weapon {id, name, ammo}` on a switch, `player:wasted`, `player:respawn {at}`.
 Combat's randomness runs on `GTP.rng.fork(0xC0B)` (reseeded in `reset()`), so fights never perturb the
 city's spawn stream. Cops drop their gun half the time; peds drop cash sometimes.
 
@@ -376,7 +403,7 @@ GTP.Missions._resolveMinigame(win)          // the UI minigame (or a test) repor
 GTP.Missions.registerTest(mission)          // tests: a mission startable by id but never listed
 GTP.Missions.current() -> {def, ctx, index, depth} | null   // the running objective (ctx holds its spawned pickups / peds / vehicles / ped)
 GTP.Missions.on(ev, fn)                     // sugar for GTP.Events.on('mission:' + ev)
-GTP.C.MISSIONS                               // knobs: unit, markerRadius 1.9, startHold 0.5, lineSeconds 2.5, gotoRadius 6, driveRadius 12, followTooClose 6 / followCloseTime 3 / followFarTime 5, waveEvery 10, maxHostiles 14, defeatHold 3, giverRange 170 / kipRange 40 (the cast at a marker: six draw calls per ped), minigameFallback 2, weaponAmmo, colors
+GTP.C.MISSIONS                               // knobs: unit, markerRadius 1.9, startHold 0.5, lineSeconds 2.5, gotoRadius 6, driveRadius 12, followTooClose 6 / followCloseTime 3 / followFarTime 5 / followPace 0.58 (3.2 m/s: the long Lobby Row tails take about three minutes), waveEvery 10, maxHostiles 14, defeatHold 3, giverRange 170 / kipRange 40 (the cast at a marker: six draw calls per ped), minigameFallback 2, weaponAmmo, colors
 ```
 
 Flow: an available mission's blue light stands at its giver landmark door with
@@ -441,19 +468,29 @@ GTP.Render.freeCam(enabled)           // tests: place camera anywhere via camera
 GTP.Render.markerMesh(color) -> Group // a mission marker: translucent additive cylinder of light + core + ground ring; userData.pulse(k) breathes it
 GTP.Render.addMarker(mesh); removeMarker(mesh)   // Missions owns positions and the list (Render.markerGroup)
 GTP.Render.rig.target(entity, ease)   // ease = glide to the new target instead of snapping (cutscenes)
+GTP.Render.knockProp(prop)            // Vehicle._knockProp: the prop's InstancedMesh matrix tips over its base in the fall direction over 0.45 s
+                                      // (prop._inst = {im, k, base pose} is kept per chunk build; a rebuilt chunk places a fallen prop down at once)
 ```
+
+Signs are front-face planes (a double-sided plane reads mirrored from behind);
+free-standing signs and billboards get a grey painted-steel backing board with
+a frame (`_backMat`), wall signs have the wall.
 
 Camera rig rules (this is where GTA feel lives):
 - Chase on foot: distance 4.2 m, height 1.9 m, looks at the player's chest.
   Mouse/touch look orbits yaw/pitch (pitch clamped -20°..60°). When the
   player moves and no look input for 1.2 s, the yaw eases behind the movement
-  direction. Collision: raycast from target to desired camera position
-  against buildings; pull in to the hit point minus 0.3 m.
+  intent (the stick / keys, not the velocity: a bump from a car or a crowd
+  does not swing the camera). Collision: raycast from target to desired camera
+  position against buildings; pull in to the hit point minus 0.3 m.
 - Chase in vehicle: distance 7.5 m (bus 10), height 3 m, yaw eases toward the
-  vehicle's velocity direction (reverse flips after 0.5 s), fov 60 → 75 with
+  vehicle's velocity direction (reverse flips after 0.5 s) unless `aim` is held
+  (a drive-by keeps the camera where the mouse put it), fov 60 → 75 with
   speed, slight roll on hard turns, shake on impacts.
 - `close` halves distances; `first` is at eye height with the body hidden.
-- Aim mode: over the right shoulder, 1.6 m back, 0.6 m right, fov 50.
+- Aim mode on foot: over the right shoulder, 2.0 m back, 0.7 m right, 1.85 m up
+  (`CAMERA.aimHeight`), looking at 1.5 m (`aimLookHeight`), fov 50. In a car the
+  chase camera stays.
 - Smoothing via `damp` per axis; never snap except on respawn or teleport.
 
 ### GTP.UI (11_ui.js)
@@ -501,7 +538,10 @@ rebuilt when `World._seed` changes. Layout scale `S = clamp(min(w/1280, h/720),
 0.62, 1.3)` (portrait phones: `clamp(w/560, 0.62, 1)`); with touch controls the
 minimap moves top-right (landscape) or top-left under the objective panel
 (portrait) so the buttons keep the bottom corners. Every HUD string is outlined
-or sits on a panel. Cosmetic randomness runs on forks of `GTP.rng`.
+or sits on a panel. The objective panel hugs its text (full width only with a
+timer bar); the mission banner sits above the district chip; bark pills are
+drawn only for peds on screen. The lock reticle labels the helicopter
+`WEATHER BALLOON`. Cosmetic randomness runs on forks of `GTP.rng`.
 
 ### GTP.Content (2x)
 

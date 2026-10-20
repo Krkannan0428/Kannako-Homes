@@ -1,0 +1,259 @@
+# Desktop builds of Grand Theft Pundit (Electron + electron-builder) for macOS (Apple Silicon and
+# Intel), Windows and Linux, published as a GitHub Release.
+#
+#   - push a tag like v0.1.0            -> build everything and create/update the release for that tag
+#   - "Run workflow" (workflow_dispatch) -> build everything and upload workflow artifacts; fill in
+#                                          release_tag with an existing tag to also publish a release
+#
+# Signing is optional. Add these repository secrets and the macOS job signs (and notarizes) instead
+# of producing an unsigned build; without them every step still runs and the output is unsigned:
+#   CSC_LINK, CSC_KEY_PASSWORD                     Developer ID Application certificate (.p12 as base64) + its password
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   notarization (needs all three, plus CSC_LINK)
+#   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD             optional Windows Authenticode certificate
+# See grand-theft-pundit/desktop/README.md.
+
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing git tag to attach the builds to as a GitHub Release (leave empty to only upload workflow artifacts)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  mac:
+    name: macOS (arm64 + x64, dmg + zip)
+    runs-on: macos-14
+    defaults:
+      run:
+        shell: bash
+        working-directory: grand-theft-pundit/desktop
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache Electron and electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Copy the game into desktop/app
+        run: node sync-game.js
+
+      - name: Check for signing secrets
+        id: signing
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ] && [ -n "$CSC_KEY_PASSWORD" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+            echo "Developer ID certificate found: the build will be signed."
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "No CSC_LINK/CSC_KEY_PASSWORD secrets: the build will be unsigned."
+          fi
+          if [ -n "$CSC_LINK" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+            echo "Apple ID secrets found: the signed build will be notarized."
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build (unsigned)
+        if: steps.signing.outputs.sign != 'true'
+        env:
+          # never pick up a stray identity from the runner keychain
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never
+
+      - name: Build (signed, notarized when Apple ID secrets exist)
+        if: steps.signing.outputs.sign == 'true'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_TEAM_ID || '' }}
+        # notarization requires the hardened runtime; electron-builder.yml keeps it off for unsigned builds
+        run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never -c.mac.hardenedRuntime=true
+
+      - name: List outputs
+        run: ls -la dist
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: |
+            grand-theft-pundit/desktop/dist/*.dmg
+            grand-theft-pundit/desktop/dist/*.zip
+          if-no-files-found: error
+
+  windows:
+    name: Windows (x64, installer + portable)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: grand-theft-pundit/desktop
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache Electron and electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Copy the game into desktop/app
+        run: node sync-game.js
+
+      - name: Build (signed only when WIN_CSC_LINK is set)
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npx electron-builder --win nsis portable --x64 --publish never
+
+      - name: List outputs
+        run: ls -la dist
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: grand-theft-pundit/desktop/dist/*.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux (x64, AppImage)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: grand-theft-pundit/desktop
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache Electron and electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Copy the game into desktop/app
+        run: node sync-game.js
+
+      - name: Build
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: List outputs
+        run: ls -la dist
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: grand-theft-pundit/desktop/dist/*.AppImage
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [mac, windows, linux]
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+    steps:
+      - name: Download every build
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -la release-assets
+
+      - name: Create or update the release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Grand Theft Pundit ${{ env.RELEASE_TAG }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          generate_release_notes: true
+          append_body: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
+          body: |
+            Downloads for Grand Theft Pundit ${{ env.RELEASE_TAG }}:
+
+            - **macOS, Apple Silicon (M1 and later):** `Grand-Theft-Pundit-*-mac-arm64.dmg`
+            - **macOS, Intel:** `Grand-Theft-Pundit-*-mac-x64.dmg` (the `.zip` files hold the same apps without the installer window)
+            - **Windows 10/11:** `Grand-Theft-Pundit-*-win-x64-setup.exe` (installer) or `Grand-Theft-Pundit-*-win-x64-portable.exe` (no install)
+            - **Linux:** `Grand-Theft-Pundit-*-linux-x86_64.AppImage` (`chmod +x` it, then run it)
+
+            Unless this release was built with a signing certificate, macOS and Windows will warn that the
+            developer is unknown. On macOS 14 and earlier: Control-click the app, choose **Open**, then **Open**
+            again. On macOS 15 and later: open it once, dismiss the message, then go to **System Settings >
+            Privacy & Security** and click **Open Anyway**. On Windows: **More info > Run anyway**.

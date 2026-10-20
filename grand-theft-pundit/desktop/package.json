@@ -1,0 +1,29 @@
+{
+  "name": "grand-theft-pundit",
+  "productName": "Grand Theft Pundit",
+  "version": "0.1.0",
+  "description": "Grand Theft Pundit: a third-person open-city parody game about the pundit-industrial complex. Desktop build of the browser game.",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": {
+    "name": "Grievance City Games"
+  },
+  "main": "main.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "sync": "node sync-game.js",
+    "icon": "node build/make-icon.js",
+    "start": "npm run sync && electron .",
+    "pack": "npm run sync && electron-builder --dir",
+    "dist": "npm run sync && electron-builder --publish never",
+    "dist:mac": "npm run sync && electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "dist:win": "npm run sync && electron-builder --win nsis portable --x64 --publish never",
+    "dist:linux": "npm run sync && electron-builder --linux AppImage --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.0",
+    "electron-builder": "26.17.0"
+  }
+}

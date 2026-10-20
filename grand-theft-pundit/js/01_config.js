@@ -100,8 +100,8 @@
     },
 
     // --- AI budgets -------------------------------------------------------
-    PEDS_TARGET: 80,
-    CARS_TARGET: 44,
+    PEDS_TARGET: 76,
+    CARS_TARGET: 40,
     ACTIVE_RADIUS: 220,
     SPAWN: { pedRadius: [40, 140], vehicleRadius: [60, 180] },
 
@@ -110,7 +110,7 @@
       thresholds: [2, 6, 12, 20, 30],
       decayDelay: 4,
       decayRate: 1.2,
-      heat: { hitPed: 1, killPed: 3, shootNearCop: 2, stealOccupied: 2, stealSeen: 1, destroyVehicle: 3, attackCop: 5 },
+      heat: { hitPed: 1, killPed: 3, shootNearCop: 2, stealOccupied: 2, stealSeen: 1, destroyVehicle: 3, attackCop: 5, ramCop: 3 },   // ramCop: a cop knocked over by the player's car (rate-limited, see C.AI.heatEvery)
       sprayCostPerStar: 100
     },
 

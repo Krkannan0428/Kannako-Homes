@@ -139,9 +139,10 @@
     var list = E().hash.query(mx, mz, bestT * 0.5 + 4, scratch);
     for (var i = 0; i < list.length; i++) {
       var e = list[i], t = -1;
-      if (e === shooter || e.removed) continue;
+      if (e === shooter || e.removed || (shooter && e === shooter.inVehicle)) continue;   // never your own car
       if (e.kind === 'ped' || e.kind === 'player') { if (!e.alive || e.inVehicle) continue; t = rayPed(o, d, e, bestT); }
       else if (e.kind === 'vehicle') { if (e.sinking) continue; t = rayVehicle(o, d, e, bestT); }
+      else if (e.kind === 'heli') { if (e.down) continue; t = raySphere(o, d, e.x, e.y, e.z, 3.4, bestT); }
       else continue;
       if (t >= 0 && t < bestT) { bestT = t; hitE = e; hb = null; out.ground = false; }
     }
@@ -191,8 +192,11 @@
     if (!e || e === shooter || e.removed) return false;
     if (e.kind === 'ped' || e.kind === 'player') return e.alive && !e.inVehicle;
     if (e.kind === 'vehicle') return !!allowVehicles && !e.wreck && !e.sinking && !!e.driver && !e.hasPlayer();
+    if (e.kind === 'heli') return !!allowVehicles && !e.down && !e.leaving;
     return false;
   }
+  // the five-star helicopter sits 30 m up: the lock-on and the hitscan reach for it
+  function reachFor(e, range) { return e && e.kind === 'heli' ? range * 1.9 : range; }
   // best target in a cone: facing dir {x,z}, half arc (rad), range; LOS vs buildings
   function bestInCone(shooter, dir, halfArc, range, needLos, allowVehicles) {
     var list = E().hash.query(shooter.x, shooter.z, range + 1, scratch2), best = null, bestS = 1e9;
@@ -245,7 +249,7 @@
       if (e.kind === 'vehicle' && !e.isPolice) continue;
       var dx = e.x - ox, dz = e.z - oz, d = Math.sqrt(dx * dx + dz * dz);
       if (d < 0.3 || d > range) continue;
-      if (Math.abs(e.y - p.y) > 6) continue;
+      if (Math.abs(e.y - p.y) > (e.kind === 'heli' ? 60 : 6)) continue;
       var sa = signedAngle(cd, dx / d, dz / d);
       if (Math.abs(sa) > halfArc) continue;
       if (!losClear(ox, oy, oz, e.x, chestY(e), e.z)) continue;
@@ -255,14 +259,14 @@
   }
   function updateAim(p, dt) {
     var In = GTP.Input, Rd = GTP.Render;
-    var active = !!p.aiming && p.alive && !p.inVehicle && !p.knockedDown && !p.swimming;
+    var active = !!p.aiming && p.alive && !p.knockedDown && !p.swimming && (!p.inVehicle || driveByWeapon(p.weapon));
     aim.active = active; aim.weapon = p.weapon;
     if (!active) { aim.target = null; aim.hover = null; aim.point = null; aim.screen = null; aim.targetScreen = null; p.lockTarget = null; return; }
     var w = WEAPONS[p.weapon] || WEAPONS.fist;
     var range = w.melee ? 7 : Math.max(w.range, 8);
     var cd = U.yawToDir(Rd.rig.yaw);
     var cur = p.lockTarget;
-    if (cur && !lockValid(p, cur, cd, range)) cur = null;
+    if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) cur = null;
     var cycle = In.pressed('lockOn');
     if (!cur || cycle) {
       var cands = lockCandidates(p, cd, range, 20 * Math.PI / 180, candBuf);
@@ -297,7 +301,7 @@
     var o = muzzle(ped), target = null, pt = null, isPlayer = ped.kind === 'player';
     if (isPlayer) {
       if (ped.aiming) {
-        if (aim.target && lockValid(ped, aim.target, U.yawToDir(GTP.Render.rig.yaw), Math.max(w.range, 8))) target = aim.target;
+        if (aim.target && lockValid(ped, aim.target, U.yawToDir(GTP.Render.rig.yaw), reachFor(aim.target, Math.max(w.range, 8)))) target = aim.target;
         if (target) pt = { x: target.x, y: chestY(target), z: target.z };
         else { var ap = aim.point || cameraAimPoint(ped, Math.max(w.range, 8)); pt = { x: ap.x, y: ap.y, z: ap.z }; }
         ped.aimYaw = GTP.Render.rig.yaw;
@@ -365,16 +369,23 @@
       sfx('hit', hit.x, hit.z, 0.4);
       return true;
     }
+    if (e.kind === 'heli') {
+      if (e.applyDamage) e.applyDamage(dmg, shooter, id);
+      impactFx(hit, 'vehicle');
+      sfx('hit', hit.x, hit.z, 0.5);
+      if (isPlayer) shooter.stats.hits = (shooter.stats.hits || 0) + 1;
+      return true;
+    }
     return false;
   }
   function hitscan(ped, w, id, ctx) {
     var pellets = w.pellets || 1, spread = w.spread || 0, isPlayer = ped.kind === 'player';
     if (!isPlayer) spread = spread * 2.2 + 0.03;
-    var o = ctx.origin, pelletHits = null;
+    var o = ctx.origin, pelletHits = null, range = reachFor(ctx.target || aim.hover, w.range);
     muzzleFlash(o, ctx.dir);
     for (var k = 0; k < pellets; k++) {
       var d = jitter(ctx.dir, spread);
-      var hit = trace(o, d, w.range, ped, traceOut);
+      var hit = trace(o, d, range, ped, traceOut);
       tracer(o, d, hit, id);
       if (hit.entity) {
         hitEntity(ped, w, id, hit, d, w.dmg / pellets);
@@ -820,8 +831,9 @@
 
     // Fire the ped's weapon toward its target. Rate-limited per ped; the player spends ammo.
     fire: function (ped, weaponId) {
-      if (!ped || !ped.alive || ped.inVehicle || ped.knockedDown || ped.entering || ped.swimming) return false;
+      if (!ped || !ped.alive || ped.knockedDown || ped.entering || ped.swimming) return false;
       var id = weaponId || ped.weapon || 'fist', w = WEAPONS[id]; if (!w) return false;
+      if (ped.inVehicle && !(ped.kind === 'player' && ped.aiming && driveByWeapon(id))) return false;   // a drive-by needs a gun and the aim held
       var now = simT(), isPlayer = ped.kind === 'player';
       if (ped._fireT != null && now - ped._fireT < 1 / w.rate - 1e-6) return false;
       if (isPlayer && !w.melee) {
@@ -885,6 +897,7 @@
 
     // UI helpers
     weaponName: function (id) { return WEAPONS[id] ? WEAPONS[id].name : String(id || ''); },
+    driveByWeapon: driveByWeapon,
     hud: function () {
       var p = player() || {}, w = p.weapon || 'fist', ammo = p.weapons ? p.weapons[w] : 0;
       return { weapon: { id: w, name: Combat.weaponName(w), ammo: ammo === Infinity ? null : (ammo | 0), infinite: ammo === Infinity }, aim: aim, death: Combat.death, hurtFlash: Combat.hurtFlash };
@@ -920,7 +933,7 @@
         ctx.fillStyle = 'rgba(10,12,20,0.7)'; ctx.fillRect(-half, half + 6, size, 5);
         ctx.fillStyle = hp > 0.5 ? '#9dff3c' : hp > 0.25 ? '#ffbe3c' : '#ff3b30'; ctx.fillRect(-half, half + 6, size * hp, 5);
         ctx.font = 'bold 11px ui-monospace, Menlo, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.fillText(t.kind === 'vehicle' ? (t.type || 'car').toUpperCase() : (t.role || 'ped').toUpperCase(), 0, half + 13);
+        ctx.fillText(t.kind === 'vehicle' ? (t.type || 'car').toUpperCase() : t.kind === 'heli' ? 'HELICOPTER' : (t.role || 'ped').toUpperCase(), 0, half + 13);
       }
       ctx.restore();
       void w; void h;

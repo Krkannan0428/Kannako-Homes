@@ -745,8 +745,8 @@
         var res = Wd.resolveCapsule(px, pz, gy, p.rad);
         var dx = res.x - px, dz = res.z - pz, dl = Math.sqrt(dx * dx + dz * dz);
         if (dl < 1e-5) continue;
-        // a small prop in the way of a moving car goes over instead of stopping it dead
-        if (res.prop && KNOCKABLE[res.prop.kind] && !res.prop.fallen && this.speed2d() > PH.knockSpeed && Math.abs(res.prop.y || 0) < 1) {
+        // a small prop in the way of the player's car goes over instead of stopping it dead (traffic keeps the posts as kerb bumpers)
+        if (res.prop && KNOCKABLE[res.prop.kind] && !res.prop.fallen && this.hasPlayer() && this.speed2d() > PH.knockSpeed && Math.abs(res.prop.y || 0) < 1) {
           this._knockProp(res.prop);
           res = Wd.resolveCapsule(px, pz, gy, p.rad);   // the prop is down: see what else pushed
           dx = res.x - px; dz = res.z - pz; dl = Math.sqrt(dx * dx + dz * dz);

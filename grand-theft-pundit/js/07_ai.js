@@ -46,7 +46,7 @@
       footEvery: [5, 4, 3.5, 3, 2.5], cruiserEvery: [0, 7, 6, 5, 4], swatEvery: [0, 0, 0, 12, 9]
     },
     roadblock: { minStar: 3, every: 12, max: 2, ahead: [84, 136], life: 30 },
-    heli: { altitude: 30, radius: 24, speed: 26, orbit: 0.3 },
+    heli: { altitude: 30, radius: 24, speed: 26, orbit: 0.3, respawn: 45 },   // respawn: seconds before another helicopter comes after one is shot down
     hoaPatrols: 2
   }, C.AI || {});
 
@@ -260,7 +260,20 @@
   var heatT = { ped: -9, cop: -9, car: -9 };
   function hookHeat() {
     var Ev = GTP.Events;
-    Ev.on('vehicle:hitPed', function (e) { if (e.vehicle && e.vehicle.hasPlayer && e.vehicle.hasPlayer() && e.ped && e.ped.alive) wanted.crime(isCop(e.ped) ? 'attackCop' : 'hitPed', 'vehicle'); });
+    // a car into a crowd or a roadblock: one crime per burst of contact, a cop knocked over is ramCop (3), not attackCop (5)
+    Ev.on('vehicle:hitPed', function (e) {
+      if (!(e.vehicle && e.vehicle.hasPlayer && e.vehicle.hasPlayer() && e.ped && e.ped.alive) || e.ped.hostile) return;
+      var now = simT();
+      if (isCop(e.ped)) { if (now - heatT.cop >= K.heatEvery) { heatT.cop = now; wanted.crime('ramCop', 'vehicle'); } }
+      else if (now - heatT.ped >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', 'vehicle'); }
+    });
+    // denting a cruiser (ramming a roadblock, a bump in a chase): one heat per ram, not per contact step
+    Ev.on('vehicle:damage', function (e) {
+      var p = player(), v = e && e.vehicle; if (!p || !v || !v.isPolice) return;
+      var src = e.src; if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
+      var now = simT();
+      if (now - heatT.car >= K.heatEveryCar) { heatT.car = now; wanted.addHeat(1, 'hitCopCar'); }
+    });
     Ev.on('damage', function (e) {
       var p = player(); if (!p || !e || !e.target || e.target === p) return;
       var src = e.src;
@@ -272,7 +285,7 @@
         if (e.target.hostile) { /* no crime */ }
         else if (isCop(e.target)) { if (now - (heatT.cop || -9) >= K.heatEvery) { heatT.cop = now; wanted.crime('attackCop', 'attackCop'); } }
         else if (e.type !== 'vehicle') { if (now - (heatT.ped || -9) >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', e.type || 'hit'); } }
-      } else if (e.target.kind === 'vehicle' && e.target.isPolice) { if (now - (heatT.car || -9) >= K.heatEveryCar) { heatT.car = now; wanted.addHeat(1, 'hitCopCar'); } }
+      }
       // gunfire scares the street
       if (e.type && /pistol|smg|shotgun|hottake|megaphone/.test(String(e.type))) AI.alarm(e.target.x, e.target.z, 26, p);
     });
@@ -938,7 +951,9 @@
       } else if (o.kind === 'ped' || o.kind === 'player') {
         if (o.inVehicle || !o.alive || o.knockedDown) continue;
         var lp = v.worldToLocal(o.x, o.z), Lp = 5 + sp * 0.9;
-        if (lp.f <= 0 || lp.f > Lp || Math.abs(lp.r) > v.hw + 0.7) continue;
+        // a ped stepping toward our line (a runner off the kerb) is seen from a wider corridor
+        var latV = (o.vx || 0) * (-f.z) + (o.vz || 0) * f.x, stepping = (lp.r > 0 && latV < -1) || (lp.r < 0 && latV > 1);
+        if (lp.f <= 0 || lp.f > Lp || Math.abs(lp.r) > v.hw + (stepping ? 2.6 : 0.7)) continue;
         var g2 = lp.f - v.hl - 1.6, cp = g2 <= 0 ? 0 : Math.sqrt(2 * K.brakeAccel * g2);
         if (ai.blockedT > K.pedBlockCreep) cp = Math.max(cp, 1.3);
         if (cp < cap) { cap = cp; reason = o; pedBlock = true; }
@@ -1097,6 +1112,7 @@
   };
   var DIRN = { x: 0, z: -1 };
   function faceToward(p, x, z, dt) { p.yaw = U.angleDamp(p.yaw, U.dirToYaw(x - p.x, z - p.z), 8, dt); }
+  function shakeAt(x, z) { var pl = player(); if (pl && GTP.Render && GTP.Render.rig) GTP.Render.rig.shake(U.clamp(1 - U.dist2d(pl.x, pl.z, x, z) / 40, 0.1, 1)); }
   // walk toward a goal, falling back to an A* path when the straight line is blocked (budgeted: one path per step)
   function walkPath(p, ai, gx, gz, run, dt) {
     var Wd = W(), d = U.dist2d(p.x, p.z, gx, gz);
@@ -1306,8 +1322,9 @@
         for (i = occ.length; i < 3; i++) { var sw = spawner.spawnPed(ss.x, ss.z, 'swat'); sw.ai.ambient = false; sw.ai.driver = true; if (!van.enter(sw, i)) sw.destroy(); }
       }
     }
-    if (q.heli[ix] && !police.heli) { police.heli = new Heli(); E().add(police.heli); }
-    else if (!q.heli[ix] && police.heli && !police.heli.leaving) police.heli.leave();
+    police.heliT = Math.max(0, (police.heliT || 0) - dt);
+    if (q.heli[ix] && !police.heli && police.heliT <= 0) { police.heli = new Heli(); E().add(police.heli); }
+    else if (!q.heli[ix] && police.heli && !police.heli.leaving && !police.heli.down) police.heli.leave();
     // roadblocks ahead of a driving player
     if (lvl >= K.roadblock.minStar && pl.inVehicle && Math.abs(pl.inVehicle.speed) > 8 && police.roadblockT <= 0 && police.roadblocks.length < K.roadblock.max) {
       police.roadblockT = K.roadblock.every;
@@ -1380,10 +1397,48 @@
       if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(true, this.x, this.z); } catch (e) { /* optional */ } }
     }
     leave() { if (this.leaving) return; this.leaving = true; this.leaveT = 0; var a = R().random() * U.TAU; this.leaveDir = { x: Math.cos(a), z: Math.sin(a) }; GTP.Events.emit('heli', { on: false }); if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(false, this.x, this.z); } catch (e) { /* optional */ } } }
+    // it can be shot down: 400 hp, smoke under half, then a spin to the ground and a blast
+    applyDamage(n, src, type) {
+      if (this.down || !(n > 0)) return 0;
+      this.hp -= n; this.lastHitBy = src || null;
+      if (this.hp <= 0) {
+        this.hp = 0; this.down = true; this.downT = 0; this.sees = false;
+        var pl = player();
+        if (pl && (src === pl || (src && src.driver === pl))) wanted.addHeat(2, 'heliDown');
+        fx({ type: 'explosion', x: this.x, y: this.y, z: this.z, size: 9, life: 0.5, color: 0xffb040 });
+        sfx('explode', this.x, this.z, 0.7);
+        GTP.Events.emit('heli:down', { heli: this, src: src || null });
+        if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(false, this.x, this.z); } catch (e) { /* optional */ } }
+      }
+      void type;
+      return n;
+    }
     update(dt) {
       this.age += dt;
       var pl = player(), H = K.heli, Wd = W();
       if (!pl) { this.destroy(); return; }
+      if (this.down) {
+        // the spin down: rotor slowing, the body yawing, falling faster, a fireball on the ground
+        this.downT += dt; this.rotor += dt * Math.max(4, 34 - this.downT * 10); this.yaw += dt * 3.5; this.bank = U.damp(this.bank, 0.5, 2, dt);
+        this.vy = (this.vy || 0) - 12 * dt; this.y += this.vy * dt; this.x += this.vx * dt * 0.6; this.z += this.vz * dt * 0.6;
+        if (this.age % 0.12 < dt) fx({ type: 'smoke', x: this.x, y: this.y + 1, z: this.z, size: 2.4, life: 1.4, color: 0x222222, vy: 1.5 });
+        var gy = Wd.heightAt(this.x, this.z, this.y);
+        if (this.y <= gy + 1.5) {
+          var r = R(), i;
+          fx({ type: 'explosion', x: this.x, y: gy + 1.5, z: this.z, size: 16, life: 0.7, color: 0xff8a30, vy: 2 });
+          for (i = 0; i < 10; i++) fx({ type: 'fire', x: this.x + r.range(-2, 2), y: gy + r.range(0.5, 2), z: this.z + r.range(-2, 2), vx: r.range(-4, 4), vy: r.range(3, 9), vz: r.range(-4, 4), size: r.range(2, 3.5), life: r.range(0.6, 1.2) });
+          for (i = 0; i < 6; i++) fx({ type: 'smoke', x: this.x, y: gy + 1 + i * 0.6, z: this.z, vx: r.range(-0.6, 0.6), vy: r.range(2, 4), vz: r.range(-0.6, 0.6), size: r.range(3, 5), life: r.range(2, 3.2), color: 0x1e1a18 });
+          fx({ type: 'decal', x: this.x, y: gy, z: this.z, size: 6, size2: 6, life: 60, color: 0x1a1210 });
+          sfx('explode', this.x, this.z, 1);
+          var near = E().hash.query(this.x, this.z, 9, scratch3);
+          for (i = 0; i < near.length; i++) { var e = near[i]; if (e === this || e.removed) continue; var d = U.dist2d(e.x, e.z, this.x, this.z); if (d > 8) continue; var k = 1 - d / 9; if ((e.kind === 'ped' || e.kind === 'player') && e.alive && !e.inVehicle) e.knockDown((e.x - this.x) / (d || 1) * 6 * k, (e.z - this.z) / (d || 1) * 6 * k, 55 * k, this.lastHitBy, 'explode'); else if (e.kind === 'vehicle' && !e.wreck) e.applyDamage(120 * k, this.lastHitBy, 'explode'); }
+          AI.alarm(this.x, this.z, 40, this.lastHitBy);
+          shakeAt(this.x, this.z);
+          this.destroy(); if (police.heli === this) { police.heli = null; police.heliT = K.heli.respawn; }
+        }
+        return;
+      }
+      if (this.hp < this.maxHp * 0.5 && this.age % 0.25 < dt) fx({ type: 'smoke', x: this.x, y: this.y + 1.2, z: this.z, size: 1.6, life: 1.1, color: 0x333333, vy: 1 });
       var tx, tz, ty;
       if (this.leaving) { this.leaveT += dt; tx = this.x + this.leaveDir.x * 60; tz = this.z + this.leaveDir.z * 60; ty = this.y + 12; if (this.leaveT > 9) { this.destroy(); if (police.heli === this) police.heli = null; return; } }
       else { this.angle += H.orbit * dt; tx = pl.x + Math.cos(this.angle) * H.radius; tz = pl.z + Math.sin(this.angle) * H.radius; ty = pl.y + H.altitude; }
@@ -1420,7 +1475,7 @@
       ud.cone.scale.set(7, len, 7);
       ud.cone.quaternion.setFromUnitVectors(ud.up, ud.dirV.set(-lx / len, -ly / len, -lz / len));
       ud.pool.position.set(lx, ly + 0.06, lz);
-      var night = GTP.Render ? GTP.Render.night || 0 : 0, on = !this.leaving;
+      var night = GTP.Render ? GTP.Render.night || 0 : 0, on = !this.leaving && !this.down;
       ud.light.visible = on; ud.light.intensity = 3 + 6 * night;
       ud.cone.visible = on; ud.cone.material.opacity = 0.05 + 0.1 * night;
       ud.pool.visible = on; ud.pool.material.opacity = 0.25 + 0.45 * night;

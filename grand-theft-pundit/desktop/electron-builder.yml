@@ -1,0 +1,91 @@
+# electron-builder configuration for the Grand Theft Pundit desktop build.
+# Docs: https://www.electron.build/configuration
+#
+# Everything packaged lives inside desktop/: main.js plus app/ (index.html, js/, vendor/ copied in
+# by sync-game.js, which also runs here as the beforePack hook so a bare `npx electron-builder`
+# still packages the current game files).
+
+appId: com.grievancecity.grandtheftpundit
+productName: Grand Theft Pundit
+copyright: Copyright © 2026 Grievance City Games. A parody; no real pundits were harmed.
+artifactName: Grand-Theft-Pundit-${version}-${os}-${arch}.${ext}
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - main.js
+  - app/**/*
+
+asar: true
+compression: normal
+npmRebuild: false
+removePackageScripts: true
+beforePack: ./sync-game.js
+
+# ---------------------------------------------------------------- macOS: Apple Silicon and Intel
+mac:
+  category: public.app-category.games
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # No `identity` here on purpose. With CSC_LINK (+ CSC_KEY_PASSWORD) in the environment,
+  # electron-builder imports that Developer ID certificate and signs; without it the build is
+  # unsigned and friends open it through Gatekeeper's "unidentified developer" flow (README).
+  # Notarization runs automatically after signing when APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
+  # APPLE_TEAM_ID are set; it also needs hardenedRuntime=true, which the release workflow passes
+  # on the command line for signed builds (-c.mac.hardenedRuntime=true).
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  darkModeSupport: true
+  minimumSystemVersion: "11.0"
+
+dmg:
+  sign: false
+  writeUpdateInfo: false
+  window:
+    width: 560
+    height: 400
+  contents:
+    - x: 150
+      y: 190
+    - x: 410
+      y: 190
+      type: link
+      path: /Applications
+
+# ---------------------------------------------------------------- Windows
+win:
+  icon: build/icon-full.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Grand Theft Pundit
+  differentialPackage: false
+  artifactName: Grand-Theft-Pundit-${version}-${os}-${arch}-setup.${ext}
+
+portable:
+  artifactName: Grand-Theft-Pundit-${version}-${os}-${arch}-portable.${ext}
+
+# ---------------------------------------------------------------- Linux
+linux:
+  icon: build/icon-full.png
+  category: Game
+  synopsis: Open-city parody game about the pundit-industrial complex
+  maintainer: Grievance City Games
+  executableName: grand-theft-pundit
+  target:
+    - target: AppImage
+      arch: [x64]

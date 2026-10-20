@@ -99,16 +99,18 @@ H.run('feel', async (t) => {
   t.assert(loop.samples.every((s) => s.street === 'The Loop'), 'the HUD names the Loop: ' + loop.samples.map((s) => s.street).join(','));
 
   // ---- 2. three stars, then pay-and-spray ----
+  // three stars on the Loop: the response arrives within a few seconds (longer and a roadblock after the ramp ends the run in a bust)
   const stars = await page.evaluate(() => {
     const p = GTP.game.player;
+    GTP.game.debug.setMoney(1000);   // a new game's $250 does not cover a three-star respray
     GTP.game.debug.setWanted(3);
-    window.F_.drive(6);
+    window.F_.drive(3);
     GTP.Input.touch.stick.active = false; GTP.Input.touch.stick.x = 0;
     const c = GTP.AI.debug.counts();
     return { wanted: p.wanted, counts: c, state: GTP.game.state, money: p.money, inCar: !!p.inVehicle };
   });
   console.log('  three stars: ' + JSON.stringify(stars));
-  t.assert(stars.wanted === 3 && stars.state === 'playing' && stars.counts.cruisers + stars.counts.foot > 0, 'three stars bring a response: ' + JSON.stringify(stars));
+  t.assert(stars.wanted === 3 && stars.state === 'playing' && stars.inCar && stars.counts.cruisers + stars.counts.foot > 0, 'three stars bring a response: ' + JSON.stringify(stars));
   const spray = await page.evaluate(() => {
     const p = GTP.game.player, v = p.inVehicle, W = GTP.World;
     const g = W.landmark('strip_garage');
@@ -121,7 +123,7 @@ H.run('feel', async (t) => {
   });
   console.log('  respray: ' + JSON.stringify(spray));
   t.assert(spray.ev && spray.ev.landmark === 'strip_garage' && spray.ev.cost === 300 && spray.spent === 300, 'Detail & Evidence resprays three stars for $300: ' + JSON.stringify(spray));
-  t.assert(spray.wanted === 0 && spray.heat === 0 && spray.hp === 80, 'stars cleared and the car repaired');
+  t.assert(spray.wanted === 0 && spray.heat === 0 && spray.hp === 80 && spray.s < 1.5, 'stars cleared and the car repaired within a second');
   await t.shot(page, 'feel_garage');
 
   // ---- 3. death and the hospital ----
