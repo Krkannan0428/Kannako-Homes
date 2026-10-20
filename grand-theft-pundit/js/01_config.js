@@ -72,7 +72,8 @@
       rollMax: 0.05, rollDamp: 4,
       closeScale: 0.5,
       aimDist: 2.0, aimSide: 0.7, aimHeight: 1.85, aimLookHeight: 1.5, aimFov: 50,   // over the right shoulder, a touch above head height so the gun hand and the target both read
-      pitchMin: -20 * Math.PI / 180, pitchMax: 60 * Math.PI / 180,
+      pitchMin: -28 * Math.PI / 180, pitchMax: 60 * Math.PI / 180,
+      pitchMinAim: -75 * Math.PI / 180,   // aiming, the scope and first person look up much further (the 5-star helicopter, rooftops: QA CMB-07)
       lookSens: 0.0032,         // radians per pixel of mouse delta
       autoYawDelay: 1.2,        // seconds without look input before the camera eases behind movement
       autoYawRate: 2.2,         // 1/s
@@ -209,21 +210,27 @@
     }
   };
 
+  // Mission tunables 09_missions.js merges over its own defaults: the unlock ammo of GDD_EXPANSION §2.1 shared rules
+  // (rifle 90, ratio launcher 3; QA-C1-13). The whole table is given because the merge is shallow.
+  C.MISSIONS = C.MISSIONS || {};
+  C.MISSIONS.weaponAmmo = { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16, tableleg: Infinity, revolver: 24, rifle: 90, hotmic: 4, sniper: 10, ratio: 3 };
+
   // Per-district light (Render blends toward the district under the focus over a couple of seconds): multipliers on the
   // hemisphere's sky and ground colours by day (the bounce off grass, brick, sand or concrete) and on the night fill
-  // (sodium on the docks, neon magenta on the strip, cool LED downtown and at the airport). v0.3 environment track.
+  // (sodium on the docks, neon magenta on the strip, cool LED downtown and at the airport); `fill` scales the night fill
+  // where there are few street lamps (the suburbs, the parks, the quay). v0.3 environment track.
   C.DISTRICT_LIGHT = {
-    downtown:   { sky: [0.95, 0.98, 1.05], ground: [0.9, 0.93, 1.0], night: [0.9, 0.98, 1.15] },
-    strip:      { sky: [1.03, 0.97, 1.03], ground: [1.06, 0.93, 1.0], night: [1.3, 0.82, 1.25] },
-    campus:     { sky: [1.0, 1.0, 0.98], ground: [0.9, 1.1, 0.86], night: [1.05, 1.0, 0.9] },
-    suburbs:    { sky: [1.0, 1.01, 0.98], ground: [0.9, 1.1, 0.86], night: [1.05, 1.0, 0.9] },
-    industrial: { sky: [0.97, 1.0, 0.98], ground: [0.96, 0.97, 0.92], night: [1.2, 0.98, 0.72] },
-    capitol:    { sky: [1.01, 1.0, 0.98], ground: [1.0, 1.04, 0.94], night: [1.1, 1.0, 0.85] },
-    marina:     { sky: [1.04, 1.0, 0.96], ground: [1.1, 1.02, 0.9], night: [1.1, 0.95, 1.05] },
-    hills:      { sky: [1.0, 1.0, 0.98], ground: [0.92, 1.08, 0.88], night: [1.0, 1.0, 1.0] },
-    uptown:     { sky: [1.02, 0.99, 0.97], ground: [1.1, 0.96, 0.88], night: [1.15, 1.0, 0.85] },
-    airport:    { sky: [0.98, 1.0, 1.03], ground: [0.98, 0.99, 1.0], night: [0.9, 1.0, 1.18] },
-    port:       { sky: [0.96, 1.0, 1.0], ground: [0.94, 0.98, 0.96], night: [1.22, 0.96, 0.7] }
+    downtown:   { sky: [0.95, 0.98, 1.05], ground: [0.9, 0.93, 1.0], night: [0.9, 0.98, 1.15], fill: 1.0 },
+    strip:      { sky: [1.03, 0.97, 1.03], ground: [1.06, 0.93, 1.0], night: [1.3, 0.82, 1.25], fill: 1.1 },
+    campus:     { sky: [1.0, 1.0, 0.98], ground: [0.9, 1.1, 0.86], night: [1.05, 1.0, 0.9], fill: 1.6 },
+    suburbs:    { sky: [1.0, 1.01, 0.98], ground: [0.9, 1.1, 0.86], night: [1.05, 1.0, 0.9], fill: 2.6 },
+    industrial: { sky: [0.97, 1.0, 0.98], ground: [0.96, 0.97, 0.92], night: [1.2, 0.98, 0.72], fill: 1.5 },
+    capitol:    { sky: [1.01, 1.0, 0.98], ground: [1.0, 1.04, 0.94], night: [1.1, 1.0, 0.85], fill: 1.2 },
+    marina:     { sky: [1.04, 1.0, 0.96], ground: [1.1, 1.02, 0.9], night: [1.1, 0.95, 1.05], fill: 1.3 },
+    hills:      { sky: [1.0, 1.0, 0.98], ground: [0.92, 1.08, 0.88], night: [1.0, 1.0, 1.0], fill: 1.7 },
+    uptown:     { sky: [1.02, 0.99, 0.97], ground: [1.1, 0.96, 0.88], night: [1.15, 1.0, 0.85], fill: 1.2 },
+    airport:    { sky: [0.98, 1.0, 1.03], ground: [0.98, 0.99, 1.0], night: [0.9, 1.0, 1.18], fill: 1.3 },
+    port:       { sky: [0.96, 1.0, 1.0], ground: [0.94, 0.98, 0.96], night: [1.22, 0.96, 0.7], fill: 1.9 }
   };
 
   // Per-district filler styles: lot sizes in tiles, floors, facade style key,

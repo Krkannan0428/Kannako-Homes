@@ -171,7 +171,7 @@
     'vec3 viewPos( vec2 uv ) { float d = texture2D( tDepth, uv ).x; vec4 p = inverseProjection * vec4( uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0 ); return p.xyz / p.w; }',
     'void main() {',
     '  float d = texture2D( tDepth, vUv ).x;',
-    '  if ( d >= 0.9999 || wet < 0.02 ) { gl_FragColor = vec4( 0.0 ); return; }',
+    '  if ( d >= 0.9999 ) { gl_FragColor = vec4( 0.0 ); return; }',
     '  vec3 P = viewPos( vUv );',
     '  vec2 px = 1.0 / resolution;',
     '  vec3 Px = viewPos( vUv + vec2( px.x, 0.0 ) ), Py = viewPos( vUv + vec2( 0.0, px.y ) );',
@@ -180,11 +180,15 @@
     '  if ( Nw.y < 0.0 ) { N = -N; Nw = -Nw; }',
     '  if ( Nw.y < 0.96 || -P.z > 140.0 ) { gl_FragColor = vec4( 0.0 ); return; }',
     '  vec3 W = ( cameraWorld * vec4( P, 1.0 ) ).xyz;',
+    // the sea reflects the city always (harbour lights at night); a street only when it is wet
+    '  float sea = step( W.y, -0.9 );',
+    '  if ( sea < 0.5 && wet < 0.02 ) { gl_FragColor = vec4( 0.0 ); return; }',
     // the ground shader's puddle field (same noise, same scales)
     '  float n2 = texture2D( tNoise, W.xz / 23.0 + 0.37 ).r;',
     '  float pn = texture2D( tNoise, W.xz / 11.0 + 0.71 ).r * 0.65 + n2 * 0.35;',
     '  float puddle = smoothstep( 0.6 - 0.1 * wet, 0.66 - 0.1 * wet, pn ) * smoothstep( 0.12, 0.55, wet );',
     '  vec3 V = normalize( P ), R = normalize( reflect( V, N ) );',
+    '  if ( sea > 0.5 ) { vec2 wn = texture2D( tNoise, W.xz / 6.0 ).rg - 0.5; R = normalize( R + vec3( wn.x, 0.0, wn.y ) * 0.06 ); }',
     '  if ( R.z > 0.2 ) { gl_FragColor = vec4( 0.0 ); return; }',
     '  float t = 0.4, tPrev = 0.0; vec3 hit = vec3( -1.0 );',
     '  for ( int i = 0; i < 28; i ++ ) {',
@@ -203,12 +207,12 @@
     '  if ( hit.x < 0.0 ) { gl_FragColor = vec4( 0.0 ); return; }',
     // only what stands above the street reflects (lamps, signs, walls, cars): another bit of road is not worth a reflection
     '  float hy = ( cameraWorld * vec4( viewPos( hit.xy ), 1.0 ) ).y;',
-    '  if ( hy < W.y + 0.3 ) { gl_FragColor = vec4( 0.0 ); return; }',
+    '  if ( hy < W.y + 0.3 && sea < 0.5 ) { gl_FragColor = vec4( 0.0 ); return; }',
     '  vec2 e = smoothstep( 0.0, 0.12, hit.xy ) * ( 1.0 - smoothstep( 0.88, 1.0, hit.xy ) );',
     '  float cosT = clamp( -dot( V, N ), 0.0, 1.0 ), F = 0.02 + 0.98 * pow( 1.0 - cosT, 5.0 );',
-    '  float k = e.x * e.y * ( 1.0 - smoothstep( 40.0, 140.0, -P.z ) ) * wet * mix( 0.18, 0.75, puddle ) * mix( 0.35, 1.0, F );',
+    '  float k = e.x * e.y * ( 1.0 - smoothstep( 40.0, 140.0, -P.z ) ) * mix( wet * mix( 0.18, 0.75, puddle ), 0.55, sea ) * mix( 0.35, 1.0, F );',
     // wet asphalt smears a reflection into vertical streaks (more on bare wet road than in a puddle)
-    '  float sp = mix( 0.035, 0.008, puddle );',
+    '  float sp = mix( mix( 0.035, 0.008, puddle ), 0.02, sea );',
     '  vec3 col = vec3( 0.0 );',
     '  for ( int s = -3; s <= 3; s ++ ) col += min( texture2D( tColor, hit.xy + vec2( 0.0, float( s ) * sp / 3.0 ) ).rgb, vec3( 24.0 ) ) * ( 1.0 - abs( float( s ) ) * 0.2 );',
     '  col /= 4.6;',
@@ -538,7 +542,7 @@
         F._prevVP.copy(F._curVP); if (!taa) F._histValid = true;
         // 1d. wet-road reflections (half resolution) and the cutscene depth of field (half resolution)
         var wet = Rd.weather ? Rd.weather.wet : 0, ssrTex = null, dofTex = null;
-        if (F.flags.ssr && wet > 0.03) {
+        if (F.flags.ssr) {
           var su2 = M.ssr.uniforms;
           su2.tColor.value = hdr; su2.tDepth.value = F._rt.depthTexture; su2.tNoise.value = GTP.Assets ? GTP.Assets.clouds : null; su2.resolution.value.set(F._ssrRT.width, F._ssrRT.height);
           su2.projection.value.copy(camera.projectionMatrix); su2.inverseProjection.value.copy(camera.projectionMatrixInverse); su2.cameraWorld.value.copy(camera.matrixWorld);

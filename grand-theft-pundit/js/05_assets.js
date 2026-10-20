@@ -432,19 +432,25 @@
     },
     // vehicle paint: a clearcoated metallic at high / ultra, a plain metallic standard below (Render.quality may change
     // the preset after a car is built; the car keeps its material until it is respawned)
-    paintMaterial: function (hex) {
-      var col = new THREE.Color(hex || '#c94040');
-      var m = C.QUALITY.clearcoat
-        ? new THREE.MeshPhysicalMaterial({ vertexColors: true, color: col, roughness: 0.42, metalness: 0.5, clearcoat: 1.0, clearcoatRoughness: 0.12, envMapIntensity: 1.0 })
-        : new THREE.MeshStandardMaterial({ vertexColors: true, color: col, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.0 });
-      m.name = 'paint';
+    // finish (the mod shop): 'gloss' (default), 'metallic' (flake: more metal, a softer coat), 'matte' (no coat, rough),
+    // 'chrome' (a mirror)
+    paintMaterial: function (hex, finish) {
+      var col = new THREE.Color(hex || '#c94040'), F = { gloss: [0.42, 0.5, 0.12], metallic: [0.3, 0.85, 0.2], matte: [0.82, 0.05, -1], chrome: [0.06, 1.0, 0.05] }[finish || 'gloss'] || [0.42, 0.5, 0.12];
+      var coat = C.QUALITY.clearcoat && F[2] >= 0;
+      var m = coat
+        ? new THREE.MeshPhysicalMaterial({ vertexColors: true, color: col, roughness: F[0], metalness: F[1], clearcoat: 1.0, clearcoatRoughness: F[2], envMapIntensity: 1.0 })
+        : new THREE.MeshStandardMaterial({ vertexColors: true, color: col, roughness: Math.max(0.05, F[0] - (F[2] >= 0 ? 0.1 : 0)), metalness: F[1] * 0.9, envMapIntensity: 1.0 });
+      m.name = 'paint'; m.userData.finish = finish || 'gloss';
       return m;
     },
-    glassMaterial: function () {
-      var M = Assets._mats;
-      if (!M.glass) { M.glass = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xb8c8d6, roughness: 0.05, metalness: 0.92, envMapIntensity: 1.1, transparent: true, opacity: 0.72 }); M.glass.name = 'glass'; }
-      return M.glass;
+    glassMaterial: function (tint) {
+      var M = Assets._mats, t = Math.max(0, Math.min(3, tint | 0)), key = t ? 'glass' + t : 'glass';
+      if (!M[key]) { M[key] = new THREE.MeshStandardMaterial({ vertexColors: true, color: t ? new THREE.Color(0xb8c8d6).multiplyScalar(1 - t * 0.27) : 0xb8c8d6, roughness: 0.05, metalness: 0.92, envMapIntensity: 1.1, transparent: true, opacity: 0.72 + t * 0.08 }); M[key].name = key; }
+      return M[key];
     },
+    // meshes for vehicle types another track builds: vehicleMeshes[type] = function (vehicle) -> Object3D (Render's
+    // buildEntityMesh uses one when it exists; v0.3 vehicles track: moto, heli, plane, jet, speedboat, jetski)
+    vehicleMeshes: {},
     chromeMaterial: function () {
       var M = Assets._mats;
       if (!M.chrome) { M.chrome = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xffffff, roughness: 0.2, metalness: 1.0, envMapIntensity: 1.2 }); M.chrome.name = 'chrome'; }
@@ -1738,7 +1744,8 @@
     '    float lit = smoothstep( 0.3, 0.7, gm.g ), cool = smoothstep( 0.3, 0.7, gm.b );',
     '    vec3 lampC = mix( vec3( 1.0, 0.68, 0.38 ), vec3( 0.62, 0.72, 0.85 ), cool );',
     '    float fall = face == 3.0 ? 1.4 : mix( 0.55, 1.1, smoothstep( 0.0, 1.0, hp.y ) );',
-    '    float nightL = uGtpInt.y * lit * ( 0.65 + 0.6 * h3 ) * ( 1.0 + shop * 0.5 );',
+    '    float nightL = uGtpInt.y * lit * ( 0.65 + 0.6 * h3 ) * ( 1.0 - shop * 0.25 );',
+    '    col *= 1.0 - shop * 0.3;',
     '    vec3 lightIn = vec3( uGtpInt.x ) * mix( 1.05, 0.4, clamp( hp.z, 0.0, 1.0 ) ) + lampC * nightL * fall;',
     '    vec3 inter = col * lightIn;',
     // blinds pulled part way down in some rooms (not the shops), with slats

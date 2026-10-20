@@ -21,6 +21,9 @@
   var UNIT_H = { pillar: 1, flag: 1, mast: 1, stack: 1, antenna: 1, sign: 1, bin: 1, billboard: 1, column: 1, craneleg: 1 };
   var NO_SHADOW = { pool: 1, canopy: 1, edgelight: 1, beacon: 1, railing: 1, fence: 1, steps: 1 };
   // props big enough to throw a shadow worth seeing from far away (they stay on layer 0, in the far cascade)
+  // props a car can knock over keep their own instance (Render.knockProp tips it); every other small prop of a chunk is
+  // baked into one merged mesh (one draw call instead of one per kind)
+  var KNOCKABLE = { lamp: 1, hydrant: 1, bin: 1, bench: 1, table: 1, luggage: 1, pallet: 1, stanchion: 1, cutout: 1 };
   var BIG_PROPS = { crane: 1, craneleg: 1, ship: 1, plane: 1, jet: 1, gantry: 1, billboard: 1, ferryboat: 1, yacht: 1, gazebo: 1, container: 1, canopy: 1, jetbridge: 1, cab: 1, stadium: 1 };
   var MAX_POINTS = 12, MAX_SPOTS = 6, MAX_RAIN = 2400, MAX_PUDDLES = 60;
   // which facade styles get which street-level and roof detail in _building (the building's own facade paints the
@@ -472,7 +475,7 @@
       L.fill.color.set(C.SKY.night.fill || '#6a7ab0');
       var SN = C.SKY.night, fillK = (Q.pointLights | 0) > 0 ? SN.fillLit : (Q.post ? SN.fillI : SN.fillLow);   // low has no post lift either
       L.fill.intensity = night * U.lerp(1, 0.75, overcast) * (fillK != null ? fillK : 0.3);
-      L._fillBase = L.fill.color.clone();
+      L._fillBase = L.fill.color.clone(); L._fillI = L.fill.intensity;
       Render._applyDistrictTint(0);
       // a physically plausible sun: the preset intensity shaped by elevation (a cosine-ish rise, warm and weak at the
       // horizon), dimmed by cloud cover; at night a faint cool moon from the opposite side
@@ -494,7 +497,7 @@
       sk.stars.material.opacity = Math.max(0, night - 0.2) * 0.9 * (1 - overcast);
       // clouds: cover and tint follow the weather; the sunlit side takes the sun's colour, the shade the sky's
       var cm = sk.cloudMat.uniforms;
-      cm.cover.value = U.lerp(0.34, 0.9, overcast) + rain * 0.06;
+      cm.cover.value = U.lerp(0.43, 0.9, overcast) + rain * 0.06;
       cm.softness.value = U.lerp(0.16, 0.08, overcast);
       cm.color.value.copy(_c1.set('#ffffff').lerp(sunC, 0.35 + horizonW * 0.4).lerp(_c2.set('#0e1222'), night).lerp(_c3.set('#b8bec6'), overcast * (1 - night)));
       cm.shade.value.copy(_c1.copy(hor).lerp(top, 0.5).multiplyScalar(0.9).lerp(_c2.set('#060810'), night * 0.8).lerp(_c3.set('#5f6870'), overcast * (1 - night) * 0.8));
@@ -786,9 +789,11 @@
     _applyDistrictTint: function (dt) {
       var L = Render.lights, W = Render._World, DL = C.DISTRICT_LIGHT; if (!L || !L._skyBase || !DL) return;
       var fx = Render.focusPoint(), d = W.districtAt ? W.districtAt(fx.x, fx.z) : null, want = (d && DL[d.id]) || null;
-      var T = Render._dTint || (Render._dTint = { sky: [1, 1, 1], ground: [1, 1, 1], night: [1, 1, 1] });
+      var T = Render._dTint || (Render._dTint = { sky: [1, 1, 1], ground: [1, 1, 1], night: [1, 1, 1], fill: 1 });
       var k = dt > 0 ? 1 - Math.exp(-1.4 * dt) : 1;
       ['sky', 'ground', 'night'].forEach(function (key) { for (var i = 0; i < 3; i++) T[key][i] += ((want ? want[key][i] : 1) - T[key][i]) * k; });
+      T.fill += ((want && want.fill ? want.fill : 1) - T.fill) * k;
+      if (L._fillI != null) L.fill.intensity = L._fillI * T.fill;
       L.hemi.color.setRGB(L._skyBase.r * T.sky[0], L._skyBase.g * T.sky[1], L._skyBase.b * T.sky[2]);
       L.hemi.groundColor.setRGB(L._groundBase.r * T.ground[0], L._groundBase.g * T.ground[1], L._groundBase.b * T.ground[2]);
       if (L._fillBase) L.fill.color.setRGB(L._fillBase.r * T.night[0], L._fillBase.g * T.night[1], L._fillBase.b * T.night[2]);
@@ -1006,7 +1011,7 @@
       ch.far = far;
       if (ch.ground) ch.ground.material = far ? A.groundMaterialFar() : A.groundMaterial();
       if (ch.buildings) ch.buildings.forEach(function (b) { b.mesh.material = far ? A.facadeMaterialFar(b.style) : A.facadeMaterial(b.style); });
-      if (ch.props) ch.props.forEach(function (im) { var rec = A.prop(im.userData.kind || 'crate'); im.material = far ? (rec.materialFar || A.propMaterialFar()) : rec.material; });
+      if (ch.props) ch.props.forEach(function (im) { var rec = im.userData.kind === 'baked' ? { material: A.propMaterial() } : A.prop(im.userData.kind || 'crate'); im.material = far ? (rec.materialFar || A.propMaterialFar()) : rec.material; });
     },
     buildChunk: function (cx, cz) {
       var key = cx + ',' + cz;
@@ -1711,8 +1716,10 @@
         if (p.kind === 'edgelight') edgelights.push(p);
         (byKind[p.kind] || (byKind[p.kind] = [])).push(p);
       }
+      var bake = { small: null, big: null };
       Object.keys(byKind).forEach(function (kind) {
         var list = byKind[kind], rec = A.prop(kind);
+        if (!rec.foliage && !KNOCKABLE[kind] && !NO_SHADOW[kind] && rec.material === A.propMaterial()) { Render._bakeProps(bake, kind, list, rec, W); return; }
         var im = new THREE.InstancedMesh(rec.geometry, rec.material, list.length);
         im.castShadow = rec.castShadow && !NO_SHADOW[kind]; im.receiveShadow = true; im.name = 'props:' + kind; im.userData.kind = kind;
         if (!rec.foliage && !BIG_PROPS[kind]) im.layers.set(1);
@@ -1740,6 +1747,19 @@
         im.frustumCulled = true;
         im.computeBoundingSphere();
         ch.group.add(im); ch.props.push(im);
+      });
+      ['small', 'big'].forEach(function (k) {
+        var b = bake[k]; if (!b || !b.n) return;
+        var geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3)); geo.setAttribute('glow', new THREE.Float32BufferAttribute(b.glow, 1));
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
+        geo.setIndex(b.n > 65535 ? new THREE.Uint32BufferAttribute(b.idx, 1) : new THREE.Uint16BufferAttribute(b.idx, 1));
+        geo.computeBoundingSphere();
+        var mesh = new THREE.Mesh(geo, A.propMaterial());
+        mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.own = true; mesh.userData.kind = 'baked'; mesh.name = 'props:baked-' + k;
+        if (k === 'small') mesh.layers.set(1);
+        ch.group.add(mesh); ch.props.push(mesh);
       });
       // text signs: one plane each (textures cached by text)
       signs.forEach(function (p) {
@@ -1795,6 +1815,33 @@
         if (!Render._beaconM) Render._beaconM = new THREE.PointsMaterial({ map: A.glow, size: 2.4, sizeAttenuation: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.9, color: 0xff3030 });
         var bPts = new THREE.Points(bg, Render._beaconM); bPts.renderOrder = 6; bPts.userData.own = true; bPts.name = 'beacons';
         ch.group.add(bPts);
+      }
+    },
+    // append every instance of a prop kind to the chunk's baked mesh (positions and normals transformed, the instance
+    // colour multiplied into the vertex colour, the glow attribute carried)
+    _bakeProps: function (bake, kind, list, rec, W) {
+      var key = BIG_PROPS[kind] ? 'big' : 'small', b = bake[key] || (bake[key] = { pos: [], nor: [], col: [], glow: [], uv: [], idx: [], n: 0 });
+      var g = rec.geometry, P = g.attributes.position, N = g.attributes.normal, Cc = g.attributes.color, G = g.attributes.glow, UVa = g.attributes.uv, I = g.index;
+      var nm = new THREE.Matrix3(), v = new THREE.Vector3(), cc = new THREE.Color();
+      for (var k = 0; k < list.length; k++) {
+        var p = list[k], sx = p.sx || p.scale || 1, sy = p.sy || p.scale || 1, sz = p.sz || p.scale || 1;
+        if (UNIT_H[kind]) { sy = p.h || 1; if (kind === 'sign' || kind === 'billboard') sy = Math.max(0.5, p.y - (p.h || 1) / 2); }
+        if (kind === 'hedge') { sx = p.sx || 1; sz = p.sz || 1; sy = p.h || 1; }
+        var py = (kind === 'sign' || kind === 'billboard') ? W.heightAt(p.x, p.z, 0) : (p.y == null ? CURB : p.y);
+        _q.setFromAxisAngle(_v2.set(0, 1, 0), p.rot || 0);
+        _m.compose(_v.set(p.x, py, p.z), _q, _v2.set(sx, sy, sz));
+        nm.getNormalMatrix(_m);
+        if (p.color) cc.set(p.color); else cc.setRGB(1, 1, 1);
+        var base = b.n;
+        for (var i = 0; i < P.count; i++) {
+          v.fromBufferAttribute(P, i).applyMatrix4(_m); b.pos.push(v.x, v.y, v.z);
+          v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); b.nor.push(v.x, v.y, v.z);
+          if (Cc) b.col.push(Cc.getX(i) * cc.r, Cc.getY(i) * cc.g, Cc.getZ(i) * cc.b); else b.col.push(cc.r, cc.g, cc.b);
+          b.glow.push(G ? G.getX(i) : 0);
+          if (UVa) b.uv.push(UVa.getX(i), UVa.getY(i)); else b.uv.push(0, 0);
+        }
+        if (I) for (i = 0; i < I.count; i++) b.idx.push(base + I.getX(i)); else for (i = 0; i < P.count; i++) b.idx.push(base + i);
+        b.n += P.count;
       }
     },
     // ---------------------------------------------------- knocked props --
@@ -1864,10 +1911,37 @@
       if (ud && ud.paint) ud.paint.dispose();
       if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.visible = false; Render.lights.headlightOwner = null; }
     },
+    // drop an entity's mesh and build it again from its current state (a vehicle after a mod shop visit, a ped after an
+    // outfit or a haircut): same parent, same pose; returns the new mesh (v0.3: the vehicles and systems tracks call it)
+    rebuildEntityMesh: function (e) {
+      if (!e) return null;
+      var old = e.mesh, parent = old && old.parent ? old.parent : Render.entityGroup;
+      if (old) {
+        Render.detach(e);
+        old.traverse(function (o) { if (o.geometry && o.userData && o.userData.own) o.geometry.dispose(); });
+      }
+      e.mesh = null;
+      try { e.mesh = Render.buildEntityMesh(e); } catch (err) { U.reportError(err, 'rebuildEntityMesh'); e.mesh = old; }
+      if (!e.mesh) return null;
+      if (e.mesh !== old && !e.removed) {
+        parent.add(e.mesh);
+        e.mesh.traverse(function (o) { o.layers.set(1); }); e.mesh.userData.gtpLayer = 1;
+        e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw || 0;
+        if (old) { e.mesh.visible = old.visible; e.mesh.quaternion.copy(old.quaternion); }
+      }
+      if (e.kind === 'vehicle' && e.mesh.userData.rec) Render.syncVehicle(e);
+      if (GTP.Events) GTP.Events.emit('entity:mesh', { entity: e });
+      return e.mesh;
+    },
     buildEntityMesh: function (e) {
       var A = Render._A;
       if (e.kind === 'ped' || e.kind === 'player') return A.pedParts(e.look || {});
-      if (e.kind === 'vehicle') return Render.buildVehicleMesh(e);
+      if (e.kind === 'vehicle') {
+        // a type another track builds (motorcycles, aircraft, boats: GTP.Assets.vehicleMeshes[type](vehicle))
+        var VM = A.vehicleMeshes;
+        if (VM && typeof VM[e.type] === 'function') { var cm = VM[e.type](e); if (cm) return cm; }
+        return Render.buildVehicleMesh(e);
+      }
       if (e.kind === 'pickup') return (GTP.Combat && GTP.Combat.pickupMesh) ? GTP.Combat.pickupMesh(e) : A.pickupMesh(e.pickupType);
       if (e.kind === 'projectile') {
         var pm = new THREE.Mesh(new THREE.SphereGeometry(e.weaponId === 'hottake' ? 0.16 : 0.07, 6, 4), e.weaponId === 'hottake' ? Render._hotMat() : A.colorMaterial('#ffe08a'));
@@ -1903,9 +1977,11 @@
       return Render._wm[name];
     },
     buildVehicleMesh: function (e) {
-      var A = Render._A, rec = A.vehicleGeometry(e.type || 'sedan', e.wrap), M = Render._vehicleMats();
-      var paint = A.paintMaterial(e.color || '#c94040');
-      var mats = [paint, M.detail, M.glass, M.headOff, M.tailOff, M.barDim, M.barDim, e.wrap ? Render._wrapMat(e.wrap) : M.detail, M.chrome];
+      var A = Render._A, mods = e.mods || null, rec = A.vehicleGeometry(e.type || 'sedan', e.wrap, mods), M = Render._vehicleMats();
+      // the mod shop (GTP.Vehicles.mod sets vehicle.mods): the paint's primary colour and finish, the window tint
+      var pm = mods && mods.paint, paint = A.paintMaterial((pm && pm.primary) || e.color || '#c94040', pm && pm.finish);
+      var glass = mods && mods.tint ? A.glassMaterial(mods.tint) : M.glass;
+      var mats = [paint, M.detail, glass, M.headOff, M.tailOff, M.barDim, M.barDim, e.wrap ? Render._wrapMat(e.wrap) : M.detail, M.chrome];
       var grp = new THREE.Group();
       var body = new THREE.Mesh(rec.body, mats); body.castShadow = true; body.receiveShadow = false; body.name = 'body'; grp.add(body);
       var n = rec.wheelOffsets.length;
@@ -2174,8 +2250,11 @@
       // recoil (Combat): the view jumps up (and a little sideways) and recovers by damp over `recover` seconds (0.25 default)
       kick: function (pitchDeg, yawDeg, recover) {
         var r = Render.rig, kp = (pitchDeg || 0) * Math.PI / 180, ky = (yawDeg || 0) * Math.PI / 180;
-        r.pitch = Math.max(C.CAMERA.pitchMin, r.pitch - kp); r.yaw += ky;
-        r.kickP += kp; r.kickY += ky; r._kickLam = 4 / (recover || 0.25);
+        // only the kick the clamp let through is recovered later: at the top of the range the view comes back to where
+        // it was instead of drifting down (QA CMB-13)
+        var before = r.pitch;
+        r.pitch = Math.max(r._pitchMin != null ? r._pitchMin : C.CAMERA.pitchMin, r.pitch - kp); r.yaw += ky;
+        r.kickP += before - r.pitch; r.kickY += ky; r._kickLam = 4 / (recover || 0.25);
       },
       update: function (dt, input) {
         var r = Render.rig, CAM = C.CAMERA, W = Render._World;
@@ -2189,8 +2268,14 @@
         var mode = (t.cameraMode || r.mode);
         var speed = Math.sqrt((t.vx || 0) * (t.vx || 0) + (t.vz || 0) * (t.vz || 0));
         var now = GTP.game ? GTP.game.time.t : 0;
+        // aiming, the scope and first person look far further up than the chase camera can (QA CMB-07); leaving them
+        // eases the pitch back into the chase range
+        var wide = (!!t.aiming && !inCar) || !!sc || mode === 'first';
+        var pMin = wide ? (CAM.pitchMinAim != null ? CAM.pitchMinAim : CAM.pitchMin) : CAM.pitchMin;
+        r._pitchMin = pMin;
+        if (r.pitch < pMin) r.pitch = U.damp(r.pitch, pMin, 6, dt);
         if (look && (look.dx || look.dy)) {
-          r.yaw -= look.dx * CAM.lookSens; r.pitch = U.clamp(r.pitch + look.dy * CAM.lookSens, CAM.pitchMin, CAM.pitchMax);
+          r.yaw -= look.dx * CAM.lookSens; r.pitch = U.clamp(r.pitch + look.dy * CAM.lookSens, Math.min(pMin, r.pitch), CAM.pitchMax);
         } else {
           var since = now - (input ? input.lastLookTime : -1e9);
           if (inCar) {
@@ -2222,11 +2307,14 @@
             var rec = Render._A.vehicleGeometry(v.type, v.wrap), eye = rec.lightPoints.eye, ep = v.localToWorld(eye.x, -eye.z);
             desired = { x: ep.x, y: v.y + eye.y, z: ep.z };
           } else desired = { x: t.x + d.x * 0.15, y: t.y + C.PLAYER.eye, z: t.z + d.z * 0.15 };
-          fx = desired.x + d.x * 6; fy = desired.y - Math.sin(r.pitch) * 3; fz = desired.z + d.z * 6;
+          // a real yaw / pitch direction (the old 6 m flat + 3 m drop capped the look-up near 10 degrees)
+          var cp = Math.cos(r.pitch), spn = Math.sin(r.pitch);
+          fx = desired.x + d.x * cp * 6; fy = desired.y - spn * 6; fz = desired.z + d.z * cp * 6;
         } else if (aiming) {
           var ah = CAM.aimHeight || 1.85, al = CAM.aimLookHeight || 1.5;
           desired = { x: t.x - d.x * CAM.aimDist + rx * CAM.aimSide, y: t.y + ah + Math.sin(r.pitch) * 1.2, z: t.z - d.z * CAM.aimDist + rz * CAM.aimSide };
-          fx = t.x + d.x * 8 + rx * CAM.aimSide; fy = t.y + al - Math.sin(r.pitch) * 6; fz = t.z + d.z * 8 + rz * CAM.aimSide;
+          var cpa = Math.cos(r.pitch), spa = Math.sin(r.pitch);
+          fx = t.x + d.x * 8 * cpa + rx * CAM.aimSide; fy = t.y + al - spa * 8; fz = t.z + d.z * 8 * cpa + rz * CAM.aimSide;
           desired = Render.rig._pullIn(t.x, t.y + 1.5, t.z, desired, 0.4);
         } else {
           var D = dist * Math.cos(r.pitch), Hh = dist * Math.sin(r.pitch) + (height - lookH);
