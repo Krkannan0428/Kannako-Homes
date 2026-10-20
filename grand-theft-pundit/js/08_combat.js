@@ -98,6 +98,9 @@
     { id: 'sniper', name: 'Snipers' }, { id: 'thrown', name: 'Thrown' }, { id: 'explosive', name: 'Explosives' }, { id: 'heavy', name: 'Heavy' }
   ];
   var ORDER = [];
+  // the shop lists the original twelve first, in the GDD's order, then the additions by slot and price
+  var BASE_ORDER = ['fist', 'tableleg', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'shotgun', 'sniper', 'hottake', 'hotmic', 'ratio'];
+  function shopOrder() { var out = BASE_ORDER.filter(function (id) { return !!WEAPONS[id]; }); for (var i = 0; i < ORDER.length; i++) if (out.indexOf(ORDER[i]) < 0) out.push(ORDER[i]); return out; }
   // the story mission that puts each of the twelve on the shop wall (the launcher also opens at 40 Monday Memos: flags.memos40);
   // the additions carry their own `unlock`
   var UNLOCK = { megaphone: 'm03_ratio', tableleg: 'm03b_range', pistol: 'm03b_range', revolver: 'm05b_provenance', rifle: 'm08b_jets', hottake: 'm09_balloon', hotmic: 'm09b_hotmic', smg: 'm11_trustless', shotgun: 'm11_trustless', sniper: 'm12b_scope', ratio: 'm13_thursday' };
@@ -113,7 +116,7 @@
   var DRIVEBY_REFUSAL = 'Not from the driver\'s seat. Respectfully.';
   // per-class mobility (the catalog's fifth bar; the aim walk speed scales with it) and the ADS fov multiplier
   var MOBILITY = { melee: 1, special: 0.9, pistol: 0.92, smg: 0.82, rifle: 0.66, shotgun: 0.66, sniper: 0.48, lmg: 0.4, launcher: 0.35, thrown: 0.95 };
-  var ADS = { pistol: 0.96, smg: 0.92, rifle: 0.84, shotgun: 0.94, lmg: 0.88, launcher: 0.86, special: 1, thrown: 1, melee: 1, sniper: 0.84 };
+  var ADS = { pistol: 1, smg: 1, rifle: 0.84, shotgun: 0.94, lmg: 0.88, launcher: 0.86, special: 1, thrown: 1, melee: 1, sniper: 0.84 };
   // the attachment variants' effects on the numbers
   var MOD_FX = {
     suppressor: { range: 0.9, dmg: 0.95, quiet: true }, compensator: { recoil: 0.7 }, extended: { mag: 1.5 },
@@ -142,12 +145,13 @@
   function emit(name, payload) { try { GTP.Events.emit(name, payload); } catch (e) { /* listeners report their own errors */ } }
   function isCopRole(p) { return !!p && (p.role === 'cop' || p.role === 'swat'); }
   function hostileRole(p) { return !!p && (p.role === 'cop' || p.role === 'swat' || p.role === 'thug' || !!p.hostile || (p.role === 'hoa' && GTP.Missions && GTP.Missions.state && GTP.Missions.state.flags && GTP.Missions.state.flags.hoa_enemy)); }
-  // a ped the aim assist may grab on its own: hostiles, mission peds, cops while wanted, anyone who hurt the player lately
+  // a ped the aim assist may grab on its own: hostiles (mission goons carry `hostile`), cops while wanted, anyone who hurt the player
+  // lately; never a bystander, a mission giver or a passive cutout
   function assistable(e, pl) {
     if (e.kind === 'vehicle') return !!e.isPolice;
     if (e.kind === 'heli') return true;
+    if (e.ai && e.ai.passive) return false;
     if (hostileRole(e) && !(isCopRole(e) && !(pl.wanted > 0) && !e.hostile)) return true;
-    if (e.ai && e.ai.mission && !e.ai.passive && !e.ai.friendly) return true;
     return !!(e._hurtPlayerT && simT() - e._hurtPlayerT < 20);
   }
   function failText(kind) {
@@ -634,16 +638,27 @@
           }
           if (cur !== p.lockTarget) { aim.lockT = simT(); aim.snapT = 0; sfx('ui', p.x, p.z, 0.2); emit('aim:assist', { target: cur }); }
         } else if (cycle) cur = null;
+      } else if (!cur && settings.aimAssist) {
+        // held aim re-acquires: a body the crosshair passes over (within 6°), or the helicopter anywhere in the cone (the rig cannot
+        // look up at it)
+        var cr0 = cameraRay(), cs = lockCandidates(p, cd, range * (w.rocket ? 1 : 1.9), 20 * DEG, candBuf, !!w.rocket), pick = null;
+        for (var q = 0; q < cs.length; q++) {
+          var ce = cs[q].e; if (ce.kind !== 'heli' && cs[q].d > range) continue;
+          if (ce.kind === 'heli' || (cr0 && rayAngleTo(cr0, ce.x, chestY(ce), ce.z) < 6 * DEG)) { if (!pick || cs[q].score < pick.score) pick = cs[q]; }
+        }
+        if (pick) { cur = pick.e; aim.lockT = simT(); aim.snapT = 0.31; }   // no snap: it is already under the sight
       }
     }
     // the assist: a snap onto the lock (0.3 s), then a light stickiness while the crosshair stays near it; looking well away
     // from it drops the lock (free aim)
     var cr = cameraRay();
+    // a hard lock: the helicopter sits above where the rig can look, so its lock holds and the shots go to it
+    var hard = !!cur && cur.kind === 'heli';
     if (cur && cr) {
       aim.snapT += dt;
       var tp = cur.kind === 'ped' || cur.kind === 'player' ? zonePoint(cur, 'torso', 0) : { x: cur.x, y: chestY(cur), z: cur.z };
       var off = rayAngleTo(cr, tp.x, tp.y, tp.z);
-      if (aim.snapT > 0.35 && off > 10 * DEG) cur = null;
+      if (aim.snapT > 0.35 && off > 10 * DEG && !hard) cur = null;
       else steerCamera(tp.x, tp.y, tp.z, aim.snapT <= 0.3 ? 16 : (settings.aimAssist ? 3.5 : 0), dt);
     }
     p.lockTarget = aim.target = cur;
@@ -653,7 +668,7 @@
     pt = cp;
     if (cur && cp.entity !== cur && cr && !(cp.entity && cp.entity !== cur)) {
       var cx = chestY(cur);
-      if (rayAngleTo(cr, cur.x, cx, cur.z) < (p.inVehicle ? 8 : 3) * DEG || aim.snapT <= 0.3) pt = { x: cur.x, y: cx, z: cur.z, entity: cur, zone: 'torso', dist: U.dist2d(p.x, p.z, cur.x, cur.z) };
+      if (hard || rayAngleTo(cr, cur.x, cx, cur.z) < (p.inVehicle ? 8 : 3) * DEG || aim.snapT <= 0.3) pt = { x: cur.x, y: cx, z: cur.z, entity: cur, zone: 'torso', dist: U.dist2d(p.x, p.z, cur.x, cur.z) };
     }
     aim.point = pt; aim.hover = pt.entity || null; aim.zone = pt.entity ? pt.zone : null; aim.range = pt.dist || 0;
     aim.inRange = U.dist2d(p.x, p.z, pt.x, pt.z) <= w.range + 0.5;
@@ -2674,8 +2689,8 @@
   }
   function shopItems() {
     syncArsenal();
-    var out = [], i;
-    for (i = 1; i < ORDER.length; i++) { var id = ORDER[i], w = WEAPONS[id]; out.push({ id: id, tab: 'weapons', weapon: id, price: w.price, name: w.name, unlock: UNLOCK[id] || null, pitch: PITCH[id] || w.pitch || '' }); }
+    var out = [], i, so = shopOrder();
+    for (i = 1; i < so.length; i++) { var id = so[i], w = WEAPONS[id]; out.push({ id: id, tab: 'weapons', weapon: id, price: w.price, name: w.name, unlock: UNLOCK[id] || null, pitch: PITCH[id] || w.pitch || '' }); }
     for (i = 0; i < SHOP_ITEMS.length; i++) out.push(Object.assign({ unlock: UNLOCK[SHOP_ITEMS[i].weapon] || null }, SHOP_ITEMS[i]));
     var am = ammoItems(); for (i = 0; i < am.length; i++) out.push(Object.assign({ unlock: UNLOCK[am[i].weapon] || null }, am[i]));
     var X = GTP.Content && GTP.Content.expansion && GTP.Content.expansion.shop, ext = X && X.items;
