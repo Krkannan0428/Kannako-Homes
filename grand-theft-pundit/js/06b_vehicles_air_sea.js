@@ -1258,6 +1258,7 @@
   var RIMS = [null, 0xd8dce2, 0xe8b53a, 0x1a1a1c, 0xd22f2f, 0xf2f2ee];
   function applyCarModVisuals(v, m) {
     var ud = m && m.userData; if (!ud || !ud.rec || ud.rec.modsApplied || !v.mods || typeof THREE === 'undefined') return;
+    if (GTP.Models && typeof GTP.Models.syncVehicle === 'function') return;   // the models track draws wheels, spoiler, tint and paint from vehicle.mods
     var md = v.mods, pm = md.paint || {};
     if (ud.paint && pm.finish) applyFinish(ud.paint, pm.finish);
     if (ud.mats && md.tint > 0 && ud.mats[2]) { var gl = ud.mats[2].clone(); gl.color.setRGB(0.12 + 0.08 * (3 - md.tint), 0.14 + 0.08 * (3 - md.tint), 0.17 + 0.08 * (3 - md.tint)); gl.opacity = Math.min(0.95, 0.72 + 0.08 * md.tint); ud.mats[2] = gl; ud.tintGlass = gl; }
@@ -1301,9 +1302,20 @@
   var DEFAULT_MODS = { paint: null, wheels: 0, spoiler: 0, tint: 0, engine: 0, brakes: 0, armor: 0, turbo: false, horn: 'stock' };
   // Content (the content track) may override names / prices: Content.parity.modshop[part] = {names, prices} or [{name, price}]
   function partTable(part) {
-    var t = PARTS[part], P = GTP.Content && GTP.Content.parity && GTP.Content.parity.modshop, o = P && P[part];
+    var t = PARTS[part], P = GTP.Content && GTP.Content.parity && GTP.Content.parity.modshop, o = P && (P[part] || (part === 'horn' ? P.horns : null));
     if (!o) return t;
     var out = Object.assign({}, t);
+    if (part === 'turbo' && !Array.isArray(o)) { out.names = [t.names[0], o.name || t.names[1]]; out.prices = [0, o.price != null ? o.price : t.prices[1]]; return out; }
+    if (part === 'horn' && Array.isArray(o)) {   // the content table's horns by id, merged over the built-in ones
+      out.list = t.list.slice(); out.names = t.names.slice(); out.prices = t.prices.slice();
+      o.forEach(function (h) { if (!h || !h.id) return; var i = out.list.indexOf(h.id); if (i < 0) { out.list.push(h.id); out.names.push(h.name || h.id); out.prices.push(h.price || 0); } else { out.names[i] = h.name || out.names[i]; if (h.price != null) out.prices[i] = h.price; } });
+      return out;
+    }
+    if (part === 'paint') {
+      var pp = o, fp = {}; (pp.finishes || []).forEach(function (f) { if (f && f.id) fp[f.id] = f.price; });
+      out.prices = Object.assign({}, t.prices, fp); out.primaryPrice = pp.primaryPrice; out.secondaryPrice = pp.secondaryPrice;
+      return out;
+    }
     if (Array.isArray(o)) { out.names = o.map(function (x, i) { return (x && x.name) || (t.names && t.names[i]); }); out.prices = o.map(function (x, i) { return x && x.price != null ? x.price : (t.prices && t.prices[i]); }); }
     else { if (o.names) out.names = o.names; if (o.prices) out.prices = o.prices; }
     return out;
@@ -1313,7 +1325,7 @@
     var o = {};
     o.wheels = U.clamp(m.wheels | 0, 0, 5); o.spoiler = U.clamp(m.spoiler | 0, 0, 3); o.tint = U.clamp(m.tint | 0, 0, 3);
     o.engine = U.clamp(m.engine | 0, 0, 4); o.brakes = U.clamp(m.brakes | 0, 0, 3); o.armor = U.clamp(m.armor | 0, 0, 5); o.turbo = !!m.turbo;
-    o.horn = PARTS.horn.list.indexOf(m.horn) >= 0 ? m.horn : 'stock';
+    o.horn = typeof m.horn === 'string' && /^[a-z0-9_]{1,24}$/.test(m.horn) ? m.horn : 'stock';   // any shop's horn id (Audio voices the known ones, others fall back to the class horn)
     var p = m.paint;
     o.paint = p ? { primary: p.primary || null, secondary: p.secondary || null, finish: PARTS.paint.finishes.indexOf(p.finish) >= 0 ? p.finish : 'gloss' } : null;
     return o;
@@ -1354,10 +1366,12 @@
     return { ok: true, mods: v.mods };
   }
   function priceOf(part, value) {
+    if (part === 'primary' || part === 'secondary') { var tp = partTable('paint'); var pv = part === 'primary' ? tp.primaryPrice : tp.secondaryPrice; return pv != null ? pv : (part === 'primary' ? 300 : 150); }
+    if (part === 'finish') return priceOf('paint', { finish: value });
     var t = partTable(part); if (!t) return null;
     if (part === 'paint') { var fin = value && value.finish || 'gloss'; return (t.prices && t.prices[fin]) != null ? t.prices[fin] : PARTS.paint.prices[fin] || 200; }
     if (part === 'turbo') return t.prices[value ? 1 : 0];
-    if (part === 'horn') { var i = PARTS.horn.list.indexOf(value); return i < 0 ? null : t.prices[i]; }
+    if (part === 'horn') { var i = (t.list || PARTS.horn.list).indexOf(value); return i < 0 ? null : t.prices[i]; }
     return t.prices ? t.prices[value | 0] : null;
   }
   function modCatalog(v) {
@@ -1367,7 +1381,7 @@
       if (air && part !== 'engine' && part !== 'armor') return;
       var t = partTable(part);
       if (part === 'turbo') { out.push({ part: part, value: true, name: t.names[1], price: t.prices[1], current: !!m.turbo, owned: !!m.turbo }); return; }
-      if (part === 'horn') { PARTS.horn.list.forEach(function (h, i) { out.push({ part: part, value: h, name: t.names[i], price: t.prices[i], current: m.horn === h, owned: m.horn === h }); }); return; }
+      if (part === 'horn') { (t.list || PARTS.horn.list).forEach(function (h, i) { out.push({ part: part, value: h, name: t.names[i], price: t.prices[i], current: m.horn === h, owned: m.horn === h }); }); return; }
       for (var i = 0; i <= PARTS[part].max; i++) out.push({ part: part, value: i, name: t.names[i], price: t.prices[i], current: (m[part] | 0) === i, owned: (m[part] | 0) >= i, stat: statLine(part, i) });
     });
     PARTS.paint.finishes.forEach(function (fin) { out.push({ part: 'paint', value: { finish: fin }, name: fin.charAt(0).toUpperCase() + fin.slice(1) + ' Respray', price: priceOf('paint', { finish: fin }), current: !!(m.paint && m.paint.finish === fin), owned: false }); });
@@ -1384,18 +1398,23 @@
   function repairPrice(v) { return Math.round(Math.max(0, 1 - Math.max(0, v.hp) / v.maxHp) * 400); }
   function repair(v) { if (!v || v.wreck) return false; v.hp = v.maxHp; v.damage = 0; v.burning = false; v.burnT = 0; return true; }
   // the purchase path the mod shop UI uses: charges the player, applies, emits shop:buy
-  function buyMod(v, part, value) {
+  function buyMod(v, part, value, shownPrice) {
     var p = player(); if (!p || !v) return { ok: false, reason: 'no vehicle' };
     if (part === 'repair') {
-      var rp = repairPrice(v); if (p.money < rp) return { ok: false, reason: 'money', price: rp };
+      var rp = repairPrice(v); if (p.money < rp) return { ok: false, reason: 'funds', price: rp };
       p.money -= rp; repair(v); sfx('modWrench', v.x, v.z, 0.8); emit('shop:buy', { item: 'mod:repair', price: rp, vehicle: v }); return { ok: true, price: rp };
     }
-    var price = priceOf(part, value); if (price == null) return { ok: false, reason: 'unknown part' };
+    // the UI's categories: primary / secondary (a colour) and finish are paint; its price (4th argument) is the one it showed
+    var paintCat = part === 'primary' || part === 'secondary' || part === 'finish';
+    var price = typeof shownPrice === 'number' && isFinite(shownPrice) && shownPrice >= 0 ? shownPrice : priceOf(part, value);
+    if (price == null || (!paintCat && part !== 'paint' && !PARTS[part])) return { ok: false, reason: 'unknown part' };
     var m = v.mods || DEFAULT_MODS;
-    if (part !== 'paint' && part !== 'horn' && (part === 'turbo' ? !!m.turbo === !!value : (m[part] | 0) === (value | 0))) return { ok: false, reason: 'owned', price: 0 };
-    if (p.money < price) { sfx('shopDeny', p.x, p.z, 0.6); return { ok: false, reason: 'money', price: price }; }
+    if (!paintCat && part !== 'paint' && part !== 'horn' && (part === 'turbo' ? !!m.turbo === !!value : (m[part] | 0) === (value | 0))) return { ok: false, reason: 'owned', price: 0 };
+    if (part === 'horn' && m.horn === value) return { ok: false, reason: 'owned', price: 0 };
+    if (p.money < price) { sfx('shopDeny', p.x, p.z, 0.6); return { ok: false, reason: 'funds', price: price }; }
     p.money -= price;
-    var patch = {}; patch[part] = value;
+    var patch = {};
+    if (paintCat) { patch.paint = {}; patch.paint[part] = value; } else patch[part] = value;
     var r = mod(v, patch);
     if (!r.ok) { p.money += price; return r; }
     p.stats.modsBought = (p.stats.modsBought || 0) + 1;
@@ -1617,8 +1636,44 @@
   // ================================================== deferred installs (Render, saves, missions) ==
   var installed = false, renderHooked = false, saveHooked = false, objHooked = false;
   function install() {
-    hookRender(); hookSaves(); hookObjectives();
+    hookRender(); hookSaves(); hookObjectives(); hookAnim();
     installed = renderHooked && saveHooked;
+  }
+  // The models track's skinned peds (06c GTP.Anim replaces Ped.syncMesh and seats riders from the vehicle record's seats,
+  // which the custom meshes do not have): for a rider of these families the anim runs with `ride` on, so the rig takes
+  // the saddle pose, then the body is placed from riderPose() (the anim rig's hips sit 0.96 m up, v0.2's 0.84 m) and,
+  // under the canopy, the legs hang. Everything else goes straight to the anim.
+  var animHooked = false;
+  function hookAnim() {
+    if (animHooked || !GTP.Anim || typeof GTP.Anim.syncMesh !== 'function' || PedP.syncMesh !== GTP.Anim.syncMesh) return;
+    animHooked = true;
+    var animSync = PedP.syncMesh;
+    PedP.syncMesh = function (alpha) {
+      var v = this.inVehicle, m = this.mesh;
+      var pose = v && fam(v) && m && m.userData && m.userData.models ? riderPose(this, alpha) : null;
+      if (!pose) return animSync.apply(this, arguments);
+      var P = this.pose, had = !!P, ride0 = P && P.ride;
+      if (!P) P = this.pose = {};
+      P.ride = true;
+      var drv = v.driver, swapped = false;
+      if (pose.kind === 'moto' && this.seat > 0) { /* a pillion: the anim only shows the driver; seat it as one for this frame */ v.driver = this; swapped = true; }
+      try { animSync.apply(this, arguments); } finally { if (swapped) v.driver = drv; if (had) P.ride = ride0; else delete this.pose; }
+      var firstPerson = this.kind === 'player' && this.cameraMode === 'first';
+      m.visible = !firstPerson && !this.removed && this.alive && camDist(this.x, this.z) <= C.QUALITY.pedDraw;
+      if (!m.visible) return;
+      var sc = (this.look && this.look.scale) || 1;
+      m.position.set(pose.x, pose.y - (0.96 * sc - 0.84), pose.z);
+      m.rotation.set(pose.pitch, pose.yaw, pose.roll, 'YXZ');
+      var B = m.userData.bones;
+      if (B && pose.kind === 'chute') {
+        var free = pose.chute !== 'open';
+        if (B.legL) B.legL.rotation.set(free ? -0.25 : 0.15, 0, -0.08); if (B.legR) B.legR.rotation.set(free ? -0.1 : 0.3, 0, 0.08);
+        if (B.lowerLegL) B.lowerLegL.rotation.set(free ? 0.4 : -0.2, 0, 0); if (B.lowerLegR) B.lowerLegR.rotation.set(free ? 0.3 : -0.35, 0, 0);
+        if (B.hips) B.hips.rotation.set(0, 0, 0); if (B.torso) B.torso.rotation.set(0, 0, 0);
+        if (B.armL) B.armL.rotation.set(free ? 1.6 : 2.85, 0, free ? 1.1 : 0.25); if (B.armR) B.armR.rotation.set(free ? 1.6 : 2.85, 0, free ? -1.1 : -0.25);
+      }
+    };
+    PedP.syncMesh._vehiclesRider = true;
   }
   function hookRender() {
     var R = GTP.Render; if (renderHooked || !R || !R.buildEntityMesh) return;

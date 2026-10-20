@@ -36,7 +36,9 @@
     'phoneRing', 'phoneBlip', 'phoneHang', 'chapter', 'bossStinger', 'bossPhase', 'bossDefeat',
     'special_focus', 'special_focusEnd', 'special_shout', 'special_chatmob', 'special_boost', 'specialReady',
     'shopBuy', 'shopBrowse', 'shopDeny', 'modApply', 'modWrench', 'modSpray',
-    'golfSwing', 'golfPutt', 'golfCup', 'achievement', 'rangeStart', 'rangeHit', 'rangeMedal', 'door', 'gps']);
+    'golfSwing', 'golfPutt', 'golfCup', 'achievement', 'rangeStart', 'rangeHit', 'rangeMedal', 'door', 'gps',
+    // names the merged tracks play directly: the story's phone (09_missions placeCall), the systems track's golf (14_systems)
+    'phone', 'golf_swing', 'golf_putt']);
   // weapon class (Combat / Content.parity) -> report voice
   var SHOT_MAP = { pistol: 'pistol', handgun: 'pistol', revolver: 'revolver', magnum: 'revolver', smg: 'smg', pdw: 'smg', machinepistol: 'smg',
     rifle: 'rifle', assault: 'rifle', carbine: 'rifle', ar: 'rifle', battle: 'rifle', lmg: 'lmg', mg: 'lmg', machinegun: 'lmg',
@@ -45,7 +47,7 @@
   var LOOKAHEAD = 0.18;        // s of radio notes scheduled ahead of the context clock
   var MAX_VOICES = 28;         // concurrent one-shot voices
   var MAX_ERRORS = 6;          // after this many caught errors the module goes silent for good
-  var MIN_GAP = { shot: 0.025, dryFire: 0.25, bossPhase: 0.5, melee_light: 0.12, melee_heavy: 0.12, melee_counter: 0.12, phoneRing: 1.2, chapter: 1, bossStinger: 1, bossDefeat: 1, achievement: 0.4, shopBrowse: 0.04, gps: 0.5, stall: 0.6, rotorStart: 1, door: 0.4, rangeHit: 0.05, hit: 0.04, punch: 0.04, ui: 0.03, crash: 0.06, skid: 0.25, land: 0.05, horn: 0.08, siren: 0.3, enter: 0.1, exit: 0.1, pickup: 0.05, cash: 0.05, explode: 0.05, debate: 0.15, dunk: 0.1, jump: 0.05, mission: 0.5, fail: 0.5, swap: 0.05, static: 0.1, reload: 0.08, reloadDone: 0.08, hitmark: 0.03, confirm: 0.2 };
+  var MIN_GAP = { phone: 1.2, shot: 0.025, dryFire: 0.25, bossPhase: 0.5, melee_light: 0.12, melee_heavy: 0.12, melee_counter: 0.12, phoneRing: 1.2, chapter: 1, bossStinger: 1, bossDefeat: 1, achievement: 0.4, shopBrowse: 0.04, gps: 0.5, stall: 0.6, rotorStart: 1, door: 0.4, rangeHit: 0.05, hit: 0.04, punch: 0.04, ui: 0.03, crash: 0.06, skid: 0.25, land: 0.05, horn: 0.08, siren: 0.3, enter: 0.1, exit: 0.1, pickup: 0.05, cash: 0.05, explode: 0.05, debate: 0.15, dunk: 0.1, jump: 0.05, mission: 0.5, fail: 0.5, swap: 0.05, static: 0.1, reload: 0.08, reloadDone: 0.08, hitmark: 0.03, confirm: 0.2 };
   // audible range in metres per sound (full volume within 5 m, quadratic falloff to the range)
   var RANGE = { shot: 110, shot_sniper: 220, shot_launcher: 160, shot_suppressed: 30, cover: 30, coverSlide: 25, melee_light: 30, melee_heavy: 36, melee_counter: 36, whoosh: 20,
     rotorStart: 120, chuteOpen: 60, bail: 40, stall: 40, gearUp: 40, splash: 60, dryFire: 15, reloadShell: 24, reloadBolt: 24, rangeHit: 80, golfSwing: 40, golfPutt: 25, golfCup: 30, punch: 28, hit: 40, explode: 240, pickup: 25, horn: 90, siren: 160, enter: 25, exit: 25, mission: 60, fail: 60, ui: 40, cash: 40, debate: 60, dunk: 60, jump: 20, land: 30, skid: 80, crash: 130, swap: 20, static: 20, reload: 24, reloadDone: 24, hitmark: 40, confirm: 40 };
@@ -87,14 +89,24 @@
     clown: function (out, t) { blip(out, t, { type: 'square', f: 520, f1: 400, glide: 0.25, dur: 0.3, g: 0.22, a: 0.01, lp: 2400 }); blip(out, t + 0.32, { type: 'square', f: 660, f1: 700, glide: 0.08, dur: 0.14, g: 0.2, a: 0.01, lp: 2600 }); return 0.5; },
     fanfare: function (out, t) { [523.25, 659.25, 783.99, 1046.5].forEach(function (f, i) { blip(out, t + i * 0.11, { type: 'sawtooth', f: f, dur: i === 3 ? 0.5 : 0.14, hold: i === 3 ? 0.25 : 0.05, g: 0.16, a: 0.01, lp: 2600 }); }); return 0.9; },
     gavel: function (out, t) { for (var i = 0; i < 2; i++) { hiss(out, t + i * 0.18, { dur: 0.05, g: 0.6, bp: 900, q: 2, a: 0.001 }); blip(out, t + i * 0.18, { type: 'sine', f: 320, f1: 180, dur: 0.08, g: 0.45, a: 0.001 }); } return 0.45; },
-    trombone: function (out, t) { [293.7, 277.2, 261.6, 246.9].forEach(function (f, i) { var last = i === 3; blip(out, t + i * 0.3, { type: 'sawtooth', f: f * 1.02, f1: f, glide: 0.06, dur: last ? 0.9 : 0.28, hold: last ? 0.5 : 0.15, g: 0.16, a: 0.02, lp: 1300, vib: last ? 6 : 0, vibDepth: 0.02 }); }); return 2.0; }
+    trombone: function (out, t) { [293.7, 277.2, 261.6, 246.9].forEach(function (f, i) { var last = i === 3; blip(out, t + i * 0.3, { type: 'sawtooth', f: f * 1.02, f1: f, glide: 0.06, dur: last ? 0.9 : 0.28, hold: last ? 0.5 : 0.15, g: 0.16, a: 0.02, lp: 1300, vib: last ? 6 : 0, vibDepth: 0.02 }); }); return 2.0; },
+    // the content track's horns (Content.parity.modshop.horns) and the UI's built-in ones
+    breaking: function (out, t) { [392, 523.25, 784].forEach(function (f, i) { blip(out, t + i * 0.13, { type: 'sawtooth', f: f, dur: i === 2 ? 0.6 : 0.16, hold: i === 2 ? 0.3 : 0.06, g: 0.17, a: 0.01, lp: 2800 }); }); return 1.0; },
+    coupon: function (out, t) { [659.25, 784, 659.25, 523.25, 784].forEach(function (f, i) { blip(out, t + i * 0.1, { type: 'square', f: f, dur: 0.12, g: 0.13, a: 0.005, lp: 3200 }); }); return 0.7; },
+    toast: function (out, t) { blip(out, t, { type: 'sawtooth', f: 330, f1: 300, dur: 0.14, g: 0.14, a: 0.01, bp: 900, q: 2 }); blip(out, t + 0.17, { type: 'sawtooth', f: 360, f1: 420, dur: 0.22, g: 0.15, a: 0.01, bp: 1300, q: 2 }); hiss(out, t + 0.16, { dur: 0.03, g: 0.15, bp: 3000, q: 2, a: 0.002 }); return 0.5; },
+    jets: function (out, t) { hiss(out, t, { dur: 1.1, g: 0.5, bp: 400, fc1: 1800, fglide: 0.6, q: 0.7, a: 0.2, hold: 0.2 }); blip(out, t, { type: 'sine', f: 1500, f1: 900, glide: 1.0, dur: 1.1, g: 0.05, a: 0.2 }); return 1.3; },
+    ten: function (out, t) { blip(out, t, { type: 'sawtooth', f: 220, f1: 200, dur: 0.3, hold: 0.15, g: 0.18, a: 0.01, bp: 1700, q: 2.5 }); hiss(out, t, { dur: 0.04, g: 0.25, hp: 4000, a: 0.002 }); return 0.4; },
+    kazoo: function (out, t) { blip(out, t, { type: 'sawtooth', f: 440, f1: 470, glide: 0.4, dur: 0.6, hold: 0.35, g: 0.15, a: 0.02, bp: 1400, q: 3, vib: 7, vibDepth: 0.03 }); return 0.7; },
+    debate_bell: function (out, t) { for (var i = 0; i < 2; i++) { blip(out, t + i * 0.22, { type: 'sine', f: 1568, dur: 0.5, g: 0.18, a: 0.002 }); blip(out, t + i * 0.22, { type: 'sine', f: 3951, dur: 0.25, g: 0.05, a: 0.002 }); } return 0.8; },
+    applause: function (out, t) { for (var i = 0; i < 14; i++) hiss(out, t + i * 0.06 + (i % 3) * 0.011, { dur: 0.03, g: 0.3 - i * 0.012, bp: 1400 + (i % 4) * 350, q: 1.4, a: 0.002 }); return 1.1; }
   };
+  HORN_MODS.airhorn = HORN_MODS.air;
 
   var ctx = null, master = null, comp = null, noiseBuf = null, space = null;
   var vol = { master: 1, music: 1, sfx: 1 };   // the Settings volumes (Audio.setVolumes)
   var bus = { sfx: null, music: null, duck: null, engine: null, siren: null, heli: null };
   var arng = GTP.makeRng ? GTP.makeRng(0xA0D10) : null;
-  var voices = [], lastAt = {}, errors = 0, disabled = false, hooked = false;
+  var voices = [], lastAt = {}, errors = 0, disabled = false, hooked = false, padUnlockT = 0;
   var scratch = [], _L = { x: 0, z: 0, yaw: 0, rx: 1, rz: 0 }, _sp = { g: 1, pan: 0 };
   var engine = { level: 0, cls: null, ttl: 0, n: null, rpm: 0.12, off: 0, throttle: 0 };
   var siren = { count: 0, dist: 1e9, g: 0, pan: 0, scanT: 0, n: null, off: 0 };
@@ -654,6 +666,11 @@
   SFX.door = function (out, t) { [2093, 2637, 2349].forEach(function (f, i) { blip(out, t + i * 0.06, { type: 'sine', f: f, dur: 0.35, g: 0.15, a: 0.002 }); }); hiss(out, t, { dur: 0.06, g: 0.15, lp: 800, a: 0.004 }); return 0.6; };
   SFX.gps = function (out, t) { blip(out, t, { type: 'sine', f: 988, dur: 0.12, g: 0.2, a: 0.004 }); blip(out, t + 0.13, { type: 'sine', f: 1319, dur: 0.2, g: 0.2, a: 0.004 }); return 0.4; };
 
+  // aliases for the names other tracks play
+  SFX.phone = function (out, t, g, o) { return SFX.phoneRing(out, t, g, o); };
+  SFX.golf_swing = function (out, t, g, o) { return SFX.golfSwing(out, t, g, o); };
+  SFX.golf_putt = function (out, t, g, o) { return SFX.golfPutt(out, t, g, o); };
+
   // --------------------------------------------------------------- engine --
   function engineStart(cls) {
     var P = ENGINE[cls] || ENGINE.sedan, n = { P: P, cls: cls };
@@ -814,6 +831,12 @@
 
   // ---------------------------------------------------------------- radio --
   function stations() { var R = GTP.Content && GTP.Content.radio; return (R && R.stations) || []; }
+  // the title theme: Content.radio.titleStation (an id), else Office Hours (lo-fi), else the default station
+  function titleStation() {
+    var R = GTP.Content && GTP.Content.radio, list = stations(), want = (R && R.titleStation) || 'office_hours';
+    for (var i = 0; i < list.length; i++) if (list[i].id === want) return i;
+    return stationIndex();
+  }
   function stationIndex() { var n = stations().length; if (!n) return -1; var i = Audio.station | 0; return ((i % n) + n) % n; }
   function degFreq(root, deg) { var sc = radio.scale, oct = Math.floor(deg / 7), st = sc[((deg % 7) + 7) % 7] + 12 * oct; return root * Math.pow(2, st / 12); }
   function realign(now) {
@@ -825,14 +848,29 @@
     radio.index = i; radio.st = st; radio.id = st ? st.id : null; radio.pat = st && st.pattern ? st.pattern : null;
     radio.bpm = st && st.bpm ? st.bpm : 120; radio.steps = radio.pat && radio.pat.steps ? radio.pat.steps : 16;
     radio.stepDur = 60 / radio.bpm / 4; radio.scale = SCALES[st && st.scale] || SCALES.minor; radio.root = ROOTS[i % ROOTS.length];
-    radio.jingleT = 0; radio.cycleBar = -1; radio.pause = 0; radio.kit = radio.bpm >= 118 ? 'house' : (radio.bpm > 100 ? 'soft' : 'march');
+    // the kit: the station's hint (23_content_radio: march / soft / house / break / none), else chosen by tempo
+    var hintKit = (st && st.kit) || (radio.pat && radio.pat.kit) || null;
+    radio.jingleT = 0; radio.cycleBar = -1; radio.pause = 0; radio.kit = KITS[hintKit] ? hintKit : (radio.bpm >= 118 ? 'house' : (radio.bpm > 100 ? 'soft' : 'march'));
     if (ctx) realign(now);
   }
+  var KITS = { march: 1, soft: 1, house: 1, 'break': 1, none: 1 };
   function kick(dest, t, kit) {
+    if (kit === 'none') return;
+    if (kit === 'break') {   // a short, punchy breakbeat kick
+      blip(dest, t, { type: 'sine', f: 150, f1: 46, glide: 0.06, dur: 0.17, g: 0.5, a: 0.002 });
+      hiss(dest, t, { dur: 0.01, g: 0.16, lp: 4500, a: 0.001 });
+      return;
+    }
     blip(dest, t, { type: 'sine', f: kit === 'house' ? 160 : 140, f1: kit === 'house' ? 40 : 48, glide: 0.1, dur: kit === 'house' ? 0.32 : (kit === 'soft' ? 0.2 : 0.22), g: kit === 'soft' ? 0.45 : (kit === 'march' ? 0.52 : 0.62), a: 0.002 });
     hiss(dest, t, { dur: 0.012, g: kit === 'soft' ? 0.08 : 0.18, lp: 3500, a: 0.001 });
   }
   function snare(dest, t, kit) {
+    if (kit === 'none') return;
+    if (kit === 'break') {   // a crisp, bright breakbeat snare with a short body
+      hiss(dest, t, { dur: 0.12, g: 0.27, bp: 2300, q: 0.8, a: 0.001 });
+      blip(dest, t, { type: 'triangle', f: 205, f1: 150, glide: 0.05, dur: 0.07, g: 0.14, a: 0.001 });
+      return;
+    }
     if (kit === 'house') {   // a clap
       for (var i = 0; i < 3; i++) hiss(dest, t + i * 0.011, { dur: 0.045, g: 0.22, bp: 1150, q: 1.1, a: 0.001 });
       hiss(dest, t + 0.03, { dur: 0.2, g: 0.2, bp: 1400, q: 0.9, a: 0.002 });
@@ -842,7 +880,8 @@
     blip(dest, t, { type: 'triangle', f: kit === 'march' ? 210 : 180, f1: 130, glide: 0.08, dur: 0.09, g: kit === 'march' ? 0.3 : 0.15, a: 0.001 });
   }
   function hat(dest, t, kit, open) {
-    hiss(dest, t, { dur: open ? 0.16 : (kit === 'house' ? 0.055 : 0.035), g: kit === 'soft' ? 0.08 : 0.12, hp: 7500, a: 0.001 });
+    if (kit === 'none') { hiss(dest, t, { dur: 0.02, g: 0.05, hp: 6000, a: 0.001 }); return; }   // ambient: a clock tick
+    hiss(dest, t, { dur: open ? 0.16 : (kit === 'house' ? 0.055 : kit === 'break' ? 0.03 : 0.035), g: kit === 'soft' ? 0.08 : kit === 'break' ? 0.1 : 0.12, hp: 7500, a: 0.001 });
   }
   function bassNote(dest, t, f, wave, len) {
     var o = { type: wave, f: f, dur: len, hold: len * 0.5, g: wave === 'sawtooth' ? 0.26 : 0.32, a: 0.005 };
@@ -915,15 +954,22 @@
   function updateRadio(dt, now) {
     var g = GTP.game, p = g && g.player, st = g ? g.state : 'playing';
     var inCar = !!(p && p.inVehicle) && (st === 'playing' || st === 'cutscene') && !(p.inVehicle.cls && p.inVehicle.cls.family === 'chute');
-    if (!inCar) radio.stopped = false;
-    radio.playing = inCar && !radio.stopped;
-    var idx = stationIndex();
+    // a cutscene with a station score ('music: station:<id>') plays it on foot too (QA-D-06); the title screen has a theme (QA-D-10)
+    var CS = GTP.Cutscenes, cur = CS && CS.active && CS.current, spec = cur && cur.script && cur.script.music;
+    var score = st === 'cutscene' && typeof spec === 'string' && spec.indexOf('station:') === 0;
+    var title = st === 'title' && Audio.titleTheme !== false;
+    if (!inCar && !score) radio.stopped = false;
+    radio.playing = ((inCar || score) && !radio.stopped) || title;
+    radio.mode = title ? 'title' : score && !inCar ? 'score' : 'car';
+    var idx = title ? titleStation() : stationIndex();
     if (idx !== radio.index || (idx >= 0 && stations()[idx] !== radio.st)) {
       var wasAudible = radio.level > 0.05 && !!ctx && !Audio.muted;
       tuneTo(idx, now || 0);
-      if (wasAudible && radio.playing) Audio.play('static', { gain: 0.5 });
+      if (wasAudible && radio.playing && radio.mode === 'car' && radio.lastMode === 'car') Audio.play('static', { gain: 0.5 });
     }
-    radio.level = U.damp(radio.level, radio.playing ? 1 : 0, radio.playing ? 5 : 7, dt);
+    radio.lastMode = radio.mode;
+    var full = radio.mode === 'title' ? 0.55 : radio.mode === 'score' ? 0.8 : 1;   // the title theme and an on-foot score sit under the dialogue
+    radio.level = U.damp(radio.level, radio.playing ? full : 0, radio.playing ? 5 : 7, dt);
     if (radio.level < 0.002 && !radio.playing) radio.level = 0;
     if (!ctx) return;
     bus.music.gain.setTargetAtTime(Audio.muted ? 0 : radio.level * radio.level * 0.6 * vol.music, now, 0.05);
@@ -954,11 +1000,13 @@
     // ---- v0.3 events (PLAN_V03.md "Events"): each a distinct synthesized cue; UI-side cues play centred, world ones in place ----
     var E = GTP.Events, here = function () { var p = GTP.game && GTP.game.player; return p ? { x: p.x, z: p.z } : {}; };
     function cue(name, gain, at) { var o = at || {}; Audio.play(name, { x: o.x, z: o.z, gain: gain == null ? 0.8 : gain }); }
-    E.on('phone:call', function () { cue('phoneRing', 0.7); });
+    // the v0.3 UI voices its own cards (chapter, achievement, the range medal, the boss down, the phone): no double cue then
+    function uiVoices() { return !!(GTP.UI && typeof GTP.UI.openModShop === 'function'); }
+    E.on('phone:call', function () { if (Audio.last !== 'phone' && !uiVoices()) cue('phoneRing', 0.7); });   // the story already rang ('phone') right before emitting
     E.on('phone:answer', function () { cue('phoneBlip', 0.6); });
     E.on('phone:end', function () { cue('phoneHang', 0.6); });
     E.on('phone:hangup', function () { cue('phoneHang', 0.6); });
-    E.on('chapter', function () { cue('chapter', 0.9); });
+    E.on('chapter', function () { if (!uiVoices()) cue('chapter', 0.9); });
     // a boss stings on its first phase and hits on each phase change (boss:phase may also fire on every hp change)
     var bossSeen = {}, specials = {};
     E.on('boss:phase', function (ev) {
@@ -966,7 +1014,7 @@
       if (bossSeen[id] === undefined) cue('bossStinger', 0.9); else if (bossSeen[id] !== ph) cue('bossPhase', 0.9);
       bossSeen[id] = ph;
     });
-    E.on('boss:defeated', function (ev) { cue('bossDefeat', 0.9); if (ev && ev.id) delete bossSeen[ev.id]; });
+    E.on('boss:defeated', function (ev) { if (!uiVoices()) cue('bossDefeat', 0.9); if (ev && ev.id) delete bossSeen[ev.id]; });
     ['load:begin', 'mission:fail', 'mission:failed', 'failed', 'player:wasted'].forEach(function (n) { E.on(n, function () { bossSeen = {}; if (n === 'load:begin') specials = {}; }); });
     E.on('special:state', function (ev) {
       if (!ev || !ev.id) return;
@@ -983,12 +1031,13 @@
     E.on('shop:deny', function () { cue('shopDeny', 0.6); });
     ['shop:open', 'armory:inspect', 'clothing:open', 'barber:open', 'property:open', 'heist:board'].forEach(function (n) { E.on(n, function () { cue('shopBrowse', 0.5); }); });
     E.on('heist:plan', function () { cue('specialReady', 0.7); });
-    E.on('golf:shot', function (ev) { var putt = ev && (ev.club === 'putter' || ev.putt || (ev.power != null && ev.power < 0.2)); cue(putt ? 'golfPutt' : 'golfSwing', 0.8, here()); });
+    // 14_systems plays golf_swing / golf_putt itself
+    E.on('golf:shot', function (ev) { if (GTP.Systems && GTP.Systems.golf) return; var putt = ev && (ev.club === 'putter' || ev.putt || (ev.power != null && ev.power < 0.2)); cue(putt ? 'golfPutt' : 'golfSwing', 0.8, here()); });
     E.on('golf:end', function () { cue('golfCup', 0.8); });
-    E.on('achievement', function () { cue('achievement', 0.85); });
+    E.on('achievement', function () { if (!uiVoices()) cue('achievement', 0.85); });
     E.on('range:start', function () { cue('rangeStart', 0.7); });
     E.on('range:hit', function (ev) { cue('rangeHit', ev && ev.points > 50 ? 0.9 : 0.7, ev && ev.x != null ? ev : null); });
-    E.on('range:end', function (ev) { var m = ev && ev.medal; if (m) cue('rangeMedal', m === 'gold' ? 1 : m === 'silver' ? 0.7 : 0.4); else cue('fail', 0.5); });
+    E.on('range:end', function (ev) { var m = ev && ev.medal; if (uiVoices()) return; if (m) cue('rangeMedal', m === 'gold' ? 1 : m === 'silver' ? 0.7 : 0.4); else cue('fail', 0.5); });
     E.on('interior:enter', function () { cue('door', 0.6); });
     E.on('interior:exit', function () { cue('door', 0.5); });
     E.on('cover:enter', function () { cue('cover', 0.8, here()); });
@@ -1021,12 +1070,27 @@
       Audio.muted = !!opts.mute || Audio.headless;
       Audio.counts = {};
       if (!arng) arng = GTP.makeRng(0xA0D10);
+      if (!Audio.headless && typeof document !== 'undefined' && document.addEventListener && !Audio._visHooked) {
+        Audio._visHooked = true;
+        document.addEventListener('visibilitychange', function () { Audio._onVisibility(); });
+        if (typeof window !== 'undefined' && window.addEventListener) { window.addEventListener('pagehide', function () { Audio._onVisibility(); }); window.addEventListener('pageshow', function () { Audio._onVisibility(); }); }
+      }
       var R = GTP.Content && GTP.Content.radio, list = stations();
       if (R && R.defaultStation && list.length) { for (var i = 0; i < list.length; i++) if (list[i].id === R.defaultStation) { Audio.station = i; break; } }
       hookEvents();
     },
 
     // creates the AudioContext on the first user gesture (keydown / mousedown / touch call this), resumes it after
+    _clearGaps: function () { lastAt = {}; },   // tests: forget the per-name rate limits
+    // a hidden tab (or a page being left) suspends the context: no engine drone, siren or radio while away (QA-D-02 / SAVE-13)
+    _onVisibility: function () {
+      if (!ctx) return;
+      var hidden = typeof document !== 'undefined' && (document.hidden || document.visibilityState === 'hidden');
+      try {
+        if (hidden && ctx.state === 'running' && ctx.suspend) { var a = ctx.suspend(); if (a && a.catch) a.catch(function () { }); Audio.suspendedByHide = true; }
+        else if (!hidden && Audio.suspendedByHide && ctx.resume) { Audio.suspendedByHide = false; var b = ctx.resume(); if (b && b.catch) b.catch(function () { }); }
+      } catch (e) { /* optional */ }
+    },
     unlock: guarded(function () {
       if (Audio.headless) return false;
       if (!ctx) {
@@ -1105,12 +1169,17 @@
       stop: function () { radio.stopped = true; },
       // true while the sequencer is meant to be heard (inside a vehicle, simulating, not stopped)
       isPlaying: function () { return radio.playing; },
+      // "Station - tagline", or "Station - Title by Artist" when the station data knows its songs (23_content_radio nowPlaying(id))
       nowPlaying: function () {
         var st = Audio.radio.current(); if (!st || !radio.playing) return '';
+        var R = GTP.Content && GTP.Content.radio, np = null;
+        try { np = R && typeof R.nowPlaying === 'function' ? R.nowPlaying(st.id) : null; } catch (e) { np = null; }
+        if (np && np.title) return String(st.name) + ' - ' + np.title + (np.artist ? ' by ' + np.artist : '');
         return String(st.name) + (st.tagline ? ' - ' + st.tagline : '');
       },
+      song: function () { var st = Audio.radio.current(), R = GTP.Content && GTP.Content.radio; try { return st && R && R.nowPlaying ? R.nowPlaying(st.id) : null; } catch (e) { return null; } },
       level: function () { return radio.level; },
-      state: function () { return { index: radio.index, id: radio.id, playing: radio.playing, level: +radio.level.toFixed(3), live: radio.live, step: radio.step, scheduled: radio.sched, bpm: radio.bpm, kit: radio.kit || null, talkBar: radio.cycleBar }; }
+      state: function () { return { index: radio.index, id: radio.id, playing: radio.playing, level: +radio.level.toFixed(3), live: radio.live, step: radio.step, scheduled: radio.sched, bpm: radio.bpm, kit: radio.kit || null, talkBar: radio.cycleBar, mode: radio.mode || 'car' }; }
     },
 
     update: guarded(function (dt) {
@@ -1118,6 +1187,12 @@
       var st = GTP.game ? GTP.game.state : 'playing', live = st === 'playing' || st === 'cutscene';
       var now = ctx ? ctx.currentTime : 0;
       updateRadio(dt, now);
+      // the radio track's hourly news (23_content_radio newsTick), folded in here instead of its Audio.update wrapper
+      var RN = GTP.Content && GTP.Content.radio;
+      if (RN && typeof RN._newsTick === 'function') { try { RN._newsTick(); } catch (eN) { if (U.reportError) U.reportError(eN, 'radio.news'); } }
+      // a gamepad-only player: a pad button counts as the gesture that creates / resumes the context (QA-D-07)
+      if (!Audio.headless && (!ctx || ctx.state !== 'running')) { var In = GTP.Input, gp = In && In.gamepad; if (gp && gp.index >= 0 && gp.buttons) { var any = false; for (var bk in gp.buttons) if (gp.buttons[bk]) { any = true; break; } if (any && !padUnlockT) { padUnlockT = 1; Audio.unlock(); } } }
+      if (padUnlockT > 0) padUnlockT = Math.max(0, padUnlockT - dt);
       if (!ctx || disabled) return;
       updateEngine(dt, now, live);
       updateSiren(dt, now, live);
@@ -1191,4 +1266,6 @@
       };
     }
   };
+  // Audio.update calls the radio data's news tick itself: 23_content_radio.js (loaded later) sees this and skips its wrapper
+  Audio._radioNewsWrapped = true;
 })();

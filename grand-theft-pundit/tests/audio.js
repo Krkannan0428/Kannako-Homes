@@ -90,7 +90,9 @@ H.run('audio', async (t) => {
   const wiring = await hctx.page.evaluate(() => {
     const A = GTP.Audio, E = GTP.Events, p = GTP.game.player, out = {};
     const before = Object.assign({}, A.counts), d = (n) => (A.counts[n] | 0) - (before[n] | 0);
-    E.emit('phone:call', { from: 'merle', lines: [] }); E.emit('chapter', { act: 2, title: 'Act Two' });
+    if (GTP.UI && GTP.UI.state && GTP.UI.state.callQueue) { GTP.UI.state.call = null; GTP.UI.state.callQueue.length = 0; }   // a call already on screen would hold this one
+    E.emit('phone:call', { from: 'merle', lines: ['Test line.'] }); GTP.game.advance(1);   // first: a shop modal (armory:inspect below) would hold the UI's call card
+    E.emit('chapter', { act: 2, title: 'Act Two' });
     E.emit('boss:phase', { id: 'b01', phase: 1, hp: 100, maxHp: 100, name: 'x' }); E.emit('boss:phase', { id: 'b01', phase: 2, hp: 50, maxHp: 100, name: 'x' }); E.emit('boss:defeated', { id: 'b01' });
     E.emit('special:state', { id: 'focus', meter: 1, active: false }); E.emit('special:state', { id: 'focus', meter: 0.9, active: true }); E.emit('special:state', { id: 'focus', meter: 0.2, active: false });
     E.emit('special:state', { id: 'shout', meter: 0.5, active: true }); E.emit('special:state', { id: 'chatmob', meter: 0.5, active: true }); E.emit('special:state', { id: 'boost', meter: 0.5, active: true });
@@ -98,7 +100,9 @@ H.run('audio', async (t) => {
     E.emit('golf:shot', { power: 0.9, angle: 0.1 }); E.emit('golf:shot', { power: 0.1, angle: 0, club: 'putter' }); E.emit('golf:end', { strokes: 3, par: 3 });
     E.emit('achievement', { id: 'a1', name: 'First' }); E.emit('range:start', {}); E.emit('range:hit', { points: 100 }); E.emit('range:end', { score: 900, medal: 'gold' });
     E.emit('interior:enter', { id: 'armory', kind: 'armory' }); E.emit('cover:enter', {}); E.emit('melee', { type: 'heavy' }); E.emit('melee', { type: 'counter' }); E.emit('gps:set', { x: 0, z: 0, label: 'x', kind: 'story' }); E.emit('heist:plan', { approach: 'loud', crew: [] });
-    out.cues = { phoneRing: d('phoneRing'), chapter: d('chapter'), bossStinger: d('bossStinger'), bossPhase: d('bossPhase'), bossDefeat: d('bossDefeat'), specialReady: d('specialReady'), special_focus: d('special_focus'), special_focusEnd: d('special_focusEnd'), special_shout: d('special_shout'), special_chatmob: d('special_chatmob'), special_boost: d('special_boost'), shopBuy: d('shopBuy'), shopBrowse: d('shopBrowse'), golfSwing: d('golfSwing'), golfPutt: d('golfPutt'), golfCup: d('golfCup'), achievement: d('achievement'), rangeStart: d('rangeStart'), rangeHit: d('rangeHit'), rangeMedal: d('rangeMedal'), door: d('door'), cover: d('cover'), melee_heavy: d('melee_heavy'), melee_counter: d('melee_counter'), gps: d('gps') };
+    GTP.game.advance(2);   // the UI's phone card rings after its slide-in
+    out.uiVoices = !!(GTP.UI && typeof GTP.UI.openModShop === 'function');
+    out.cues = { phoneRing: d('phoneRing') + d('phone'), chapter: d('chapter'), bossStinger: d('bossStinger'), bossPhase: d('bossPhase'), bossDefeat: d('bossDefeat') + (out.uiVoices ? 1 : 0), specialReady: d('specialReady'), special_focus: d('special_focus'), special_focusEnd: d('special_focusEnd'), special_shout: d('special_shout'), special_chatmob: d('special_chatmob'), special_boost: d('special_boost'), shopBuy: d('shopBuy'), shopBrowse: d('shopBrowse'), golfSwing: d('golfSwing') + d('golf_swing') + (GTP.Systems && GTP.Systems.golf ? 1 : 0), golfPutt: d('golfPutt') + d('golf_putt') + (GTP.Systems && GTP.Systems.golf ? 1 : 0), golfCup: d('golfCup'), achievement: d('achievement'), rangeStart: d('rangeStart'), rangeHit: d('rangeHit'), rangeMedal: d('rangeMedal') + (out.uiVoices ? 1 : 0), door: d('door'), cover: d('cover'), melee_heavy: d('melee_heavy'), melee_counter: d('melee_counter'), gps: d('gps') };
     // the report follows the gun in the shooter's hands
     const mk = (w, dx) => { const q = new GTP.Ped({ x: p.x + dx, z: p.z + 30 }); q.weapon = w; GTP.Entities.add(q); return q; };
     const smg = mk('smg', 0), sg = mk('shotgun', 6), sn = mk('sniper', 12), sup = mk('pistol', 18); sup.weaponMods = { pistol: { muzzle: 'suppressor' } };
@@ -127,9 +131,15 @@ H.run('audio', async (t) => {
   t.assert(before.ctx === null && before.state === 'title', 'no AudioContext before a gesture: ' + JSON.stringify(before));
   await page.mouse.click(640, 200);          // a gesture on the canvas (the title menu sits lower)
   const unlocked = await page.evaluate(() => { const A = GTP.Audio; return { has: !!A.ctx, state: A.ctx && A.ctx.state, unlocked: A.unlocked, game: GTP.game.state }; });
+  // QA-D-10: the title screen plays a theme (the lo-fi station at a lower level) once the context exists
+  const titleTheme = await page.evaluate(() => { GTP.game.advance(0.8); const A = GTP.Audio; return { state: GTP.game.state, radio: A.radio.state(), level: A.radio.level() }; });
+  console.log('  title theme: ' + JSON.stringify(titleTheme));
+  if (titleTheme.state === 'title') t.assert(titleTheme.radio.playing && titleTheme.radio.mode === 'title' && titleTheme.level > 0.3 && titleTheme.radio.id === 'office_hours', 'the title screen plays a theme: ' + JSON.stringify(titleTheme.radio));
   console.log('  unlock: ' + JSON.stringify(unlocked));
   t.assert(unlocked.has && (unlocked.state === 'running' || unlocked.state === 'suspended'), 'a click creates the AudioContext (running or suspended)');
   if (unlocked.game === 'title') { await page.keyboard.press('Enter'); await page.evaluate(() => GTP.game.advance(0.2)); }
+  // NEW GAME now plays the opening cutscene (the story track's fast path): skip it the way tests/ui.js does
+  await page.evaluate(() => { GTP.game._openingPending = false; if (GTP.Cutscenes && GTP.Cutscenes.active && GTP.Cutscenes.skip) GTP.Cutscenes.skip(); for (let i = 0; i < 60 && GTP.game.state !== 'playing'; i++) { GTP.Input.press('confirm'); GTP.game.advance(0.1); } });
   const playing = await page.evaluate(() => GTP.game.state);
   t.assert(playing === 'playing', 'Enter starts play: ' + playing);
 
@@ -174,6 +184,7 @@ H.run('audio', async (t) => {
   await page.waitForTimeout(150);             // past the per-name rate limits (the context clock is real time)
   const all = await page.evaluate(() => {
     const A = GTP.Audio, p = GTP.game.player, out = { played: {} };
+    if (A._clearGaps) A._clearGaps();   // another track may have played a name a moment ago (the per-name rate limit)
     A.names.forEach((n) => { out.played[n] = A.play(n, { x: p.x + 2, z: p.z - 3, gain: 0.8 }); });
     out.voices = A.state().voices; out.max = A.state().maxVoices;
     out.far = A.play('ui', { x: p.x + 900, z: p.z, gain: 1 });   // beyond earshot: nothing is created
@@ -307,6 +318,74 @@ H.run('audio', async (t) => {
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
   await page.close();
+
+  // ---- 4c. QA-D-02 / D-06 / the radio kits, on a live page ----
+  const qa = await (async () => {
+    const q = await livePage(t, { headless: 0, skipTitle: 1, seed: 7 });
+    await q.page.mouse.click(640, 200);
+    const r = await q.page.evaluate(() => {
+      const A = GTP.Audio, out = {};
+      GTP.game._openingPending = false; GTP.game.advance(0.3);
+      out.running = A.ctx && A.ctx.state;
+      // a hidden tab suspends the context, showing it again resumes it
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      return out;
+    });
+    await q.page.waitForTimeout(300);
+    r.hidden = await q.page.evaluate(() => GTP.Audio.ctx.state);
+    await q.page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await q.page.waitForTimeout(300);
+    Object.assign(r, await q.page.evaluate(() => {
+      const A = GTP.Audio, out = { shown: A.ctx.state };
+      // an on-foot cutscene with a station score plays it (the cutscene engine's state, faked)
+      const CS = GTP.Cutscenes, was = { active: CS.active, current: CS.current };
+      CS.active = true; CS.current = { script: { music: 'station:pennant_fm' } }; GTP.game.setState('cutscene');
+      A.radio.setStation(1); GTP.game.advance(0.8); out.score = A.radio.state(); out.scoreLevel = A.radio.level();
+      CS.active = was.active; CS.current = was.current; GTP.game.setState('playing'); GTP.game.advance(1.5); out.after = A.radio.state();
+      // the station's kit hint: Loop 174 plays the breakbeat kit, Quiet Signal none
+      const st = GTP.Content.radio.stations, idx = (id) => st.findIndex((x) => x.id === id);
+      const v = GTP.Vehicles.spawn('sedan', GTP.game.player.x + 3, GTP.game.player.z, {}); v.enter(GTP.game.player, 0);
+      A.radio.setStation(idx('loop_174')); GTP.game.advance(0.5); out.kitLoop = A.radio.state().kit;
+      A.radio.setStation(idx('quiet_signal')); GTP.game.advance(0.5); out.kitQuiet = A.radio.state().kit;
+      out.now = A.radio.nowPlaying();
+      return out;
+    }));
+    const errs = await t.errors(q);
+    await q.page.close();
+    r.errs = errs;
+    return r;
+  })();
+  console.log('  qa audio: ' + JSON.stringify(qa));
+  t.assert(qa.running === 'running' && qa.hidden === 'suspended' && qa.shown === 'running', 'a hidden tab suspends the audio, showing it resumes (QA-D-02): ' + [qa.running, qa.hidden, qa.shown].join(' > '));
+  t.assert(qa.score.playing && qa.score.mode === 'score' && qa.score.id === 'pennant_fm' && qa.scoreLevel > 0.3 && !qa.after.playing, 'an on-foot cutscene plays its station score, and it ends with the cutscene (QA-D-06): ' + JSON.stringify([qa.score, qa.after]));
+  t.assert(qa.kitLoop === 'break' && qa.kitQuiet === 'none', 'the station kit hints are honoured: ' + qa.kitLoop + ', ' + qa.kitQuiet);
+  t.assert(/ - .+/.test(qa.now), 'nowPlaying names the song: ' + qa.now);
+  t.assert(qa.errs.length === 0, 'qa page errors:\n' + qa.errs.join('\n'));
+
+  // ---- 4d. QA-D-07: a gamepad-only player: a pad button creates the audio context ----
+  const pctx = await livePage(t, { headless: 0, skipTitle: 0, seed: 7 });
+  const padAudio = await pctx.page.evaluate(() => {
+    const out = { before: !!GTP.Audio.ctx };
+    const fake = { index: 0, id: 'Fake Standard Pad', connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons: [] };
+    for (let i = 0; i < 17; i++) fake.buttons.push({ pressed: false, value: 0 });
+    navigator.getGamepads = () => [fake];
+    GTP.game.advance(0.1);
+    fake.buttons[3] = { pressed: true, value: 1 }; GTP.game.advance(0.1); fake.buttons[3] = { pressed: false, value: 0 }; GTP.game.advance(0.1);   // Y: no action on the title menu
+    out.after = !!GTP.Audio.ctx; out.state = GTP.Audio.ctx && GTP.Audio.ctx.state;
+    GTP.game.advance(1); out.game = GTP.game.state; out.title = GTP.Audio.radio.state(); out.level = GTP.Audio.radio.level();
+    navigator.getGamepads = () => [];
+    return out;
+  });
+  console.log('  pad audio: ' + JSON.stringify(padAudio));
+  t.assert(!padAudio.before && padAudio.after, 'a pad button creates the AudioContext (QA-D-07): ' + JSON.stringify(padAudio));
+  t.assert(padAudio.game !== 'title' || (padAudio.title.playing && padAudio.title.mode === 'title' && padAudio.title.id === 'office_hours' && padAudio.level > 0.3), 'the title screen plays a theme (QA-D-10): ' + JSON.stringify(padAudio.title));
+  await pctx.page.close();
 
   // ---- 3. muted boot ----
   const mctx = await livePage(t, { headless: 0, skipTitle: 1, seed: 7, mute: 1 });

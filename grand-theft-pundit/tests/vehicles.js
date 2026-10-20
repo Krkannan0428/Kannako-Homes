@@ -414,7 +414,10 @@ H.run('vehicles', async (t) => {
     out.ok = r.ok; out.stats = { accel: +(car.cls.accel / base.accel).toFixed(2), max: +(car.cls.maxSpeed / base.max).toFixed(2), brake: +(car.cls.brake / base.brake).toFixed(2), hp: car.maxHp / base.hp };
     out.shared = GTP.C.VEHICLES.sports.accel === base.accel;
     out.rebuilt = car.mesh !== mesh0 && !!car.mesh;
-    out.spoiler = !!car.mesh.getObjectByName('spoiler'); out.rims = !!car.mesh.getObjectByName('rims'); out.color = car.color;
+    // the looks: the models track draws them from vehicle.mods (its mods key), else 06b's overlay (a spoiler and rims)
+    out.models = !!(GTP.Models && GTP.Models.syncVehicle); GTP.game.render();
+    out.spoiler = out.models ? !!(GTP.Models.modsKey && GTP.Models.modsKey(car.mods)) : !!car.mesh.getObjectByName('spoiler');
+    out.rims = out.models ? true : !!car.mesh.getObjectByName('rims'); out.color = car.color;
     const hp0 = car.hp; car.applyDamage(50, null, 'test'); out.armorTook = +(hp0 - car.hp).toFixed(1); car.hp = car.maxHp;
     out.catalog = V.modCatalog(car).length;
     // a purchase: the money moves and shop:buy fires
@@ -453,20 +456,20 @@ H.run('vehicles', async (t) => {
     GTP.Events.off && GTP.Events.off('modshop:open', fn);
     W.landmarks.pop(); delete W._lm.spin_doctor_test; V.modshop.lmRef = null;
     // garages
-    const sv = V.store('safe_dorm', car);
-    out.store = { ok: sv.ok, slot: sv.slot, inV: !!p.inVehicle, removed: car.removed, list: V.garage('safe_dorm').map((r) => r.type + ':' + r.mods.engine) };
-    out.full = (() => { const extra = []; for (let i = 0; i < 4; i++) { const c = g.debug.spawnVehicle(p.x + 8 + i * 5, p.z + 8, 'sedan'); extra.push(V.store('safe_dorm', c)); } return extra.map((r) => r.ok ? 'ok' : r.reason); })();
-    const back = V.retrieve('safe_dorm', 0);
-    out.retrieve = back ? { type: back.type, engine: back.mods && back.mods.engine, color: back.color, left: V.garage('safe_dorm').length } : null;
+    const sv = V.store('safe_penthouse', car);
+    out.store = { ok: sv.ok, slot: sv.slot, inV: !!p.inVehicle, removed: car.removed, list: V.garage('safe_penthouse').map((r) => r.type + ':' + r.mods.engine) };
+    out.full = (() => { const extra = []; for (let i = 0; i < 4; i++) { const c = g.debug.spawnVehicle(p.x + 8 + i * 5, p.z + 8, 'sedan'); extra.push(V.store('safe_penthouse', c)); } return extra.map((r) => r.ok ? 'ok' : r.reason); })();
+    const back = V.retrieve('safe_penthouse', 0);
+    out.retrieve = back ? { type: back.type, engine: back.mods && back.mods.engine, color: back.color, left: V.garage('safe_penthouse').length } : null;
     // the registry round trip and a slot save / load
     const snap = GTP.SaveRegistry.vehicles.get();
-    out.registry = { garages: Object.keys(snap.garages), count: snap.garages.safe_dorm.length };
-    GTP.SaveRegistry.vehicles.set({ v: 1, garages: {} }); out.cleared = V.garage('safe_dorm').length;
-    GTP.SaveRegistry.vehicles.set(snap); out.restored = V.garage('safe_dorm').length;
+    out.registry = { garages: Object.keys(snap.garages), count: snap.garages.safe_penthouse.length };
+    GTP.SaveRegistry.vehicles.set({ v: 1, garages: {} }); out.cleared = V.garage('safe_penthouse').length;
+    GTP.SaveRegistry.vehicles.set(snap); out.restored = V.garage('safe_penthouse').length;
     out.saved = g.saveSlot(3, { reason: 'test' });
     GTP.SaveRegistry.vehicles.set({ v: 1, garages: {} });
     out.loaded = g.loadSlot(3); g.advance(0.5);
-    out.afterLoad = V.garage('safe_dorm').length;
+    out.afterLoad = V.garage('safe_penthouse').length;
     return out;
   });
   console.log('  mods: ' + JSON.stringify(mods));
@@ -476,7 +479,7 @@ H.run('vehicles', async (t) => {
   t.assert(mods.rebuilt && mods.spoiler && mods.rims && mods.color === '#2f6fd8', 'the mesh is rebuilt with the paint, a spoiler and rims');
   t.assert(mods.armorTook < 40, 'armour soaks damage: ' + mods.armorTook);
   t.assert(mods.catalog > 20, 'the catalog lists the parts: ' + mods.catalog);
-  t.assert(mods.buy.b1.ok && mods.buy.b2 === 'owned' && mods.buy.b3 && mods.buy.b4 === 'money' && mods.buy.engine === 2 && mods.buy.items.length === 2 && mods.buy.items.every((i) => /^mod:/.test(i)), 'buyMod charges, refuses owned parts and empty wallets, emits shop:buy: ' + JSON.stringify(mods.buy));
+  t.assert(mods.buy.b1.ok && mods.buy.b2 === 'owned' && mods.buy.b3 && mods.buy.b4 === 'funds' && mods.buy.engine === 2 && mods.buy.items.length === 2 && mods.buy.items.every((i) => /^mod:/.test(i)), 'buyMod charges, refuses owned parts and empty wallets, emits shop:buy: ' + JSON.stringify(mods.buy));
   t.assert(mods.heliParts.indexOf('spoiler') < 0 && mods.heliParts.indexOf('engine') >= 0 && mods.heliParts.indexOf('armor') >= 0, 'aircraft take engine and armour only: ' + mods.heliParts);
   t.assert(shop.opened.length === 1 && /^spin_doctor_test:true:\d+/.test(shop.opened[0]) && !shop.closed, 'driving into the Spin Doctor bay opens the mod shop, leaving closes it: ' + JSON.stringify(shop));
   t.assert(shop.store.ok && !shop.store.inV && shop.store.removed && shop.store.list[0] === 'sedan:2', 'store() parks the car in the garage (the driver steps out): ' + JSON.stringify(shop.store));
@@ -533,7 +536,7 @@ H.run('vehicles', async (t) => {
     out.saved = g.saveSlot(2, { reason: 'test' }); out.loaded = g.loadSlot(2); g.advance(1);
     out.reloaded = { inV: p.inVehicle && p.inVehicle.type, garage: V.garage('safe_brownstone').length };
     V.fleet.enabled = true; g.newGame(7); g.advance(1);
-    out.newGame = { garage: V.garage('safe_brownstone').length + V.garage('safe_dorm').length, fleet: V.state().fleet.length };
+    out.newGame = { garage: V.garage('safe_brownstone').length + V.garage('safe_penthouse').length, fleet: V.state().fleet.length };
     return out;
   });
   console.log('  edges: ' + JSON.stringify(edges));
