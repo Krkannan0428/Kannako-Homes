@@ -3,7 +3,7 @@
 #
 #   - push a tag like v0.1.0            -> build everything and create/update the release for that tag
 #   - "Run workflow" (workflow_dispatch) -> build everything and upload workflow artifacts; fill in
-#                                          release_tag with an existing tag to also publish a release
+#                                          release_tag (existing or new, created at the built commit) to also publish a release
 #
 # Signing is optional. Add these repository secrets and the macOS job signs (and notarizes) instead
 # of producing an unsigned build; without them every step still runs and the output is unsigned:
@@ -239,6 +239,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           name: Grand Theft Pundit ${{ env.RELEASE_TAG }}
           prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           generate_release_notes: true
