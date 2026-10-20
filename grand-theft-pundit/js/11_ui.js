@@ -184,6 +184,20 @@
   }
   function failText(kind, dflt) { var R = GTP.Content && GTP.Content.radio; return (R && R.failTexts && R.failTexts[kind]) || dflt; }
   var ROLE_LABEL = { civ: 'CIVILIAN', cop: 'COP', swat: 'BALLOON UNIT', thug: 'GOON', protester: 'MARCHER', hoa: 'HOA PATROL', npc: 'SOMEBODY', raccoon: 'RACCOON', courier: 'COURIER', doorman: 'DOORMAN', clerk: 'CLERK' };
+  // the name over a lock-on / scope target: a boss weak point by its label, a boss by its name, a vehicle by its display
+  // name (never the engine class id, QA-B-TXT-04), a cast member by name, else the role
+  function targetLabel(t) {
+    if (!t) return '';
+    if (t.bossPart) return String(t.label || 'WEAK POINT');
+    if (t.boss && t.boss.name) return String(t.boss.name);
+    if (t.kind === 'vehicle' || t.kind === 'heli') return t.isPolice ? 'CRUISER' : vehicleName(t).toUpperCase();
+    return t.castId ? castName(t.castId) : roleLabel(t.role);
+  }
+  // a boss ped's own hp is a 100000 placeholder: its bar is the encounter's
+  function targetHp(t) {
+    var b = t && t.boss; if (b && b.maxHp) return U.clamp((b.hp || 0) / b.maxHp, 0, 1);
+    return U.clamp((t.hp || 0) / (t.maxHp || 1), 0, 1);
+  }
   function roleLabel(role) { return ROLE_LABEL[role] || String(role || 'ped').toUpperCase(); }
   function fmtSubs(n) { n = n | 0; return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'K' : String(n); }
   function nMissions(n) { n = n | 0; return n + (n === 1 ? ' mission' : ' missions'); }
@@ -555,6 +569,11 @@
       case 'rampage': ctx.beginPath(); ctx.ellipse(0, -1, 9, 6.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.moveTo(-3, 4); ctx.lineTo(-6, 9); ctx.lineTo(2, 5); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-5, -2, 2, 2); ctx.fillRect(-1, -2, 2, 2); ctx.fillRect(3, -2, 2, 2); break;
       case 'ramp': ctx.beginPath(); ctx.moveTo(-9, 7); ctx.lineTo(9, 7); ctx.lineTo(9, -6); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(-2, 2, 2, 5); ctx.fillRect(3, -1, 2, 8); break;
       case 'violation': ctx.beginPath(); for (var j = 0; j < 10; j++) { var a2 = -Math.PI / 2 + j * Math.PI / 5, rd = j % 2 ? 3.6 : 8.5; ctx.lineTo(Math.cos(a2) * rd, Math.sin(a2) * rd); } ctx.closePath(); ctx.fill(); break;
+      case 'golf': ctx.fillRect(-1, -8, 2, 16); ctx.beginPath(); ctx.moveTo(1, -8); ctx.lineTo(9, -5); ctx.lineTo(1, -2); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.ellipse(0, 8, 6, 2, 0, 0, Math.PI * 2); ctx.fill(); break;
+      case 'property': ctx.font = 'bold 15px ' + FONT_DISPLAY; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('$', 0, 1); break;
+      case 'job': rr(ctx, -8, -4, 16, 11, 2); ctx.fill(); ctx.fillRect(-3, -7, 6, 3); ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-8, 0, 16, 1.5); break;
+      case 'fire': ctx.beginPath(); ctx.moveTo(0, -9); ctx.quadraticCurveTo(8, 0, 5, 6); ctx.quadraticCurveTo(0, 10, -5, 6); ctx.quadraticCurveTo(-8, 0, 0, -9); ctx.fill(); break;
+      case 'client': ctx.beginPath(); ctx.arc(0, -4, 4, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(0, 8, 7, Math.PI, Math.PI * 2); ctx.fill(); break;
       case 'stranger': ctx.font = 'bold 17px ' + FONT_DISPLAY; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', 0, 1); break;
       case 'waypoint': ctx.beginPath(); ctx.moveTo(0, 9); ctx.lineTo(-6, -1); ctx.arc(0, -3, 6, Math.PI * 0.85, Math.PI * 2.15); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.beginPath(); ctx.arc(0, -3, 2.4, 0, Math.PI * 2); ctx.fill(); break;
       default: ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
@@ -607,6 +626,7 @@
     var list = E.list;
     for (var i = 0; i < list.length; i++) {
       var e = list[i]; if (e.removed) continue;
+      if (e.bossPart || e.boss) continue;   // a boss weak point (an entity of kind 'heli') is not a police helicopter
       if (e.kind === 'heli') { out.push({ x: e.x, z: e.z, kind: 'heli' }); continue; }
       if (e.kind === 'vehicle' && e.isPolice && !e.wreck && e.driver) { out.push({ x: e.x, z: e.z, kind: 'car' }); continue; }
       if (e.kind === 'ped' && e.alive && !e.inVehicle && (e.role === 'cop' || e.role === 'swat' || e.role === 'hoa')) out.push({ x: e.x, z: e.z, kind: 'cop' });
@@ -618,14 +638,24 @@
   function allMarkers() {
     var Ms = GTP.Missions, out = [];
     try { out = Ms && Ms.allMarkers ? Ms.allMarkers() : (Ms && Ms.markers ? Ms.markers() : []); } catch (e) { out = []; }
-    var Sg = GTP.Strangers;   // v0.3 strangers side missions: Strangers.markers() -> [{id, x, z, y, title, giver}]
-    if (Sg && typeof Sg.markers === 'function') { try { var sm = Sg.markers() || []; for (var si = 0; si < sm.length; si++) if (sm[si] && typeof sm[si].x === 'number') out.push(Object.assign({}, sm[si], { id: 'stranger:' + sm[si].id, kind: 'stranger', icon: 'stranger', strangerId: sm[si].id })); } catch (e) { /* optional */ } }
+    // strangers side missions (GTP.Strangers, mission kind 'stranger') come as ordinary mission markers: drawn as a purple '?'
+    for (var si = 0; si < out.length; si++) { var sid = out[si] && out[si].kind === 'mission' ? strandOf(out[si].missionId || out[si].id) : null; if (sid) out[si] = Object.assign({}, out[si], { kind: 'stranger', icon: 'stranger', strangerId: sid }); }
+    // the systems' entries (properties for sale, safehouses, the golf course, odd jobs; the job calls and the pin while one runs)
+    var Sy = GTP.Systems;
+    if (Sy && typeof Sy.markers === 'function') { try { var sy = Sy.markers() || []; for (var yi = 0; yi < sy.length; yi++) if (sy[yi] && typeof sy[yi].x === 'number') out.push(sy[yi]); } catch (e) { /* optional */ } }
     var CB = GTP.Combat, g = game();
     if (CB && CB.shop && CB.shop.stores) {
       var inCut = g && g.state === 'cutscene';
       try { var st = CB.shop.stores(); for (var i = 0; i < st.length && !inCut; i++) out.push({ id: 'shop:' + st[i].id, kind: 'shop', icon: 'gunshop', x: st[i].x, z: st[i].z, title: st[i].name || 'Both Sides Arms', color: COL.green }); } catch (e) { /* optional */ }
     }
     return out;
+  }
+  // the strand of a strangers mission id (null for the story's own missions)
+  function strandOf(missionId) {
+    if (!missionId) return null;
+    var Sg = GTP.Strangers; if (Sg && typeof Sg.strandOf === 'function') { var r = call(Sg.strandOf, Sg, [missionId], null); if (r) return r; }
+    var Ms = GTP.Missions, d = Ms && Ms.def ? call(Ms.def, Ms, [missionId], null) : null;
+    return d && d.kind === 'stranger' ? (d.strand || 'stranger') : null;
   }
   // mission and objective blips on top of the home / strand icons that can share their spot (QA-B-NP-02)
   function markersByLayer() {
@@ -717,7 +747,7 @@
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i], l = toLocal(mk.x, mk.z), col = markerColor(mk);
       if (l.far) {
-        if (mk.kind === 'shop' || mk.kind === 'stranger' || mk.icon === 'home' || mk.icon === 'race' || mk.icon === 'rampage') continue;   // only the objective-grade markers point from the rim
+        if (mk.kind === 'shop' || mk.kind === 'stranger' || mk.kind === 'system' || mk.icon === 'home' || mk.icon === 'race' || mk.icon === 'rampage') continue;   // only the objective-grade markers point from the rim
         var e = clampEdge(l); ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.ang); ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(px(7), 0); ctx.lineTo(-px(4), -px(5)); ctx.lineTo(-px(4), px(5)); ctx.closePath(); ctx.fill(); ctx.restore(); continue;
       }
       var pulse = mk.kind === 'objective' || mk.kind === 'mission' ? 1 + 0.15 * Math.sin(t * 4 + i) : 1;
@@ -1081,7 +1111,7 @@
     if (tg && GTP.Render) {
       var ts = GTP.Render.worldToScreen(tg.x, tg.y + (tg.height || 1.8) * ((tg.look && tg.look.scale) || 1) + 0.4, tg.z);
       if (ts.visible && U.dist2d(ts.sx, ts.sy, cx, cy) < rad - px(20)) {
-        var label = tg.kind === 'vehicle' ? String(tg.type || 'car').toUpperCase() : tg.kind === 'heli' ? 'WEATHER BALLOON' : (tg.castId ? castName(tg.castId) : roleLabel(tg.role));
+        var label = targetLabel(tg);
         var font = F(10, 'bold'), w = measure(ctx, label, font) + px(14);
         panel(ctx, ts.sx - w / 2, ts.sy - px(18), w, px(16), px(4), 'rgba(255,63,164,0.25)', 'rgba(255,63,164,0.6)');
         txt(ctx, label, ts.sx, ts.sy - px(6), { font: font, color: COL.ink, align: 'center', outline: false });
@@ -1167,6 +1197,7 @@
     // caller, text}), the top-of-hour news bulletin (station.bulletins / station.news), call-in lines (station.callers)
     var np = null, A = GTP.Audio;
     try { np = A && A.radio && typeof A.radio.nowPlaying === 'function' ? A.radio.nowPlaying() : null; } catch (e) { np = null; }
+    if (np && typeof np !== 'object') np = null;   // GTP.Audio's nowPlaying() is the "Station - tagline" string: the chip already says it
     if (!np && st.nowPlaying) np = typeof st.nowPlaying === 'function' ? st.nowPlaying() : st.nowPlaying;
     if (!np && R && typeof R.nowPlaying === 'function' && st.songs && st.songs.length) { try { np = R.nowPlaying(st.id); } catch (e) { np = null; } if (np) np = { kind: 'song', id: np.song, title: np.title, artist: np.artist }; }   // the radio track: Content.radio.nowPlaying(id)
     if (np) {
@@ -1214,6 +1245,7 @@
   }
   function drawTicker(ctx, y) {
     var tk = ui.ticker, p = player(), st = currentStation(); if (!tk.cur || !p) return;
+    if (p.inVehicle && vehCat(p.inVehicle) === 'chute') return;   // no radio under a canopy (the vehicles track mutes it too)
     var m = minimapRect();
     var x = safe.l + (ui.touch.visible ? px(210) : 0), right = m.top ? W - safe.r - (ui.touch.visible ? px(230) : 0) : m.x - px(12), w = right - x;
     if (portrait) { x = safe.l; w = W - safe.l - safe.r; }
@@ -2230,12 +2262,17 @@
     if (st && st.active) rows.push({ kind: 'active', title: st.mission ? st.mission.title : st.active, sub: st.objectiveText || 'In progress' });
     if (canRetry && lf) rows.push({ kind: 'retry', title: lf.m.title, sub: (lf.text || 'Context stamped') + '  ·  RETRY from the checkpoint', id: lf.id });
     var av = Ms && Ms.available ? Ms.available() : [];
-    for (i = 0; i < av.length; i++) { var lm = GTP.World.landmark(av[i].marker); rows.push({ kind: 'avail', title: av[i].title, sub: castName(av[i].giver) + '  ·  ' + (lm ? landmarkLabel(lm) : av[i].marker) + '  ·  ' + U.fmtMoney(av[i].reward || 0) }); }
-    // v0.3 strangers: Strangers.list() -> [{id, title, giver, status, line, x, z}] (else their markers)
-    var Sg = GTP.Strangers, sl = null;
-    try { sl = Sg && typeof Sg.list === 'function' ? Sg.list() : null; } catch (e) { sl = null; }
-    if (!sl) sl = allMarkers().filter(function (m2) { return m2.kind === 'stranger'; }).map(function (m2) { return { id: m2.strangerId, title: m2.title, giver: m2.giver, x: m2.x, z: m2.z, status: 'available' }; });
-    for (i = 0; i < (sl || []).length; i++) { var sx = sl[i]; if (!sx || sx.status === 'done' || sx.status === 'locked') continue; rows.push({ kind: 'stranger', title: '? ' + (sx.title || sx.name || sx.id), sub: (sx.giver ? castName(sx.giver) + '  ·  ' : '') + (sx.line || (sx.status === 'active' ? 'In progress' : 'Somebody wants a word')), x: sx.x, z: sx.z, id: sx.id }); }
+    // the strangers' next missions (GTP.Strangers.summary(): {id, name, giver, state, done, total, next}) are purple rows
+    // with a GPS button; the story's are blue
+    var Sg = GTP.Strangers, strands = {}, mk0 = null;
+    try { (Sg && Sg.summary ? Sg.summary() : []).forEach(function (x2) { if (x2) strands[x2.id] = x2; }); } catch (e) { strands = {}; }
+    for (i = 0; i < av.length; i++) {
+      var lm = GTP.World.landmark(av[i].marker), sid = strandOf(av[i].id), where = lm ? landmarkLabel(lm) : av[i].marker;
+      if (sid) {
+        var sx = strands[sid] || {}; mk0 = null; allMarkers().forEach(function (m2) { if (m2.missionId === av[i].id) mk0 = m2; });
+        rows.push({ kind: 'stranger', title: '? ' + av[i].title, sub: (sx.name ? sx.name + ' ' + ((sx.done | 0) + 1) + '/' + (sx.total || 1) + '  ·  ' : '') + castName(av[i].giver) + '  ·  ' + where, x: mk0 ? mk0.x : (lm && lm.door ? lm.door.x : null), z: mk0 ? mk0.z : (lm && lm.door ? lm.door.z : null), id: av[i].id });
+      } else rows.push({ kind: 'avail', title: av[i].title, sub: castName(av[i].giver) + '  ·  ' + where + '  ·  ' + U.fmtMoney(av[i].reward || 0) });
+    }
     for (i = 0; i < all.length; i++) if (st && st.completed && st.completed.has(all[i].id)) { var bt = Ms.bestTime ? Ms.bestTime(all[i].id) : null; rows.push({ kind: 'done', title: all[i].title, sub: 'Completed  ·  ' + U.fmtMoney(all[i].reward || 0) + (bt != null ? '  ·  best ' + U.fmtTime(bt) : ''), id: all[i].id }); }
     var done = st && st.completed ? st.completed.size : 0;
     txt(ctx, 'MISSIONS  ' + done + ' / ' + all.length, x, y + px(14), { font: F(12, 'bold'), color: COL.cyan, outline: false });
@@ -2287,7 +2324,7 @@
   function drawPhoneStats(ctx, x, y, w, h) {
     var p = player(), g = game(), st = (p && p.stats) || {}, Ms = GTP.Missions;
     var wl = (GTP.AI && GTP.AI.wanted) ? GTP.AI.wanted.level : 0, subs = Ms && Ms.subscribers ? Ms.subscribers() : null;
-    var rows = [
+    var rows = hasStatsPage() ? [['Subscribers', (subs ? fmtSubs(subs.count) + '  ·  ' + subs.name : '0')], ['Day / time', g ? 'Day ' + g.time.day + ', ' + U.fmtClock(g.time.clock) : ''], ['Wanted', wl ? wl + ' star' + (wl > 1 ? 's' : '') : 'clean']] : [   // the systems' page carries the career numbers
       ['Cash', p ? U.fmtMoney(p.money) : '$0'], ['Subscribers', (subs ? fmtSubs(subs.count) + '  ·  ' + subs.name : '0')], ['Missions passed', String(Ms && Ms.state ? Ms.state.completed.size : 0)],
       ['Retries', String(st.retries || 0)], ['Play time', fmtPlay(g ? g.playTime : 0)], ['Day / time', g ? 'Day ' + g.time.day + ', ' + U.fmtClock(g.time.clock) : ''], ['Wanted', wl ? wl + ' star' + (wl > 1 ? 's' : '') : 'clean'],
       ['Distance on foot', Math.round(st.distance || 0) + ' m'], ['Distance driven', Math.round(st.distanceDriven || 0) + ' m'],
@@ -3682,7 +3719,7 @@
     drawTurnArrow(ctx, arrived ? 'straight' : G.turn.dir, x + px(28), y + h / 2, px(30), col);
     var head = arrived ? 'ARRIVED' : G.turn.dir === 'around' ? 'TURN AROUND' : G.turn.dir === 'straight' ? fmtDist(G.len) : fmtDist(G.turn.dist) + '  ' + (G.turn.dir === 'left' ? 'TURN LEFT' : 'TURN RIGHT');
     txt(ctx, head, x + px(52), y + px(20), { font: F(13, 'bold'), color: COL.ink, outline: false, maxW: w - px(60) });
-    var sub = (G.kind === 'story' ? 'STORY  ·  ' : '') + (G.label || 'Destination') + (arrived || G.turn.dir === 'straight' ? '' : '  ·  ' + fmtDist(G.len));
+    var sub = (G.kind === 'story' ? 'STORY  ·  ' : G.kind === 'objective' ? 'OBJECTIVE  ·  ' : '') + (G.label || 'Destination') + (arrived || G.turn.dir === 'straight' ? '' : '  ·  ' + fmtDist(G.len));
     txt(ctx, sub, x + px(52), y + px(36), { font: F(10, 'bold'), color: col, outline: false, maxW: w - px(60) });
   }
 
@@ -3873,10 +3910,21 @@
   function updateFade(dt) { var f = ui.fade; if (!f) return; f.t += dt; if ((f.phase === 'in' && f.t > 0.35) || (f.phase === 'out' && f.t > 3)) ui.fade = null; }
   function drawFade(ctx) { var a = fadeAlpha(); if (a <= 0.001) return; ctx.fillStyle = 'rgba(0,0,0,' + a.toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); }
   var INTERIOR_NAMES = { armory: 'Both Sides Arms', clothing: 'Lanyard & Co.', barber: 'Clip Joint', safehouse: 'Safehouse', range: 'The Range' };
+  // a store is a landmark id (GTP.Interiors' interior:enter {store}); its name is the Combat shop's store, else the landmark's
+  function storeLabel(store, kind) {
+    if (store && typeof store === 'object') return store.name || store.title || storeLabel(store.id, kind);
+    if (store) {
+      var CB = GTP.Combat, list = CB && CB.shop && CB.shop._stores, Wd = GTP.World, lm = null;
+      if (list) for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === store && list[i].name) return list[i].name;
+      if (Wd && typeof Wd.landmark === 'function') lm = call(Wd.landmark, Wd, [store], null);
+      if (lm && (lm.name || lm.label)) return landmarkLabel(lm) || lm.name;
+    }
+    return INTERIOR_NAMES[kind] || '';
+  }
   function interiorEnter(e) {
     if (!e) return;
-    ui.interior = { id: e.id, kind: e.kind || e.id, store: e.store || null, t: 0 };
-    var name = (e.store && (e.store.name || e.store.title)) || e.name || INTERIOR_NAMES[e.kind] || String(e.id || '').replace(/_/g, ' ');
+    ui.interior = { id: e.id, kind: e.kind || e.id, store: e.store || null, landmark: e.landmark || null, t: 0 };
+    var name = storeLabel(e.store || e.landmark, e.kind) || e.name || String(e.id || '').replace(/_/g, ' ');
     ui.placeCard = { title: name, sub: e.kind === 'armory' ? 'We arm both sides. That\'s balance.' : e.kind === 'clothing' ? 'Dress for the outrage you want.' : e.kind === 'barber' ? 'Hair that holds a take.' : e.kind === 'safehouse' ? 'Bed saves. Wardrobe changes.' : '', t: 0 };
   }
   function drawPlaceCard(ctx) {
@@ -3902,6 +3950,8 @@
   function vehicleName(v) {
     if (!v) return '';
     if (v.name) return v.name;
+    var Vs = GTP.Vehicles, h = Vs && typeof Vs.hud === 'function' ? call(Vs.hud, Vs, [v], null) : null;
+    if (h && h.name && h.name !== v.type) return h.name;
     var T = { sedan: 'Pundit Sedan', sports: 'Hot Take GT', suv: 'HOA Patrol SUV', van: 'Podcast Van', truck: 'Mattress Truck', taxi: 'Loud Cab', cop: 'Cruiser', police: 'Cruiser', moto: 'Mic Drop 600', bike: 'Mic Drop 600', heli: 'Spin Cycle Helicopter', plane: 'Op-Ed Prop', jet: 'Thinkpiece Jet', speedboat: 'Hot Water Speedboat', jetski: 'Sidebar Jet Ski', boat: 'Boat', parachute: 'Parachute' };
     return T[v.type] || String(v.type || 'vehicle').replace(/_/g, ' ').replace(/\b\w/g, function (m) { return m.toUpperCase(); });
   }
@@ -3922,8 +3972,8 @@
   // (a bare dot after a shot without aiming), scope (the Fact Checker's sight).
   function isHostile(t) { return !!t && (t.role === 'cop' || t.role === 'swat' || t.role === 'thug' || t.hostile || (t.kind === 'vehicle' && t.isPolice) || t.kind === 'heli' || t.kind === 'boss' || t.boss); }
   function crossState(hud, aim, p) {
-    var hm = hud && hud.hitmark, w = hud && hud.weapon, t = aim.target || aim.hoverEntity || null, wd = w ? weaponDef(w.id) : null;
-    var cov = p && p.pose && p.pose.cover;
+    var hm = hud && hud.hitmark, w = hud && hud.weapon, t = aim.target || (aim.hover && typeof aim.hover === 'object' ? aim.hover : null) || aim.hoverEntity || null, wd = w ? weaponDef(w.id) : null;
+    var cov = (hud && hud.cover && hud.cover.active ? hud.cover : null) || (p && p.pose && p.pose.cover), ch = hud && hud.crosshair;
     if (w && w.reloading) return 'reload';
     if (hm && hm.kill && hm.age < 0.4) return 'kill';
     if (hm && hm.zone === 'head' && hm.age < 0.45) return 'headshot';
@@ -3931,9 +3981,9 @@
     if (cov && cov.blind) return 'blind';
     if (w && (w.cls === 'melee' || w.id === 'fist' || w.id === 'tableleg' || (wd && /melee/.test(String(wd.class || ''))))) return 'melee';
     if (w && (w.cls === 'thrown' || w.cls === 'lobbed' || w.id === 'hottake' || w.id === 'hotmic' || (wd && wd.projectile === 'lobbed'))) return 'throw';
-    if (isHostile(t)) return 'hostile';
-    if (t || aim.hover) return 'friendly';
-    if (aim.inRange === false) return 'range';
+    if (isHostile(t) || (!t && ch && ch.hostile)) return 'hostile';
+    if (t || aim.hover || (ch && ch.target)) return 'friendly';
+    if (aim.inRange === false || (ch && ch.inRange === false)) return 'range';
     return 'aim';
   }
   var CROSS_COL = { aim: '#ffffff', hostile: '#ff3b30', friendly: '#ffbe3c', range: 'rgba(200,205,220,0.55)', hit: '#ffffff', headshot: '#ffd23c', kill: '#ff3fa4', reload: '#ffbe3c', blind: '#ffffff', melee: '#ffffff', throw: '#ffffff' };
@@ -4011,10 +4061,10 @@
       var bracket = function () { ctx.beginPath(); ctx.moveTo(-half, -half + c); ctx.lineTo(-half, -half); ctx.lineTo(-half + c, -half); ctx.moveTo(half - c, -half); ctx.lineTo(half, -half); ctx.lineTo(half, -half + c); ctx.moveTo(half, half - c); ctx.lineTo(half, half); ctx.lineTo(half - c, half); ctx.moveTo(-half + c, half); ctx.lineTo(-half, half); ctx.lineTo(-half, half - c); ctx.stroke(); };
       ctx.lineWidth = px(5); ctx.strokeStyle = 'rgba(0,0,0,0.55)'; bracket();
       ctx.lineWidth = px(2.2); ctx.strokeStyle = flash ? '#ffffff' : isHostile(t) ? COL.red : COL.amber; bracket();
-      var hp = U.clamp((t.hp || 0) / (t.maxHp || 1), 0, 1);
+      var hp = targetHp(t);
       ctx.fillStyle = 'rgba(10,12,20,0.75)'; rr(ctx, -half, half + px(6), size, px(6), px(3)); ctx.fill();
       ctx.fillStyle = hp > 0.5 ? COL.lime : hp > 0.25 ? COL.amber : COL.red; rr(ctx, -half, half + px(6), size * hp, px(6), px(3)); ctx.fill();
-      var label = t.kind === 'vehicle' ? (t.isPolice ? 'CRUISER' : String(t.type || 'car').toUpperCase()) : t.kind === 'heli' ? 'WEATHER BALLOON' : (t.castId ? castName(t.castId) : roleLabel(t.role));
+      var label = targetLabel(t);
       txt(ctx, label, 0, half + px(24), { font: F(11, 'bold'), color: COL.ink, align: 'center' });
       ctx.restore();
     }
@@ -4050,8 +4100,13 @@
     txt(ctx, label, kx + px(4), y + px(17), { font: font, color: opts.color || COL.ink, outline: false });
     return w;
   }
+  // GTP.Combat.hud().cover: {active, high, edge, canVault, blind, ...} in cover, else {near, nearHigh}; hud().prompt is
+  // 'counter' | 'cover' | 'vault' | 'peek'
+  function coverHud() { var CB = GTP.Combat, h = CB && CB.hud ? call(CB.hud, CB, [], null) : null; return h && h.cover ? h.cover : null; }
   function coverAvailable(p) {
-    var CB = GTP.Combat, cv = CB && CB.cover;
+    var CB = GTP.Combat, cv = CB && CB.cover, ch = coverHud();
+    if (ch) return ch.active ? null : (ch.near ? { high: ch.nearHigh } : null);
+    if (p && p._coverNear) return p._coverNear;
     if (p && p.coverHint) return p.coverHint;
     if (!cv) return null;
     if (typeof cv.available === 'function') return call(cv.available, cv, [p], null);
@@ -4059,23 +4114,25 @@
     if (typeof cv.candidate === 'function') return call(cv.candidate, cv, [p], null);
     return null;
   }
-  function inCover(p) { return !!((p && p.pose && p.pose.cover) || ui.cover.on); }
+  function inCover(p) { var ch = coverHud(); if (ch) return !!ch.active; return !!((p && (p.cover || (p.pose && p.pose.cover))) || ui.cover.on); }
   function promptList() {
     var p = player(), g = game(), out = []; if (!p || !g || g.state !== 'playing' || ui.modal || ui.shopOpen || ui.dialogue) return out;
     var CB = GTP.Combat, hud = CB && CB.hud ? CB.hud() : null, w = hud && hud.weapon, aiming = !!(CB && CB.aim && CB.aim.active), v = p.inVehicle;
     if (ui.golf && ui.golf.active) return out;
     if (v) {
       var cat = vehCat(v), alt = p.y - groundY(p.x, p.z);
-      if ((cat === 'heli' || cat === 'plane') && alt > 30) out.push({ keys: [glyph('enter')], label: 'BAIL OUT', color: COL.amber });
-      if (cat === 'chute') out.push({ keys: [glyph('enter')], label: 'CUT AWAY' });
+      var vhp = vehHud(v), bail = vhp && vhp.family ? vhp.prompt === 'Bail out' : alt > 30;
+      if ((cat === 'heli' || cat === 'plane') && bail) out.push({ keys: [glyph('enter')], label: 'BAIL OUT', color: COL.amber });
+      if (cat === 'chute' && chuteState(p) === 'open') out.push({ keys: [glyph('enter')], label: 'CUT AWAY' });
       return out;
     }
     if (chuteState(p) === 'freefall') return out;   // the big DEPLOY prompt is drawn on its own
+    if (hud && hud.prompt === 'counter') out.push({ keys: [glyph('jump')], label: 'COUNTER', color: COL.red });
     if (inCover(p)) {
-      var cov = (p.pose && p.pose.cover) || {};
-      out.push({ keys: [glyph('aim')], label: 'PEEK' });
+      var cov = (hud && hud.cover && hud.cover.active ? hud.cover : null) || p.cover || (p.pose && p.pose.cover) || {};
+      out.push({ keys: [glyph('aim')], label: cov.edge || cov.high === false ? 'PEEK' : 'AIM' });
       out.push({ keys: [glyph('shoot')], label: aiming ? 'FIRE' : 'BLIND FIRE' });
-      if (cov.high === false || ui.cover.low) out.push({ keys: [glyph('jump')], label: 'VAULT' });
+      if (cov.canVault || cov.high === false || ui.cover.low) out.push({ keys: [glyph('jump')], label: 'VAULT' });
       out.push({ keys: [glyph('cover')], label: 'LEAVE COVER' });
       return out;
     }
@@ -4107,7 +4164,7 @@
   function chuteState(p) {
     if (!p) return null;
     var v = p.inVehicle;
-    if (v && (v.type === 'parachute' || v.kind === 'parachute')) return 'open';
+    if (v && (v.type === 'parachute' || v.kind === 'parachute' || (v.cls && v.cls.family === 'chute'))) return v.chute === 'free' ? 'freefall' : v.chute === 'landed' ? null : 'open';   // GTP.Vehicles: 'free' | 'open' | 'landed'
     var c = p.parachute;
     if (c && typeof c === 'object') return c.state || (c.open ? 'open' : c.freefall ? 'freefall' : null);
     if (p.freefall) return 'freefall';
@@ -4116,7 +4173,7 @@
   function drawParachute(ctx) {
     var p = player(), g = game(); if (!p || !g || g.state !== 'playing') return;
     var st = chuteState(p); if (!st) return;
-    var alt = Math.max(0, p.y - groundY(p.x, p.z));
+    var vh = p.inVehicle ? vehHud(p.inVehicle) : null, alt = Math.max(0, vh && vh.alt != null ? vh.alt : p.y - groundY(p.x, p.z));
     ui.chuteShown = st;
     if (st === 'freefall') {
       var pulse = 1 + 0.06 * Math.sin(ui.t * 10), y = H * 0.66;
@@ -4130,7 +4187,7 @@
       return;
     }
     // canopy open: the altitude, the descent and the steering line
-    var vy = p.vy != null ? p.vy : 0, x = W / 2, yy = H - safe.b - px(ui.touch.visible ? 220 : 110);
+    var vy = vh && vh.vs != null ? vh.vs : (p.vy != null ? p.vy : 0), x = W / 2, yy = H - safe.b - px(ui.touch.visible ? 220 : 110);
     var cw = px(240);
     glass(ctx, x - cw / 2, yy, cw, px(54), COL.cyan, px(10));
     txt(ctx, Math.round(alt) + ' m', x - cw / 2 + px(18), yy + px(32), { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false });
@@ -4142,7 +4199,9 @@
   // -------------------------------------------------------- vehicle HUDs ----
   // vehicle.hud() -> {speed (m/s), alt (m), pitch, roll, heading (rad), throttle (0..1), gear}: a bike gauge with the lean,
   // an aircraft panel (attitude ball, heading tape, altitude and speed boxes, throttle / collective, PULL UP), a boat panel.
+  var FAMILY_CAT = { car: 'car', moto: 'bike', heli: 'heli', plane: 'plane', boat: 'boat', chute: 'chute' };
   function vehCat(v) {
+    if (v && v.cls && FAMILY_CAT[v.cls.family]) return FAMILY_CAT[v.cls.family];   // GTP.Vehicles' family
     var t = String((v && (v.type || v.kind)) || '').toLowerCase();
     if (/moto|bike|scooter|cycle/.test(t)) return 'bike';
     if (/heli/.test(t)) return 'heli';
@@ -4153,7 +4212,8 @@
   }
   function vehHud(v) { if (!v || typeof v.hud !== 'function') return null; try { return v.hud() || null; } catch (e) { return null; } }
   var CARD = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  function headingDeg(h) { var d = (h || 0) * 180 / Math.PI; d = ((d % 360) + 360) % 360; return d; }
+  // Vehicle.hud().heading is in degrees (0 = north, clockwise); an older hud without `family` gave radians
+  function headingDeg(h, deg) { var d = deg ? (h || 0) : (h || 0) * 180 / Math.PI; d = ((d % 360) + 360) % 360; return d; }
   function drawVehicleHud(ctx) {
     var p = player(), g = game(); if (!p || !g || g.state !== 'playing' || !p.inVehicle) return;
     var v = p.inVehicle, h = vehHud(v), cat = vehCat(v);
@@ -4165,20 +4225,20 @@
     glass(ctx, x, y, w, hh, cat === 'boat' ? COL.cyan : cat === 'bike' ? COL.pink : COL.amber, px(12));
     var spd = Math.abs(h.speed || 0);
     if (cat === 'bike') {
-      var mph = spd * 2.237, cx = x + px(56), cy = y + px(62), r = px(38), k = clamp01(mph / 140);
+      var mph = h.mph != null ? h.mph : spd * 2.237, cx = x + px(56), cy = y + px(62), r = px(38), k = clamp01(mph / 140);
       ctx.lineCap = 'round'; ctx.lineWidth = px(7); ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI * 0.8, Math.PI * 2.2); ctx.stroke();
       ctx.strokeStyle = k > 0.85 ? COL.red : COL.pink; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI * 0.8, Math.PI * 0.8 + Math.PI * 1.4 * k); ctx.stroke();
       txt(ctx, String(Math.round(mph)), cx, cy + px(6), { font: F(24, '900', FONT_DISPLAY), color: COL.ink, align: 'center', outline: false });
       txt(ctx, 'MPH', cx, cy + px(20), { font: F(8, 'bold'), color: COL.muted, align: 'center', outline: false });
       // the lean: a bike seen from behind tilting with the roll
-      var lx = x + px(150), ly = y + px(54), roll = U.clamp(h.roll || 0, -1.2, 1.2);
+      var lx = x + px(150), ly = y + px(54), roll = U.clamp(h.lean != null ? h.lean : (h.roll || 0), -1.2, 1.2);
       ctx.save(); ctx.translate(lx, ly + px(18)); ctx.rotate(roll);
       ctx.fillStyle = COL.ink; rr(ctx, -px(4), -px(34), px(8), px(34), px(3)); ctx.fill(); ctx.fillStyle = COL.pink; rr(ctx, -px(9), -px(42), px(18), px(8), px(3)); ctx.fill();
       ctx.restore();
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(lx, ly + px(18), px(40), Math.PI * 1.2, Math.PI * 1.8); ctx.stroke();
       txt(ctx, 'LEAN ' + Math.round(Math.abs(roll) * 57.3) + '°', lx, y + px(88), { font: F(9, 'bold'), color: COL.muted, align: 'center', outline: false });
       if (h.gear != null) txt(ctx, 'GEAR ' + h.gear, x + w - px(10), y + px(18), { font: F(10, 'bold'), color: COL.cyan, align: 'right', outline: false });
-      if ((h.pitch || 0) > 0.3) txt(ctx, 'WHEELIE', x + w / 2, y + px(18), { font: F(11, '900'), color: COL.lime, align: 'center', outline: false });
+      if ((h.wheelie != null ? h.wheelie : h.pitch || 0) > 0.3) txt(ctx, 'WHEELIE', x + w / 2, y + px(18), { font: F(11, '900'), color: COL.lime, align: 'center', outline: false });
       return;
     }
     if (cat === 'boat') {
@@ -4186,7 +4246,7 @@
       txt(ctx, String(Math.round(kts)), x + px(20), y + px(52), { font: F(34, '900', FONT_DISPLAY), color: COL.ink, outline: false });
       txt(ctx, 'KNOTS', x + px(22), y + px(68), { font: F(8, 'bold'), color: COL.muted, outline: false });
       throttleBar(ctx, x + w - px(30), y + px(14), px(12), hh - px(30), h.throttle, 'THR');
-      var hd = headingDeg(h.heading);
+      var hd = headingDeg(h.heading, !!h.family);
       txt(ctx, CARD[Math.round(hd / 45) % 8] + ' ' + Math.round(hd) + '°', x + px(110), y + px(36), { font: F(13, 'bold'), color: COL.cyan, outline: false });
       if (h.planing || kts > 18) txt(ctx, 'PLANING', x + px(110), y + px(56), { font: F(9, 'bold'), color: COL.lime, outline: false });
       return;
@@ -4195,7 +4255,7 @@
     var ax = x + px(70), ay = y + px(72), ar = px(48);
     attitude(ctx, ax, ay, ar, h.pitch || 0, h.roll || 0);
     // heading tape across the top
-    var hd2 = headingDeg(h.heading), tx0 = x + px(128), tw = w - px(176), ty = y + px(10);
+    var hd2 = headingDeg(h.heading, !!h.family), tx0 = x + px(128), tw = w - px(176), ty = y + px(10);
     ctx.save(); rr(ctx, tx0, ty, tw, px(22), px(5)); ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill(); ctx.clip();
     for (var dd = -60; dd <= 60; dd += 15) {
       var deg = Math.round((hd2 + dd) / 15) * 15, off = (deg - hd2) / 60 * (tw / 2), gx = tx0 + tw / 2 + off;
@@ -4209,7 +4269,7 @@
     var alt = h.alt != null ? h.alt : (p.y - groundY(p.x, p.z));
     readout(ctx, tx0, y + px(40), tw / 2 - px(4), 'ALT', Math.round(alt) + ' m', alt < 25 ? COL.red : COL.ink);
     readout(ctx, tx0 + tw / 2 + px(4), y + px(40), tw / 2 - px(4), cat === 'heli' ? 'SPEED' : 'AIRSPEED', Math.round(spd * 1.944) + ' kt', (h.stall || (cat === 'plane' && spd < 18 && alt > 10)) ? COL.red : COL.ink);
-    var vs = h.vspeed != null ? h.vspeed : (p.inVehicle.vy || 0);
+    var vs = h.vs != null ? h.vs : h.vspeed != null ? h.vspeed : (p.inVehicle.vy || 0);
     txt(ctx, 'V/S ' + (vs >= 0 ? '+' : '') + vs.toFixed(1), tx0, y + px(100), { font: F(10, 'bold'), color: COL.muted, outline: false });
     if (h.gear != null && cat === 'plane') txt(ctx, 'GEAR ' + (h.gear === true || h.gear === 'down' || h.gear === 1 ? 'DOWN' : 'UP'), tx0 + tw, y + px(100), { font: F(10, 'bold'), color: h.gear === true || h.gear === 'down' || h.gear === 1 ? COL.lime : COL.muted, align: 'right', outline: false });
     if (cat === 'heli' && h.rotor != null && h.rotor < 0.98) txt(ctx, 'ROTOR ' + Math.round(h.rotor * 100) + '%', tx0 + tw, y + px(100), { font: F(10, 'bold'), color: COL.amber, align: 'right', outline: false });
@@ -4248,14 +4308,26 @@
   }
 
   // ------------------------------------------------------------ boss bar ----
-  // boss:phase {id, phase, hp, maxHp, name}: a bar bottom-centre (the name, PHASE n, the hp with a white damage trail);
-  // a phase change flashes and announces; boss:defeated {id} stamps RATIO'D over the name.
+  // GTP.Bosses (UI.drawsBossBar): boss:start {id, name, phases}, boss:phase {id, phase, phases, hp, maxHp, name, shield,
+  // state, hint}, boss:end {id, reason}; GTP.Bosses.hud() refreshes the shield text, hint and colour every frame.
+  // A bar bottom-centre (the name, PHASE n / m, the hp with a white damage trail, grey while shielded, the shield
+  // text or the hint under it); a phase change flashes (the bosses track banners the phase itself); boss:defeated
+  // stamps RATIO'D over the name.
+  function bossHud() { var B = GTP.Bosses; return B && typeof B.hud === 'function' ? call(B.hud, B, [], null) : null; }
+  function bossStart(e) {
+    if (!e) return;
+    var h = bossHud(), hp = h && h.id === e.id ? h.hp : 1, mx = h && h.id === e.id ? h.maxHp : 1;
+    if (!ui.boss || ui.boss.id !== e.id) ui.boss = { id: e.id, name: e.name || String(e.id || 'BOSS'), phase: 1, phases: e.phases || null, hp: hp, maxHp: mx, trail: hp, trailT: 0, t: 0, flashT: 0.8 };
+    ui.bossDown = null;
+  }
+  function bossEnd(e) { if (ui.boss && (!e || !e.id || ui.boss.id === e.id)) ui.boss = null; }
   function bossPhase(e) {
     if (!e) return;
     var b = ui.boss;
+    if (e.state === 'done' || e.state === 'ended') { if (b && b.id === e.id) ui.boss = null; return; }
     if (!b || b.id !== e.id) b = ui.boss = { id: e.id, name: e.name || String(e.id || 'BOSS'), phase: e.phase || 1, phases: e.phases || null, hp: e.hp, maxHp: e.maxHp || e.hp || 1, trail: e.hp, trailT: 0, t: 0, flashT: 0.8 };
     else {
-      if (e.phase != null && e.phase !== b.phase) { b.flashT = 1.6; b.announce = { text: 'PHASE ' + e.phase, t: 0 }; }
+      if (e.phase != null && e.phase !== b.phase) b.flashT = 1.6;
       if (e.hp != null && e.hp < b.hp) b.trailT = 0.6;
       if (e.name) b.name = e.name;
       if (e.phase != null) b.phase = e.phase;
@@ -4263,18 +4335,25 @@
       if (e.maxHp) b.maxHp = e.maxHp;
       if (e.hp != null) b.hp = e.hp;
     }
+    if (e.shield !== undefined) b.shield = !!e.shield;
+    if (e.hint !== undefined) b.hint = e.hint || '';
+    if (e.state) b.state = e.state;
     if (b.hp > b.trail) b.trail = b.hp;
   }
   function bossDefeated(e) { var b = ui.boss; ui.bossDown = { name: b && (!e || b.id === e.id) ? b.name : (e && e.name) || 'BOSS', t: 0 }; if (!e || !b || b.id === e.id) ui.boss = null; sfx('chapter', 0.5); }
   function updateBoss(dt) {
     var b = ui.boss;
+    if (b) {
+      var h = bossHud();
+      if (h && h.id === b.id) { b.shield = !!h.shield; b.shieldText = h.shieldText || ''; b.hint = h.hint || ''; b.color = h.color || null; b.state = h.state; if (h.hp != null && h.hp < b.hp) { b.trailT = 0.6; b.hp = h.hp; } }
+    }
     if (b) { b.t += dt; if (b.flashT > 0) b.flashT -= dt; if (b.trailT > 0) b.trailT -= dt; else b.trail = U.damp(b.trail, b.hp, 6, dt); if (b.announce) { b.announce.t += dt; if (b.announce.t > 2) b.announce = null; } }
     if (ui.bossDown) { ui.bossDown.t += dt; if (ui.bossDown.t > 4.5) ui.bossDown = null; }
   }
   function bossRect() {
     var m = minimapRect(), left = safe.l + px(10), right = m.top ? W - safe.r - px(10) : m.x - px(16);
     var w = Math.min(px(620), right - left), x = left + (right - left - w) / 2;
-    var y = ui.touch.visible ? Math.max(ui.objBottom, m.top ? ui.chipBottom : 0) + px(30) : H - safe.b - px(36);
+    var y = ui.touch.visible ? Math.max(ui.objBottom, m.top ? ui.chipBottom : 0) + px(30) : H - safe.b - px(52);
     if (ui.touch.visible && !portrait) { w = Math.min(px(460), W - safe.l - safe.r - m.s - px(40)); x = (W - w) / 2; y = ui.objBottom + px(26); }
     else if (ui.touch.visible) { x = safe.l + px(6); w = W - safe.l - safe.r - px(12); }
     return { x: x, y: y, w: w };
@@ -4282,7 +4361,7 @@
   function drawBoss(ctx) {
     var b = ui.boss, g = game();
     if (ui.bossDown) drawBossDown(ctx);
-    if (!b || !g || (g.state !== 'playing' && g.state !== 'cutscene')) return;
+    if (!b || !g || g.state !== 'playing' || ui.dialogue || b.state === 'done') return;
     var r = bossRect(), k = clamp01(b.hp / Math.max(1, b.maxHp)), tk = clamp01(b.trail / Math.max(1, b.maxHp)), bh = px(14), a = Math.min(1, b.t / 0.4);
     ctx.save(); ctx.globalAlpha = a;
     txt(ctx, String(b.name).toUpperCase(), r.x, r.y - px(8), { font: F(15, '900', FONT_DISPLAY), color: COL.ink, lw: px(4), maxW: r.w * 0.7 });
@@ -4291,14 +4370,14 @@
     panel(ctx, r.x, r.y, r.w, bh, px(3), 'rgba(6,7,13,0.82)', 'rgba(255,255,255,0.3)');
     ctx.fillStyle = 'rgba(255,200,120,0.75)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * tk, bh - 4);
     var gr = ctx.createLinearGradient(0, r.y, 0, r.y + bh); gr.addColorStop(0, '#ff6a5e'); gr.addColorStop(1, '#b3121f');
+    if (b.shield) { gr = ctx.createLinearGradient(0, r.y, 0, r.y + bh); gr.addColorStop(0, '#b9bec8'); gr.addColorStop(1, '#6a6f79'); }
     ctx.fillStyle = b.flashT > 0 && Math.floor(ui.t * 10) % 2 ? '#ff9d93' : gr; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, bh - 4);
     ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, (bh - 4) * 0.4);
     if (b.phases > 1) { ctx.fillStyle = 'rgba(0,0,0,0.6)'; for (var i = 1; i < b.phases; i++) ctx.fillRect(r.x + r.w * i / b.phases - 1, r.y, 2, bh); }
+    var line = b.shield ? (b.shieldText || '') : '', hint = b.hint || '';
+    if (line) txt(ctx, line, r.x + r.w / 2, r.y + bh + px(14), { font: F(11, 'bold'), color: '#d0d4dc', align: 'center', maxW: r.w });
+    if (hint) txt(ctx, hint, r.x + r.w / 2, r.y + bh + px(line ? 28 : 14), { font: F(11, 'bold'), color: line ? COL.gold : COL.lime, align: 'center', maxW: r.w });
     ctx.restore();
-    if (b.announce) {
-      var ak = b.announce.t / 2, aa = ak < 0.1 ? ak / 0.1 : ak > 0.7 ? (1 - ak) / 0.3 : 1;
-      txt(ctx, b.announce.text, W / 2, H * 0.36, { font: F(portrait ? 28 : 40, '900', FONT_DISPLAY), color: COL.amber, align: 'center', lw: px(6), alpha: aa });
-    }
   }
   function drawBossDown(ctx) {
     var d = ui.bossDown, k = d.t / 4.5, a = k < 0.06 ? k / 0.06 : k > 0.8 ? (1 - k) / 0.2 : 1, sc = 1 + (1 - ease(Math.min(1, d.t / 0.35))) * 1.2;
@@ -4317,7 +4396,7 @@
   // fills with the meter, glows while active; a full one shows its key. Only specials that reported a state are shown.
   var SPECIALS = { focus: { name: 'FOCUS', col: '#2ee6ff', how: 'while aiming' }, shout: { name: 'SHOUT', col: '#ffbe3c', how: 'tap' }, chatmob: { name: 'CHAT MOB', col: '#ff3fa4', how: 'hold' }, boost: { name: 'BOOST', col: '#9dff3c', how: 'in a vehicle' } };
   var SPECIAL_ORDER = ['focus', 'shout', 'chatmob', 'boost'];
-  function specialState(e) { if (!e || !e.id) return; var s = ui.specials[e.id] || (ui.specials[e.id] = { meter: 0, active: false, t: 0, fullT: 0 }); var was = k01(s.meter) >= 0.999; s.meter = e.meter; s.active = !!e.active; if (!was && k01(e.meter) >= 0.999) s.fullT = 1.2; }
+  function specialState(e) { if (!e || !e.id) return; if (e.unlocked === false) { delete ui.specials[e.id]; return; } var s = ui.specials[e.id] || (ui.specials[e.id] = { meter: 0, active: false, t: 0, fullT: 0 }); var was = k01(s.meter) >= 0.999; s.meter = e.meter; s.active = !!e.active; if (!was && k01(e.meter) >= 0.999) s.fullT = 1.2; }
   function specialIcon(ctx, id, x, y, s, col) {
     ctx.save(); ctx.translate(x, y); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = s * 0.12; ctx.lineCap = 'round';
     if (id === 'focus') { ctx.beginPath(); ctx.ellipse(0, 0, s * 0.45, s * 0.26, 0, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 0, s * 0.13, 0, Math.PI * 2); ctx.fill(); }
@@ -4355,18 +4434,41 @@
   // range:start [{seconds, medals:{bronze, silver, gold}}], range:hit {points}, range:end {score, medal}: the timer,
   // the score with +points floats, a medal track; the end card with the medal. GTP.Interiors.range.hud() (if it exists)
   // overrides the local clock and score.
+  // GTP.Interiors runs the round: range:start {store, weapon, seconds} opens a 3 s countdown, range:hit {points, score}
+  // (a moderator cutout is -10), range:end {score, medal, hits, shots, best, aborted}; GTP.Interiors.range is its raw
+  // state ({running, t (countdown included), score, hits, shots, best}) and GTP.Interiors.MEDALS the thresholds.
+  var RANGE_COUNTDOWN = 3;
+  function rangeMedals() { var I = GTP.Interiors, P = parity(); return (I && I.MEDALS) || (P.range && P.range.medals) || null; }
   function rangeStart(e) {
     e = e || {};
-    var P = parity(), med = e.medals || (P.range && P.range.medals) || null;
-    ui.range = { t: 0, dur: e.seconds || e.duration || 60, score: 0, floats: [], medals: med, hits: 0 };
+    ui.range = { t: 0, dur: e.seconds || e.duration || 60, score: 0, floats: [], medals: e.medals || rangeMedals(), hits: 0, shots: 0, weapon: e.weapon || null, countdown: RANGE_COUNTDOWN };
     ui.rangeEnd = null;
   }
-  function rangeHit(e) { var R = ui.range; if (!R) return; var n = (e && (e.points != null ? e.points : e.score)) || 0; R.score += n; R.hits++; R.floats.push({ n: n, t: 0, x: ((R.hits * 0.37) % 1) }); if (R.floats.length > 6) R.floats.shift(); }
-  function rangeEnd(e) { var R = ui.range; ui.rangeEnd = { score: e && e.score != null ? e.score : (R ? R.score : 0), medal: e && e.medal ? String(e.medal) : null, t: 0, best: e && e.best }; ui.range = null; if (ui.rangeEnd.medal) sfx('achievement', 0.5); }
-  function rangeHud() { var I = GTP.Interiors, r = I && I.range; return r && typeof r.hud === 'function' ? call(r.hud, r, [], null) : null; }
+  function rangeHit(e) {
+    var R = ui.range; if (!R) return; e = e || {};
+    var n = e.points != null ? e.points : 0; R.hits++; if (e.score != null) R.score = e.score; else R.score += n;
+    R.floats.push({ n: n, t: 0, x: ((R.hits * 0.37) % 1), mod: !!e.moderator || n < 0 }); if (R.floats.length > 6) R.floats.shift();
+  }
+  function rangeEnd(e) {
+    var R = ui.range; e = e || {};
+    ui.range = null;
+    if (e.aborted) { ui.rangeEnd = null; toast('Round called off. The cutouts are relieved.'); return; }
+    ui.rangeEnd = { score: e.score != null ? e.score : (R ? R.score : 0), medal: e.medal ? String(e.medal) : null, t: 0, best: e.best, hits: e.hits != null ? e.hits : (R ? R.hits : 0), shots: e.shots, bonus: e.bonus };
+    if (ui.rangeEnd.medal) sfx('achievement', 0.5);
+  }
+  function rangeRaw() { var I = GTP.Interiors, r = I && I.range; if (!r) return null; if (typeof r.hud === 'function') return call(r.hud, r, [], null); return r; }
   function updateRange(dt) {
     var R = ui.range;
-    if (R) { var h = rangeHud(); R.t += dt; if (h) { if (h.time != null) R.left = h.time; if (h.score != null) R.score = h.score; if (h.medals) R.medals = h.medals; } for (var i = R.floats.length - 1; i >= 0; i--) { R.floats[i].t += dt; if (R.floats[i].t > 1.2) R.floats.splice(i, 1); } if (R.t > R.dur + 15) ui.range = null; }
+    if (R) {
+      var h = rangeRaw(); R.t += dt;
+      if (h && h.running !== false) {
+        if (h.time != null) R.left = h.time;
+        else if (h.t != null) { R.countdown = Math.max(0, RANGE_COUNTDOWN - h.t); R.left = Math.max(0, R.dur - Math.max(0, h.t - RANGE_COUNTDOWN)); }
+        if (h.score != null) R.score = h.score; if (h.hits != null) R.hits = h.hits; if (h.shots != null) R.shots = h.shots; if (h.medals) R.medals = h.medals;
+      } else if (!h) { R.countdown = Math.max(0, RANGE_COUNTDOWN - R.t); R.left = Math.max(0, R.dur - Math.max(0, R.t - RANGE_COUNTDOWN)); }
+      for (var i = R.floats.length - 1; i >= 0; i--) { R.floats[i].t += dt; if (R.floats[i].t > 1.2) R.floats.splice(i, 1); }
+      if (R.t > R.dur + RANGE_COUNTDOWN + 15) ui.range = null;
+    }
     if (ui.rangeEnd) { ui.rangeEnd.t += dt; if (ui.rangeEnd.t > 5) ui.rangeEnd = null; }
   }
   var MEDAL_COL = { bronze: '#cd7f32', silver: '#cfd6e0', gold: '#ffd23c', platinum: '#b9f2ff' };
@@ -4386,11 +4488,16 @@
     if (ui.rangeEnd) drawRangeEnd(ctx);
     if (!R || !g || g.state !== 'playing') return;
     var left = R.left != null ? R.left : Math.max(0, R.dur - R.t), w = Math.min(px(420), W - safe.l - safe.r), x = (W - w) / 2, y = ui.objBottom + px(4), h = px(70);
+    if (R.countdown > 0) {   // 3, 2, 1 over the lane before the first cutout rises
+      var cd = Math.ceil(R.countdown), fr = R.countdown - Math.floor(R.countdown);
+      txt(ctx, String(cd), W / 2, H * 0.42, { font: F(64 + 30 * fr, '900', FONT_DISPLAY), color: COL.amber, align: 'center', lw: px(6), alpha: 0.4 + 0.6 * fr });
+      txt(ctx, 'HECKLERS +10 · +5 · +2   ·   MODERATORS -10', W / 2, H * 0.42 + px(34), { font: F(12, 'bold'), color: COL.ink, align: 'center', maxW: W - px(30) });
+    }
     glass(ctx, x, y, w, h, COL.amber, px(12));
     txt(ctx, 'SHOOTING RANGE', x + px(16), y + px(18), { font: F(10, 'bold'), color: COL.amber, outline: false });
     txt(ctx, U.fmtTime(Math.ceil(left)), x + px(16), y + px(52), { font: F(30, '900', FONT_DISPLAY), color: left < 10 && Math.floor(ui.t * 4) % 2 ? COL.red : COL.ink, outline: false });
     txt(ctx, String(R.score | 0), x + w - px(16), y + px(40), { font: F(26, '900', FONT_DISPLAY), color: COL.ink, align: 'right', outline: false });
-    txt(ctx, 'SCORE  ·  ' + R.hits + ' hit' + (R.hits === 1 ? '' : 's'), x + w - px(16), y + px(18), { font: F(9, 'bold'), color: COL.muted, align: 'right', outline: false });
+    txt(ctx, 'SCORE  ·  ' + R.hits + ' hit' + (R.hits === 1 ? '' : 's') + (R.shots ? ' / ' + R.shots : ''), x + w - px(16), y + px(18), { font: F(9, 'bold'), color: COL.muted, align: 'right', outline: false });
     var M = R.medals;
     if (M && M.gold) {   // the medal track: bronze, silver and gold ticks along a bar under the score
       var tx = x + px(120), tw = w - px(140), ty = y + px(54), top = M.gold * 1.15;
@@ -4399,7 +4506,7 @@
       ['bronze', 'silver', 'gold'].forEach(function (mk) { if (M[mk] == null) return; var mx = tx + tw * clamp01(M[mk] / top); ctx.fillStyle = R.score >= M[mk] ? MEDAL_COL[mk] : 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.arc(mx, ty + px(3), px(5), 0, Math.PI * 2); ctx.fill(); });
     }
     // +points floats rising over the crosshair area
-    for (var i = 0; i < R.floats.length; i++) { var f = R.floats[i], k = f.t / 1.2; txt(ctx, '+' + f.n, W / 2 + (f.x - 0.5) * px(80), H * 0.44 - k * px(40), { font: F(16, '900', FONT_DISPLAY), color: f.n >= 50 ? COL.gold : COL.ink, align: 'center', alpha: 1 - k }); }
+    for (var i = 0; i < R.floats.length; i++) { var f = R.floats[i], k = f.t / 1.2; txt(ctx, (f.n < 0 ? '−' + (-f.n) + (f.mod ? '  MODERATOR' : '') : '+' + f.n), W / 2 + (f.x - 0.5) * px(80), H * 0.44 - k * px(40), { font: F(16, '900', FONT_DISPLAY), color: f.n < 0 ? COL.red : f.n >= 10 ? COL.gold : COL.ink, align: 'center', alpha: 1 - k }); }
   }
   function drawRangeEnd(ctx) {
     var E = ui.rangeEnd, k = E.t / 5, a = k < 0.06 ? k / 0.06 : k > 0.85 ? (1 - k) / 0.15 : 1, pop = 1 + (1 - ease(Math.min(1, E.t / 0.4))) * 0.4;
@@ -4409,31 +4516,47 @@
     txt(ctx, 'RANGE COMPLETE', W / 2, y + px(26), { font: F(12, 'bold'), color: COL.muted, align: 'center', outline: false });
     if (E.medal) { ctx.save(); ctx.translate(W / 2, y + px(96)); ctx.scale(pop, pop); medal(ctx, 0, 0, px(30), E.medal); ctx.restore(); }
     else txt(ctx, 'NO MEDAL', W / 2, y + px(100), { font: F(22, '900', FONT_DISPLAY), color: COL.muted, align: 'center', outline: false });
+    if (E.shots) txt(ctx, E.hits + ' / ' + E.shots + ' HITS' + (E.best ? '  ·  BEST ' + E.best : '') + (E.bonus ? '  ·  +' + U.fmtMoney(E.bonus) : ''), W / 2, y + px(46), { font: F(10, 'bold'), color: COL.muted, align: 'center', outline: false, maxW: w - px(20) });
     txt(ctx, (E.medal ? E.medal.toUpperCase() + '  ·  ' : '') + 'SCORE ' + (E.score | 0), W / 2, y + px(158), { font: F(18, '900', FONT_DISPLAY), color: E.medal ? MEDAL_COL[E.medal] || COL.ink : COL.ink, align: 'center', outline: false });
     txt(ctx, E.medal === 'gold' ? 'Merle says that\'s "fine". High praise.' : E.medal ? 'Respectable. Merle nods at a wall.' : 'The cutouts thank you for your restraint.', W / 2, y + px(182), { font: F(11, 'italic', FONT_TEXT), color: COL.muted, align: 'center', outline: false, maxW: w - px(20) });
     ctx.restore();
   }
 
   // ---------------------------------------------------------------- golf ----
-  // golf:start [{hole, par, wind, club, dist}], golf:end {strokes, par}. The systems track simulates; GTP.Systems.golf.hud()
-  // (if it exists) feeds the panel every frame. The swing meter is the UI's: left / right aim, a first press of shoot or
-  // jump starts the meter, the second sets the power and emits golf:shot {power, angle} (unless Systems.golf.hud()
-  // reports its own power, then the UI only draws).
-  function golfHud() { var S = GTP.Systems, gf = S && S.golf; return gf && typeof gf.hud === 'function' ? call(gf.hud, gf, [], null) : null; }
+  // GTP.Systems.golf owns the round: it reads the input itself (left / right aim, forward / back club, shoot / jump / confirm
+  // starts and stops the meter, enter quits), freezes the player, and emits golf:start {hole (0-based), holes, par},
+  // golf:hole {hole, strokes, par, name} per hole and golf:end {strokes, par, toPar, holes, full, reason}. The UI only
+  // draws from golf.state() ({phase 'aim'|'swing'|'flight'|'holed', hole, par, strokes, clubName, distToPin, meter, power,
+  // wind {speed, dir}, aim, ball.lie, total, totalPar, message}). Without the systems module a local meter stands in
+  // (golf:shot {power, angle} on the second press).
+  function golfSys() { var S = GTP.Systems, gf = S && S.golf; return gf && typeof gf.state === 'function' ? gf : null; }
+  function golfHud() {
+    var gf = golfSys(); if (gf) { var st = call(gf.state, gf, [], null); return st && st.active ? st : null; }
+    var S = GTP.Systems, g2 = S && S.golf; return g2 && typeof g2.hud === 'function' ? call(g2.hud, g2, [], null) : null;
+  }
   function golfStart(e) {
     e = e || {};
-    var p = player(), G = ui.golf;
+    var p = player(), G = ui.golf, sys = !!golfSys();
     var cont = G && G.active;
-    ui.golf = { active: true, hole: e.hole || (cont ? G.hole : 1), par: e.par || (cont ? G.par : 4), strokes: e.strokes || 0, wind: e.wind || (cont ? G.wind : null), club: e.club || 'Driver', dist: e.dist, phase: 'aim', power: 0, angle: e.angle || 0, swingT: 0, waitT: 0, total: e.total || (cont ? G.total : 0) };
-    ui.golfEnd = null;
+    ui.golf = { active: true, sys: sys, hole: e.hole != null ? (sys ? e.hole + 1 : e.hole) : (cont ? G.hole : 1), holes: e.holes || null, par: e.par || (cont ? G.par : 4), strokes: e.strokes || 0, wind: e.wind || (cont ? G.wind : null), club: e.club || 'Driver', dist: e.dist, phase: 'aim', power: 0, angle: e.angle || 0, swingT: 0, waitT: 0, total: e.total || (cont ? G.total : 0), course: e.course || null };
+    if (!cont) ui.golfEnd = null;
+    if (sys) return;   // the systems module freezes the player's control itself
     if (p && !cont) { ui.golf.restoreControl = p.controlEnabled !== false; p.controlEnabled = false; }
     else if (cont) ui.golf.restoreControl = G.restoreControl;
   }
+  // golf:hole: the hole's score card; golf:end: the round's (queued behind a hole card still showing)
+  function golfHole(e) {
+    if (!e) return;
+    ui.golfEnd = { strokes: e.strokes | 0, par: e.par | 0, t: 0, hole: (e.hole | 0) + (golfSys() ? 1 : 0), name: e.name || null };
+  }
   function golfEnd(e) {
-    var G = ui.golf, p = player();
-    var strokes = e && e.strokes != null ? e.strokes : (G ? G.strokes : 0), par = e && e.par != null ? e.par : (G ? G.par : 4);
-    ui.golfEnd = { strokes: strokes, par: par, t: 0, hole: G ? G.hole : null };
-    if (G && p && G.restoreControl) p.controlEnabled = true;
+    var G = ui.golf, p = player(); e = e || {};
+    var strokes = e.strokes != null ? e.strokes : (G ? G.strokes : 0), par = e.par != null ? e.par : (G ? G.par : 4);
+    var card = { strokes: strokes, par: par, t: 0, hole: G ? G.hole : null };
+    if (e.holes != null) { card.round = true; card.holes = e.holes; card.full = !!e.full; card.reason = e.reason || null; card.hole = null; }
+    if (card.round && !card.holes) card = null;   // quit before a single hole: nothing to show
+    if (card && ui.golfEnd && ui.golfEnd.t < 3 && !ui.golfEnd.round) ui.golfEnd.next = card; else if (card) ui.golfEnd = card;
+    if (G && p && G.restoreControl && !G.sys) p.controlEnabled = true;
     ui.golf = null;
   }
   function golfTerm(strokes, par) {
@@ -4441,12 +4564,19 @@
     var d = strokes - par;
     return d <= -3 ? 'ALBATROSS' : d === -2 ? 'EAGLE' : d === -1 ? 'BIRDIE' : d === 0 ? 'PAR' : d === 1 ? 'BOGEY' : d === 2 ? 'DOUBLE BOGEY' : '+' + d;
   }
-  function golfOwnSwing() { var h = golfHud(); return !(h && h.power != null); }
+  function golfOwnSwing() { if (golfSys()) return false; var h = golfHud(); return !(h && h.power != null); }
   function updateGolf(dt) {
     var G = ui.golf;
-    if (ui.golfEnd) { ui.golfEnd.t += dt; if (ui.golfEnd.t > 4.5) ui.golfEnd = null; }
+    if (ui.golfEnd) { ui.golfEnd.t += dt; if (ui.golfEnd.t > 4.5) ui.golfEnd = ui.golfEnd.next || null; }
     if (!G) return;
     var h = golfHud();
+    if (h && golfSys()) {
+      G.hole = h.hole + 1; G.holes = h.holes; G.par = h.par; G.strokes = h.strokes; G.wind = h.wind; G.club = h.clubName || h.club; G.carry = h.clubCarry;
+      G.dist = h.distToPin; G.lie = h.ball && h.ball.lie; G.phase = h.phase; G.power = h.phase === 'swing' ? h.meter : h.power; G.aim = h.aim;
+      G.total = h.total; G.totalPar = h.totalPar; G.name = h.name; G.course = h.course; G.message = h.message;
+      if (h.phase === 'flight' && G.lastPower !== h.power) G.lastPower = h.power;
+      return;
+    }
     if (h) { ['hole', 'par', 'strokes', 'wind', 'club', 'dist', 'lie', 'phase', 'total'].forEach(function (k) { if (h[k] != null) G[k] = h[k]; }); if (h.power != null) G.power = h.power; if (h.angle != null) G.angle = h.angle; }
     if (golfOwnSwing()) {
       if (G.phase === 'swing') { G.swingT += dt; var c = (G.swingT / 0.9) % 2; G.power = c < 1 ? c : 2 - c; if (G.swingT > 5.4) { G.phase = 'aim'; G.power = 0; } }
@@ -4480,18 +4610,18 @@
     // the scorecard chip top-left under the bars
     var x = safe.l, y = ui.hudTop + px(48), w = px(210);
     glass(ctx, x, y, w, px(86), COL.lime, px(12));
-    txt(ctx, 'GOLDPLATE LINKS', x + px(14), y + px(18), { font: F(9, 'bold'), color: COL.lime, outline: false });
-    txt(ctx, 'HOLE ' + G.hole, x + px(14), y + px(44), { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false });
+    txt(ctx, String(G.course || 'Goldplate Links').toUpperCase() + (G.name ? '  ·  ' + String(G.name).toUpperCase() : ''), x + px(14), y + px(18), { font: F(9, 'bold'), color: COL.lime, outline: false, maxW: w - px(28) });
+    txt(ctx, 'HOLE ' + G.hole + (G.holes ? '/' + G.holes : ''), x + px(14), y + px(44), { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false });
     txt(ctx, 'PAR ' + G.par, x + w - px(14), y + px(30), { font: F(12, 'bold'), color: COL.ink, align: 'right', outline: false });
-    txt(ctx, 'STROKE ' + ((G.strokes | 0) + (G.phase === 'flight' ? 0 : 1)), x + w - px(14), y + px(46), { font: F(12, 'bold'), color: COL.amber, align: 'right', outline: false });
+    txt(ctx, 'STROKE ' + ((G.strokes | 0) + (G.phase === 'flight' || G.phase === 'holed' ? 0 : 1)), x + w - px(14), y + px(46), { font: F(12, 'bold'), color: COL.amber, align: 'right', outline: false });
     txt(ctx, (G.club || 'Driver').toUpperCase() + (G.dist != null ? '  ·  PIN ' + Math.round(G.dist) + ' m' : '') + (G.lie ? '  ·  ' + String(G.lie).toUpperCase() : ''), x + px(14), y + px(70), { font: F(10, 'bold'), color: COL.muted, outline: false, maxW: w - px(28) });
     // wind: an arrow in a disc, top-right of the chip
     var wd = G.wind, wx = x + w + px(34), wy = y + px(36);
     if (wd) {
       var sp = wd.speed != null ? wd.speed : (typeof wd === 'number' ? wd : 0), dir = wd.dir != null ? wd.dir : (wd.angle || 0);
       ctx.fillStyle = 'rgba(9,11,22,0.85)'; ctx.beginPath(); ctx.arc(wx, wy, px(26), 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.save(); ctx.translate(wx, wy); ctx.rotate(dir); ctx.fillStyle = COL.cyan; ctx.beginPath(); ctx.moveTo(0, -px(16)); ctx.lineTo(px(7), px(4)); ctx.lineTo(px(2), px(2)); ctx.lineTo(px(2), px(14)); ctx.lineTo(-px(2), px(14)); ctx.lineTo(-px(2), px(2)); ctx.lineTo(-px(7), px(4)); ctx.closePath(); ctx.fill(); ctx.restore();
-      txt(ctx, Math.round(sp) + ' mph', wx, wy + px(40), { font: F(10, 'bold'), color: COL.cyan, align: 'center' });
+      ctx.save(); ctx.translate(wx, wy); ctx.rotate(G.sys && G.aim != null ? -(dir - G.aim) : dir); ctx.fillStyle = COL.cyan; ctx.beginPath(); ctx.moveTo(0, -px(16)); ctx.lineTo(px(7), px(4)); ctx.lineTo(px(2), px(2)); ctx.lineTo(px(2), px(14)); ctx.lineTo(-px(2), px(14)); ctx.lineTo(-px(2), px(2)); ctx.lineTo(-px(7), px(4)); ctx.closePath(); ctx.fill(); ctx.restore();
+      txt(ctx, Math.round(sp) + (G.sys ? ' m/s' : ' mph'), wx, wy + px(40), { font: F(10, 'bold'), color: COL.cyan, align: 'center' });
     }
     // the swing meter bottom-centre: the power fill, the sweet spot, the aim readout
     var mw = Math.min(px(420), W - px(40)), mx = (W - mw) / 2, my = H - safe.b - px(ui.touch.visible ? 190 : 84), mh = px(18);
@@ -4500,17 +4630,27 @@
     var pg = ctx.createLinearGradient(mx, 0, mx + mw, 0); pg.addColorStop(0, COL.cyan); pg.addColorStop(0.8, COL.lime); pg.addColorStop(1, COL.red);
     ctx.fillStyle = pg; rr(ctx, mx + 2, my + 2, (mw - 4) * clamp01(G.power), mh - 4, px(7)); ctx.fill();
     if (G.lastPower != null) { ctx.fillStyle = '#fff'; ctx.fillRect(mx + mw * clamp01(G.lastPower) - 1, my - px(4), 2, mh + px(8)); }
-    var help = G.phase === 'aim' ? glyph('left') + ' / ' + glyph('right') + ' aim  ·  ' + glyph('shoot') + ' swing' : G.phase === 'swing' ? glyph('shoot') + ' set the power' : 'In flight...';
+    var help = G.phase === 'aim' ? glyph('left') + ' / ' + glyph('right') + ' aim  ·  ' + (G.sys ? glyph('forward') + ' / ' + glyph('back') + ' club  ·  ' : '') + glyph('shoot') + ' swing' + (G.sys ? '  ·  ' + glyph('enter') + ' quit' : '')
+      : G.phase === 'swing' ? glyph('shoot') + ' set the power' : G.phase === 'holed' ? glyph('shoot') + ' next hole' : (G.message || 'In flight...');
     txt(ctx, help, W / 2, my - px(10), { font: F(11, 'bold'), color: COL.ink, align: 'center' });
     txt(ctx, 'POWER ' + Math.round(clamp01(G.power) * 100) + '%', mx, my + mh + px(14), { font: F(10, 'bold'), color: COL.muted });
-    txt(ctx, 'AIM ' + (G.angle >= 0 ? 'R ' : 'L ') + Math.abs(Math.round((G.angle || 0) * 57.3)) + '°', mx + mw, my + mh + px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right' });
+    txt(ctx, G.sys ? (G.carry ? 'CARRY ' + Math.round(G.carry) + ' m' : '') + (G.total ? '  ·  CARD ' + G.total + ' (' + fmtToPar(G.total - (G.totalPar || 0)) + ')' : '') : 'AIM ' + (G.angle >= 0 ? 'R ' : 'L ') + Math.abs(Math.round((G.angle || 0) * 57.3)) + '°', mx + mw, my + mh + px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right' });
   }
+  function fmtToPar(d) { return d === 0 ? 'E' : (d > 0 ? '+' : '−') + Math.abs(d); }
   function drawGolfEnd(ctx) {
-    var E = ui.golfEnd, k = E.t / 4.5, a = k < 0.08 ? k / 0.08 : k > 0.82 ? (1 - k) / 0.18 : 1, term = golfTerm(E.strokes, E.par);
+    var E = ui.golfEnd, k = E.t / 4.5, a = k < 0.08 ? k / 0.08 : k > 0.82 ? (1 - k) / 0.18 : 1;
     var good = E.strokes - E.par <= 0;
+    if (E.round) {
+      ctx.save(); ctx.globalAlpha = clamp01(a);
+      txt(ctx, E.full ? 'ROUND COMPLETE' : 'ROUND OVER', W / 2, H * 0.38, { font: F(portrait ? 28 : 44, '900', FONT_DISPLAY), color: good ? COL.lime : COL.amber, align: 'center', lw: px(7), outline: 'rgba(0,0,0,0.85)', maxW: W - px(30) });
+      txt(ctx, E.strokes + ' strokes  ·  par ' + E.par + '  ·  ' + fmtToPar(E.strokes - E.par) + '  ·  ' + E.holes + ' hole' + (E.holes === 1 ? '' : 's'), W / 2, H * 0.38 + px(30), { font: F(14, 'bold'), color: COL.ink, align: 'center', maxW: W - px(30) });
+      ctx.restore();
+      return;
+    }
+    var term = golfTerm(E.strokes, E.par);
     ctx.save(); ctx.globalAlpha = clamp01(a);
     txt(ctx, term, W / 2, H * 0.4, { font: F(portrait ? 32 : 52, '900', FONT_DISPLAY), color: good ? COL.lime : COL.amber, align: 'center', lw: px(7), outline: 'rgba(0,0,0,0.85)', maxW: W - px(30) });
-    txt(ctx, (E.hole ? 'HOLE ' + E.hole + '  ·  ' : '') + E.strokes + ' stroke' + (E.strokes === 1 ? '' : 's') + '  ·  par ' + E.par, W / 2, H * 0.4 + px(30), { font: F(14, 'bold'), color: COL.ink, align: 'center' });
+    txt(ctx, (E.hole ? 'HOLE ' + E.hole + (E.name ? ' "' + E.name + '"' : '') + '  ·  ' : '') + E.strokes + ' stroke' + (E.strokes === 1 ? '' : 's') + '  ·  par ' + E.par, W / 2, H * 0.4 + px(30), { font: F(14, 'bold'), color: COL.ink, align: 'center' });
     ctx.restore();
   }
   // =============================================================== modals ====
@@ -4637,9 +4777,10 @@
     if (!s) { var m = /(muzzle|mag|optic|grip|light|scope|suppress|barrel|stock)/.exec(it.id + ' ' + (it.name || '').toLowerCase()); s = m ? (m[1] === 'suppress' || m[1] === 'barrel' ? 'muzzle' : m[1] === 'scope' ? 'optic' : m[1]) : 'other'; }
     return String(s).toLowerCase();
   }
+  // a catalog tint is {variant}; its colour is GTP.Assets.weaponTints[variant].main
   function tintColor(it, i) {
-    var P = parity(), d = findById(P.tints, it.tintId || it.id);
-    return it.color || it.hex || (d && (d.color || d.hex)) || TINT_FALLBACK[(i || 0) % TINT_FALLBACK.length];
+    var A = GTP.Assets, T = (A && A.weaponTints) || [], d = findById(T, it.variant || it.tintId) || findById(parity().tints, it.tintId || it.variant || it.id);
+    return it.color || it.hex || (d && (d.main || d.color || d.hex)) || TINT_FALLBACK[(i || 0) % TINT_FALLBACK.length];
   }
   function weaponStats(row) {
     if (!row) return null;
@@ -4647,7 +4788,9 @@
     var d = weaponDef(row.weaponId || row.id); if (!d) return null;
     return { damage: clamp01((d.dmg || 10) / 100), rate: clamp01((d.rate || 1) / 12), range: clamp01((d.range || 30) / 200), accuracy: clamp01(1 - (d.spread || 0.05) * 5), mobility: d.hold === 'one' ? 0.8 : 0.5 };
   }
+  // openArmory(storeId, weaponId), or GTP.Interiors' openArmory({store, landmark, counter, weaponId})
   function openArmory(storeId, weaponId) {
+    if (storeId && typeof storeId === 'object' && !storeId.name && (storeId.store !== undefined || storeId.counter || storeId.landmark !== undefined)) { weaponId = weaponId || storeId.weaponId; storeId = storeId.store || (storeId.landmark && (storeId.landmark.id || storeId.landmark)) || null; }
     var cat = armoryCatalog(storeId), rows = weaponRows(cat), sel = 0;
     for (var i = 0; i < rows.length; i++) if ((rows[i].weaponId || rows[i].id) === weaponId) { sel = i; break; }
     var m = openModal('armory', { store: storeId || (ui.interior && ui.interior.store) || null, weaponId: weaponId || null, row: sel, tab: 0, isel: 0, focus: weaponId ? 1 : 0, turn: 0 });
@@ -4666,12 +4809,13 @@
   }
   function armoryBuy(item) {
     var m = ui.modal, CB = GTP.Combat; if (!m || !item) return;
-    var res = null, opts = { storeId: m.store && m.store.id ? m.store.id : m.store, weaponId: item.weaponId || null, equip: true };
+    var res = null, opts = { store: m.store && m.store.id ? m.store.id : m.store };   // an owned attachment toggles on and off
     if (CB && typeof CB.buy === 'function' && !item._legacy) res = call(CB.buy, CB, [item.id, opts], null);
     else if (CB && CB.shop && CB.shop.buy) res = call(CB.shop.buy, CB.shop, [item.id], null);
     var X = expansion(), barks = (X.shop && X.shop.barks) || {}, pick = function (list, d) { return list && list.length ? list[(urng ? Math.floor(urng.random() * list.length) : 0) % list.length] : d; };
     var why = res && (res.reason || res.why);
-    if (res && res.ok) { modalMsg(m, (item.owned && (item.kind === 'attachment' || item.kind === 'tint') ? 'EQUIPPED: ' : 'SOLD: ') + item.name + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1; m.bark = pick(barks.sale, 'Sold. Both sides thank you.'); sfx('cash', 0.6); }
+    if (res && res.ok && item.owned && res.equipped === false) { modalMsg(m, 'REMOVED: ' + item.name, COL.muted); sfx('ui', 0.4); }
+    else if (res && res.ok) { modalMsg(m, (item.owned && (item.kind === 'attachment' || item.kind === 'tint') ? 'EQUIPPED: ' : 'SOLD: ') + item.name + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1; m.bark = pick(barks.sale, 'Sold. Both sides thank you.'); sfx('cash', 0.6); }
     else if (why === 'funds') modalMsg(m, 'NOT ENOUGH CASH' + (res.need ? '. Need ' + U.fmtMoney(res.need) + ' more.' : '.'), COL.red);
     else if (why === 'locked') modalMsg(m, 'LOCKED. ' + (item.lockReason || res.lockReason || ('Unlocks after: ' + (res.lockedBy || 'the story'))), COL.amber);
     else if (why === 'owned') modalMsg(m, 'Already yours. Pick ammo or a mod.', COL.muted);
@@ -4684,7 +4828,7 @@
     var m = ui.modal, S2 = armoryState(), rows = S2.rows, row = S2.row, p = player();
     var pw = Math.min(px(1060), W - safe.l - safe.r), ph = Math.min(px(640), H - safe.t - safe.b), x = (W - pw) / 2, y = (H - ph) / 2, narrow = pw < px(720);
     ctx.fillStyle = 'rgba(4,5,10,0.55)'; ctx.fillRect(0, 0, W, H);
-    var storeName = (m.store && (m.store.name || m.store.title)) || (ui.interior && ui.interior.store && ui.interior.store.name) || 'Both Sides Arms';
+    var storeName = storeLabel(m.store || (ui.interior && ui.interior.store), 'armory') || 'Both Sides Arms';
     modalFrame(ctx, x, y, pw, ph, String(storeName).toUpperCase(), null, COL.green);
     moneyChip(ctx, x + pw - px(110), y + px(34));
     exitButton(ctx, x + pw - px(16), y + px(14));
@@ -5006,7 +5150,27 @@
     { id: 'color', name: 'Color', items: [{ id: 'hc_brown', name: 'Brown', price: 25, hex: '#5a3a22' }, { id: 'hc_black', name: 'Black', price: 25, hex: '#16161a' }, { id: 'hc_blond', name: 'Blond', price: 35, hex: '#d8b866' }, { id: 'hc_grey', name: 'Distinguished Grey', price: 40, hex: '#a8a8ad' }, { id: 'hc_pink', name: 'Rebrand Pink', price: 60, hex: '#ff3fa4' }] },
     { id: 'beard', name: 'Facial hair', items: [{ id: 'beard_none', name: 'Clean', price: 15 }, { id: 'beard_stubble', name: 'Deadline Stubble', price: 20 }, { id: 'beard_full', name: 'Full (Serious)', price: 45 }] }
   ];
-  function wardrobeCats(mode) {
+  // GTP.Systems owns the purchase: wardrobe.items(slot, store) rows {id, slot, name, price, look, flavor, owned, equipped,
+  // locked} and wardrobe.buy(id) (buys, wears, applies the look); barber.options() {styles, colors} (each with `current`)
+  // and barber.buy(styleId, colorId). Its rows carry _sys so the buy goes back to the same ids. Without it: the content
+  // tables and a local purchase.
+  var SLOT_NAMES = { top: 'Tops', bottom: 'Bottoms', shoes: 'Shoes', hat: 'Hats', glasses: 'Glasses', hair: 'Cut', color: 'Colour' };
+  function wardrobeCatsSys(mode, store) {
+    var S = GTP.Systems; if (!S) return null;
+    if (mode === 'barber') {
+      var B = S.barber; if (!B || typeof B.options !== 'function') return null;
+      var o = call(B.options, B, [], null); if (!o) return null;
+      return [{ id: 'hair', name: 'Cut', items: asList(o.styles).map(function (st) { return Object.assign({}, st, { style: st.style || st.hair || st.id, _sys: 'style' }); }) },
+        { id: 'color', name: 'Colour', items: asList(o.colors).map(function (c) { return Object.assign({}, c, { hex: c.hex || c.color, _sys: 'color' }); }) }].filter(function (c) { return c.items.length; });
+    }
+    var Wr = S.wardrobe; if (!Wr || typeof Wr.items !== 'function') return null;
+    var list = call(Wr.items, Wr, [null, store || null], null); if (!list || !list.length) return null;
+    var by = {}, order = [];
+    list.forEach(function (it) { var k = String(it.slot || 'other'); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(Object.assign({}, it, { _sys: 'clothing' })); });
+    return order.map(function (k) { return { id: k, name: SLOT_NAMES[k] || k.charAt(0).toUpperCase() + k.slice(1), items: by[k] }; });
+  }
+  function wardrobeCats(mode, store) {
+    var sys = wardrobeCatsSys(mode, store); if (sys && sys.length) return sys;
     var P = parity(), src = mode === 'barber' ? P.barber : P.clothing, out = [];
     function group(list) { var by = {}, order = []; asList(list).forEach(function (it) { var k = String(it.slot || it.category || it.cat || it.type || 'other'); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(it); }); return order.map(function (k) { return { id: k, name: k.charAt(0).toUpperCase() + k.slice(1), items: by[k] }; }); }
     if (Array.isArray(src)) out = src.length && src[0] && src[0].items ? src : group(src);
@@ -5021,6 +5185,7 @@
   function cloneLook(l) { return JSON.parse(JSON.stringify(l || {})); }
   function applyItemToLook(look, mode, slot, it) {
     slot = String(slot || '').toLowerCase();
+    if (it.look && typeof it.look === 'object') { Object.assign(look, it.look); if (mode !== 'barber') { look.outfit = look.outfit || {}; look.outfit[slot] = it.id; } return look; }
     var style = it.style || String(it.id || '').replace(/^(hair|hat|glasses|beard)_/, '');
     if (mode === 'barber') {
       if (/col/.test(slot)) look.hairColor = it.hex || it.color || look.hairColor;
@@ -5036,38 +5201,48 @@
     return look;
   }
   function isWorn(p, mode, slot, it) {
+    if (it._sys) return it._sys === 'clothing' ? !!it.equipped : !!it.current;
     var l = lookOf(p); slot = String(slot || '').toLowerCase();
     var style = it.style || String(it.id || '').replace(/^(hair|hat|glasses|beard)_/, '');
     if (mode === 'barber') { if (/col/.test(slot)) return (it.hex || it.color) === l.hairColor; if (/beard|facial/.test(slot)) return l.beard === style; return l.hair === style; }
     return !!(l.outfit && l.outfit[slot] === it.id);
   }
-  function ownsItem(p, id) {
+  function ownsItem(p, id, it) {
+    if (it && it._sys) return it._sys === 'clothing' ? !!it.owned : false;
     var S = GTP.Systems;
     if (S && typeof S.owns === 'function') { var r = call(S.owns, S, [id], null); if (r != null) return !!r; }
     var o = p.wardrobe || p.owned; if (Array.isArray(o)) return o.indexOf(id) >= 0; if (o && typeof o === 'object') return !!o[id];
     return false;
   }
-  function openWardrobe(mode) {
+  function openWardrobe(mode, opts) {
     var p = player(); if (!p) return null;
     var barber = mode === 'barber';
     var committed = cloneLook(lookOf(p));
-    return openModal('wardrobe', { mode: barber ? 'barber' : 'clothing', committed: committed, cat: 0, opt: 0, focus: 0, previewT: -1,
+    return openModal('wardrobe', { mode: barber ? 'barber' : 'clothing', store: (opts && opts.store) || null, committed: committed, cat: 0, opt: 0, focus: 0, previewT: -1,
       cam: { target: p, dist: barber ? 1.5 : 3.1, height: barber ? 1.72 : 1.45, lookY: barber ? 1.62 : 1.05, yaw: barber ? 0.35 : 0.25, spin: 0 },
       onClose: function (m) { var pl = player(), want = JSON.stringify(m.committed); if (pl && (JSON.stringify(pl.look) !== want || (m.meshLook && m.meshLook !== want))) { pl.look = cloneLook(m.committed); rebuildMesh(pl); } } });
   }
   function wardrobePreview(m) {
-    var p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
+    var p = player(), cats = wardrobeCats(m.mode, m.store), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
     p.look = applyItemToLook(cloneLook(m.committed), m.mode, c.id, it); m.previewT = 0.12;
   }
   function wardrobeBuy(m) {
-    var p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
+    var p = player(), cats = wardrobeCats(m.mode, m.store), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
     if (isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it)) { modalMsg(m, 'You are already wearing that. Bold.', COL.muted); return; }
-    var S = GTP.Systems, res = null, price = ownsItem(p, it.id) ? 0 : (it.price || 0);
+    var S = GTP.Systems, res = null, price = ownsItem(p, it.id, it) ? 0 : (it.price || 0);
+    if (it._sys === 'clothing' && S.wardrobe && S.wardrobe.buy) res = call(S.wardrobe.buy, S.wardrobe, [it.id], null);
+    else if (it._sys && S.barber && S.barber.buy) res = call(S.barber.buy, S.barber, [it._sys === 'style' ? it.id : null, it._sys === 'color' ? it.id : null], null);
+    if (res && !res.ok && res.reason === 'unknown') res = null;   // an id the systems table does not know: the local purchase
+    if (it._sys && res && res.ok) {   // the systems module applied the look (applyLook); keep it as the committed one
+      m.committed = cloneLook(p.look); rebuildMesh(p); m.meshLook = JSON.stringify(p.look); m.previewT = -1;
+      modalMsg(m, (res.price ? 'BOUGHT: ' : 'WEARING: ') + it.name + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1;
+      return;
+    }
     var fns = m.mode === 'barber' ? [[S, 'buyHaircut'], [S && S.barber, 'buy']] : [[S, 'buyClothing'], [S && S.clothing, 'buy']];
     for (var i = 0; i < fns.length && res == null; i++) if (fns[i][0] && typeof fns[i][0][fns[i][1]] === 'function') res = call(fns[i][0][fns[i][1]], fns[i][0], [it.id, { slot: c.id }], null);
     if (res == null && S && typeof S.buy === 'function') res = call(S.buy, S, [m.mode, it.id, { slot: c.id }], null);
     var ok = res === true || (res && res.ok);
-    if (res != null && !ok) { modalMsg(m, (res && res.reason === 'funds') ? 'NOT ENOUGH CASH.' : 'No sale.', COL.red); sfx('fail', 0.3); return; }
+    if (res != null && !ok) { var rz = res && res.reason; modalMsg(m, rz === 'funds' || rz === 'money' ? 'NOT ENOUGH CASH.' + (res.need ? ' Need ' + U.fmtMoney(res.need) + ' more.' : '') : rz === 'locked' ? 'LOCKED. ' + (it.unlock && it.unlock.mission ? 'Unlocks after "' + missionTitle(it.unlock.mission) + '".' : 'Not yet.') : 'No sale.', COL.red); sfx('fail', 0.3); return; }
     if (res == null) {
       if (!payMoney(price)) { modalMsg(m, 'NOT ENOUGH CASH. Need ' + U.fmtMoney(price - (p.money | 0)) + ' more.', COL.red); sfx('fail', 0.3); return; }
       p.wardrobe = Array.isArray(p.wardrobe) ? p.wardrobe : []; if (p.wardrobe.indexOf(it.id) < 0) p.wardrobe.push(it.id);
@@ -5080,7 +5255,7 @@
     modalMsg(m, (price ? 'BOUGHT: ' : 'WEARING: ') + it.name + (price ? '  -' + U.fmtMoney(price) : ''), COL.lime); m.flash = 1; sfx('cash', 0.5);
   }
   function drawWardrobe(ctx) {
-    var m = ui.modal, p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat] || cats[0], items = c ? c.items : [], R = sidePanelRect();
+    var m = ui.modal, p = player(), cats = wardrobeCats(m.mode, m.store), c = cats[m.cat] || cats[0], items = c ? c.items : [], R = sidePanelRect();
     var barber = m.mode === 'barber', accent = barber ? COL.amber : COL.cyan;
     var vg = ctx.createLinearGradient(R.x, 0, R.x + R.w + px(160), 0); vg.addColorStop(0, 'rgba(4,5,10,0.5)'); vg.addColorStop(1, 'rgba(4,5,10,0)');
     if (!portrait) { ctx.fillStyle = vg; ctx.fillRect(0, 0, R.x + R.w + px(160), H); }
@@ -5098,22 +5273,22 @@
     }
     var ly = top + px(34), lh = R.h - (ly - R.y) - px(100), rh = px(36);
     listBox(ctx, items.length, m.opt, R.x + px(16), ly, R.w - px(36), lh, rh, function (k, x, y, w, h, sel) {
-      var it = items[k], worn = isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it), own = ownsItem(p, it.id);
+      var it = items[k], worn = isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it), own = ownsItem(p, it.id, it);
       panel(ctx, x, y, w, h - px(4), px(7), sel && m.focus === 1 ? hexA(accent, 0.24) : 'rgba(255,255,255,0.04)', sel ? accent : 'rgba(255,255,255,0.08)', sel ? 1.5 : 1);
-      var sw = it.hex || it.color;
+      var sw = it.hex || it.color || (it.look && (it.look.shirt || it.look.pants || it.look.shoes || it.look.hatColor));
       if (sw) { ctx.fillStyle = sw; rr(ctx, x + px(10), y + px(8), px(16), px(16), px(4)); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.stroke(); }
       txt(ctx, it.name || it.id, x + (sw ? px(34) : px(12)), y + px(21), { font: F(12, 'bold'), color: COL.ink, outline: false, maxW: w - px(120) });
       txt(ctx, worn ? 'WEARING' : own ? 'OWNED' : it.price ? U.fmtMoney(it.price) : 'FREE', x + w - px(10), y + px(21), { font: F(11, 'bold'), color: worn ? accent : own ? COL.lime : (p.money >= (it.price || 0) ? COL.ink : COL.red), align: 'right', outline: false });
     }, function (k) { if (m.opt === k && m.focus === 1) wardrobeBuy(m); else { m.opt = k; m.focus = 1; wardrobePreview(m); } }, 'ward-item');
     var it2 = items[m.opt], worn2 = it2 && isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it2);
     var bw = px(160), bx = R.x + R.w - bw - px(16), byy = R.y + R.h - px(52);
-    button(ctx, bx, byy, bw, px(30), worn2 ? 'WEARING' : it2 && (ownsItem(p, it2.id) || !it2.price) ? 'WEAR' : 'BUY ' + U.fmtMoney(it2 ? it2.price : 0), { color: accent, disabled: !it2 || worn2 || m.focus !== 1, sel: m.flash > 0, fn: function () { wardrobeBuy(m); }, id: 'ward-buy' });
+    button(ctx, bx, byy, bw, px(30), worn2 ? 'WEARING' : it2 && it2.locked ? 'LOCKED' : it2 && (ownsItem(p, it2.id, it2) || !it2.price) && it2._sys !== 'style' && it2._sys !== 'color' ? 'WEAR' : 'BUY ' + U.fmtMoney(it2 ? it2.price : 0), { color: accent, disabled: !it2 || worn2 || m.focus !== 1, sel: m.flash > 0, fn: function () { wardrobeBuy(m); }, id: 'ward-buy' });
     exitButton(ctx, bx - px(8), byy + px(2));
     if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, R.x + px(18), byy - px(8), { font: F(10, 'bold'), color: m.msg.color, outline: false, maxW: R.w - px(36) });
     helpLine(ctx, navKeys() + '  ·  drag turns the camera', R.x + px(18), R.y + R.h - px(10), R.w - px(36));
   }
   function wardrobeInput(In) {
-    var m = ui.modal, cats = wardrobeCats(m.mode), n = Math.max(1, (cats[m.cat] || { items: [] }).items.length);
+    var m = ui.modal, cats = wardrobeCats(m.mode, m.store), n = Math.max(1, (cats[m.cat] || { items: [] }).items.length);
     if (m.focus === 0) {
       if (menuBack(In)) { closeModal(); return true; }
       if (In.pressed('left')) { m.cat = (m.cat - 1 + cats.length) % cats.length; m.opt = 0; sfx('ui', 0.15); }
@@ -5134,11 +5309,13 @@
   // property:open {id}: the listing card (name, district, price, income per day, garage slots, the perks) with BUY.
   // Data: GTP.Systems.properties.get(id) / GTP.Content.parity.properties; buying calls Systems.buyProperty(id) or
   // Systems.properties.buy(id), else pays here and emits property:buy {id, price}.
+  // GTP.Systems.properties.list() rows: {id, name, kind ('safehouse' | 'business'), price, income, garage, flavor, landmark,
+  // owned, locked, lockReason ('mission' | 'flag'), unlock}; property:open {id, ..., handled} gets handled = true here
   function propertyDef(id) {
     var S = GTP.Systems, sp = S && S.properties, d = null;
-    if (sp && typeof sp.get === 'function') d = call(sp.get, sp, [id], null);
+    if (sp && typeof sp.list === 'function') d = findById(call(sp.list, sp, [], []), id);
+    if (!d && sp && typeof sp.get === 'function') d = call(sp.get, sp, [id], null);
     if (!d && sp && Array.isArray(sp.list)) d = findById(sp.list, id);
-    if (!d && sp && typeof sp.list === 'function') d = findById(call(sp.list, sp, [], []), id);
     return d || findById(parity().properties, id) || { id: id, name: String(id || 'Property').replace(/_/g, ' '), price: 50000, income: 0 };
   }
   function propertyOwned(id) {
@@ -5148,14 +5325,36 @@
     var d = propertyDef(id); if (d && d.owned != null) return !!d.owned;
     var p = player(); return !!(p && p.properties && (Array.isArray(p.properties) ? p.properties.indexOf(id) >= 0 : p.properties[id]));
   }
-  function openProperty(e) { var id = e && (e.id || e.propertyId); if (!id) return null; return openModal('property', { id: id, sel: 0 }); }
+  function openProperty(e) { var id = e && (e.id || e.propertyId); if (!id) return null; var m = openModal('property', { id: id, sel: 0 }); if (m && e) e.handled = true; return m; }
+  function propertyDistrict(d) {
+    if (d.district) return String(d.district);
+    var Wd = GTP.World, lm = Wd && typeof Wd.landmark === 'function' ? call(Wd.landmark, Wd, [d.landmark || d.near], null) : null;
+    var dd = lm && (lm.districtName || lm.district);
+    return dd ? String(dd).replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : '';
+  }
+  // an owned safehouse: sleep six hours and save (Systems.properties.sleep), refused while wanted or on a mission
+  function propertySleep(m) {
+    var S = GTP.Systems, sp = S && S.properties, g = game(), res = null;
+    var why = saveBlocker(g);
+    if (why) { modalMsg(m, why, COL.amber); sfx('fail', 0.3); return; }
+    if (sp && typeof sp.sleep === 'function') res = call(sp.sleep, sp, [m.id], null);
+    else if (g && g.saveSlot) res = { ok: !!call(g.saveSlot, g, [g.activeSlot || 1, { reason: 'safehouse' }], false) };
+    if (res && res.ok) { closeModal(); toast('Slept six hours. Saved.'); return; }
+    var r = res && res.reason;
+    modalMsg(m, r === 'wanted' ? 'Lose the heat before you sleep.' : r === 'mission' ? 'Finish the mission first.' : 'Could not save.', COL.red); sfx('fail', 0.3);
+  }
   function propertyBuy(m) {
     var d = propertyDef(m.id), S = GTP.Systems, sp = S && S.properties, res = null, p = player();
-    if (propertyOwned(m.id)) { modalMsg(m, 'You already own it. The HOA has noticed.', COL.muted); return; }
+    if (propertyOwned(m.id) || m.bought) { if (d.kind === 'safehouse') propertySleep(m); else modalMsg(m, 'You already own it. The HOA has noticed.', COL.muted); return; }
+    if (d.locked) { modalMsg(m, 'NOT ON THE MARKET YET.' + (d.unlock && d.unlock.mission ? ' Unlocks after "' + missionTitle(d.unlock.mission) + '".' : ''), COL.amber); sfx('fail', 0.3); return; }
     if (S && typeof S.buyProperty === 'function') res = call(S.buyProperty, S, [m.id], null);
     else if (sp && typeof sp.buy === 'function') res = call(sp.buy, sp, [m.id], null);
     var ok = res === true || (res && res.ok);
-    if (res != null && !ok) { modalMsg(m, res && res.reason === 'funds' ? 'NOT ENOUGH CASH.' : 'The seller "has other offers".', COL.red); sfx('fail', 0.3); return; }
+    if (res != null && !ok) {
+      var r = res && res.reason, need = res && res.need;
+      modalMsg(m, r === 'money' || r === 'funds' ? 'NOT ENOUGH CASH.' + (need ? ' Need ' + U.fmtMoney(need) + ' more.' : '') : r === 'mission' ? 'Not during a mission. The seller wants your full attention.' : r === 'locked' ? 'NOT ON THE MARKET YET.' : r === 'owned' ? 'You already own it.' : 'The seller "has other offers".', COL.red);
+      sfx('fail', 0.3); return;
+    }
     if (res == null) {
       if (!payMoney(d.price || 0)) { modalMsg(m, 'NOT ENOUGH CASH. Need ' + U.fmtMoney((d.price || 0) - (p.money | 0)) + ' more.', COL.red); sfx('fail', 0.3); return; }
       p.properties = p.properties && typeof p.properties === 'object' && !Array.isArray(p.properties) ? p.properties : {}; p.properties[m.id] = true;
@@ -5187,9 +5386,9 @@
     ctx.save(); ctx.translate(x + pw - px(70), y + px(40)); ctx.rotate(0.35); ctx.fillStyle = owned || m.bought ? COL.lime : COL.red; ctx.fillRect(-px(70), -px(12), px(140), px(24)); txt(ctx, owned || m.bought ? 'OWNED' : 'FOR SALE', 0, px(5), { font: F(12, '900'), color: '#0b1020', align: 'center', outline: false }); ctx.restore();
     var ty = y + ah + px(48);
     txt(ctx, String(d.name || m.id).toUpperCase(), x + px(22), ty, { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false, maxW: pw - px(44) });
-    var dist = d.district || d.area || '';
+    var dist = propertyDistrict(d);
     txt(ctx, (dist ? String(dist) + '  ·  ' : '') + (d.kind ? String(d.kind).toUpperCase() : 'PROPERTY'), x + px(22), ty + px(20), { font: F(10, 'bold'), color: COL.cyan, outline: false });
-    var facts = [['PRICE', U.fmtMoney(d.price || 0), p && p.money >= (d.price || 0) ? COL.lime : COL.red], ['INCOME', d.income ? U.fmtMoney(d.income) + ' / day' : '—', COL.ink], ['GARAGE', d.garage != null ? d.garage + ' car' + (d.garage === 1 ? '' : 's') : '—', COL.ink]];
+    var facts = [[owned || m.bought ? 'PAID' : 'PRICE', d.price ? U.fmtMoney(d.price) : 'FREE', owned || m.bought || (p && p.money >= (d.price || 0)) ? COL.lime : COL.red], ['INCOME', d.income ? U.fmtMoney(d.income) + ' / day' : '—', COL.ink], ['GARAGE', d.garage != null ? d.garage + ' car' + (d.garage === 1 ? '' : 's') : '—', COL.ink]];
     var fw = (pw - px(44)) / 3;
     for (var i = 0; i < facts.length; i++) {
       var fx = x + px(22) + i * fw;
@@ -5197,54 +5396,83 @@
       txt(ctx, facts[i][0], fx + px(10), ty + px(50), { font: F(8, 'bold'), color: COL.muted, outline: false });
       txt(ctx, facts[i][1], fx + px(10), ty + px(74), { font: F(14, '900', FONT_DISPLAY), color: facts[i][2], outline: false, maxW: fw - px(24) });
     }
-    var desc = d.desc || d.description || d.flavor || (d.save !== false ? 'A safehouse: the bed saves your game, the garage keeps your ride.' : 'A business that pays out every game day. Allegedly.');
+    var desc = d.flavor || d.desc || d.description || (d.kind === 'safehouse' ? 'A safehouse: the bed saves your game, the garage keeps your ride.' : 'A business that pays out every game day. Allegedly.');
+    if (d.locked && !owned) desc = 'Not on the market yet' + (d.unlock && d.unlock.mission ? ': unlocks after "' + missionTitle(d.unlock.mission) + '". ' : '. ') + desc;
     var dl = wrap(ctx, desc, F(12, '', FONT_TEXT), pw - px(44));
     for (i = 0; i < Math.min(3, dl.length); i++) txt(ctx, dl[i], x + px(22), ty + px(106) + i * px(16), { font: F(12, '', FONT_TEXT), color: COL.muted, outline: false });
     var bw = px(180), bx = x + pw - bw - px(22), byy = y + ph - px(48);
-    button(ctx, bx, byy, bw, px(34), owned || m.bought ? 'OWNED' : 'BUY  ' + glyph('confirm'), { color: COL.lime, disabled: owned || m.bought, sel: m.flash > 0, fn: function () { propertyBuy(m); }, id: 'prop-buy' });
+    var sleeper = (owned || m.bought) && d.kind === 'safehouse';
+    button(ctx, bx, byy, bw, px(34), sleeper ? 'SLEEP & SAVE  ' + glyph('confirm') : owned || m.bought ? 'OWNED' : d.locked ? 'LOCKED' : 'BUY  ' + glyph('confirm'), { color: sleeper ? COL.cyan : COL.lime, disabled: !sleeper && (owned || m.bought || d.locked), sel: m.flash > 0, fn: function () { propertyBuy(m); }, id: 'prop-buy' });
     button(ctx, x + px(22), byy, px(110), px(34), 'BACK  ' + glyph('cancel'), { color: COL.muted, fn: closeModal, id: 'prop-back' });
     if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, x + pw / 2, byy - px(10), { font: F(11, 'bold'), color: m.msg.color, align: 'center', outline: false, maxW: pw - px(40) });
   }
   function propertyInput(In) { var m = ui.modal; if (menuBack(In)) { closeModal(); return true; } if (In.pressed('confirm')) propertyBuy(m); return true; }
 
   // ------------------------------------------------------- the heist board ----
-  // heist:board {missionId}: a corkboard with the approach cards and the crew (driver, hacker, muscle) as pinned
-  // polaroids, each with a cut; the estimated take updates live. CONFIRM emits heist:plan {approach, crew:[castIds],
-  // missionId}. Data: the parity mission's `heist` block ({approaches, roles, take}), else built-in defaults.
+  // heist:board {missionId, approaches:[{id,name,hostiles,payout,wanted,line}], crew:[{id,name,cut,perk}], mission} comes
+  // from the story (GTP.Heist): its ids are the ones heist:plan must carry back, so the payload is authoritative. The
+  // content's parity.heists.<id> only enriches it (an approach's pitch, a crew member's role and pitch, the board title).
+  // A corkboard: approach index cards, the crew as polaroids (toggle up to four), the job's pay after the cuts on a sticky
+  // note. CONFIRM emits heist:plan {approach, crew:[ids], missionId}.
   var HEIST_DEFAULT = {
-    take: 240000,
     approaches: [
-      { id: 'quiet', name: 'The Quiet Take', desc: 'In through the loading dock with a clipboard. Nobody questions a clipboard.', mult: 1.0, risk: 'LOW', color: '#2ee6ff' },
-      { id: 'loud', name: 'Full Volume', desc: 'Front door, megaphones, a live stream. Faster, louder, more cruisers.', mult: 1.3, risk: 'HIGH', color: '#ff3b30' },
-      { id: 'panel', name: 'The Fake Panel', desc: 'Book a debate in the building, walk out during the Q&A with the goods.', mult: 1.15, risk: 'MEDIUM', color: '#ffbe3c' }
+      { id: 'quiet', name: 'The Quiet Take', hostiles: 0.6, payout: 1.0, wanted: 2, line: 'In through the loading dock, out before the panel ends.' },
+      { id: 'loud', name: 'The Loud Take', hostiles: 1.5, payout: 1.3, wanted: 4, line: 'Through the front door, on air, with a megaphone.' }
     ],
-    roles: [
-      { id: 'driver', name: 'Driver', options: [{ id: 'gus', cut: 0.08, skill: 0.75 }, { id: 'kip', cut: 0.02, skill: 0.3 }, { id: 'sloane', cut: 0.12, skill: 0.9 }] },
-      { id: 'hacker', name: 'Hacker', options: [{ id: 'freshman', cut: 0.05, skill: 0.7 }, { id: 'moonsworth', cut: 0.14, skill: 0.85 }, { id: 'kip', cut: 0.02, skill: 0.2 }] },
-      { id: 'muscle', name: 'Muscle', options: [{ id: 'roz', cut: 0.07, skill: 0.65 }, { id: 'thug', cut: 0.04, skill: 0.45 }, { id: 'cop', cut: 0.1, skill: 0.8 }] }
-    ]
+    crew: [{ id: 'gus', name: 'Gus', cut: 0.1, perk: 'driver' }, { id: 'roz', name: 'Roz', cut: 0.08, perk: 'crowd' }, { id: 'kip', name: 'Kip', cut: 0.02, perk: 'hacker' }]
   };
-  function heistDef(missionId) {
-    var P = parity(), pm = findById(P.missions, missionId), h = (pm && pm.heist) || (P.heists && (P.heists[missionId] || findById(P.heists, missionId))) || null;
-    var out = Object.assign({}, HEIST_DEFAULT, h || {});
-    out.approaches = asList(out.approaches); out.roles = asList(out.roles).map(function (r) { return Object.assign({}, r, { options: asList(r.options).map(function (o) { return typeof o === 'string' ? { id: o, cut: 0.05, skill: 0.5 } : o; }) }); });
+  var HEIST_MAX_CREW = 4;
+  function heistDef(src) {
+    src = src || {};
+    var P = parity(), H = GTP.Heist, ph = null, hs = asList(P.heists);
+    for (var i = 0; i < hs.length; i++) if (hs[i] && (hs[i].missions || []).indexOf(src.missionId) >= 0) ph = hs[i];
+    var aps = asList(src.approaches).length ? asList(src.approaches) : (H && H.approaches ? H.approaches() : HEIST_DEFAULT.approaches);
+    var crew = asList(src.crew).length ? asList(src.crew) : (H && H.crewList ? H.crewList() : HEIST_DEFAULT.crew);
+    var pa = ph ? asList(ph.approaches) : [], pc = ph ? asList(ph.crew) : [], roles = ph ? asList(ph.roles) : [];
+    var COLS = ['#2ee6ff', '#ff3b30', '#ffbe3c', '#b06bff'];
+    var out = {
+      title: (ph && ph.board && ph.board.title) || String(missionTitle(src.missionId) || 'THE JOB').toUpperCase(),
+      note: (ph && ph.board && (ph.board.note || ph.board.subtitle)) || 'Pick an approach, pick a crew. The string is decorative.',
+      approaches: aps.map(function (a, k) {
+        var e = findById(pa, a.id) || {}, hm = a.hostiles != null ? a.hostiles : (e.guardsMul != null ? e.guardsMul : 1);
+        return { id: a.id, name: a.name || e.name || a.id, desc: a.line || e.pitch || a.desc || '', mult: a.payout != null ? a.payout : (e.payoutMul != null ? e.payoutMul : (a.mult || 1)),
+          wanted: a.wanted != null ? a.wanted : e.wanted, risk: hm < 0.9 ? 'LOW' : hm < 1.2 ? 'MEDIUM' : 'HIGH', color: a.color || COLS[k % COLS.length] };
+      }),
+      crew: crew.map(function (c) {
+        var id = c.id || c.castId, e = null;
+        for (var j = 0; j < pc.length; j++) if (pc[j].castId === id) e = pc[j];
+        var role = e && findById(roles, e.role);
+        return { id: id, name: c.name || castName(id), cut: c.cut != null ? c.cut : (e ? e.cut : 0), role: String((role && role.name) || c.perk || (e && e.role) || ''), pitch: (e && e.pitch) || c.line || '' };
+      })
+    };
+    var job = findById(P.missions, (ph && ph.missions && ph.missions[ph.missions.length - 1]) || 'h03_job');
+    out.base = (job && job.reward) || (src.mission && src.mission.reward) || 2500;
     return out;
   }
   function openHeistBoard(e) {
-    var id = e && e.missionId, d = heistDef(id);
-    return openModal('heist', { missionId: id, approach: 0, picks: d.roles.map(function () { return 0; }), row: 0 });
+    e = e || {};
+    var d = heistDef(e), plan = GTP.Heist && GTP.Heist.plan ? GTP.Heist.plan() : null, ai = 0, picks = {};
+    if (plan) { d.approaches.forEach(function (a, k) { if (a.id === plan.approach) ai = k; }); (plan.crew || []).forEach(function (id) { picks[id] = true; }); }
+    else if (d.crew[0]) picks[d.crew[0].id] = true;
+    var r = openModal('heist', { missionId: e.missionId, src: e, def: d, approach: ai, picks: picks, cursor: 0, row: 0 });
+    if (r) e.handled = true;
+    return r;
   }
-  function heistTake(m, d) {
-    var ap = d.approaches[m.approach] || { mult: 1 }, cut = 0, skill = 0;
-    d.roles.forEach(function (r, i) { var o = r.options[m.picks[i]] || {}; cut += o.cut || 0; skill += o.skill || 0.5; });
-    skill /= Math.max(1, d.roles.length);
-    var gross = Math.round((d.take || 200000) * (ap.mult || 1) * (0.7 + 0.5 * skill));
-    return { gross: gross, cut: cut, net: Math.round(gross * (1 - cut)), skill: skill };
+  function heistCrew(m) { return m.def.crew.filter(function (c) { return m.picks[c.id]; }); }
+  function heistTake(m) {
+    var d = m.def, ap = d.approaches[m.approach] || { mult: 1 }, cut = 0;
+    heistCrew(m).forEach(function (c) { cut += c.cut || 0; });
+    var gross = Math.round(d.base * (ap.mult || 1));
+    return { gross: gross, cut: cut, net: Math.max(0, Math.round(gross * (1 - Math.min(0.6, cut)))), n: heistCrew(m).length };
+  }
+  function heistToggle(m, k) {
+    var c = m.def.crew[k]; if (!c) return;
+    if (!m.picks[c.id] && heistCrew(m).length >= HEIST_MAX_CREW) { toast('Four is a crew. Five is a panel.'); sfx('error', 0.3); return; }
+    m.picks[c.id] = !m.picks[c.id]; sfx('ui', 0.2);
   }
   function heistConfirm(m) {
-    var d = heistDef(m.missionId), ap = d.approaches[m.approach];
-    var crew = d.roles.map(function (r, i) { var o = r.options[m.picks[i]]; return o ? o.id : null; }).filter(Boolean);
-    GTP.Events.emit('heist:plan', { approach: ap ? ap.id : null, crew: crew, missionId: m.missionId, take: heistTake(m, d).net });
+    var ap = m.def.approaches[m.approach];
+    GTP.Events.emit('heist:plan', { approach: ap ? ap.id : null, crew: heistCrew(m).map(function (c) { return c.id; }), missionId: m.missionId, take: heistTake(m).net });
     toast('Plan pinned. Nobody touch the string.');
     sfx('cash', 0.5);
     closeModal();
@@ -5262,80 +5490,91 @@
     ctx.restore();
   }
   function drawHeist(ctx) {
-    var m = ui.modal, d = heistDef(m.missionId), tk = heistTake(m, d);
+    var m = ui.modal, d = m.def, tk = heistTake(m), i, k;
     ctx.fillStyle = 'rgba(4,5,10,0.6)'; ctx.fillRect(0, 0, W, H);
     var pw = Math.min(px(1080), W - safe.l - safe.r), ph = Math.min(px(660), H - safe.t - safe.b), x = (W - pw) / 2, y = (H - ph) / 2, narrow = pw < px(760);
     // the cork
     var cg = ctx.createLinearGradient(x, y, x + pw, y + ph); cg.addColorStop(0, '#9c6b3e'); cg.addColorStop(1, '#7d5230');
     panel(ctx, x, y, pw, ph, px(10), cg, '#4a2e14', px(8));
     ctx.save(); rr(ctx, x, y, pw, ph, px(10)); ctx.clip();
-    var r = 7; for (var i = 0; i < 260; i++) { r = (r * 9301 + 49297) % 233280; var dx = x + (r / 233280) * pw; r = (r * 9301 + 49297) % 233280; var dy = y + (r / 233280) * ph; ctx.fillStyle = 'rgba(40,20,5,0.25)'; ctx.fillRect(dx, dy, px(2), px(2)); }
+    var r = 7; for (i = 0; i < 260; i++) { r = (r * 9301 + 49297) % 233280; var dx = x + (r / 233280) * pw; r = (r * 9301 + 49297) % 233280; var dy = y + (r / 233280) * ph; ctx.fillStyle = 'rgba(40,20,5,0.25)'; ctx.fillRect(dx, dy, px(2), px(2)); }
     ctx.restore();
     // the title card
     ctx.save(); ctx.translate(x + px(24), y + px(18)); ctx.rotate(-0.015);
     ctx.fillStyle = '#f4efe4'; ctx.fillRect(0, 0, Math.min(px(420), pw - px(48)), px(58));
-    txt(ctx, 'THE PLAN: ' + String(missionTitle(m.missionId) || 'THE JOB').toUpperCase(), px(14), px(26), { font: F(15, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: Math.min(px(400), pw - px(70)) });
-    txt(ctx, 'Pick an approach, pick a crew. The string is decorative.', px(14), px(46), { font: F(10, 'italic', FONT_TEXT), color: '#555', outline: false, maxW: Math.min(px(400), pw - px(70)) });
+    txt(ctx, 'THE PLAN: ' + d.title, px(14), px(26), { font: F(15, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: Math.min(px(400), pw - px(70)) });
+    txt(ctx, d.note, px(14), px(46), { font: F(10, 'italic', FONT_TEXT), color: '#555', outline: false, maxW: Math.min(px(400), pw - px(70)) });
     ctx.restore();
+    // the sticky note's column on wide boards; the cards and the crew stay left of it
+    var sw = narrow ? pw - px(48) : px(230), leftW = narrow ? pw - px(48) : pw - sw - px(72);
     // approaches: index cards
-    var ay = y + px(96), aw = narrow ? (pw - px(48) - (d.approaches.length - 1) * px(8)) / d.approaches.length : Math.min(px(220), (pw * 0.62) / d.approaches.length - px(14)), ah = narrow ? px(128) : px(150);
+    var na = Math.max(1, d.approaches.length), gap = narrow ? px(8) : px(14), ay = y + px(96);
+    var aw = Math.min(px(230), (leftW - (na - 1) * gap) / na), ah = narrow ? px(132) : px(156);
     txt(ctx, 'APPROACH', x + px(24), ay - px(6), { font: F(11, '900'), color: '#fff3d6', outline: 'rgba(0,0,0,0.4)' });
     for (i = 0; i < d.approaches.length; i++) {
-      var ap = d.approaches[i], ax = x + px(24) + i * (aw + (narrow ? px(8) : px(14))), on = i === m.approach, foc = m.row === 0 && on;
+      var ap = d.approaches[i], ax = x + px(24) + i * (aw + gap), on = i === m.approach, foc = m.row === 0 && on;
       ctx.save(); ctx.translate(ax + aw / 2, ay + ah / 2); ctx.rotate((i % 2 ? 1 : -1) * 0.02); ctx.translate(-aw / 2, -ah / 2);
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = on ? '#fffbe8' : '#ece4d0'; ctx.fillRect(0, 0, aw, ah); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-      ctx.fillStyle = ap.color || COL.cyan; ctx.fillRect(0, 0, aw, px(6));
-      var tl = wrap(ctx, String(ap.name || ap.id).toUpperCase(), F(narrow ? 10 : 12, '900', FONT_DISPLAY), aw - px(26));
-      for (var k = 0; k < Math.min(2, tl.length); k++) txt(ctx, tl[k], px(8), px(24) + k * px(14), { font: F(narrow ? 10 : 12, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: aw - px(16) });
-      var dfont = F(narrow ? 9 : 10, '', FONT_TEXT), dl = wrap(ctx, ap.desc || '', dfont, aw - px(16)), dy0 = px(30) + Math.min(2, tl.length) * px(14), maxL = Math.max(1, Math.floor((ah - dy0 - px(22)) / px(13)));
+      ctx.fillStyle = ap.color; ctx.fillRect(0, 0, aw, px(6));
+      var tfont = F(narrow ? 10 : 12, '900', FONT_DISPLAY), tl = wrap(ctx, String(ap.name).toUpperCase(), tfont, aw - px(30));
+      for (k = 0; k < Math.min(2, tl.length); k++) txt(ctx, tl[k], px(8), px(24) + k * px(14), { font: tfont, color: '#20202a', outline: false, maxW: aw - px(30) });
+      var dfont = F(narrow ? 9 : 10, '', FONT_TEXT), dl = wrap(ctx, ap.desc, dfont, aw - px(16)), dy0 = px(30) + Math.min(2, tl.length) * px(14), maxL = Math.max(1, Math.floor((ah - dy0 - px(24)) / px(13)));
       for (k = 0; k < Math.min(maxL, dl.length); k++) txt(ctx, k === maxL - 1 && dl.length > maxL ? dl[k].replace(/\s*\S*$/, '…') : dl[k], px(8), dy0 + k * px(13), { font: dfont, color: '#444', outline: false });
-      txt(ctx, 'RISK: ' + (ap.risk || '?'), px(10), ah - px(10), { font: F(9, 'bold'), color: ap.risk === 'HIGH' ? '#b3121f' : '#2a5a2a', outline: false });
+      var foot = 'RISK ' + ap.risk + (ap.wanted ? '  ·  ' + '★'.repeat(Math.min(6, ap.wanted)) : '') + '  ·  ×' + (+ap.mult).toFixed(2).replace(/\.?0+$/, '');
+      txt(ctx, foot, px(8), ah - px(10), { font: F(9, 'bold'), color: ap.risk === 'HIGH' ? '#b3121f' : ap.risk === 'MEDIUM' ? '#8a5a00' : '#2a5a2a', outline: false, maxW: aw - px(14) });
       if (on) { ctx.strokeStyle = foc ? COL.pink : '#20202a'; ctx.lineWidth = px(foc ? 4 : 2); ctx.strokeRect(-px(2), -px(2), aw + px(4), ah + px(4)); txt(ctx, '✔', aw - px(14), px(26), { font: F(16, '900'), color: '#b3121f', align: 'center', outline: false }); }
       ctx.fillStyle = '#2ee6ff'; ctx.beginPath(); ctx.arc(aw / 2, px(3), px(5), 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       hit(ax, ay, aw, ah, (function (kk) { return function () { m.approach = kk; m.row = 0; sfx('ui', 0.2); }; })(i), 'heist-ap-' + i);
     }
-    // crew polaroids, one row per role
-    var cy = ay + ah + px(36), availH = y + ph - px(60) - cy, rowH = Math.min(px(76) * 1.24 + px(30), availH / Math.max(1, d.roles.length)), pwid = Math.max(px(40), (rowH - px(30)) / 1.24);
-    if (narrow) pwid = Math.min(pwid, (pw * 0.55 - px(60)) / 3);
-    for (var ri = 0; ri < d.roles.length; ri++) {
-      var role = d.roles[ri], ry = cy + ri * rowH, rowOn = m.row === ri + 1;
-      if (ry + rowH > y + ph - px(10) && ri > 0) { /* small screens: rows overlap the summary less than they clip */ }
-      txt(ctx, String(role.name || role.id).toUpperCase(), x + px(24), ry + px(4), { font: F(11, '900'), color: rowOn ? '#fff' : '#fff3d6', outline: 'rgba(0,0,0,0.45)' });
-      for (var oi = 0; oi < role.options.length; oi++) {
-        var o = role.options[oi], ox = x + px(24) + oi * (pwid + px(narrow ? 12 : 22)), oy = ry + px(14), osel = m.picks[ri] === oi;
-        polaroid(ctx, o.id, ox, oy, pwid, osel && rowOn, (oi - 1) * 0.04, castName(o.id).split(' ')[0], Math.round((o.cut || 0) * 100) + '% CUT');
-        if (osel) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), x + pw * 0.78, y + px(150)); ctx.stroke(); }
-        hit(ox, oy, pwid, pwid * 1.24, (function (a, b) { return function () { m.picks[a] = b; m.row = a + 1; sfx('ui', 0.2); }; })(ri, oi), 'heist-crew-' + ri + '-' + oi);
-      }
+    // the crew: polaroids in one row, toggled; the focused one's pitch underneath
+    var nc = Math.max(1, d.crew.length), cy = ay + ah + px(36), pitchH = px(34);
+    var sumH = narrow ? px(96) : 0, availH = y + ph - px(64) - cy - pitchH - sumH;
+    var pwid = Math.max(px(40), Math.min(px(96), (leftW - (nc - 1) * px(14)) / nc, availH / 1.24 - px(4)));
+    txt(ctx, 'CREW  ' + tk.n + '/' + HEIST_MAX_CREW, x + px(24), cy - px(10), { font: F(11, '900'), color: m.row === 1 ? '#fff' : '#fff3d6', outline: 'rgba(0,0,0,0.45)' });
+    for (i = 0; i < d.crew.length; i++) {
+      var c = d.crew[i], ox = x + px(24) + i * (pwid + px(14)), oy = cy, picked = !!m.picks[c.id], cf = m.row === 1 && m.cursor === i;
+      ctx.save(); if (!picked) ctx.globalAlpha = 0.6;
+      polaroid(ctx, c.id, ox, oy, pwid, cf, ((i % 3) - 1) * 0.04, String(c.name).split(' ')[0], Math.round((c.cut || 0) * 100) + '% CUT');
+      ctx.restore();
+      if (picked) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), narrow ? x + pw - px(60) : x + pw - sw / 2 - px(24), narrow ? y + ph - px(150) : y + px(150)); ctx.stroke(); txt(ctx, '✔', ox + pwid - px(4), oy + px(12), { font: F(14, '900'), color: '#d7262e', align: 'center', outline: '#fff' }); }
+      if (c.role) txt(ctx, c.role.toUpperCase(), ox + pwid / 2, oy + pwid * 1.24 + px(12), { font: F(8, '900'), color: '#fff3d6', align: 'center', outline: 'rgba(0,0,0,0.5)', maxW: pwid + px(10) });
+      hit(ox, oy, pwid, pwid * 1.24, (function (kk) { return function () { m.row = 1; m.cursor = kk; heistToggle(m, kk); }; })(i), 'heist-crew-' + i);
     }
-    // the take summary (a sticky note) and CONFIRM
-    var sw = narrow ? Math.min(px(170), pw * 0.4) : px(230), sx = x + pw - sw - px(24), sy = y + (narrow ? px(96) + ah + px(30) : px(110));
-    if (narrow) sx = x + pw - sw - px(12);
-    ctx.save(); ctx.translate(sx + sw / 2, sy + px(80)); ctx.rotate(0.03); ctx.translate(-sw / 2, -px(80));
-    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = '#ffe873'; ctx.fillRect(0, 0, sw, px(160)); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    txt(ctx, 'EST. TAKE', px(14), px(26), { font: F(10, 'bold'), color: '#5a4a00', outline: false });
-    txt(ctx, U.fmtMoney(tk.net), px(14), px(56), { font: F(narrow ? 18 : 24, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: sw - px(20) });
-    txt(ctx, 'gross ' + U.fmtMoney(tk.gross) + '  ·  crew ' + Math.round(tk.cut * 100) + '%', px(14), px(76), { font: F(9, 'bold'), color: '#5a4a00', outline: false, maxW: sw - px(20) });
-    txt(ctx, 'CREW SKILL', px(14), px(100), { font: F(9, 'bold'), color: '#5a4a00', outline: false });
-    ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(px(14), px(106), sw - px(28), px(8)); ctx.fillStyle = '#2a5a2a'; ctx.fillRect(px(14), px(106), (sw - px(28)) * tk.skill, px(8));
+    var fc = d.crew[m.cursor];
+    if (fc && fc.pitch) {
+      var pl = wrap(ctx, fc.name + ': ' + fc.pitch, F(10, 'italic', FONT_TEXT), leftW);
+      for (k = 0; k < Math.min(2, pl.length); k++) txt(ctx, pl[k], x + px(24), cy + pwid * 1.24 + px(30) + k * px(13), { font: F(10, 'italic', FONT_TEXT), color: '#fff3d6', outline: 'rgba(0,0,0,0.5)' });
+    }
+    // the take (a sticky note) and CONFIRM
+    var sh = narrow ? px(84) : px(160), sx = narrow ? x + px(24) : x + pw - sw - px(24), sy = narrow ? y + ph - px(64) - sh - px(4) : y + px(110);
+    if (narrow) sw = Math.min(sw, px(260));
+    ctx.save(); ctx.translate(sx + sw / 2, sy + sh / 2); ctx.rotate(narrow ? -0.015 : 0.03); ctx.translate(-sw / 2, -sh / 2);
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = '#ffe873'; ctx.fillRect(0, 0, sw, sh); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    txt(ctx, 'THE JOB PAYS', px(14), px(22), { font: F(10, 'bold'), color: '#5a4a00', outline: false });
+    txt(ctx, U.fmtMoney(tk.net), px(14), narrow ? px(50) : px(56), { font: F(narrow ? 18 : 24, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: sw - px(20) });
+    txt(ctx, U.fmtMoney(tk.gross) + ' less crew ' + Math.round(Math.min(0.6, tk.cut) * 100) + '%', px(14), narrow ? px(70) : px(78), { font: F(9, 'bold'), color: '#5a4a00', outline: false, maxW: sw - px(20) });
+    if (!narrow) {
+      var apn = d.approaches[m.approach];
+      txt(ctx, 'HEAT', px(14), px(108), { font: F(9, 'bold'), color: '#5a4a00', outline: false });
+      txt(ctx, apn && apn.wanted ? '★'.repeat(Math.min(6, apn.wanted)) : '—', px(14), px(128), { font: F(14, '900'), color: '#b3121f', outline: false });
+      if (!tk.n) txt(ctx, 'No crew. Bold.', px(14), px(148), { font: F(9, 'italic', FONT_TEXT), color: '#5a4a00', outline: false });
+    }
     ctx.restore();
     var cbw = Math.min(px(230), pw - px(48)), cbx = x + pw - cbw - px(24), cby = y + ph - px(56);
-    button(ctx, cbx, cby, cbw, px(38), 'CONFIRM PLAN  ' + glyph('confirm'), { color: COL.pink, sel: m.row === d.roles.length + 1, fn: function () { heistConfirm(m); }, id: 'heist-confirm', font: F(13, '900') });
-    txt(ctx, (device() === 'gamepad' ? 'LS pick · A confirm · B back' : '↑ ↓ rows  ·  ← → choose  ·  Enter confirm  ·  Esc back'), x + px(24), y + ph - px(14), { font: F(10, 'bold'), color: '#fff3d6', outline: 'rgba(0,0,0,0.5)', maxW: pw - cbw - px(70) });
+    button(ctx, cbx, cby, cbw, px(38), 'CONFIRM PLAN  ' + glyph('confirm'), { color: COL.pink, sel: m.row === 2, fn: function () { heistConfirm(m); }, id: 'heist-confirm', font: F(13, '900') });
+    var help = device() === 'touch' ? 'Tap a card, tap the crew' : device() === 'gamepad' ? 'LS row · ← → pick · A toggle · B back' : '↑ ↓ rows  ·  ← → pick  ·  Enter toggle  ·  Esc back';
+    txt(ctx, help, x + px(24), y + ph - px(14), { font: F(10, 'bold'), color: '#fff3d6', outline: 'rgba(0,0,0,0.5)', maxW: pw - cbw - px(70) });
   }
   function heistInput(In) {
-    var m = ui.modal, d = heistDef(m.missionId), rows = d.roles.length + 2;
+    var m = ui.modal, d = m.def, rows = 3;
     if (menuBack(In)) { closeModal(); return true; }
     if (In.pressed('forward')) { m.row = (m.row - 1 + rows) % rows; sfx('ui', 0.15); }
     if (menuDown(In)) { m.row = (m.row + 1) % rows; sfx('ui', 0.15); }
     var dir = In.pressed('left') ? -1 : In.pressed('right') ? 1 : 0;
-    if (dir) {
-      if (m.row === 0) m.approach = (m.approach + dir + d.approaches.length) % d.approaches.length;
-      else if (m.row <= d.roles.length) { var r = d.roles[m.row - 1]; m.picks[m.row - 1] = (m.picks[m.row - 1] + dir + r.options.length) % r.options.length; }
-      sfx('ui', 0.15);
-    }
-    if (In.pressed('confirm')) { if (m.row === rows - 1) heistConfirm(m); else m.row = Math.min(rows - 1, m.row + 1); }
+    if (dir && m.row === 0 && d.approaches.length) { m.approach = (m.approach + dir + d.approaches.length) % d.approaches.length; sfx('ui', 0.15); }
+    if (dir && m.row === 1 && d.crew.length) { m.cursor = (m.cursor + dir + d.crew.length) % d.crew.length; sfx('ui', 0.15); }
+    if (In.pressed('confirm')) { if (m.row === 2) heistConfirm(m); else if (m.row === 1) heistToggle(m, m.cursor); else m.row = 1; }
     return true;
   }
 
@@ -5457,8 +5696,10 @@
     if (!live) l = asList(parity().stocks);
     return (l || []).map(function (o) {
       var hist = o.history || o.hist || o.prices || [], price = o.price != null ? o.price : (hist.length ? hist[hist.length - 1] : (o.base || o.start || 0));
-      var prev = hist.length > 1 ? hist[hist.length - 2] : (o.prev != null ? o.prev : (o.open != null ? o.open : null)), chg = prev ? (price - prev) / prev : (o.change != null ? (Math.abs(o.change) > 1 ? o.change / 100 : o.change) : 0);
-      return { id: o.id || o.symbol || o.ticker, sym: String(o.symbol || o.ticker || o.id || '').toUpperCase(), name: o.name || o.company || '', price: +price || 0, change: chg, history: hist, shares: o.shares || o.owned || o.held || 0, avg: o.avg || o.cost || null, live: live, flavor: o.flavor || o.desc || '' };
+      // GTP.Systems.stocks.list(): {ticker, name, flavor, price, change (24 h, a fraction), history, qty, avg, value, gain}
+      var prev = hist.length > 1 ? hist[hist.length - 2] : (o.prev != null ? o.prev : (o.open != null ? o.open : null));
+      var chg = o.change != null ? (Math.abs(o.change) > 1 ? o.change / 100 : o.change) : prev ? (price - prev) / prev : 0;
+      return { id: o.ticker || o.id || o.symbol, sym: String(o.ticker || o.symbol || o.id || '').toUpperCase(), name: o.name || o.company || '', price: +price || 0, change: chg, history: hist, shares: o.qty != null ? o.qty : (o.shares || o.owned || o.held || 0), avg: o.avg || null, gain: o.gain, live: live, flavor: o.flavor || o.desc || '' };
     });
   }
   function stockTrade(row, n) {
@@ -5466,8 +5707,8 @@
     if (!row.live || !A) { toast('Market closed. The bell is "on order".'); return; }
     var fn = n > 0 ? A.buy : A.sell, res = typeof fn === 'function' ? call(fn, A, [row.id, Math.abs(n)], null) : null;
     var ok = res === true || (res && res.ok);
-    if (ok) { sfx('cash', 0.5); toast((n > 0 ? 'Bought ' : 'Sold ') + Math.abs(n) + ' ' + row.sym + ' at ' + U.fmtMoney(row.price)); }
-    else toast(res && res.reason === 'funds' ? 'Not enough cash for ' + Math.abs(n) + ' ' + row.sym + '.' : res && (res.reason === 'shares' || res.reason === 'none') ? 'You do not own that many ' + row.sym + '.' : 'Trade refused' + (res && res.reason ? ' (' + res.reason + ')' : '') + '.');
+    if (ok) toast((n > 0 ? 'Bought ' : 'Sold ') + Math.abs(n) + ' ' + row.sym + ' at ' + U.fmtMoney(row.price) + (res && res.total ? '  (' + U.fmtMoney(res.total) + ' with the fee)' : ''));   // Systems plays the register
+    else toast(res && (res.reason === 'money' || res.reason === 'funds') ? 'Not enough cash for ' + Math.abs(n) + ' ' + row.sym + (res.need ? ' (' + U.fmtMoney(res.need) + ' short)' : '') + '.' : res && (res.reason === 'shares' || res.reason === 'none' || res.reason === 'qty') ? 'You do not own that many ' + row.sym + '.' : 'Trade refused' + (res && res.reason ? ' (' + res.reason + ')' : '') + '.');
   }
   function sparkline(ctx, hist, x, y, w, h, col) {
     if (!hist || hist.length < 2) { ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2); ctx.stroke(); return; }
@@ -5520,8 +5761,11 @@
   // ------------------------------------------------------- phone: STATS extras ----
   // GTP.Systems.stats() -> [{label, value}] | [[label, value]] | {sections:[{title, rows}]}; the achievements list from
   // GTP.Content.parity.achievements with Systems.unlocked(id) / Systems.achievements.unlocked (else the toasts seen).
+  function hasStatsPage() { var S = GTP.Systems; return !!(S && typeof S.statsPage === 'function'); }
   function systemsStats() {
-    var S = GTP.Systems, st = S ? (typeof S.stats === 'function' ? call(S.stats, S, [], null) : S.stats) : null;
+    var S = GTP.Systems;
+    if (hasStatsPage()) return asList(call(S.statsPage, S, [], [])).map(function (s) { return { title: s.title || s.id || '', rows: normRows(s.rows) }; });   // [{id, title, rows:[{label, value}]}]
+    var st = S ? (typeof S.stats === 'function' ? call(S.stats, S, [], null) : S.stats) : null;
     if (!st) return [];
     if (st.sections) return asList(st.sections).map(function (s) { return { title: s.title || '', rows: normRows(s.rows) }; });
     return [{ title: 'CAREER', rows: normRows(st) }];
@@ -5548,21 +5792,24 @@
         ry += rh;
       }
     }
-    var ach = asList(parity().achievements);
+    // GTP.Systems.achievements.list() {id, name, desc, unlocked, progress, goal}; a def with hidden: true reads ??? until unlocked
+    var SA = GTP.Systems && GTP.Systems.achievements, ach = SA && typeof SA.list === 'function' ? asList(call(SA.list, SA, [], [])) : asList(parity().achievements);
+    ach = ach.map(function (a) { var d = SA && SA.def ? call(SA.def, SA, [a.id], null) : null; return Object.assign({}, a, { secret: a.secret || a.hidden || !!(d && (d.hidden || d.secret)) }); });
     if (ach.length) {
-      var got = ach.filter(function (a) { return achUnlocked(a.id); }).length;
+      var got = ach.filter(function (a) { return a.unlocked != null ? !!a.unlocked : achUnlocked(a.id); }).length;
       ry += px(14);
       if (ry > y - rh && ry < y + h + rh) { txt(ctx, 'ACHIEVEMENTS  ' + got + ' / ' + ach.length, x, ry, { font: F(10, 'bold'), color: COL.gold, outline: false }); }
       ry += px(10);
       var cols = w > px(440) ? 2 : 1, cw = (w - (cols - 1) * px(8)) / cols, ah = px(40);
       for (i = 0; i < ach.length; i++) {
-        var a = ach[i], on = achUnlocked(a.id), ax = x + (i % cols) * (cw + px(8)), ay = ry + Math.floor(i / cols) * (ah + px(6));
+        var a = ach[i], on = a.unlocked != null ? !!a.unlocked : achUnlocked(a.id), ax = x + (i % cols) * (cw + px(8)), ay = ry + Math.floor(i / cols) * (ah + px(6));
         if (ay + ah > y && ay < y + h) {
           panel(ctx, ax, ay, cw, ah, px(8), on ? 'rgba(232,181,58,0.12)' : 'rgba(255,255,255,0.03)', on ? 'rgba(232,181,58,0.5)' : 'rgba(255,255,255,0.08)');
           ctx.fillStyle = on ? COL.gold : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(ax + px(20), ay + ah / 2, px(12), 0, Math.PI * 2); ctx.fill();
           trophy(ctx, ax + px(20), ay + ah / 2, px(16), on ? '#2a1c04' : 'rgba(0,0,0,0.4)');
           txt(ctx, on || !a.secret ? (a.name || a.id) : '???', ax + px(40), ay + px(17), { font: F(11, 'bold'), color: on ? COL.ink : COL.muted, outline: false, maxW: cw - px(48) });
           txt(ctx, on || !a.secret ? (a.desc || a.description || '') : 'Secret.', ax + px(40), ay + px(31), { font: F(9, '', FONT_TEXT), color: COL.muted, outline: false, maxW: cw - px(48) });
+          if (!on && !a.secret && a.goal && a.progress > 0) { ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(ax + px(40), ay + ah - px(5), cw - px(52), px(2)); ctx.fillStyle = COL.gold; ctx.fillRect(ax + px(40), ay + ah - px(5), (cw - px(52)) * clamp01(a.progress), px(2)); }
         }
       }
       ry += Math.ceil(ach.length / cols) * (ah + px(6));
@@ -5579,22 +5826,25 @@
     Ev.on('interior:fade', interiorFade);
     Ev.on('interior:enter', interiorEnter);
     Ev.on('interior:exit', function () { ui.interior = null; if (ui.modal && ui.modal.kind === 'armory') closeModal(); ui.range = null; });
-    Ev.on('armory:inspect', function (e) { var st = ui.interior && ui.interior.store; if (ui.modal && ui.modal.kind === 'armory') { var S2 = armoryState(); for (var i = 0; i < S2.rows.length; i++) if ((S2.rows[i].weaponId || S2.rows[i].id) === (e && e.weaponId)) { ui.modal.row = i; ui.modal.isel = 0; ui.modal.focus = 1; } return; } openArmory(e && e.storeId || (st && (st.id || st)) || null, e && e.weaponId); });
+    Ev.on('armory:inspect', function (e) { var st = ui.interior && ui.interior.store; if (ui.modal && ui.modal.kind === 'armory') { var S2 = armoryState(); for (var i = 0; i < S2.rows.length; i++) if ((S2.rows[i].weaponId || S2.rows[i].id) === (e && e.weaponId)) { ui.modal.row = i; ui.modal.isel = 0; ui.modal.focus = 1; } return; } openArmory((e && (e.store || e.storeId)) || (st && (st.id || st)) || null, e && e.weaponId); });
     Ev.on('range:start', rangeStart);
     Ev.on('range:hit', rangeHit);
     Ev.on('range:end', rangeEnd);
-    Ev.on('clothing:open', function () { openWardrobe('clothing'); });
-    Ev.on('barber:open', function () { openWardrobe('barber'); });
+    Ev.on('clothing:open', function (e) { openWardrobe('clothing', e); });
+    Ev.on('barber:open', function (e) { openWardrobe('barber', e); });
     Ev.on('modshop:open', function (e) { if (ui.modal && ui.modal.kind === 'modshop' && e && ui.modal.vehicle === e.vehicle) return; openModShop(e); });
     Ev.on('modshop:close', function () { if (ui.modal && ui.modal.kind === 'modshop') closeModal(); });
     Ev.on('property:open', openProperty);
     Ev.on('heist:board', openHeistBoard);
     Ev.on('boss:phase', bossPhase);
+    Ev.on('boss:start', bossStart);
+    Ev.on('boss:end', bossEnd);
     Ev.on('boss:defeated', bossDefeated);
     Ev.on('special:state', specialState);
     Ev.on('achievement', achievementToast);
     Ev.on('golf:start', golfStart);
     Ev.on('golf:end', golfEnd);
+    Ev.on('golf:hole', golfHole);
     Ev.on('vehicle:enter', function (e) { var p = player(), v = e && (e.vehicle || e); if (!v || (e && e.ped && e.ped !== p) || (e && e.driver && e.driver !== p)) return; ui.vehName = { name: vehicleName(v), sub: v.mods && v.mods.engine ? 'TUNED' : '', t: 0 }; });
     Ev.on('vehicle:exit', function () { ui.vehName = null; });
     Ev.on('cover:enter', function (e) { ui.cover.on = true; ui.cover.low = !!(e && (e.low || e.high === false)); });
@@ -5621,6 +5871,8 @@
 
   // ----------------------------------------------------------------- API ----
   var UI = GTP.UI = {
+    // the other tracks' fallbacks stand down when these are set: GTP.Interiors' DOM fade, GTP.Bosses' plain boss bar and special meters
+    interiorFade: true, drawsBossBar: true, drawsSpecials: true,
     drawsBarks: true,
     minigames: { debate: debate, ratio: ratio },
     init: function () {
@@ -5702,12 +5954,12 @@
     openPause: openPause, closePause: closePause, setMuted: setMuted, isMuted: function () { return ui.muted; },
     // v0.3 screens (the events in PLAN_V03 open them too)
     openArmory: openArmory, openModShop: function (vehicle) { return openModShop({ vehicle: vehicle }); }, openWardrobe: openWardrobe,
-    openProperty: function (id) { return openProperty({ id: id }); }, openHeistBoard: function (missionId) { return openHeistBoard({ missionId: missionId }); },
+    openProperty: function (id) { return openProperty({ id: id }); }, openHeistBoard: function (e) { return openHeistBoard(typeof e === 'object' && e ? e : { missionId: e }); },
     closeModal: closeModal, modal: function () { return ui.modal; },
     gps: { set: gpsSet, clear: function () { ui.gps = null; }, get: function () { return ui.gps; } },
     skipCall: skipCallLine,
     wantsMenuPad: function () { var c = ui.card; return !!(c && c.kind === 'failed' && retryOffer() && c.t >= 0.8); },
-    phoneTabs: PHONE_TABS, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
+    phoneTabs: PHONE_TABS, allMarkers: allMarkers, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
     state: ui,
     _v3: { crossState: crossState, drawCrosshair: drawCrosshair, gpsTurn: gpsTurn, armoryState: function () { return ui.modal && ui.modal.kind === 'armory' ? armoryState() : null; }, retryOffer: retryOffer, stockList: stockList, wardrobeCats: wardrobeCats, modCats: modCats, heistDef: heistDef, vehCat: vehCat, chuteState: chuteState, promptList: promptList, missionRowActivate: missionRowActivate, retryActivate: retryActivate }
   };

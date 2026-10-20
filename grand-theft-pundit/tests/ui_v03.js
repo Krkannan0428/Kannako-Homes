@@ -244,11 +244,11 @@ H.run('ui_v03', async (t) => {
   t.assert(prop.modal === 'property' && prop2.money === 15000 && prop2.ev && prop2.ev.id === 'safe_brownstone' && prop2.owned, 'the property card buys The Brownstone: ' + JSON.stringify(prop2));
 
   // ---- 10. heist board ----
-  await page.evaluate(() => { GTP.Events.emit('heist:board', { missionId: 'h01_casing' }); T_.adv(0.3); GTP.game.render(); });
+  await page.evaluate(() => { GTP.Events.emit('heist:board', { missionId: 'h01_casing', approaches: GTP.Heist && GTP.Heist.approaches(), crew: GTP.Heist && GTP.Heist.crewList() }); T_.adv(0.3); GTP.game.render(); });
   await shot('heist');
-  const heist = await page.evaluate(() => { T_.press('right'); T_.press('back'); T_.press('right'); T_.press('back'); T_.press('back'); T_.press('back'); T_.press('confirm'); return { plan: T_.last('heist:plan'), modal: !!T_.ui.modal }; });
+  const heist = await page.evaluate(() => { const d = T_.ui.modal && T_.ui.modal.def; T_.press('right'); T_.press('back'); T_.press('right'); T_.press('confirm'); T_.press('right'); T_.press('confirm'); T_.press('back'); T_.press('confirm'); return { plan: T_.last('heist:plan'), modal: !!T_.ui.modal, ids: d && d.crew.map((c) => c.id), aps: d && d.approaches.map((a) => a.id), heistIds: GTP.Heist ? GTP.Heist.crewList().map((c) => c.id) : null }; });
   console.log('  heist: ' + JSON.stringify(heist));
-  t.assert(heist.plan && heist.plan.approach === 'loud' && heist.plan.crew.length === 3 && heist.plan.crew[0] === 'kip' && !heist.modal, 'the board emits heist:plan {approach, crew}: ' + JSON.stringify(heist.plan));
+  t.assert(heist.plan && heist.plan.approach === heist.aps[1] && heist.plan.crew.join() === heist.ids.slice(0, 3).join() && (!heist.heistIds || heist.ids.join() === heist.heistIds.join()) && !heist.modal, 'the board emits heist:plan {approach, crew}: ' + JSON.stringify(heist.plan));
 
   // ---- 11. golf ----
   await page.evaluate(() => { GTP.Events.emit('golf:start', { hole: 3, par: 4, wind: { speed: 9, dir: 0.7 }, club: 'Driver', dist: 312 }); T_.adv(0.2); T_.press('right', 20); T_.press('shoot'); T_.adv(0.55); GTP.game.render(); });
@@ -377,21 +377,25 @@ H.run('ui_v03', async (t) => {
   console.log('  radio: ' + JSON.stringify(radio));
   t.assert(radio.some((l) => /^ON AIR: Call Me Maybe Wrong/.test(l)) && radio.some((l) => /^NEWS 14:00/.test(l)) && radio.some((l) => /^CALLER: Deb/.test(l)), 'the ticker shows the show on air, the hourly bulletin and a caller: ' + JSON.stringify(radio));
   const strangers = await page.evaluate(() => {
-    const p = GTP.game.player;
-    GTP.Strangers = { markers: () => [{ id: 's01_birdwatch', x: p.x + 60, z: p.z - 20, title: 'Birds Aren\'t Real Estate', giver: 'moonsworth' }], list: () => [{ id: 's01_birdwatch', title: 'Birds Aren\'t Real Estate', giver: 'moonsworth', status: 'available', line: 'He has a theory about pigeons and zoning.', x: p.x + 60, z: p.z - 20 }] };
-    T_.lookAt(p.x + 60, p.z - 20); T_.adv(0.1); GTP.game.render();
-    const a = { labels: T_.ui.labelsDrawn };
+    // the real GTP.Strangers: open the first strand by completing its gate for the duration of the check
+    const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = Sg.list()[0].id, first = Sg.missions(sid)[0], added = [];
+    (first.requires || []).forEach((id) => { if (!Ms.state.completed.has(id)) { Ms.state.completed.add(id); added.push(id); } });
+    window.__strAdded = added;
+    const mk = GTP.UI.allMarkers().find((m) => m.missionId === first.id) || {};
+    if (mk.x != null) { p.x = mk.x - 30; p.z = mk.z; T_.lookAt(mk.x, mk.z); }
+    T_.adv(0.1); GTP.game.render();
+    const a = { labels: T_.ui.labelsDrawn, kind: mk.kind, icon: mk.icon, strand: sid };
     GTP.UI.openMap(); T_.ui.pause.tab = GTP.UI.phoneTabs.indexOf('MISSIONS'); T_.adv(0.05); GTP.game.render();
-    const rows = T_.ui.pause.rows || [], k = rows.findIndex((r) => r.kind === 'stranger'); a.row = k >= 0;
+    const rows = T_.ui.pause.rows || [], k = rows.findIndex((r) => r.kind === 'stranger'); a.row = k >= 0; a.sub = k >= 0 ? rows[k].sub : null;
     if (k >= 0) { T_.ui.pause.row = k; GTP.game.render(); }
     return a;
   });
   await shot('strangers_phone');
   const strangers2 = await page.evaluate(() => { const rows = T_.ui.pause.rows || [], r = rows.find((x) => x.kind === 'stranger'); GTP.UI._v3.missionRowActivate(r); const G = T_.ui.gps; GTP.UI.closePause(); T_.adv(0.1); GTP.game.render(); return { gps: G && G.kind }; });
   await shot('strangers_map');
-  await page.evaluate(() => { delete GTP.Strangers; GTP.Events.emit('gps:clear'); });
+  await page.evaluate(() => { (window.__strAdded || []).forEach((id) => GTP.Missions.state.completed.delete(id)); GTP.Events.emit('gps:clear'); });
   console.log('  strangers: ' + JSON.stringify([strangers, strangers2]));
-  t.assert(strangers.labels >= 1 && strangers.row && strangers2.gps === 'stranger', 'stranger missions get a label, a phone row and a GPS route: ' + JSON.stringify([strangers, strangers2]));
+  t.assert(strangers.kind === 'stranger' && strangers.icon === 'stranger' && strangers.labels >= 1 && strangers.row && strangers2.gps === 'stranger', 'stranger missions get a label, a phone row and a GPS route: ' + JSON.stringify([strangers, strangers2]));
 
   // night readability: the GPS chip, labels, specials and the call card over a night street
   await page.evaluate(() => { const g = GTP.game; g.debug.setClock(23.2); GTP.Events.emit('phone:call', { from: 'gus', lines: ['The van makes a new noise. I think it is a podcast.'] }); T_.adv(2); g.render(); });
