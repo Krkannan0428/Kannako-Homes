@@ -1,10 +1,12 @@
 /* Grand Theft Pundit: 23_content_radio.js
- * GTP.Content.radio: the four stations (GDD section 8, verbatim), the news
- * ticker, ped and cop barks (GDD section 9), the fail-screen texts, and the
- * street names (GDD section 9) unless 20_content_world.js already defined
- * them. Pure data plus tiny helpers. Loads standalone: it only needs window.
+ * GTP.Content.radio: six stations (GDD section 8 plus two v0.3 stations), their
+ * songs, ads and DJ lines, WAIL 101's call-in show, the hourly news bulletins
+ * that follow story progress, the news ticker, ped and cop barks (GDD section
+ * 9), the fail-screen texts, and the street names (GDD section 9) unless
+ * 20_content_world.js already defined them. Data plus small helpers; loads
+ * standalone (only needs window). Decisions: docs/v03/radio.md.
  *
- * Station pattern schema (played by GTP.Audio's radio sequencer):
+ * Station pattern schema (played by GTP.Audio's radio sequencer, unchanged):
  *   pattern = {
  *     steps: 16,                  // sixteenth notes; one pattern is one bar
  *     bass:  [16 x degree|null],  // scale degree 0-7 (7 = octave) or rest
@@ -20,12 +22,31 @@
  * length as a fraction of a step, >1 means overlapping pads), `jingle`
  * ({every seconds, notes[]}, Pennant FM only), `transposeBass` (shift bass by
  * chords[bar]), `talk` (a talk station: the pattern is its bumper, played for
- * four bars, then the host murmurs behind phone-line static for eight).
+ * four bars, then the host murmurs behind phone-line static for eight), `kit`
+ * (the drum kit the genre wants: 'march'|'soft'|'house'|'break').
+ *
+ * v0.3 songs. Each station also has `songs`: [{id, title, artist, bars, form,
+ * sections}], where a section is {bars, chords:[root per bar], bass, lead,
+ * drums:{kick, snare, hat}, swing, sustain, wave} and every lane holds one
+ * 16-step array per bar (already expanded, absolute degrees). `form` lists
+ * section names in play order; 'X^n' plays X shifted n scale degrees (a key
+ * change inside the station's scale) and 'X!' puts the song's fill on X's last
+ * bar. GTP.Content.radio.timeline(id) is the flat list of bars in station
+ * order, every bar shaped exactly like `pattern`. An engine that knows songs
+ * reads the timeline; today's engine reads `pattern`, which is a live view:
+ * each property is a getter that returns the bar now playing, found from
+ * GTP.Audio.radio.state().talkBar (the engine's bar counter). A retune starts
+ * the next song. All of this is plain data plus getters: no audio code here.
  *
  * Ads and DJ lines are never spoken: they scroll on the ticker strip. Every
  * station runs its Nap Dynasty ad at minute 20 of the game hour
  * (`napMinute`); `napAd` is the index of that line in each station's `ads`.
- * Every string obeys CONTENT_RULES.md.
+ * WAIL 101's `dj` is the current call-in segment (rotates every game hour);
+ * `djAll` lists every line. News: `news` (bulletins keyed by story flag and by
+ * completed mission), GTP.Content.radio.bulletin() builds the top-of-the-hour
+ * bulletin; a small runner shows it on the ticker unless the UI sets
+ * GTP.UI.radioNews = true (it then calls bulletin() itself). `ticker` stays a
+ * plain array. Every string obeys CONTENT_RULES.md.
  */
 (function () {
   'use strict';
@@ -34,166 +55,1129 @@
 
   var _ = null; // a rest, so the patterns read like a tracker
 
-  GTP.Content.radio = {
+  // ------------------------------------------------------------ notation --
+  // Lanes are written like a tracker: '0 . . 4 . . 7 .' (16 tokens: a degree or
+  // '.' for a rest) and drums as 'x...x...x...x...' (16 chars). A lane is one
+  // string (every bar) or a list of strings (one per bar, cycled).
+  var R0 = '. . . . . . . . . . . . . . . .';
+  var D0 = '................';
+
+  // ------------------------------------------------------------ stations --
+  var STATIONS = [
+    // ================================================================ WAIL 101
+    {
+      id: 'wail_101', name: 'WAIL 101 "The Yell"',
+      tagline: 'All outrage, all hours.',
+      genre: 'brass stingers, march drums, phone-in static',
+      bpm: 100, scale: 'minor', color: '#e04848', kit: 'march',
+      swing: 0, sustain: 0.35, wave: { bass: 'sawtooth', lead: 'square' }, talk: true,
+      ads: [
+        'Nap Dynasty. Sleep like you\'ve never been wrong. Code TAKES20.',
+        'Char & Charter. Steaks sized by donor tier. The salad is Bronze.',
+        'Fulcrum Foundation. The numbers you were going to say anyway.',
+        'Vaultwright Capital. We short what we love.',
+        'Clarity Pellets. Ask your doctor. He won\'t say.',
+        'Detail & Evidence. We clean cars and records. Mostly records.',
+        'Char & Charter Brunch. Bottomless outrage, mimosas by donor tier. The fruit cup is Bronze.',
+        'Fulcrum Foundation Summer Fellowship. Forty fellows. One opinion. Bring your own conclusion.',
+        'Vaultwright Capital Retirement. Retire early. On somebody else\'s position.',
+        'Clarity Pellets Extra Strength. Twice the stance. Your doctor won\'t tell you. He isn\'t allowed in the barn.',
+        'Green Room Motel. Four hours of waiting, ninety seconds of fame, unlimited bagels. Hostility mandatory.',
+        'Gus\'s Garage. We respray cars and opinions. Same price. Same color.',
+        '$PUNDIT. The coin backed by takes. Trustless. Please trust us.',
+        'Octane Opinions. Premium is regular with a stance. Fill up angry.',
+        'Detail & Evidence. Spring special: three records cleaned for the price of two cars.',
+        'Perpetual Assembly Plaza Gift Shop. The cause changed. The mugs didn\'t. Collect all one.'
+      ],
+      napAd: 0,
+      djBase: [
+        'Caller, you\'re on. You\'re wrong. Go.',
+        'Next hour: is the next hour a hoax? We take calls, from one side.',
+        'Our weather is also an opinion. Wrong.',
+        'That was silence, sponsored by Nap Dynasty.',
+        'That caller has been ratioed. Next caller, also ratioed. Pre-emptively.',
+        'Coming up: five people agreeing loudly. Stay tuned for the disagreement. There isn\'t one.',
+        'If you\'re just tuning in: you\'re late, and you\'re wrong.',
+        'We\'ll take your calls after this brass sting. And this one. And this one.',
+        'Reminder: this station has never been fact-checked. Fulcrum confirms. [citation pending]',
+        'Traffic on the Loop: everyone is legally a party. Plan accordingly.',
+        'Our screener asks one question: are you mad? Good. You\'re on.',
+        'Next hour: what are they hiding? We don\'t know. That\'s what makes it a segment.'
+      ],
+      jingle: null,
+      // Six bumpers, twelve bars each: four bars of brass and march drums, then
+      // eight bars of talk (the engine murmurs; the talk section's lead gives the
+      // stinger note on bars 4 and 8, and is a quiet bed on engines without talk).
+      songs: [
+        {
+          id: 'yell_theme', title: 'The Yell (Main Theme)', artist: 'The WAIL Brass Desk',
+          sections: {
+            bump: {
+              c: [0, 0, 5, 4], rb: true,
+              b: ['0 . . . 0 . 0 . 0 . . . 4 . 0 .', '0 . . . 0 . 0 . 0 . . . 4 . 2 .', '0 . . . 0 . 0 . 0 . . . 4 . 0 .', '0 . 0 . 0 . . . 4 . 4 . 2 . 1 .'],
+              l: ['7 . . 7 9 . . . 11 . . . 9 . 7 .', '7 . . 7 9 . . . 11 . 12 . 11 . 9 .', '12 . . 12 11 . . . 9 . . . 7 . . .', '11 . 11 . 11 . . . 8 . . . 11 . . .'],
+              k: ['x.....x.x.......', 'x.....x.x.......', 'x.....x.x.......', 'x...............'], s: ['..x.......x..xxx', '..x.......x..xxx', '..x.......x..xxx', '..x.x.x.xxxxxxxx'], h: 'x.x.x.x.x.x.x.x.'
+            },
+            talk: 'TALK:7:11'
+          },
+          form: 'bump talk'
+        },
+        {
+          id: 'hotline', title: 'Caller Hotline', artist: 'The WAIL Brass Desk',
+          sections: {
+            bump: {
+              c: [0, 6, 5, 6], rb: true,
+              b: ['0 . 0 0 . . 0 . 0 . 0 0 . . 4 .', '0 . 0 0 . . 0 . 0 . 0 0 . . 4 .', '0 . 0 0 . . 0 . 0 . 0 0 . . 4 .', '0 . 0 0 . . 0 . 0 . 0 . 4 . 4 .'],
+              l: ['11 11 . 11 11 . . . 11 11 . 11 11 . . .', '10 10 . 10 10 . . . 13 . . . 10 . . .', '9 9 . 9 9 . . . 12 . . . 9 . . .', '8 . 10 . 13 . . . 13 . 14 . . . . .'],
+              k: ['x.......x.......', 'x.......x.......', 'x.......x.......', 'x...............'], s: ['....x.......x...', '....x.......x...', '....x.......x...', '..x.x.x.x.x.xxxx'], h: ['x.xxx.xxx.xxx.xx', 'x.xxx.xxx.xxx.xx', 'x.xxx.xxx.xxx.xx', 'x.x.x.x.x.x.....']
+            },
+            talk: 'TALK:13:10'
+          },
+          form: 'bump talk'
+        },
+        {
+          id: 'breaking', title: 'Breaking Outrage', artist: 'The WAIL Brass Desk',
+          sections: {
+            bump: {
+              c: [0, 5, 3, 4], rb: true,
+              b: ['0 . . . 0 . . . 0 . . . 0 . . .', '0 . . . 0 . . . 0 . . . 0 . . .', '0 . . . 0 . . . 0 . . . 0 . . .', '0 . . . 0 . . . 0 . 0 . 0 . 0 .'],
+              l: ['14 . . . 12 . . . 11 . . . 9 . . .', '12 . . . 11 . . . 9 . . . 7 . . .', '10 . . . 9 . . . 7 . . . 5 . . .', '8 . 8 . 8 . 8 . 11 . . . . . . .'],
+              k: ['x.......x.......', 'x.......x.......', 'x.......x.......', 'x.......x.......'],
+              s: ['....x.......x...', '....x.......x...', '....x.......x...', '....x....xxxxxxx'],
+              h: ['x...x...x...x...', 'x...x...x...x...', 'x...x...x...x...', 'x.x.x.x.x.x.x.x.']
+            },
+            talk: 'TALK:14:8'
+          },
+          form: 'bump talk'
+        },
+        {
+          id: 'top_of_hour', title: 'Top of the Hour', artist: 'The WAIL Brass Desk',
+          sections: {
+            bump: {
+              c: [0, 0, 3, 4], rb: true,
+              b: ['0 . . . . . . . 0 . . . . . . .', '0 . . . . . . . 0 . . . . . . .', '0 . . . . . . . 0 . . . . . . .', '0 . . . 0 . . . 0 . . . . . . .'],
+              l: ['7 . . . . . . . 7 . . . . . . .', '7 . . . . . . . 7 . . . . . . .', '10 . . . . . . . 10 . . . . . . .', '7 . . . 11 . . . 14 . . . . . . .'],
+              k: 'x.......x.......', s: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......xxxx'], h: 'xxxxxxxxxxxxxxxx'
+            },
+            talk: 'TALK:14:7'
+          },
+          form: 'bump talk'
+        },
+        {
+          id: 'weather', title: 'The Weather Is an Opinion', artist: 'The WAIL Brass Desk',
+          sections: {
+            bump: {
+              c: [0, 3, 6, 2], rb: true,
+              b: '0 . . 0 . . 0 . 0 . . 0 . . 0 .',
+              l: ['4 . 5 . 7 . . . 4 . . . 2 . . .', '5 . 7 . 8 . . . 5 . . . 3 . . .', '6 . 8 . 10 . . . 8 . . . 6 . . .', '7 . . . 9 . . . 11 . . . 14 . . .'],
+              k: 'x.....x...x.....', s: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......x.xx'], h: 'x.x.x.x.x.x.x.x.'
+            },
+            talk: 'TALK:9:4'
+          },
+          form: 'bump talk'
+        },
+        {
+          id: 'one_side', title: 'From One Side (March)', artist: 'The WAIL Brass Desk',
+          sections: {
+            bump: {
+              c: [0, 4, 0, 4], rb: true,
+              b: '0 . . . 4 . . . 0 . . . 4 . . .',
+              l: ['7 . 7 . 8 . 9 . 11 . 9 . 8 . 7 .', '8 . . . 11 . . . 8 . . . 4 . . .', '7 . 7 . 8 . 9 . 11 . 12 . 14 . 11 .', '11 . 10 . 8 . . . 11 . . . . . . .'],
+              k: ['x...x...x...x...', 'x...x...x...x...', 'x...x...x...x...', 'x...............'], s: ['..x...x...x...xx', '..x...x...x...xx', '..x...x...x...xx', '..x.x.x.xxxxxxxx'], h: 'x.x.x.x.x.x.x.x.'
+            },
+            talk: 'TALK:11:7'
+          },
+          form: 'bump talk'
+        }
+      ]
+    },
+
+    // ============================================================== PENNANT FM
+    {
+      id: 'pennant_fm', name: 'Pennant FM "Ten out of Ten"',
+      tagline: 'The President\'s station. Also the President\'s.',
+      genre: 'sax synth, elevator chords, a jingle every 40 seconds',
+      bpm: 112, scale: 'major', color: '#ffd400', kit: 'soft',
+      swing: 0.2, sustain: 0.8, wave: { bass: 'triangle', lead: 'sawtooth' },
+      ads: [
+        'Goldplate Tower, by Goldplate. Floors ten through one hundred now leasing.',
+        'Goldplate Links. Par ten. No refunds.',
+        'Goldplate Water. Rated a ten by Goldplate.',
+        'Goldplate Goldplate Stadium. Both words. Both tens.',
+        'Nap Dynasty. Official mattress of Goldplate. Code TENOUTOFTEN.',
+        'Goldplate Weather. Tomorrow: a ten.',
+        'Goldplate Steaks. Well done, rated a ten, served with Goldplate Ketchup. Also a ten.',
+        'Goldplate University. Four-year degree, two-week program. Every graduate a ten, says the dean, Goldplate.',
+        'Goldplate Cologne. Smells like a ten. Notes of hard hat and fresh ribbon.',
+        'Goldplate Goldplate Memorial. Formerly St. Somebody\'s. Now a ten. Bandage coupon included.',
+        'Goldplate Ribbon Co. There is always a ribbon. Every ribbon a ten.',
+        'Goldplate Helicopters. A fleet of both. Each one a ten. Together a twenty, which is a ten.',
+        'Goldplate Bottled Air. Breathe in a ten. Breathe out a nine. Breathe out less.',
+        'Goldplate Hard Hats. As worn at every ribbon cutting. Rated a ten by the head inside.',
+        'Goldplate International. Runway numbered ten at both ends. Your flight is delayed. The delay is a ten.',
+        'Goldplate Calendar. Every month renamed Goldplate. Twelve tens. Leap years get a bonus ten.'
+      ],
+      napAd: 4,
+      dj: [
+        'That track was a ten.',
+        'Coming up: the same song. A ten.',
+        'Traffic on Goldplate Avenue is Goldplate.',
+        'The President has renamed this station. It\'s still Pennant. He renamed the name.',
+        'That was the President\'s favorite song. He named it after himself. It was already named after him.',
+        'Time check: ten o\'clock. It is always ten o\'clock on Pennant FM.',
+        'Goldplate Weather: sunny, a ten. Rain is in the forecast, a nine, under protest.',
+        'The President rates that sax solo a ten. The saxophone has been renamed Goldplate.',
+        'Pennant FM: now on 101, 102 and 10. Mostly 10.',
+        'Listener mail: "Is anything not a ten?" Yes. Your letter. A four.',
+        'Goldplate Goldplate Stadium traffic: both words are backed up.',
+        'That jingle was a ten. You\'ll hear it again in forty seconds. Also a ten.',
+        'The helicopter count on the Tower holds at two. Analysts call it "both."',
+        'Pennant FM has been renamed Pennant FM. Please update your presets. They are the same.'
+      ],
+      jingle: { every: 40, notes: [0, 2, 4, 7, 4] },
+      songs: [
+        {
+          // smooth sax over I vi IV V verses and a IV V vi I chorus; the last two
+          // choruses go up a fifth (shift 4: the melody moves to the dominant)
+          id: 'ten_theme', title: 'Ten Out of Ten (Theme)', artist: 'The Goldplate Pops Orchestra',
+          fill: { k: 'x.....x.x.......', s: '....x.......x.xx', h: 'x.x.x.x.x.x.....' },
+          sections: {
+            I: { c: [0, 4], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: [R0, '. . . . . . . . . . . . 2 . 4 .'], k: 'x.......x.......', h: '..x...x...x...x.' },
+            A: {
+              c: [0, 5, 3, 4], rb: true,
+              b: ['0 . . 0 . . 4 . 0 . . 0 . . 4 .', '0 . . 0 . . 4 . 0 . . 0 . . 2 .', '0 . . 0 . . 4 . 0 . . 0 . . 4 .', '0 . . 0 . . 4 . 0 . 4 . 2 . 1 .'],
+              l: ['. . 4 . 5 . 7 . . 9 . 7 . 5 . 4', '5 . . . . . 4 . 2 . . . 4 . . .', '. . 3 . 4 . 5 . . 7 . 5 . 3 . 2', '4 . . . . . . . 1 . 2 . 4 . . .'],
+              k: 'x.....x.x.......', s: '....x.......x...', h: '..x...x...x...x.'
+            },
+            A2: {
+              c: [0, 5, 3, 4], rb: true,
+              b: ['0 . . 0 . . 4 . 0 . . 0 . . 4 .', '0 . . 0 . . 4 . 0 . . 0 . . 2 .', '0 . . 0 . . 4 . 0 . . 0 . . 4 .', '0 . . 0 . . 4 . 0 . 4 . 2 . 1 .'],
+              l: ['. . 4 . 5 . 7 . . 9 . 7 . 5 . 4', '5 . . . 7 . 5 . 4 . . . 2 . . .', '. . 3 . 4 . 5 . . 7 . 9 . 10 . 9', '7 . . . . . 6 . 4 . . . . . . .'],
+              k: 'x.....x.x.......', s: '....x.......x...', h: 'x.x...x.x.x...x.'
+            },
+            B: {
+              c: [3, 4, 5, 0], rb: true,
+              b: ['0 . . 0 . . 0 . . 0 . 0 . . 4 .', '0 . . 0 . . 0 . . 0 . 0 . . 4 .', '0 . . 0 . . 0 . . 0 . 0 . . 4 .', '0 . . 0 . . 4 . 0 . 4 . 2 . 1 .'],
+              l: ['7 . . 7 . . 9 . 10 . . . 9 . 7 .', '8 . . 8 . . 6 . 4 . . . 6 . 8 .', '9 . . . 12 . 9 . 7 . . . 5 . 7 .', '7 . . . . . . . 4 . . . 2 . . .'],
+              k: 'x.....x.x.....x.', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            Br: {
+              c: [1, 4, 0, 5], rb: true, sus: 0.65,
+              b: '0 . . . 4 . . . 0 . . 0 . . 4 .',
+              l: ['1 . 3 . 5 . 8 . . 7 . 5 . 3 . .', '4 . 6 . 8 . 11 . 10 . 8 . 6 . 4 .', '7 . . . 9 . 11 . 14 . . . 11 . 9 .', '9 . 7 . 5 . 2 . . . . . . . . .'],
+              k: 'x.......x.......', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
+            },
+            O: {
+              c: [0, 3, 0, 0], rb: true, b: '0 . . . . . . . 0 . . . . . . .',
+              l: ['7 . . . 4 . . . 2 . . . 0 . . .', '. . 3 . 5 . 7 . . . . . . . . .', '9 . . . . . 7 . . . . . . . . .', '7 . . . . . . . . . . . . . . .'],
+              k: ['x.....x.x.......', 'x.....x.x.......', 'x.......x.......', 'x...............'], s: ['....x.......x...', '....x.......x...', D0, D0], h: '..x...x...x...x.'
+            }
+          },
+          form: 'I A A2 B A A2! B Br! B^4 B^4! O'
+        },
+        {
+          // bossa: a 3-2 clave on the rim, root-fifth bass, a stepwise melody; the
+          // last verse lifts a step (shift 1)
+          id: 'gold_escalator', title: 'Gold Escalator (Bossa)', artist: 'The Atrium Quartet',
+          swing: 0.08, sustain: 0.7,
+          fill: { k: 'x..x....x..x....', s: 'x..x..x...x.xxxx', h: 'x.x.x.x.x.x.x.x.' },
+          sections: {
+            I: { c: [0, 0], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .', k: 'x..x....x..x....', s: 'x..x..x...x.x...', h: 'x.x.x.x.x.x.x.x.' },
+            A: {
+              c: [0, 1, 2, 1], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
+              l: ['4 . . 4 . . 2 . . . . . 4 . . .', '5 . . 5 . . 3 . . . . . 1 . . .', '6 . . 6 . . 4 . . . . . 2 . . .', '5 . . . 3 . . . 1 . . . . . . .'],
+              k: 'x..x....x..x....', s: 'x..x..x...x.x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            A2: {
+              c: [0, 1, 2, 1], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
+              l: ['4 . . 4 . . 2 . . . . . 4 . 5 .', '7 . . . 5 . . . 3 . . . . . . .', '6 . . 6 . . 4 . 2 . . . 4 . . .', '1 . . . . . . . . . . . . . . .'],
+              k: 'x..x....x..x....', s: 'x..x..x...x.x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            B: {
+              c: [3, 3, 4, 4], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
+              l: ['10 . . . 9 . 7 . . . 5 . . . . .', '7 . . 9 . . 10 . . . . . . . . .', '11 . . . 10 . 8 . . . 6 . . . . .', '8 . . 10 . . 11 . . . 13 . 11 . . .'],
+              k: 'x..x....x..x....', s: '..x..x....x..x..', h: 'xxx.xxx.xxx.xxx.'
+            },
+            B2: {
+              c: [5, 1, 4, 0], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
+              l: ['9 . . . 7 . 5 . . . . . . . . .', '8 . . . 5 . 3 . . . . . . . . .', '6 . . 8 . . 10 . 11 . . . . . . .', '7 . . . . . . . . . . . . . . .'],
+              k: 'x..x....x..x....', s: '..x..x....x..x..', h: 'xxx.xxx.xxx.xxx.'
+            },
+            O: { c: [0, 0], rb: true, b: '0 . . 4 4 . . . 0 . . . . . . .', l: ['7 . . . 4 . . . 0 . . . . . . .', R0], s: ['x..x..x...x.x...', D0], h: 'x.x.x.x.x.x.....' }
+          },
+          form: 'I A A2 B B2! A A2 B B2! A^1 A2^1! O'
+        },
+        {
+          // a half-time slow jam: long sax tones, kick and snare an octave apart in time
+          id: 'rated_slow', title: 'Rated a Ten (Slow Jam)', artist: 'Ten Karat Sax',
+          swing: 0.15, sustain: 1.2,
+          fill: { k: 'x.........x.....', s: '........x...x.xx', h: 'x.x.x.x.x.x.x.x.' },
+          sections: {
+            I: { c: [0, 3], rb: true, b: '0 . . . . . . . . . . . . . . .', h: 'x.x.x.x.x.x.x.x.' },
+            V: {
+              c: [0, 2, 3, 4], rb: true, b: ['0 . . . . . . 0 . . 4 . . . . .', '0 . . . . . . 0 . . 4 . . . 2 .'],
+              l: ['7 . . . . . . . 6 . . . 4 . . .', '6 . . . . . . . 4 . . . 2 . . .', '5 . . . . . . . 3 . . . 1 . . .', '4 . . . . . 2 . 1 . . . . . . .'],
+              k: ['x.........x.....', 'x......x..x.....'], s: '........x.......', h: 'x.x.x.x.x.x.x.x.'
+            },
+            C: {
+              c: [3, 4, 2, 5], rb: true, b: '0 . . . . . . 0 . . 4 . 0 . . .',
+              l: ['10 . . . 9 . . . 7 . . . 5 . . .', '8 . . . . . 6 . 4 . . . . . . .', '9 . . . . . 11 . 9 . . . 6 . . .', '5 . . . . . . . . . . . . . . .'],
+              k: 'x......x..x.....', s: '........x.......', h: 'xxx.xxx.xxx.xxx.'
+            },
+            O: { c: [0, 0], rb: true, b: '0 . . . . . . . . . . . . . . .', l: ['7 . . . . . . . . . . . 4 . . .', '7 . . . . . . . . . . . . . . .'], h: 'x...x...x...x...' }
+          },
+          form: 'I V V! C V V! C C! O'
+        },
+        {
+          // a swung shuffle with a boogie walking bass; the last chorus goes up a step
+          id: 'both_tens', title: 'Both Tens (Shuffle)', artist: 'The Ribbon Cutters',
+          swing: 0.28, sustain: 0.6,
+          fill: { k: 'x.......x.......', s: '....x.......xxxx', h: 'x.xxx.xxx.......' },
+          sections: {
+            A: {
+              c: [0, 3, 0, 4], rb: true, b: ['0 . . . 2 . . . 4 . . . 5 . . .', '7 . . . 5 . . . 4 . . . 2 . . .'],
+              l: ['7 . 7 . 9 . 7 . 4 . . . 5 . 4 .', '10 . 10 . 12 . 10 . 7 . . . 8 . 7 .', '7 . 7 . 9 . 7 . 4 . . . 2 . 4 .', '8 . . . 6 . . . 4 . . . . . . .'],
+              k: 'x.......x.......', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
+            },
+            B: {
+              c: [3, 3, 0, 0], rb: true, b: ['0 . . . 2 . . . 4 . . . 5 . . .', '7 . . . 5 . . . 4 . . . 2 . . .'],
+              l: ['10 . . 10 . . 12 . 14 . . . 12 . 10 .', '9 . . . 7 . . . 5 . . . 3 . . .', '7 . . 7 . . 9 . 11 . . . 9 . 7 .', '4 . . . 2 . . . 0 . . . . . . .'],
+              k: 'x.....x.x.......', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            T: {
+              c: [4, 3, 0, 4], rb: true, b: '0 . . . 2 . . . 4 . . . 5 . . .',
+              l: ['11 . . . 8 . . . 6 . . . 4 . . .', '10 . . . 7 . . . 5 . . . 3 . . .', '7 . 9 . 11 . 14 . . . . . . . . .', '8 . 9 . 10 . 11 . . . . . . . . .'],
+              k: 'x.......x.......', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
+            },
+            O: { c: [0, 0], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: ['7 . . . . . . . 4 . . . 7 . . .', '0 . . . . . . . . . . . . . . .'], k: ['x.......x.......', 'x...............'], s: ['....x.......x...', D0], h: 'x.xxx.xxx.......' }
+          },
+          form: 'A A B T! A A B T! A^1 B^1 T^1! O'
+        }
+      ]
+    },
+
+    // =========================================================== VELVETINE 888
+    {
+      id: 'velvetine_888', name: 'Velvetine Lounge 88.8',
+      tagline: 'Listening, never dancing.',
+      genre: 'deep house with no drop, ice clinks, a spreadsheet read softly',
+      bpm: 122, scale: 'minor', color: '#b56bff', kit: 'house',
+      swing: 0.08, sustain: 0.45, wave: { bass: 'triangle', lead: 'sine' },
+      ads: [
+        'Velvetine Listening Pier. A party you\'ll hear about.',
+        'Velvetine Records. Nothing released. Still charting.',
+        'The Afterparty. A yacht, a dress code, a Baron. It has never sailed.',
+        'Fresh Takes Fish Shack. Reheated hourly.',
+        'Nap Dynasty. Official mattress of lying awake. Code VELVET20.',
+        'Warehouse 42 Mixtapes. Thirty years, one cassette, still sealed.',
+        'Velvetine Headphones. Noise cancelling. Music cancelling. Just the cancelling.',
+        'The Baron\'s Greatest Hits. Zero tracks. Two discs. Charting since forever.',
+        'Velvetine Ice. Hand-clinked. The only sound at the party.',
+        'Listening Room Bottle Service. A bottle, a sparkler, total silence. To whatever this is.',
+        'Velvetine Records Unreleased Box Set. Nothing inside. Still sealed. Already a classic.',
+        'Fresh Takes Fish Shack. Catch of the day: last Tuesday\'s take. Reheated with love.',
+        'Afterparty Yacht Club. Membership includes the dock. The yacht stays exactly where it is.',
+        'Velvetine Spreadsheet Sessions. Quarterly numbers, read softly, over a beat that never drops.',
+        'Velvetine Valet. We park it. We network next to it. One lane, four hours.',
+        'Warehouse 42 Merch. A shirt for the mixtape. The mixtape is coming. The shirt is here.'
+      ],
+      napAd: 4,
+      dj: [
+        'To the night. To the brand. To whatever this is.',
+        'That was eleven minutes of build.',
+        'The drop is coming. It is not.',
+        'The Baron thanks you for listening to listening.',
+        'To the night! To the ice! To the silence between the ice!',
+        'That was a nine-minute intro. The rest of the song is coming. It is not.',
+        'Shout out to everyone on the Listening Pier. You\'re networking beautifully.',
+        'Tonight\'s set: page four of the spreadsheet. Column C. Softly.',
+        'The Baron would like to thank the bass for never arriving.',
+        'The request line is open. Requests are listened to. Never played.',
+        'Afterparty dress code tonight: "a vibe." Shoes optional. Sailing impossible.',
+        'If you can hear this, the party is too loud. Please remain impressed.',
+        'Velvetine Records has a new single out. It is a press release about the single.',
+        'To whatever this is! The glass clinks. That\'s the hook.'
+      ],
+      // Deep house: intro, groove, chord stabs, a breakdown, a build, and then the
+      // drop does not come (one empty bar and the groove carries on). That is the joke.
+      songs: [
+        {
+          id: 'eleven_minutes', title: 'Eleven Minutes of Build', artist: 'DJ Spreadsheet',
+          fill: { k: 'x...x...x...x...', s: '....x.......x.xx', h: '..x...x...xxxxxx' },
+          sections: {
+            In: { c: [0, 0, 3, 3], l: [R0, '. . . . . . . . . . . . . . 14 .', R0, '. . . . . . . 11 . . . . . . 14 .'], k: 'x...x...x...x...', h: ['..x...x...x...x.', '..x...x...x...x.', '..x...x...x...x.', '..x...x...x...xx'] },
+            G: {
+              c: [0, 0, 3, 3], rb: true, b: ['. . 0 . . . 0 . . . 0 . . 0 . 7', '. . 0 . . . 0 . . . 0 . . . 3 .'],
+              l: ['. . . . . . . 11 . . . . . . 14 .', R0, '. . . . . . . 12 . . . . . . 14 .', R0],
+              k: 'x...x...x...x...', s: '....x.......x...', h: ['..x...x...x...x.', '..x...x...x...xx']
+            },
+            S: {
+              c: [0, 0, 3, 3], rb: true, sus: 1.2, b: ['. . 0 . . . 0 . . . 0 . . 0 . 7', '. . 0 . . . 0 . . . 0 . . . 3 .'],
+              l: ['. . 9 . . 11 . . . . 13 . . 11 . .', '. . 9 . . 11 . . . . 13 . 14 . . .', '. . 10 . . 12 . . . . 14 . . 12 . .', '. . 10 . . 12 . . . . 16 . 14 . . .'],
+              k: 'x...x...x...x...', s: '....x.......x...', h: '..x.x.x...x.x.xx'
+            },
+            B: {
+              c: [0, 0, 3, 3], sus: 2.5, l: ['14 . . . 13 . . . 11 . . . 9 . . .', '11 . . . . . . . . . . . . . . .', '12 . . . 14 . . . 15 . . . 14 . . .', '12 . . . . . . . . . . . . . . .'],
+              h: '........x.......'
+            },
+            U: {
+              c: [0, 0, 3, 3], l: ['7 . . . 7 . . . 7 . . . 7 . . .', '9 . 9 . 9 . 9 . 9 . 9 . 9 . 9 .', '12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12', '14 14 14 14 14 14 14 14 . . . . . . . .'],
+              k: 'x...x...x...x...', s: ['x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'xxxxxxxxxxxxxxxx', 'xxxxxxxxxxxxxxxx'], h: 'xxxxxxxxxxxxxxxx'
+            },
+            N: { c: [0], l: '. . . . . . . . . . . . . . . 14' }
+          },
+          form: 'In G G S S! B U N G G S S! In'
+        },
+        {
+          id: 'session_nine', title: 'Listening Session No. 9', artist: 'The Velvetine House Band',
+          fill: { k: 'x...x...x...x...', s: '....x...x.x.x.xx', h: '..x...x...x...xx' },
+          sections: {
+            In: { c: [0, 5, 2, 6], rb: true, b: [R0, R0, '0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . 0 . . . 0 . . 0 . .'], k: 'x...x...x...x...', h: '..x...x...x...x.' },
+            A: {
+              c: [0, 5, 2, 6], rb: true, b: ['0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . 0 . . . 7 . . 0 . .'],
+              l: ['. . . . . . . 11 . . . . . . 14 .', '. . . . . . . 12 . . . . . . . .', '. . . . . . . 11 . . . . . . 13 .', '. . . . . . . 10 . . . . . . . .'],
+              k: 'x...x...x...x...', s: '....x.......x...', h: ['..x...x...x...x.', '..x.x.x...x...xx']
+            },
+            C: {
+              c: [0, 5, 2, 6], rb: true, sus: 1.0, b: ['0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . 0 . . . 7 . . 0 . .'],
+              l: ['7 . . 9 . . 11 . . . 9 . . 7 . .', '7 . . 9 . . 12 . . . 9 . . 7 . .', '6 . . 9 . . 11 . . . 9 . . 6 . .', '5 . . 8 . . 10 . . . 8 . . 5 . .'],
+              k: 'x...x...x...x...', s: '....x.......x...', h: '..xx..xx..xx..xx'
+            },
+            B: { c: [0, 5, 2, 6], sus: 2.5, l: ['11 . . . . . . . 9 . . . . . . .', '12 . . . . . . . . . . . 11 . . .', '9 . . . . . . . 11 . . . . . . .', '10 . . . . . . . . . . . . . . .'], h: '....x.......x...' },
+            U: {
+              c: [0, 5, 2, 6], rb: true, b: '0 . . . 0 . . . 0 . . . 0 . . .', l: [R0, R0, '7 . 7 . 9 . 9 . 11 . 11 . 12 . 12 .', '14 . 14 . 14 . 14 . 14 14 14 14 . . . .'],
+              k: 'x...x...x...x...', s: ['x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'xxxxxxxxxxxxxxxx', 'xxxxxxxxxxxx....'], h: 'xxxxxxxxxxxxxxxx'
+            },
+            N: { c: [0], l: '14 . . . . . . . . . . . . . . .' }
+          },
+          form: 'In A A C C! B U N A C^4 C^4! In'
+        },
+        {
+          id: 'drop_is_coming', title: 'The Drop Is Coming (It Is Not)', artist: 'Afterparty Allstars',
+          fill: { k: 'x...x...x...x...', s: '....x.......xxxx', h: '..x...x...x...xx' },
+          sections: {
+            In: { c: [5, 6, 0, 0], k: 'x...x...x...x...', h: ['................', '..x...x...x...x.'], l: [R0, R0, R0, '. . . . . . . . . . . . . . 14 .'] },
+            A: {
+              c: [5, 6, 0, 0], rb: true, b: '0 . 0 . . 0 . 0 0 . 0 . . 0 7 .',
+              l: ['. . . . . . . 12 . . . . . . . .', '. . . . . . . 13 . . . . . . . .', '. . . . . . . 11 . . . . . . 14 .', R0],
+              k: 'x...x...x...x...', s: '....x.......x...', h: '..x...x...x...x.'
+            },
+            P: {
+              c: [5, 6, 0, 0], rb: true, sus: 1.4, b: '0 . 0 . . 0 . 0 0 . 0 . . 0 7 .',
+              l: ['. . 12 . . 14 . . . 12 . . 9 . . .', '. . 13 . . 15 . . . 13 . . 10 . . .', '. . 11 . . 14 . . . 11 . . 9 . . .', '. . 11 . . 14 . . 16 . . . 14 . . .'],
+              k: 'x...x...x...x...', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            U: {
+              c: [5, 6, 0, 0], rb: true, b: '0 . . . 0 . . . 0 . . . 0 . . .', l: ['9 . . . . . . . 9 . . . . . . .', '10 . . . 10 . . . 10 . . . 10 . . .', '11 . 11 . 11 . 11 . 11 . 11 . 11 . 11 .', '14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14'],
+              k: 'x...x...x...x...', s: ['x.......x.......', 'x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'xxxxxxxxxxxxxxxx'], h: ['..x...x...x...x.', '..x...x...x...x.', 'xxxxxxxxxxxxxxxx', 'xxxxxxxxxxxxxxxx']
+            },
+            N: { c: [0], l: R0 }
+          },
+          form: 'In A A P P! U U N A P In'
+        },
+        {
+          // the Baron's DJ reads a spreadsheet: a monotone "spoken" lead in speech
+          // rhythm over a dub groove; the second reading moves up a third (shift 2)
+          id: 'spreadsheet_dub', title: 'Spreadsheet Reading (Dub)', artist: 'The Quarterly Earnings',
+          fill: { k: 'x...x...x...x...', s: '....x.......x.x.', h: 'x.x.x.x.x.xxxxxx' },
+          sections: {
+            In: { c: [0, 3, 5, 4], k: 'x...x...x...x...', h: 'x.x.x.x.x.x.x.x.' },
+            G: {
+              c: [0, 3, 5, 4], rb: true, b: ['0 . . . . . 0 . . 0 . . 4 . . .', '0 . . . . . 0 . . 0 . . 7 . 4 .'],
+              k: 'x...x...x...x...', s: '............x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            R: {
+              c: [0, 3, 5, 4], rb: true, b: ['0 . . . . . 0 . . 0 . . 4 . . .', '0 . . . . . 0 . . 0 . . 7 . 4 .'],
+              l: ['7 7 . 7 . 7 7 . . 7 . 7 7 7 . .', '7 . 7 7 . . 7 . 7 7 . . 6 . . .', '7 7 . 7 . 7 7 . . 7 . 7 9 . . .', '8 . 8 8 . . 8 . . . 7 . . . . .'],
+              k: 'x...x...x...x...', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            B: { c: [0, 3, 5, 4], sus: 3, l: ['14 . . . . . . . . . . . . . . .', '12 . . . . . . . . . . . . . . .', '12 . . . . . . . 14 . . . . . . .', '11 . . . . . . . . . . . . . . .'], h: '....x.......x...' }
+          },
+          form: 'In G G R R! B G R^2 R^2! In'
+        }
+      ]
+    },
+
+    // ============================================================ QUIET SIGNAL
+    {
+      id: 'quiet_signal', name: 'Quiet Signal',
+      tagline: 'You are not listening to this.',
+      genre: 'ambient pads, elevator chimes, a dial tone in the key of beige',
+      bpm: 60, scale: 'dorian', color: '#9fb3c8', kit: 'none',
+      swing: 0, sustain: 3.0, wave: { bass: 'triangle', lead: 'sine' },
+      ads: [
+        'Weather Balloon Repair. A balloon has been repaired. No further questions have been taken.',
+        'A mattress has been recommended. A code has been issued. The code is CLASSIFIED20.',
+        'Fulcrum Foundation. A study was funded. Results were concluded.',
+        'Perpetual Assembly Plaza gift shop. A cause has been updated. The mugs have not.',
+        'Bravadia. A jet has been requested. Tourism has been declared.',
+        'This ad slot was purchased. By whom is unimportant.',
+        'Beige vans are being offered for lease. Questions are not being taken. Mileage has been redacted.',
+        'Antennas have been installed. Fourteen have been counted. The weather has been listened to.',
+        'Clarity Pellets have been evaluated. Nothing was found. A barn has been acquired.',
+        'Your podcast has been subscribed to. Your comments have been formatted. Gratitude is not required.',
+        'A dashboard is being offered. Every faction has been subscribed. Your tier has been preselected.',
+        'Bridge tolls have been paid. A drop has been left underneath. It has been found to be ad copy.',
+        'Nap Dynasty has been endorsed. Firmness has been assessed. Sleep has been permitted.',
+        'Weather Balloon Repair Depot. Forty vans have been parked. Zero balloons have been seen.',
+        'Sunglasses have been issued. Indoors they will be worn. Visibility has been reduced to policy.',
+        'This ad has been read. By you. That has been noted.'
+      ],
+      napAd: 1,
+      dj: [
+        'This station was tuned. Enjoyment is optional.',
+        'A van has been dispatched. Not for you. Probably.',
+        'The word of the day is "crisp." It should be used at a gala.',
+        'Static will follow. Static is content.',
+        'This frequency has been assigned. Your preference was not consulted.',
+        'A podcast has been listened to. Notes have been taken. You will be thanked eventually.',
+        'The weather is being repaired. Overcast skies should be maintained.',
+        'Fourteen antennas have been pointed. The direction is not being confirmed.',
+        'A memo has been printed. Monday has been chosen. Reasons have not been given.',
+        'Your car radio has been noticed. Appreciation has been logged.',
+        'A song was considered for broadcast. It was deemed too specific.',
+        'The time has been estimated. Now has been approximated.',
+        'Questions may be submitted. They will be stored. Answers have been pre-written.',
+        'An intern has been asked if this is paid. It is not.'
+      ],
+      // Ambient pieces at 60 bpm, one bar = four seconds. No drums except a clock
+      // tick; the chimes ring long enough to overlap into chords.
+      songs: [
+        {
+          id: 'hold_music', title: 'Hold Music for a Call That Was Not Placed', artist: 'Unattributed',
+          sections: {
+            A: {
+              c: [0, 0, 3, 3], rb: true, b: '0 . . . . . . . . . . . . . . .',
+              l: ['. . . . 11 . . . 9 . . . . . . .', R0, '. . . . 10 . . . 8 . . . . . . .', R0], h: 'x.......x.......'
+            },
+            B: {
+              c: [2, 6, 3, 0], rb: true, b: '0 . . . . . . . . . . . . . . .',
+              l: ['9 . . . . . . . 7 . . . . . . .', '10 . . . . . . . 8 . . . . . . .', '10 . . . 12 . . . 14 . . . . . . .', '11 . . . . . . . 9 . . . . . . .'], h: 'x.......x.......'
+            },
+            C: {
+              c: [6, 2, 3, 0], rb: true, b: '0 . . . . . . . . . . . . . . .',
+              l: ['8 . . . 10 . . . 13 . . . . . . .', '9 . . . . . . . 11 . . . . . . .', '10 . . . 12 . . . 14 . . . . . . .', '11 . . . 9 . . . 7 . . . . . . .'], h: ['x.......x.......', 'x.......x.......', 'x.......x.......', D0]
+            }
+          },
+          form: 'A A B A C'
+        },
+        {
+          id: 'beige', title: 'Beige (Dial Tone Suite)', artist: 'Unattributed',
+          sections: {
+            A: { c: [0, 6, 2, 3], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: '4 . . . 4 . . . 4 . . . 4 . . .' },
+            B: { c: [3, 0, 6, 0], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: ['3 . . . 3 . . . 3 . . . 3 . . .', '4 . . . 4 . . . 4 . . . 4 . . .', '3 . . . 3 . . . 3 . . . 3 . . .', '4 . . . 4 . . . 4 . . . . . . .'] },
+            C: { c: [0, 0, 0, 0], rb: true, b: '0 . . . . . . . . . . . . . . .', l: ['4 . . . 4 . . . 4 . . . 4 . . .', '4 . . . 4 . . . 4 . . . 4 . . .', '4 . . . . . . . 11 . . . . . . .', R0] }
+          },
+          form: 'A B A^4 C'
+        },
+        {
+          id: 'balloon_repaired', title: 'Balloon, Repaired', artist: 'Unattributed',
+          sections: {
+            A: {
+              c: [0, 0, 3, 3], rb: true, b: '0 . . . . . . . . . . . . . . .',
+              l: ['7 . . . 9 . . . 11 . . . 14 . . .', '13 . . . 11 . . . 9 . . . 7 . . .', '10 . . . 12 . . . 14 . . . 17 . . .', '16 . . . 14 . . . 12 . . . 10 . . .']
+            },
+            B: {
+              c: [6, 6, 2, 2], rb: true, b: '0 . . . . . . . 0 . . . . . . .',
+              l: ['8 . . . . . . . 10 . . . . . . .', '13 . . . . . . . 12 . . . . . . .', '9 . . . . . . . 11 . . . . . . .', '14 . . . . . . . . . . . . . . .']
+            },
+            C: {
+              c: [3, 6, 0, 0], rb: true, b: '0 . . . . . . . . . . . . . . .',
+              l: ['10 . . . . . . . 12 . . . . . . .', '13 . . . . . . . 8 . . . . . . .', '7 . . . . . . . . . . . . . . .', R0]
+            }
+          },
+          form: 'A A^4 B A C'
+        },
+        {
+          id: 'briefing', title: 'A Briefing Has Been Given', artist: 'Unattributed',
+          sustain: 2.0,
+          sections: {
+            A: {
+              c: [0, 3, 0, 6], rb: true, b: '0 . . . . . . . 0 . . . . . . .',
+              l: ['11 . 11 . . . 11 11 11 . . . . . . .', R0, '12 . 12 . . . 11 . 9 . . . . . . .', R0], h: 'x...x...x...x...'
+            },
+            B: {
+              c: [2, 3, 2, 3], rb: true, b: '0 . . . . . . . 0 . . . . . . .',
+              l: ['9 . . . . . . . . . . . 9 . 11 .', '12 . . . . . . . 10 . . . . . . .', '9 . . . . . . . . . . . 9 . 11 .', '14 . . . . . . . . . . . . . . .'], h: 'x...x...x...x...'
+            },
+            C: {
+              c: [6, 3, 0, 0], rb: true, b: '0 . . . . . . . . . . . . . . .',
+              l: ['13 . . . 10 . . . 8 . . . . . . .', '12 . . . 10 . . . . . . . . . . .', '11 . . . . . . . 7 . . . . . . .', R0], h: ['x...x...x...x...', 'x...x...x...x...', 'x...x...x...x...', D0]
+            }
+          },
+          form: 'A B A B C'
+        }
+      ]
+    },
+
+    // ============================================================ OFFICE HOURS
+    {
+      id: 'office_hours', name: 'Office Hours 90.1 "Beats to Not Read To"',
+      tagline: 'Lo-fi beats to not do the reading to.',
+      genre: 'lo-fi study beats: swung dusty drums, electric piano, a raccoon on the cover',
+      bpm: 102, scale: 'dorian', color: '#7fbf6a', kit: 'soft', district: 'campus',
+      swing: 0.22, sustain: 1.4, wave: { bass: 'triangle', lead: 'sine' },
+      ads: [
+        'Nap Dynasty Dorm Twin XL. Sleep through your 8 a.m. like you meant it. Code SKIPCLASS20.',
+        'Lanyard & Co. Lanyards for every occasion, including none. Now in dorm key and VIP.',
+        'Clip Joint Barber. Fades, trims, and a free hot take with every cut. Walk-ins debated.',
+        'Dorm 4B Studio. The ON AIR sign never turns off. Neither does the mini-fridge. Book by the hour.',
+        'Founders\' College. Nine folding tables. Zero chairs. Now accepting applications and arguments.',
+        'Fresh Takes Late Night. Student discount: half a take, reheated twice.',
+        'Octane Opinions Student Fill-Up. Premium with a stance, regular with a meal plan.',
+        'The Loud & Correct Podcast Van. Wrapped, parked, rated a two. Available for tailgates and apologies.',
+        'Campus Bookstore. Textbooks you won\'t open at prices you won\'t believe. Rent the summary instead.',
+        'Gus\'s Garage. Student respray: one coat, one opinion, cash only. "You\'re peaking." - Gus',
+        'Founders\' College Debate Club. Thursdays on the Quad. No reading required. No chairs provided.',
+        'Lot C Parking Permits. Forty dollars a semester. Raccoon has priority boarding.'
+      ],
+      napAd: 0,
+      dj: [
+        'DJ Skimmed Abstract here on Office Hours 90.1. Beats to not do the reading to.',
+        'If you\'re just waking up, so am I. It\'s 4 p.m. We did it.',
+        'Next: forty minutes of rain sounds and one guilty piano. Your essay is due in nine hours.',
+        'Office hours are open. Nobody has come. Nobody ever comes. That\'s the station.',
+        'Shout out to the raccoon of Lot C. Still parks better than the podcast van.',
+        'Finals tip: the textbook is mostly a vibe. The professor is less of one.',
+        'This beat was made in Dorm 4B. The mini-fridge did backing vocals.',
+        'If anyone did the reading, please call in. We have questions. Mostly "why."',
+        'Reminder: the Quad tables are not study spaces. They are debate spaces. There are no chairs.',
+        'Study playlist, hour six. If you\'re still on page one, that\'s growth.',
+        'The raccoon of Lot C was seen in a lanyard. Congratulations on the internship, buddy.',
+        'New study: students who skip class have more takes. Fulcrum funded it. [citation pending]',
+        'Midterms are coming. No, wait. They were last week. Hope you\'re okay.',
+        'Kip in the Dorm 4B lobby asks if this is paid. It\'s campus radio, Kip. Nothing is paid.'
+      ],
+      // Lo-fi: swung boom-bap on the soft kit, an electric piano (the sine lead)
+      // arpeggiating seventh chords, a round triangle bass, vamps of i7 IV7 and
+      // descending sequences; each song has a drop-out and one key lift.
+      songs: [
+        {
+          id: 'didnt_read', title: 'Didn\'t Do the Reading', artist: 'syllabus (unread)',
+          fill: { k: 'x......x........', s: '....x.......x..x', h: 'x.x.x.x.x.x.....' },
+          sections: {
+            In: { c: [0, 3], l: ['0 . 2 . 4 . 6 . . . . . . . . .', '3 . 5 . 7 . 9 . . . . . . . . .'], h: 'x...x...x...x...' },
+            A: {
+              c: [0, 0, 3, 3], rb: true, b: ['0 . . . . . . 0 . . 4 . . . . .', '0 . . . . . . . . . 2 . 4 . . .'],
+              l: ['. . 2 . 4 . 6 . . . . . 7 . 6 .', '. . 2 . 4 . 6 . . . 9 . 8 . 6 .', '. . 3 . 5 . 7 . . . . . 9 . 7 .', '. . 3 . 5 . 7 . 9 . . . 10 . . .'],
+              k: 'x......x..x.....', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            B: {
+              c: [2, 1, 0, 6], rb: true, b: '0 . . . . . . 0 . . 4 . . . . .',
+              l: ['9 . . . 8 . 6 . . . 4 . . . . .', '8 . . . 7 . 5 . . . 3 . . . . .', '7 . . . 6 . 4 . . . 2 . . . . .', '6 . . . 5 . 3 . . . 8 . . . . .'],
+              k: 'x.....x...x..x..', s: '....x.......x...', h: 'x.x.x.xxx.x.x.x.'
+            },
+            Out: { c: [0, 0], l: ['0 . . . . . . . . . . . . . . .', R0], h: ['x.x.x.x.x.x.x.x.', 'x...x...........'] }
+          },
+          form: 'In A A B A! B B^1 A Out'
+        },
+        {
+          id: 'raccoon', title: 'Lot C Raccoon', artist: 'the raccoon of lot c',
+          fill: { k: 'x.....x.........', s: '....x.......x.xx', h: 'x.x.x.x.x.x.x...' },
+          sections: {
+            In: { c: [0, 6], rb: true, b: [R0, '. . . . . . . . . . . . . . 4 .'], l: ['. . 4 . . 2 . . 0 . . . . . . .', '. . 3 . . 1 . . 6 . . . . . . .'] },
+            A: {
+              c: [0, 6, 2, 3], rb: true, b: '0 . . . . . 0 . . . 2 . . . 4 .',
+              l: ['. . 4 . . 2 . . 0 . . . . . . .', '. . 3 . . 1 . . 6 . . . . . . .', '. . 4 . . 2 . . 6 . . . . . . .', '. . 5 . . 3 . . 7 . . . 9 . . .'],
+              k: 'x.....x.x.......', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            B: {
+              c: [3, 3, 0, 0], rb: true, b: ['0 . . . . . 0 . . . 2 . . . 4 .', '0 . . . . . . . 0 . . . 4 . . .'],
+              l: ['10 . . 9 . . 7 . . . 5 . . . . .', '7 . . . . . . . . . . . . . . .', '9 . . 7 . . 6 . . . 4 . . . . .', '2 . . . . . . . . . . . . . . .'],
+              k: 'x.....x...x.....', s: '....x.......x...', h: 'x.xxx.x.x.xxx.x.'
+            },
+            Out: { c: [0, 6], l: ['. . 4 . . 2 . . 0 . . . . . . .', '. . 3 . . 1 . . 6 . . . . . . .'], h: 'x...x...x...x...' }
+          },
+          form: 'In A A! B A A! B B Out'
+        },
+        {
+          // half-time: kick and snare at half the rate, a ii v i turnaround
+          id: 'nobody_came', title: 'Office Hours (Nobody Came)', artist: 'lanyard.wav',
+          sustain: 1.5,
+          fill: { k: 'x.........x.....', s: '........x.....xx', h: 'x.x.x.x.x.x.x.x.' },
+          sections: {
+            In: { c: [1, 4], l: ['3 . . . 5 . . . 7 . . . . . . .', '4 . . . 6 . . . 8 . . . 10 . . .'], h: 'x.x.x.x.x.x.x.x.' },
+            A: {
+              c: [1, 4, 0, 0], rb: true, b: ['0 . . . . . . . . . 4 . . . . .', '0 . . . . . . . 4 . . . 2 . . .'],
+              l: ['3 . . . 5 . . . 7 . . . . . . .', '4 . . . 6 . . . 8 . . . 10 . . .', '7 . . . 6 . . . 4 . . . 2 . . .', '0 . . . . . . . . . . . . . . .'],
+              k: 'x.........x.....', s: '........x.......', h: 'x.x.x.x.x.x.x.x.'
+            },
+            B: {
+              c: [3, 6, 2, 4], rb: true, b: '0 . . . . . . . 0 . . . . . . .',
+              l: ['5 . 7 . 9 . . . . . . . . . . .', '6 . 8 . 10 . . . . . . . . . . .', '4 . 6 . 8 . . . . . . . . . . .', '4 . 6 . 8 . 10 . . . . . . . . .'],
+              k: 'x.........x..x..', s: '........x.......', h: 'xxx.xxx.xxx.xxx.'
+            },
+            Out: { c: [0, 0], l: ['7 . . . . . . . . . . . . . . .', R0], h: ['x.x.x.x.x.x.x.x.', D0] }
+          },
+          form: 'In A A B! B A A^3 Out'
+        },
+        {
+          id: 'finals_week', title: 'Finals Week in Dorm 4B', artist: '4B beats',
+          fill: { k: 'x......x..x.....', s: '....x...x...x.xx', h: 'x.x.x.x.x.x.x.x.' },
+          sections: {
+            In: { c: [3, 2], rb: true, b: [R0, '. . . . . . . . 0 . 4 . . . . .'], h: 'x.x.x.x.x.x.x.x.' },
+            A: {
+              c: [3, 2, 1, 0], rb: true, b: '0 . . 0 . . . . 0 . 4 . . . . .',
+              l: ['7 . . 9 . 10 . . . 9 . 7 . . . .', '6 . . 8 . 9 . . . 8 . 6 . . . .', '5 . . 7 . 8 . . . 7 . 5 . . . .', '4 . . 6 . 7 . . . 6 . 4 . . . .'],
+              k: 'x......x..x.....', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
+            },
+            C: {
+              c: [0, 3, 0, 3], rb: true, b: ['0 . . . . . . 0 . . 4 . . . . .', '0 . . . . . . . 0 . . . 2 . . .'],
+              l: ['7 . 9 . . 7 . 4 . . 6 . 7 . . .', '9 . 10 . . 9 . 7 . . 5 . 3 . . .', '7 . 9 . . 7 . 4 . . 6 . 7 . 9 .', '10 . . . 9 . . . 7 . . . 5 . . .'],
+              k: 'x.....x...x..x..', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
+            },
+            Out: { c: [3, 2, 1, 0], l: ['7 . . . . . . . . . . . . . . .', '6 . . . . . . . . . . . . . . .', '5 . . . . . . . . . . . . . . .', '4 . . . . . . . . . . . . . . .'], h: ['x.x.x.x.x.x.x.x.', 'x...x...x...x...', 'x...x...x...x...', D0] }
+          },
+          form: 'In A A C C! A A^4 Out'
+        }
+      ]
+    },
+
+    // ================================================================ LOOP 174
+    {
+      id: 'loop_174', name: 'Loop 174 "Legally a Party"',
+      tagline: 'On the Loop you are legally a party.',
+      genre: 'drum and bass and breakbeats, a rolling bass, an MC who only knows the speed limit',
+      bpm: 174, scale: 'minor', color: '#ff7a00', kit: 'break', district: 'loop',
+      swing: 0, sustain: 2.5, wave: { bass: 'sawtooth', lead: 'square' },
+      ads: [
+        'Nap Dynasty Car Mattress. Rest at every red light. The Loop has none. Code LOOP174.',
+        'Spin Doctor Customs. Body kits, neon and a stance. We spin your car and your coverage.',
+        'Octane Opinions. Premium is regular with a stance. Diesel is regular with a grudge.',
+        'Detail & Evidence. Wash, wax and a clean record. Tire shine is extra. Records are not.',
+        'Pump & Circumstance. The HOA approved the pump. Not the price. Not you.',
+        'Spin Doctor Customs Spoilers. Zero downforce. Forty percent more attitude.',
+        'Octane Opinions Car Wash. We wash your car, then argue it was never dirty.',
+        'Sponsor Span. Tolled per opinion. Coupon codes accepted. Takes over ten words pay double.',
+        'Gus\'s Garage. Pay-and-spray. Wanted stars out, new color in. A hundred bucks a star.',
+        'Loud Cab. A ride with a podcast you can\'t turn off. Fare includes three hot takes.',
+        'Spin Doctor Customs Horns. Forty tones. Every one of them says "Respectfully."',
+        'The Lower Loop. Opening soon. Drivers legally a layover. Passengers legally a carpool.'
+      ],
+      napAd: 0,
+      dj: [
+        'MC POSTED LIMIT ON LOOP 174! THE SPEED LIMIT IS FIFTY-FIVE! I AM SAYING IT VERY FAST!',
+        'ON THE LOOP YOU ARE LEGALLY A PARTY! PARTIES MUST SIGNAL! SIGNAL, PARTY!',
+        'FIFTY-FIVE! THAT\'S NOT THE BPM, THAT\'S THE LAW! THE BPM IS ONE SEVENTY-FOUR!',
+        'MERGE! MERGE LIKE YOU MEAN IT! MERGE LIKE A COMMENT SECTION!',
+        'IF YOU CAN READ THIS TICKER, YOU ARE LOOKING AT THE DASHBOARD! EYES UP!',
+        'THE LOOP HAS NO EXITS! THE LOOP HAS NO ENTRANCES! YOU HAVE ALWAYS BEEN ON THE LOOP!',
+        'SHOUT OUT TO THE PODCAST VAN! RATED A TWO! STILL ON THE LOOP!',
+        'BREAK! BEAT! BRAKE! SAFELY! AT A REASONABLE FOLLOWING DISTANCE!',
+        'UNLIKE VELVETINE, WE HAVE A DROP! HERE IT COMES! AT FIFTY-FIVE!',
+        'HOA PATROL ON THE ON-RAMP! THEY CAN\'T FOLLOW YOU! THE LOOP IS NOT A CUL-DE-SAC!',
+        'BUCKLE UP! THE PARTY IS LEGALLY BINDING!',
+        'FOUR-MINUTE TRACK, ONE LAP! THAT\'S OVER THE LIMIT! PULL OVER EMOTIONALLY!',
+        'SPONSORED BY SPIN DOCTOR CUSTOMS! THEY SPIN IT! I SHOUT IT! FIFTY-FIVE!',
+        'LOWER LOOP OPENING SOON! STILL FIFTY-FIVE DOWN THERE! GRAVITY DOES NOT COUNT!'
+      ],
+      // Drum and bass: an atmospheric intro, a snare-roll build, a two-step drop
+      // with a rolling bass and square stabs, a breakdown with bell melodies, a
+      // second build, an amen-style drop that lifts a third (shift 2), an outro.
+      songs: [
+        {
+          id: 'legally_a_party', title: 'Legally a Party', artist: 'Rumble Strip',
+          fill: { k: 'x...............', s: 'x.xxx.x.xxxxxxxx', h: 'x.x.x.x.........' },
+          sections: {
+            In: {
+              c: [0, 0, 5, 4], rb: true, sus: 3, wave: { bass: 'sawtooth', lead: 'sine' }, b: '0 . . . . . . . . . . . . . . .',
+              l: ['. . . . . . . . 11 . . . . . . .', R0, '. . . . . . . . 12 . . . 11 . . .', R0], h: ['x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.xx']
+            },
+            U: {
+              c: [0, 0, 5, 4], rb: true, b: '0 . . . 0 . . . 0 . . . 0 . . .', l: ['7 . . . . . . . 7 . . . . . . .', '7 . . . 7 . . . 7 . . . 7 . . .', '9 . . . 9 . . . 9 . . . 9 . . .', '11 . 11 . 11 . 11 . 11 11 11 11 . . . .'],
+              k: [D0, D0, 'x...x...x...x...', 'x.......x.......'], s: ['....x.......x...', 'x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.xxxx....'], h: 'xxxxxxxxxxxxxxxx'
+            },
+            D: {
+              c: [0, 0, 5, 4], rb: true,
+              b: ['0 . . . . . 0 . . . 0 . . . . .', '0 . . . . . 0 . . . 0 . . 4 . .', '0 . . . . . 0 . . . 0 . . . . .', '0 . . . 0 . . . 0 . 0 . 0 . 0 .'],
+              l: ['. . 7 . . 7 . . 11 . . . 10 . . .', '. . 7 . . 7 . . 11 . . . 13 . 11 .', '. . 9 . . 9 . . 12 . . . 11 . . .', '. . 8 . . 8 . . 11 . . . . . . .'],
+              k: 'x.........x.....', s: '....x.......x...', h: 'x.xxx.x.x.xxx.x.'
+            },
+            Br: {
+              c: [0, 6, 5, 4], rb: true, sus: 3, wave: { bass: 'triangle', lead: 'sine' }, b: '0 . . . . . . . 0 . . . . . . .',
+              l: ['14 . . . . . . . 13 . . . 11 . . .', '13 . . . . . . . 11 . . . 10 . . .', '12 . . . . . . . 11 . . . 9 . . .', '11 . . . . . . . . . . . . . . .'], h: '....x.......x...'
+            },
+            D2: {
+              c: [0, 0, 5, 4], rb: true,
+              b: ['0 . . 0 . . 0 . . . 0 . . . 6 .', '0 . . 0 . . 0 . . . 0 . 4 . 2 .', '0 . . 0 . . 0 . . . 0 . . . 4 .', '0 . 0 . 0 . 0 . 4 . 4 . 2 . 1 .'],
+              l: ['14 . . . 13 . . . 11 . . . . . . .', '. . 10 . . 11 . . 13 . . . 11 . . .', '12 . . . 11 . . . 9 . . . . . . .', '. . 8 . . 11 . . 15 . . . 14 . . .'],
+              k: ['x.x.......xx....', 'x.x.......xx....', 'x.x.......xx....', 'x.x.......x.....'], s: ['....x..x.x..x..x', '....x..x.x..x..x', '....x..x.x..x..x', '....x..x.x....x.'], h: 'x.x.x.x.x.x.x.x.'
+            },
+            Out: { c: [0, 0, 5, 4], rb: true, sus: 3, wave: { bass: 'sawtooth', lead: 'sine' }, b: '0 . . . . . . . . . . . . . . .', l: ['11 . . . . . . . . . . . . . . .', R0, R0, R0], k: ['x.........x.....', 'x.........x.....', D0, D0], h: 'x.x.x.x.x.x.x.x.' }
+          },
+          form: 'In In U D D D D! Br Br U D2^2 D2^2 D2 D2! Out'
+        },
+        {
+          id: 'speed_limit', title: 'Speed Limit (Suggested)', artist: 'Merge Left',
+          fill: { k: 'x.........x.....', s: '....x..xx.xxxxxx', h: 'x.x.x.x.x.x.....' },
+          sections: {
+            In: { c: [0, 5, 2, 6], sus: 3, wave: { bass: 'sawtooth', lead: 'triangle' }, h: 'x.x.x.x.x.x.x.x.', l: ['. . . . . . . . . . . . 7 . . .', R0, '. . . . . . . . . . . . 9 . . .', '. . . . . . . . 10 . . . . . . .'] },
+            U: {
+              c: [0, 5, 2, 6], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: [R0, R0, '11 . . . 11 . . . 11 . . . 11 . . .', '13 . 13 . 13 . 13 . 13 . 13 . 13 13 13 13'],
+              k: [D0, 'x.......x.......', 'x...x...x...x...', 'x...x...x...x...'], s: ['................', '....x.......x...', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.xxxx'], h: 'xxxxxxxxxxxxxxxx'
+            },
+            D: {
+              // the reese: a sawtooth retriggered in a tresillo, under hoover stabs on the one
+              c: [0, 5, 2, 6], rb: true, sus: 3,
+              b: ['0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . 0 . . . 2 . . 2 . .', '0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . . . 2 . . . 4 . . .'],
+              l: ['7 . . . . . . . . . . . . . . .', '9 . . . . . . . . . . . 7 . . .', '9 . . . . . . . . . . . . . . .', '10 . . . . . . . 8 . . . 6 . . .'],
+              k: ['x.........x.....', 'x.........x.x...'], s: ['....x.......x...', '....x..x....x...'], h: 'x.xxx.x.x.xxx.x.'
+            },
+            Br: {
+              c: [0, 5, 2, 6], sus: 3, wave: { bass: 'triangle', lead: 'sine' }, b: '0 . . . . . . . . . . . . . . .', rb: true,
+              l: ['11 . . . 12 . . . 14 . . . . . . .', '12 . . . 11 . . . 9 . . . . . . .', '11 . . . 9 . . . 7 . . . . . . .', '10 . . . . . . . 8 . . . . . . .'], h: 'x...x...x...x...'
+            },
+            Out: { c: [0, 5, 2, 6], sus: 3, wave: { bass: 'sawtooth', lead: 'triangle' }, rb: true, b: '0 . . . . . . . . . . . . . . .', k: ['x.........x.....', D0], h: 'x.x.x.x.x.x.x.x.' }
+          },
+          form: 'In U D D D D! Br U D D^4 D^4! Out'
+        },
+        {
+          // liquid: bells throughout, half-time drums under the first drop, then the roller
+          id: 'lower_loop', title: 'Lower Loop Layover', artist: 'Hazard Lights',
+          wave: { bass: 'sawtooth', lead: 'sine' }, sustain: 2,
+          fill: { k: 'x...............', s: '....x.xxx.xxxxxx', h: 'x.x.x.x.x.x.x.x.' },
+          sections: {
+            In: { c: [0, 6, 5, 4], rb: true, sus: 3, b: [R0, '0 . . . . . . . . . . . . . . .'], l: ['14 . . . . . . . 13 . . . . . . .', '13 . . . . . . . 11 . . . . . . .', '12 . . . . . . . 11 . . . . . . .', '11 . . . . . . . . . . . . . . .'], h: 'x.x.x.x.x.x.x.x.' },
+            H: {
+              c: [0, 6, 5, 4], rb: true, b: '0 . . . . . . . 0 . . . 4 . . .',
+              l: ['7 . 11 . 14 . . . 11 . . . 7 . . .', '6 . 10 . 13 . . . 10 . . . 6 . . .', '5 . 9 . 12 . . . 9 . . . 5 . . .', '4 . 8 . 11 . . . 8 . . . 11 . . .'],
+              k: 'x.........x.....', s: '........x.......', h: 'x.x.x.x.x.x.x.x.'
+            },
+            D: {
+              c: [0, 6, 5, 4], rb: true, b: ['0 . . . . . 0 . . . 0 . . . . .', '0 . . . . . 0 . . . 0 . . 4 . .'],
+              l: ['7 . 11 . 14 . . . 11 . . . 7 . . .', '6 . 10 . 13 . . . 10 . . . 6 . . .', '5 . 9 . 12 . . . 9 . . . 5 . . .', '4 . 8 . 11 . . . 8 . . . 11 . . .'],
+              k: ['x.........x.....', 'x.........x..x..'], s: '....x.......x...', h: 'x.xxx.x.x.xxx.x.'
+            },
+            Out: { c: [0, 6, 5, 4], rb: true, sus: 3, b: '0 . . . . . . . . . . . . . . .', l: ['14 . . . . . . . . . . . . . . .', R0, R0, R0], h: ['x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x...x...x...x...', D0] }
+          },
+          form: 'In H H D D D! In D^5 D^5! Out'
+        },
+        {
+          // amen-heavy breakbeat; the lead is a two-tone siren
+          id: 'four_stars', title: 'Four Stars From the Chase Cop', artist: 'The Rumble Strip Soundsystem',
+          fill: { k: 'x.x.............', s: 'x.x.xxx.xxx.xxxx', h: 'x.x.x.x.x.x.....' },
+          sections: {
+            In: { c: [0, 0, 6, 6], l: ['11 . . . . . . . 9 . . . . . . .', '11 . . . . . . . 9 . . . . . . .', '10 . . . . . . . 8 . . . . . . .', '10 . . . . . . . 8 . . . . . . .'], sus: 3, h: 'x.x.x.x.x.x.x.x.' },
+            A: {
+              c: [0, 0, 6, 6], rb: true, b: ['0 . . 0 . . . . 0 . 0 . . . . .', '0 . . 0 . . . . 0 . 0 . 4 . 6 .'],
+              l: ['11 . . . . . . . 9 . . . . . . .', '11 . . . . . . . 9 . . . . . . .', '10 . . . . . . . 8 . . . . . . .', '10 . . . . . . . 8 . . . 13 . . .'], sus: 3,
+              k: ['x.x.......xx....', 'x.x.......x.....'], s: ['....x..x.x..x..x', '....x..x.x....x.'], h: 'x.x.x.x.x.x.x.x.'
+            },
+            B: {
+              c: [5, 5, 4, 4], rb: true, b: '0 . . . . . 0 . . . 0 . . . . .',
+              l: ['. . 12 . . 12 . . 14 . . . 12 . . .', '. . 12 . . 12 . . 16 . . . 14 . . .', '. . 11 . . 11 . . 13 . . . 11 . . .', '. . 11 . . 11 . . 15 . . . 14 . . .'],
+              k: 'x.........x.....', s: '....x.......x...', h: 'xxxxxxxxxxxxxxxx'
+            },
+            Out: { c: [0, 0, 6, 6], sus: 3, l: ['11 . . . . . . . . . . . . . . .', R0, R0, R0], k: ['x.x.......xx....', D0, D0, D0], s: ['....x..x.x..x..x', D0, D0, D0], h: 'x.x.x.x.x.x.x.x.' }
+          },
+          form: 'In In A A! B B! A^4 A^4! B A! Out'
+        }
+      ]
+    }
+  ];
+
+  // The four GDD DJ lines of WAIL 101 stay first in djBase; `dj` is the current
+  // call-in segment (installed below).
+
+  // ------------------------------------------------------------ call-in --
+  var CALLIN = {
+    station: 'wail_101',
+    show: 'Uproar at Large',
+    host: 'Thad Uproar',
+    segments: [
+      {
+        id: 'open_lines', title: 'Open Lines (One Side)',
+        intro: 'Lines are open. One side of them. The other side was disconnected for your comfort.',
+        exchanges: [
+          'CALLER, Doreen in Culdesac Heights: "I agree with you, Thad." THAD: "Bold. Brave. Dangerous. Next."',
+          'CALLER, Marty at the Printworks: "I have a question." THAD: "We don\'t do those here. Rephrase it as a grievance."',
+          'CALLER, Bev on the Sponsor Strip: "I\'m calling from the other side." THAD: "Screener! How did she get a dial tone?"',
+          'CALLER, Lenny on Lobby Row: "Long-time listener, first-time yeller." THAD: "Welcome. Yell in the key of the bumper music."',
+          'CALLER, Priya in Chyron Center: "I think we both make good points." THAD: "Ma\'am, this is a radio station."'
+        ],
+        outro: 'That\'s open lines. The lines are now closed. They were never fully open.'
+      },
+      {
+        id: 'ask_fulcrum', title: 'Ask a Fulcrum Fellow',
+        intro: 'In studio, a Fulcrum Foundation fellow. Forty of them, one opinion, he drew the short straw.',
+        exchanges: [
+          'CALLER, Gordon at Founders\' College: "Is the study peer-reviewed?" THAD: "His peers reviewed it. All forty. In one room."',
+          'CALLER, Tanya in Pennant Point: "What does the data say?" THAD: "Whatever the last check said. Footnoted. [citation pending]."',
+          'CALLER, Ed at the port: "Who funds Fulcrum?" THAD: "Nonpartisan. Two doors, one checkbook. Next question, dumber please."',
+          'CALLER, Wanda uptown: "Can he cite that?" THAD: "He can. It\'s pending. It\'s been pending since the founding."',
+          'CALLER, Raul on the Sponsor Strip: "Does the fellow have a personal opinion?" THAD: "He did. It was acquired in a merger."'
+        ],
+        outro: 'Thanks to our fellow. He has to go publish whatever we just said.'
+      },
+      {
+        id: 'hoax_hour', title: 'The Hoax Hour',
+        intro: 'It\'s the Hoax Hour. Is the hour itself a hoax? We take calls, from one side.',
+        exchanges: [
+          'CALLER, Phil at the airport: "The airport only has one runway." THAD: "Hoax. Its owner rated it two tens. That\'s two runways."',
+          'CALLER, June in Culdesac Heights: "Is the balloon office really about weather?" THAD: "Fourteen antennas. For clouds. Next."',
+          'CALLER, Sid at Velvetine Docks: "That yacht has never sailed." THAD: "Hoax. It sails emotionally. Every night."',
+          'CALLER, Nora at the Printworks: "Who orders the Monday Memo?" THAD: "Nobody, Nora. That\'s what makes it efficient."',
+          'CALLER, Hank in Chyron Center: "Is this segment a hoax?" THAD: "Screener, cut him. He\'s too good at this."'
+        ],
+        outro: 'The Hoax Hour is over. Or is it. It is. We have ads.'
+      },
+      {
+        id: 'hoa_hotline', title: 'HOA Hotline',
+        intro: 'HOA Hotline. Report your neighbor, your mailbox, and your own lawn before it reports you.',
+        exchanges: [
+          'CALLER, Margery in Culdesac Heights: "My neighbor\'s mailbox is two inches too tall." THAD: "Two stars. Maybe three. Lock your doors."',
+          'CALLER, Doug on Trustless Terrace: "The HOA gave me a wanted level for a hose." THAD: "Was it coiled? No? Then you know what you did."',
+          'CALLER, Patrice in Culdesac Heights: "Can the HOA arrest me?" THAD: "Legally, no. Spiritually, they already have."',
+          'CALLER, Al on Pellet Place: "The gas price went up again." THAD: "The HOA approved the pump, Al. Not the price. Not you."',
+          'CALLER, Gail in Culdesac Heights: "I\'d like to report myself." THAD: "Finally, a responsible citizen. Four stars, in your own driveway."'
+        ],
+        outro: 'HOA Hotline is closed. Your lawn was measured during the call.'
+      },
+      {
+        id: 'sponsor_confessional', title: 'Sponsor Confessional',
+        intro: 'Sponsor Confessional, where sponsors call in and we thank them. Mostly we thank them.',
+        exchanges: [
+          'CALLER, Dale Firmness at the Mattress Depot: "Just saying hi." THAD: "Dale! Sir! The whole show runs on you. Code TAKES20, folks."',
+          'CALLER, Dale Firmness, again: "I heard you mention a pillow, Thad." THAD: "Never happened, Dale. I said nap. Nap Dynasty."',
+          'CALLER, Marla at Octane Opinions: "Is premium worth it?" THAD: "Marla, you own the pump. You know it\'s regular with a stance."',
+          'CALLER, Ray at Detail & Evidence: "We\'d like to sponsor this segment." THAD: "Sold. Your records are clean. Ours are cleaner."',
+          'CALLER, Dale Firmness: "I\'ve never actually sat on a mattress." THAD: "And that, folks, is sponsored silence."'
+        ],
+        outro: 'That\'s Sponsor Confessional. Absolution was provided by Nap Dynasty. Code TAKES20.'
+      },
+      {
+        id: 'weather_opinion', title: 'The Weather Is an Opinion',
+        intro: 'Time for the weather. Remember: our weather is an opinion, and yours is wrong.',
+        exchanges: [
+          'CALLER, Lou in Pennant Point: "It\'s raining here." THAD: "The President rated it sunny. You\'re just wet with a stance."',
+          'CALLER, Kendra at the port: "Is it going to snow?" THAD: "Snow is a Fulcrum talking point. The other door."',
+          'CALLER, Otis on the Sponsor Strip: "The forecast says partly cloudy." THAD: "Partly? Pick a side, Otis."',
+          'CALLER, Mo on Lobby Row: "There\'s a weather balloon over my house." THAD: "That\'s not a balloon, Mo. That\'s a subscription."',
+          'CALLER, Ines at Velvetine Docks: "What\'s tomorrow\'s high?" THAD: "Nap Dynasty presents a firm seventy-two. Code TAKES20."'
+        ],
+        outro: 'That was the weather. Disagree? Call in. You\'ll still be wrong, but on the radio.'
+      },
+      {
+        id: 'pundit_desk', title: 'The $PUNDIT Trading Desk',
+        intro: 'The $PUNDIT Trading Desk. A coin backed by takes, and takes backed by nothing. Trustless.',
+        exchanges: [
+          'CALLER, Brent in Culdesac Heights: "Should I buy $PUNDIT?" THAD: "It\'s trustless, Brent. That means trust me. You shouldn\'t."',
+          'CALLER, Gina at Founders\' College: "I put my tuition in $PUNDIT." THAD: "Bold. You now have liquidity. And no tuition."',
+          'CALLER, Hal uptown: "My grandfather never bought coins." THAD: "He bought opinions, Hal. Same chart, slower."',
+          'CALLER, Terry at the airport: "It went up, down, then shed." THAD: "That\'s the shed phase. Moonsworth calls it a roadmap."',
+          'CALLER, Ana on Lobby Row: "Can I buy a sandwich with it?" THAD: "Everything is liquidity, Ana. The sandwich declined."'
+        ],
+        outro: '$PUNDIT closes the hour at a number. That\'s all we can legally say.'
+      }
+    ]
+  };
+
+  // --------------------------------------------------------------- news --
+  // Top-of-the-hour bulletins. `order` is story order: the latest key the
+  // player has reached leads the bulletin. Keys are story flags
+  // (GTP.Missions.state.flags) or 'mission:<id>' (GTP.Missions.state.completed).
+  var NEWS = {
+    every: 'hour',
+    jingle: { notes: [7, 4, 7, 11] },   // a hint for an engine that plays a news sting
+    intros: {
+      wail_101: 'WAIL 101 NEWS. EVERYTHING IS BREAKING. HERE IS WHAT BROKE:',
+      pennant_fm: 'PENNANT FM NEWS, RATED A TEN. TODAY\'S TOP TENS:',
+      velvetine_888: 'VELVETINE NEWS, READ SOFTLY. TO WHATEVER THIS IS:',
+      quiet_signal: 'A BULLETIN HAS BEEN ISSUED. THE FOLLOWING HAS BEEN REPORTED:',
+      office_hours: 'OFFICE HOURS NEWS BREAK. WE SKIMMED THE HEADLINES FOR YOU:',
+      loop_174: 'LOOP 174 NEWS AT FIFTY-FIVE! HEADLINES AT THE LEGAL LIMIT:'
+    },
+    start: [
+      'LOCAL STUDENT HAULS FOLDING TABLE ONTO QUAD; NO CHAIRS SIGHTED',
+      'NAP DYNASTY SPONSORS NOON; NOON NOW FIRMER',
+      'FOUNDERS\' COLLEGE REPORTS RECORD TABLE ATTENDANCE; CLASSROOMS EMPTY',
+      'GOLDPLATE RATES THIS MORNING A TEN; MORNING DISPUTES IT',
+      'FULCRUM ANNOUNCES STUDY OF UPCOMING STUDY; RESULTS ALREADY KNOWN',
+      'RACCOON SPOTTED IN LOT C; DECLINES COMMENT, UNLIKE EVERYONE ELSE'
+    ],
+    byFlag: {
+      has_table: [
+        'TAKESWORTH WINS FIRST QUAD DEBATE ON VOLUME; OPPONENT HAD DONE THE READING',
+        'FRESHMAN WHO READ THE BOOK DEFEATED; BOOK UNAVAILABLE FOR COMMENT',
+        'LOCAL PUNDIT DECLARED "PRE-VIRAL"; DOCTORS UNSURE IF CONTAGIOUS'
+      ],
+      has_van: [
+        'LOUD & CORRECT VAN WRAPPED; PRESIDENT RATES IT A TWO, PERSONALLY',
+        'PODCAST VAN SPOTTED ON THE LOOP; LEGALLY A PARTY OF ONE',
+        'TAKESWORTH NOW OWNS A VAN; NEIGHBORS LOCK UP THEIR MICROPHONES'
+      ],
+      seen_airport: [
+        'TAKESWORTH VISITS GOLDPLATE INTERNATIONAL; GATE CHANGES WHEN HE REACHES IT',
+        'ONE FLIGHT DEPARTS GOLDPLATE INTERNATIONAL; FLIGHT IS A TRUCK'
+      ],
+      sponsored: [
+        'NAP DYNASTY SIGNS LOCAL PUNDIT; COUPON CODE NOW TALLER THAN HIM',
+        'TAKESWORTH READS FIRST AD, CALLS IT JOURNALISM; JOURNALISTS SIGH',
+        'DALE FIRMNESS ADDS ANOTHER SHOW TO PORTFOLIO; PORTFOLIO IS THE CITY'
+      ],
+      range_trained: [
+        'LOCAL PUNDIT COMPLETES RANGE LESSON AT BOTH SIDES ARMS; BOTH SIDES APPLAUD',
+        'MERLE FIRMNESS GRADES PUNDIT\'S AIM "LOUD"; CARDBOARD CUTOUTS UNMOVED'
+      ],
+      a_voice: [
+        'FOUR-MINUTE CABLE HIT LASTS NINETY SECONDS; TAKESWORTH NOW "A VOICE"',
+        'CHYRON INTERRUPTS GUEST WITH BREAKING NEWS; NEWS IS CHYRON',
+        'LOCAL PUNDIT APPEARS IN LOWER-THIRD; LOWER-THIRD MISSPELLS HIM TWICE'
+      ],
+      contract_sold: [
+        'VAULTWRIGHT SELLS TAKESWORTH CONTRACT; WHISPERS PRICE, NOBODY HEARS IT',
+        'LOCAL PUNDIT LENT OUT LIKE A LAWN MOWER; LAWN MOWERS OFFENDED',
+        'VAULTWRIGHT CALLS THE SALE "A HEDGE"; HEDGE MAZE DECLINES COMMENT'
+      ],
+      table_loaned: [
+        'TAKESWORTH TABLE GOES UNDER GLASS AT MUSEUM OF TAKES; GIFT SHOP SELLS THE GLASS',
+        'HEIRLOOM CLUB ADMIRES FOLDING TABLE; ASKS WHO ITS GRANDFATHER LISTENED WITH'
+      ],
+      show_renamed: [
+        'GOLDPLATE RENAMES LOUD & CORRECT "GOLDPLATE & GOLDPLATE"; RATES IT A TEN',
+        'TAKESWORTH SHOW HAS A NEW NAME; HOST LAST TO KNOW',
+        'PRESIDENT RENAMES PODCAST TWICE; SECOND NAME IS THE FIRST NAME AGAIN'
+      ],
+      theft_pinned: [
+        'WAREHOUSE 42 THEFT PINNED ON LOCAL PUNDIT; BARON TOASTS THE INVESTIGATION',
+        'STOLEN CRATES FOUND TO CONTAIN NOTHING; NOTHING STILL CHARTING',
+        'VELVETINE CALLS TAKESWORTH "A PERSON OF INTEREST"; FIRST TIME ANYONE HAS'
+      ],
+      ferry_friend: [
+        'TAKESWORTH BOARDS FERRY TO ELSEWHERE; FERRY REMAINS HERE',
+        'FERRY ANNOUNCER MAKES A NEW FRIEND; DEPARTURE STILL "SOON"'
+      ],
+      scooters_billed: [
+        'DEFENSE SCOOTERS BILLED TO PODCAST; WARBANNER SAYS THAT\'S WHY WE NEED THE JETS',
+        'LOUD & CORRECT NOW OWES BRAVADIA FORTY SCOOTERS; SCOOTERS SOLD TO BOTH SIDES',
+        'TAKESWORTH OPENS SCOOTER INVOICE; INVOICE ENDS "AND THAT\'S WHY WE NEED THE JETS"'
+      ],
+      jets_arrived: [
+        'BRAVADIA\'S JETS ARRIVE ON A TRUCK; WARBANNER DECLARES LIFT',
+        'JETS DELIVERED IN PROFILE; WARBANNER: "AND THAT\'S WHY WE NEED MORE JETS"',
+        'RUNWAY 10/10 WELCOMES FIRST JET; JET HAS NOT LEFT THE TRAILER'
+      ],
+      has_memo: [
+        'DEAD DROP UNDER BRIDGE CONTAINS AD COPY; SPYCRAFT RATED A FOUR',
+        'OVA DENIES RECRUITING PODCASTER; ANTENNA COUNT RISES TO FIFTEEN',
+        'LOCAL PUNDIT NAMED AN "ASSET"; ASSET VALUED AT ONE BAGEL'
+      ],
+      byline: [
+        'HOT MIC AT CUSTOMS CATCHES LOCAL PUNDIT; QUOTE DECLARED, NOT DISCLOSED',
+        'TAKESWORTH EARNS FIRST BYLINE; BYLINE IS A LEAK'
+      ],
+      hoa_enemy: [
+        'HOA ISSUES WANTED LEVEL ON LOCAL PUNDIT; ALSO ON HIS MAILBOX, PRE-EMPTIVELY',
+        'CLARITY PELLET BARN DISTURBED; PELLETS REPORT NO CHANGE, AS USUAL',
+        'TAKESWORTH NOW WANTED IN CULDESAC HEIGHTS; LAWN SIGNS SHARPENED'
+      ],
+      rugged: [
+        '$PUNDIT RUG-PULLED; MOONSWORTH CALLS IT A TRUSTLESS EXIT',
+        'MOONSWORTH\'S CAR WRAP NOW WORTH MORE THAN THE COIN IT ADVERTISES',
+        'LOCAL PUNDIT LOSES ALL LIQUIDITY; LIQUIDITY WAS A SANDWICH'
+      ],
+      knows_memo: [
+        'EVERY TALKING POINT TRACED TO ONE MONDAY MEMO; MEMO TRACED TO A COMMENT SECTION',
+        '"RESPECTFULY" TYPO FOUND IN EVERY SCRIPT IN THE CITY; ONE L, ALL FACTIONS',
+        'OVA HAS NO OPERATIONS FLOOR, ONLY SUBSCRIBERS; SUBSCRIBERS DEMAND REFUND'
+      ],
+      cited: [
+        'FULCRUM CITATION FINALLY FOUND AT MUSEUM; CITATION CITES FULCRUM',
+        'LOCAL PUNDIT CHASES FOOTNOTE ACROSS HEIRLOOM HEIGHTS; FOOTNOTE STILL PENDING'
+      ],
+      survived_thursday: [
+        'ALL FACTIONS CONVERGE ON THE QUAD THURSDAY; TABLE HOLDS',
+        '"DUNK DESTROYS TAKESWORTH" WAS ON THE CALENDAR; CALENDAR WRONG FOR ONCE',
+        'LOCAL PUNDIT OUTLASTS ENTIRE POLICE DEPARTMENT; DEPARTMENT RATES IT A SIX'
+      ],
+      launched: [
+        'RATIO LAUNCHER FIRED AT CONTAINER YARD; EVERY CONTAINER STILL MERCH',
+        'LOCAL PUNDIT RATIOS A CRANE; CRANE MOVES ZERO CARGO IN PROTEST'
+      ],
+      offered_chair: [
+        'CHYRON PANEL OFFERS TAKESWORTH THE ANCHOR CHAIR; CHAIR IS ALSO A MATTRESS',
+        'FIVE PANELISTS GIVE FIVE IDENTICAL ANSWERS; ALL FIVE SIGNED "RESPECTFULY"',
+        'ANCHOR CHAIR COMES WITH PRIMETIME SLOT; PRIMETIME COMES WITH DALE FIRMNESS'
+      ],
+      ending_primetime: [
+        'TAKESWORTH TAKES THE CHAIR; SPONSOR READ ENTERS DAY FOUR',
+        'GOLD FOLDING TABLE INSTALLED ON GOLDPLATE TOWER ROOF; RATED A TEN',
+        'PRIMETIME HOST LOSES RATIO WAR TO OWN ARCHIVE; ARCHIVE CLAIMS MANDATE'
+      ],
+      ending_grass: [
+        'LOCAL PUNDIT READS MONDAY MEMO LIVE ON AIR; CHYRON DOES NOT LEAVE IT THERE',
+        'NEW SIGN ON QUAD READS "I DON\'T KNOW. LET\'S TALK."; ELEVEN PEOPLE STAY',
+        'DUNK SETS UP SAME SIGN AT NEXT TABLE; RATIO DECLARED A TIE'
+      ]
+    },
+    byMission: {
+      m01c_both_sides: [
+        'MERLE FIRMNESS GIVES LOCAL PUNDIT A FREE LOANER; CALLS IT "BALANCE"',
+        'BOTH SIDES ARMS HOSTS RANGE LESSON; CARDBOARD CUTOUTS FILE HOA COMPLAINT'
+      ],
+      b01_goldplate: [
+        'GOLD HELICOPTER GROUNDED BY RIBBON SPOOLS; ROOF SIGN STILL READS "BOTH"',
+        'PRESIDENT\'S HELICOPTER TANGLED IN OWN RIBBON; RIBBON RATED A TEN',
+        'GOLDPLATE SAYS HELICOPTER IS "RESTING"; RENAMES THE GROUND "GOLDPLATE GROUND"'
+      ],
+      b02_velvetine: [
+        'SILENT YACHT LOSES ITS SPEAKERS; NOBODY NOTICES THE DIFFERENCE',
+        'AFTERPARTY SPEAKERS WRECKED; BARON TOASTS "TO THE QUIET"',
+        'VELVETINE YACHT STILL HAS NOT SAILED; NOW ALSO HAS NOT PLAYED'
+      ],
+      b03_warbanner: [
+        'JET FLYOVER MISSES LOCAL PUNDIT; WARBANNER SAYS THAT\'S WHY WE NEED BETTER JETS',
+        'DEFENSE SCOOTER FLEET WRECKED; BOTH SIDES DEMAND REFUNDS FROM EACH OTHER',
+        'BRAVADIA ISSUES 400 PRESS RELEASES ON SCOOTERS; VOLUME IS POLICY'
+      ],
+      b04_redacted: [
+        'GIANT WEATHER BALLOON POPPED OVER PRINTWORKS; OVA DENIES BALLOON, BALLOON DENIES OVA',
+        'AGENT REDACTED COMMENTS ON BALLOON: "[REDACTED]"',
+        'WEATHER BALLOON REPAIR DEPOT FINALLY HAS A BALLOON TO REPAIR'
+      ],
+      h01_casing: [
+        'SUSPICIOUS VAN CIRCLES MONDAY MEMO PRINT WORKS; VAN RATED A TWO',
+        'PRINT WORKS GUARD REPORTS MAN TAKING NOTES; FIRST NOTES TAKEN IN CITY IN YEARS'
+      ],
+      h02_prep: [
+        'LOCAL INTERN, 54, BUYS FORTY REAMS OF BLANK PAPER; ASKS IF IT\'S PAID',
+        'GUS\'S GARAGE RESPRAYS PODCAST VAN BEIGE; VAN NOW BLENDS INTO OVA FLEET'
+      ],
+      h03_job: [
+        '4,000 MONDAY MEMOS GO MISSING; CITY HAS NO TALKING POINTS FOR ONE DAY',
+        'PUNDITS OPEN MOUTHS, NOTHING COMES OUT; EXPERTS CALL IT "PEACEFUL"',
+        'MONDAY MEMO SWAPPED FOR BLANK PAGE; EVERY FACTION AGREES WITH IT ANYWAY'
+      ],
+      b05_dunk: [
+        'TABLE-TO-TABLE BRAWL ON THE QUAD; PTOLEMY DUNK DIDN\'T READ THE RULES',
+        'DUNK RATIOED BY TAKESWORTH; DUNK REPLIES ANYWAY',
+        'FOLDING TABLE INDUSTRY REPORTS RECORD QUARTER AFTER QUAD BRAWL'
+      ],
+      b06_panel: [
+        'FIVE-PERSON PANEL BESTED BY ONE FOLDING TABLE; CHYRON MUST LEAVE IT THERE',
+        'PANEL ANSWERS FROM MEMO; MEMO ANSWERS FROM COMMENTS; COMMENTS UNAVAILABLE',
+        'DEBATE ARENA REPORTS ZERO MINDS CHANGED; MINDS CHANGED COURT STILL EMPTY'
+      ]
+    },
+    // story order (v0.3 chain); the two endings share the last slot
+    order: [
+      'has_table', 'has_van', 'seen_airport', 'mission:m01c_both_sides', 'sponsored', 'range_trained', 'a_voice',
+      'contract_sold', 'table_loaned', 'show_renamed', 'mission:b01_goldplate', 'theft_pinned', 'ferry_friend',
+      'mission:b02_velvetine', 'scooters_billed', 'jets_arrived', 'mission:b03_warbanner', 'has_memo', 'byline',
+      'mission:b04_redacted', 'hoa_enemy', 'rugged', 'knows_memo', 'cited', 'mission:h01_casing', 'mission:h02_prep',
+      'mission:h03_job', 'survived_thursday', 'mission:b05_dunk', 'launched', 'mission:b06_panel', 'offered_chair',
+      'ending_primetime', 'ending_grass'
+    ]
+  };
+
+  // ------------------------------------------------------------- module --
+  var RADIO = GTP.Content.radio = {
     napMinute: 20,
     defaultStation: 'wail_101',
-
-    stations: [
-      {
-        id: 'wail_101', name: 'WAIL 101 "The Yell"',
-        tagline: 'All outrage, all hours.',
-        genre: 'brass stingers, march drums, phone-in static',
-        bpm: 100, scale: 'minor',
-        ads: [
-          'Nap Dynasty. Sleep like you\'ve never been wrong. Code TAKES20.',
-          'Char & Charter. Steaks sized by donor tier. The salad is Bronze.',
-          'Fulcrum Foundation. The numbers you were going to say anyway.',
-          'Vaultwright Capital. We short what we love.',
-          'Clarity Pellets. Ask your doctor. He won\'t say.',
-          'Detail & Evidence. We clean cars and records. Mostly records.'
-        ],
-        napAd: 0,
-        dj: [
-          'Caller, you\'re on. You\'re wrong. Go.',
-          'Next hour: is the next hour a hoax? We take calls, from one side.',
-          'Our weather is also an opinion. Wrong.',
-          'That was silence, sponsored by Nap Dynasty.'
-        ],
-        // A talk-radio bumper: a brass stinger on the downbeat, then the march
-        // drums carry the bar while the bass thumps on 1 and 3.
-        pattern: {
-          steps: 16,
-          bass: [0, _, _, _, 4, _, _, _, 0, _, _, _, 4, _, _, _],
-          lead: [7, _, 9, _, 11, _, _, _, _, _, _, _, 14, _, 11, _],
-          chords: [0, 0, 5, 4],
-          drums: {
-            kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0],
-            snare: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1],
-            hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
-          },
-          swing: 0,
-          wave: { bass: 'sawtooth', lead: 'square' },
-          sustain: 0.35,
-          talk: true
-        }
-      },
-
-      {
-        id: 'pennant_fm', name: 'Pennant FM "Ten out of Ten"',
-        tagline: 'The President\'s station. Also the President\'s.',
-        genre: 'sax synth, elevator chords, a jingle every 40 seconds',
-        bpm: 112, scale: 'major',
-        ads: [
-          'Goldplate Tower, by Goldplate. Floors ten through one hundred now leasing.',
-          'Goldplate Links. Par ten. No refunds.',
-          'Goldplate Water. Rated a ten by Goldplate.',
-          'Goldplate Goldplate Stadium. Both words. Both tens.',
-          'Nap Dynasty. Official mattress of Goldplate. Code TENOUTOFTEN.',
-          'Goldplate Weather. Tomorrow: a ten.'
-        ],
-        napAd: 4,
-        dj: [
-          'That track was a ten.',
-          'Coming up: the same song. A ten.',
-          'Traffic on Goldplate Avenue is Goldplate.',
-          'The President has renamed this station. It\'s still Pennant. He renamed the name.'
-        ],
-        // Smooth major elevator groove: I vi IV V, soft kick, off-beat hats, a
-        // lazy sax phrase that lands on the sixth. Swung.
-        pattern: {
-          steps: 16,
-          bass: [0, _, _, 0, _, _, 4, _, 0, _, _, 0, _, _, 4, _],
-          lead: [_, _, 4, _, 5, _, 7, _, _, 9, _, 7, _, 5, _, 4],
-          chords: [0, 5, 3, 4],
-          drums: {
-            kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-            snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-            hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0]
-          },
-          swing: 0.2,
-          wave: { bass: 'triangle', lead: 'sawtooth' },
-          sustain: 0.8,
-          transposeBass: true,
-          jingle: { every: 40, notes: [0, 2, 4, 7, 4] }
-        }
-      },
-
-      {
-        id: 'velvetine_888', name: 'Velvetine Lounge 88.8',
-        tagline: 'Listening, never dancing.',
-        genre: 'deep house with no drop, ice clinks, a spreadsheet read softly',
-        bpm: 122, scale: 'minor',
-        ads: [
-          'Velvetine Listening Pier. A party you\'ll hear about.',
-          'Velvetine Records. Nothing released. Still charting.',
-          'The Afterparty. A yacht, a dress code, a Baron. It has never sailed.',
-          'Fresh Takes Fish Shack. Reheated hourly.',
-          'Nap Dynasty. Official mattress of lying awake. Code VELVET20.',
-          'Warehouse 42 Mixtapes. Thirty years, one cassette, still sealed.'
-        ],
-        napAd: 4,
-        dj: [
-          'To the night. To the brand. To whatever this is.',
-          'That was eleven minutes of build.',
-          'The drop is coming. It is not.',
-          'The Baron thanks you for listening to listening.'
-        ],
-        // Deep house pulse: four-on-the-floor, clap on 2 and 4, off-beat hats,
-        // a rolling sub that never resolves, two ice clinks per bar. No drop.
-        pattern: {
-          steps: 16,
-          bass: [0, _, 0, _, _, 0, _, 0, 0, _, 0, _, _, 0, 7, _],
-          lead: [_, _, _, _, _, _, _, 11, _, _, _, _, _, _, 14, _],
-          chords: [0, 0, 5, 3],
-          drums: {
-            kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
-            snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-            hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1]
-          },
-          swing: 0.08,
-          wave: { bass: 'triangle', lead: 'sine' },
-          sustain: 0.45,
-          transposeBass: true
-        }
-      },
-
-      {
-        id: 'quiet_signal', name: 'Quiet Signal',
-        tagline: 'You are not listening to this.',
-        genre: 'ambient pads, elevator chimes, a dial tone in the key of beige',
-        bpm: 60, scale: 'dorian',
-        ads: [
-          'Weather Balloon Repair. A balloon has been repaired. No further questions have been taken.',
-          'A mattress has been recommended. A code has been issued. The code is CLASSIFIED20.',
-          'Fulcrum Foundation. A study was funded. Results were concluded.',
-          'Perpetual Assembly Plaza gift shop. A cause has been updated. The mugs have not.',
-          'Bravadia. A jet has been requested. Tourism has been declared.',
-          'This ad slot was purchased. By whom is unimportant.'
-        ],
-        napAd: 1,
-        dj: [
-          'This station was tuned. Enjoyment is optional.',
-          'A van has been dispatched. Not for you. Probably.',
-          'The word of the day is "crisp." It should be used at a gala.',
-          'Static will follow. Static is content.'
-        ],
-        // Slow ambient pads: one bass drone per bar, two chimes, no drums.
-        pattern: {
-          steps: 16,
-          bass: [0, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-          lead: [_, _, _, _, 7, _, _, _, _, _, _, _, 9, _, _, _],
-          chords: [0, 2, 3, 0],
-          drums: {
-            kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            snare: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-          },
-          swing: 0,
-          wave: { bass: 'triangle', lead: 'sine' },
-          sustain: 3.0
-        }
-      }
-    ],
+    stations: STATIONS,
+    callin: CALLIN,
+    news: NEWS,
+    errors: [],   // authoring problems found while compiling the songs (tests assert none)
 
     // ---------------------------------------------------------- ticker --
     ticker: [
@@ -208,7 +1192,19 @@
       'PRESIDENT RENAMES GOLDPLATE BRIDGE "GOLDPLATE GOLDPLATE BRIDGE"',
       'CAWTI PROTESTS TUESDAY, COUNTER-PROTESTS ITSELF WEDNESDAY',
       'NAP DYNASTY SPONSORS THE WEATHER; WEATHER NOW FIRMER',
-      'LOCAL PUNDIT NOT A JOURNALIST, JOURNALISTS CONFIRM'
+      'LOCAL PUNDIT NOT A JOURNALIST, JOURNALISTS CONFIRM',
+      'NAP DYNASTY SPONSORS GRAVITY; EVERYTHING NOW SLIGHTLY FIRMER',
+      'GOLDPLATE RATES THE MOON A NINE; MOON TO BE RENAMED',
+      'WARBANNER OFFERS CONDOLENCES; ALSO NEEDS JETS',
+      'CLARITY PELLETS NOW IN GUMMY FORM; YOUR DOCTOR STILL WON\'T SAY',
+      'CAWTI PROTESTS THE PROTEST SCHEDULE; SCHEDULE PROTESTS BACK',
+      'THINK TANK FINDS THINKING OVERRATED; TANK RATED A TEN',
+      'GREEN ROOM BAGEL SUPPLY HITS RECORD LOW; HOSTILITY HOLDS STEADY',
+      'CHYRON FINISHES A SENTENCE; NETWORK OPENS INQUIRY',
+      '$PUNDIT DECLARED TRUSTLESS BY EVERYONE WHO TRUSTED IT',
+      'LOOP DRIVERS REMINDED THEY ARE LEGALLY A PARTY; PARTY ASKED TO SIGNAL',
+      'BARON VELVETINE ANNOUNCES TOUR; ELEVEN CITIES, ZERO SONGS',
+      'INTERN, 54, ASKS IF THIS HEADLINE IS PAID; IT IS NOT'
     ],
 
     // ----------------------------------------------------------- barks --
@@ -303,7 +1299,7 @@
   // Group the twenty ped barks by district (1-based line numbers from the
   // GDD list). Lines 1, 14 and 19 are universal.
   (function () {
-    var B = GTP.Content.radio.barks;
+    var B = RADIO.barks;
     var universal = [1, 14, 19];
     var map = {
       campus: [2, 6, 11, 17],
@@ -322,21 +1318,267 @@
     }
   })();
 
-  // Tiny helpers.
-  GTP.Content.radio.station = function (id) {
-    var s = GTP.Content.radio.stations;
+  // ------------------------------------------------------- song compiler --
+  // Expands every song into absolute 16-step arrays per bar (relative bass
+  // added to the chord root, key shifts applied, fills placed) and builds the
+  // station timeline. Problems go to RADIO.errors instead of throwing.
+  var cache = {};
+  function err(msg) { RADIO.errors.push(msg); }
+  function notes(str, where) {
+    var key = 'n' + str; if (cache[key]) return cache[key];
+    var tok = String(str).trim().split(/\s+/), out = [];
+    if (tok.length !== 16) err(where + ': ' + tok.length + ' note tokens, want 16');
+    for (var i = 0; i < 16; i++) {
+      var t = tok[i];
+      if (t == null || t === '.') { out.push(_); continue; }
+      var v = parseInt(t, 10);
+      if (!isFinite(v) || String(v) !== t) { err(where + ': bad token "' + t + '"'); out.push(_); } else out.push(v);
+    }
+    return (cache[key] = out);
+  }
+  function hits(str, where) {
+    var key = 'd' + str; if (cache[key]) return cache[key];
+    var s = String(str).replace(/\s+/g, ''), out = [];
+    if (s.length !== 16) err(where + ': ' + s.length + ' drum steps, want 16');
+    for (var i = 0; i < 16; i++) out.push(s.charAt(i) === 'x' ? 1 : 0);
+    return (cache[key] = out);
+  }
+  function pick(lane, bar) { return lane == null ? null : (typeof lane === 'string' ? lane : lane[bar % lane.length]); }
+  function shifted(arr, by) {
+    if (!by) return arr;
+    var out = new Array(16);
+    for (var i = 0; i < 16; i++) out[i] = arr[i] == null ? _ : arr[i] + by;
+    return out;
+  }
+  // 'TALK:a:b' is the talk station's eight-bar section: stinger a on bar 0,
+  // stinger b on bar 4, a quiet bed for engines without a talk mode.
+  function talkSection(spec) {
+    var p = spec.split(':'), a = p[1], b = p[2], L = [];
+    for (var i = 0; i < 8; i++) L.push(i === 0 ? a + ' . . . . . . . . . . . . . . .' : i === 4 ? b + ' . . . . . . . . . . . . . . .' : R0);
+    return { c: [0, 0, 0, 0, 5, 5, 4, 4], rb: true, b: '0 . . . . . . . . . . . . . . .', l: L, h: '........x.......' };
+  }
+
+  function compileStation(st, si) {
+    var bars = [], starts = [], songsOut = [];
+    var songs = st.songs || [];
+    for (var k = 0; k < songs.length; k++) {
+      var song = songs[k], where = st.id + '/' + song.id;
+      var secs = {}, name;
+      for (name in song.sections) {
+        var raw = song.sections[name];
+        if (typeof raw === 'string' && raw.indexOf('TALK') === 0) raw = talkSection(raw);
+        var c = raw.c || [0], n = c.length, S = { bars: n, chords: c.slice(), bass: [], lead: [], drums: { kick: [], snare: [], hat: [] }, relBass: !!raw.rb };
+        if (raw.sus != null) S.sustain = raw.sus;
+        if (raw.sw != null) S.swing = raw.sw;
+        if (raw.wave) S.wave = raw.wave;
+        for (var b = 0; b < n; b++) {
+          var w = where + '.' + name + '[' + b + ']';
+          var bs = pick(raw.b, b), ls = pick(raw.l, b);
+          var ba = bs ? notes(bs, w + '.bass') : notes(R0, w);
+          if (raw.rb) ba = shifted(ba, c[b]);
+          S.bass.push(ba);
+          S.lead.push(ls ? notes(ls, w + '.lead') : notes(R0, w));
+          S.drums.kick.push(hits(pick(raw.k, b) || D0, w + '.kick'));
+          S.drums.snare.push(hits(pick(raw.s, b) || D0, w + '.snare'));
+          S.drums.hat.push(hits(pick(raw.h, b) || D0, w + '.hat'));
+        }
+        secs[name] = S;
+      }
+      var fill = song.fill ? { kick: hits(song.fill.k || D0, where + '.fill'), snare: hits(song.fill.s || D0, where + '.fill'), hat: hits(song.fill.h || D0, where + '.fill') } : null;
+      var form = String(song.form).trim().split(/\s+/), start = bars.length;
+      starts.push(start);
+      for (var f = 0; f < form.length; f++) {
+        var m = /^([A-Za-z0-9_]+)(\^(-?\d+))?(!)?$/.exec(form[f]);
+        var sec = m && secs[m[1]];
+        if (!sec) { err(where + ': unknown form token "' + form[f] + '"'); continue; }
+        var by = m[3] ? parseInt(m[3], 10) : 0, fillIt = !!m[4];
+        if (fillIt && !fill) err(where + ': "' + form[f] + '" asks for a fill but the song has none');
+        for (var bb = 0; bb < sec.bars; bb++) {
+          var chord = sec.chords[bb] + by, last = bb === sec.bars - 1;
+          var drums = (fillIt && last && fill) ? fill : { kick: sec.drums.kick[bb], snare: sec.drums.snare[bb], hat: sec.drums.hat[bb] };
+          bars.push({
+            steps: 16,
+            bass: shifted(sec.bass[bb], by),
+            lead: shifted(sec.lead[bb], by),
+            chords: [chord, chord, chord, chord],
+            drums: drums,
+            swing: sec.swing != null ? sec.swing : (song.swing != null ? song.swing : st.swing || 0),
+            sustain: sec.sustain != null ? sec.sustain : (song.sustain != null ? song.sustain : (st.sustain == null ? 0.5 : st.sustain)),
+            wave: sec.wave || song.wave || st.wave,
+            song: k, section: m[1], shift: by, fill: fillIt && last, bar: bb
+          });
+        }
+      }
+      songsOut.push({ id: song.id, title: song.title, artist: song.artist, bars: bars.length - start, form: form, sections: secs });
+      if (st.talk && (bars.length - start) % 12 !== 0) err(where + ': a talk-station song must be a multiple of 12 bars, has ' + (bars.length - start));
+    }
+    st.songs = songsOut;
+    return { bars: bars, starts: starts };
+  }
+
+  // ----------------------------------------------------- live pattern view --
+  // `station.pattern` keeps the v0.2 schema; each lane is a getter for the bar
+  // now playing. The bar comes from the engine's own bar counter
+  // (GTP.Audio.radio.state().talkBar, which restarts at a retune); without it a
+  // wall-clock bar count stands in. A retune moves on to the next song.
+  var LIVE = {};
+  function songOf(T, pos) { var s = 0; for (var i = 0; i < T.starts.length; i++) if (T.starts[i] <= pos) s = i; return s; }
+  function engineBar(st) {
+    var A = GTP.Audio, rs = null;
+    try { rs = A && A.radio && typeof A.radio.state === 'function' ? A.radio.state() : null; } catch (e) { rs = null; }
+    if (rs && rs.id != null && rs.id !== st.id) return { off: true };
+    if (rs && typeof rs.talkBar === 'number' && isFinite(rs.talkBar)) return { bar: rs.talkBar };
+    return { bar: Math.floor(Date.now() / 1000 / (240 / (st.bpm || 120))), clock: true };
+  }
+  function current(st) {
+    var L = LIVE[st.id], T = L.T;
+    if (!T.bars.length) return null;
+    var e = engineBar(st);
+    if (e.off) return T.bars[L.pos];
+    var cb = e.bar;
+    if (cb !== L.last) {
+      if (cb < L.last && !e.clock) {   // the engine retuned: the next song (or the cued one) starts
+        var next = L.cued != null ? L.cued : (songOf(T, L.pos) + 1) % T.starts.length;
+        L.offset = T.starts[next];
+      }
+      L.cued = null;
+      L.last = cb;
+      L.pos = (((L.offset + Math.max(0, cb)) % T.bars.length) + T.bars.length) % T.bars.length;
+    }
+    return T.bars[L.pos];
+  }
+  function makeView(st, T) {
+    LIVE[st.id] = { T: T, last: -2, offset: 0, pos: 0, cued: null };
+    var view = { steps: 16, transposeBass: false, kit: st.kit || null };
+    if (st.talk) view.talk = true;
+    if (st.jingle) view.jingle = st.jingle;
+    ['bass', 'lead', 'chords', 'drums', 'swing', 'sustain', 'wave'].forEach(function (k) {
+      Object.defineProperty(view, k, { enumerable: true, configurable: true, get: function () { var b = current(st); return b ? b[k] : null; } });
+    });
+    return view;
+  }
+
+  for (var si = 0; si < STATIONS.length; si++) {
+    var st = STATIONS[si];
+    var T = compileStation(st, si);
+    Object.defineProperty(st, 'pattern', { value: makeView(st, T), enumerable: true, configurable: true, writable: true });
+    delete st.swing; delete st.sustain; delete st.wave; delete st.talk;
+    if (!st.jingle) delete st.jingle;
+  }
+
+  // WAIL 101's `dj`: the call-in segment for this game hour, framed by the
+  // GDD lines; `djAll` holds every line (credits, audits).
+  (function () {
+    var wail = station('wail_101');
+    if (!wail || wail.id !== 'wail_101') return;
+    var segLists = CALLIN.segments.map(function (seg, i) {
+      var base = wail.djBase, list = [CALLIN.show.toUpperCase() + ': ' + seg.title.toUpperCase() + '. ' + seg.intro];
+      for (var e = 0; e < seg.exchanges.length; e++) { list.push(seg.exchanges[e]); if (e === 1 || e === 3) list.push(base[(i * 2 + e) % base.length]); }
+      list.push(seg.outro);
+      return list;
+    });
+    var all = wail.djBase.slice();
+    CALLIN.segments.forEach(function (seg) { all.push(seg.intro); all = all.concat(seg.exchanges); all.push(seg.outro); });
+    wail.djAll = all;
+    Object.defineProperty(wail, 'dj', { enumerable: true, configurable: true, get: function () { return segLists[RADIO.segmentIndex()]; } });
+  })();
+
+  // ---------------------------------------------------------- helpers --
+  function station(id) {
+    var s = RADIO.stations;
     for (var i = 0; i < s.length; i++) if (s[i].id === id) return s[i];
     return s[0];
-  };
+  }
+  RADIO.station = station;
   // Bark pool for a ped: by role when the role has its own lines, else by
   // district, else the full civilian list.
-  GTP.Content.radio.barksFor = function (role, districtId) {
-    var B = GTP.Content.radio.barks;
+  RADIO.barksFor = function (role, districtId) {
+    var B = RADIO.barks;
     if (role === 'cop') return B.cop;
     if (role && B[role] && role !== 'ped' && B[role].length) return B[role];
     if (districtId && B.byDistrict[districtId]) return B.byDistrict[districtId];
     return B.ped;
   };
+  function hourKey() { var g = GTP.game, t = g && g.time; return t ? (t.day | 0) * 24 + Math.floor(t.clock || 0) : 0; }
+  // the call-in segment on air this game hour
+  RADIO.segmentIndex = function (hk) { var n = CALLIN.segments.length; hk = hk == null ? hourKey() : hk; return ((hk % n) + n) % n; };
+  RADIO.segment = function (hk) { return CALLIN.segments[RADIO.segmentIndex(hk)]; };
+  // the flat bar list of a station (every bar shaped like `pattern`), and its song starts
+  RADIO.timeline = function (id) { var L = LIVE[(station(id) || {}).id]; return L ? L.T.bars : []; };
+  RADIO.songStarts = function (id) { var L = LIVE[(station(id) || {}).id]; return L ? L.T.starts.slice() : []; };
+  // what a station is playing (or would play): song, artist, section, bar
+  RADIO.nowPlaying = function (id) {
+    var st = station(id), L = st && LIVE[st.id]; if (!L || !L.T.bars.length) return null;
+    var b = L.T.bars[L.pos], s = st.songs[b.song];
+    return { station: st.id, song: s.id, title: s.title, artist: s.artist, section: b.section, shift: b.shift, bar: L.pos - L.T.starts[b.song], bars: s.bars, pos: L.pos };
+  };
+  // start song k now (or at the next retune when the station is off air)
+  RADIO.cue = function (id, k) {
+    var st = station(id), L = st && LIVE[st.id]; if (!L) return false;
+    k = ((k | 0) % L.T.starts.length + L.T.starts.length) % L.T.starts.length;
+    L.cued = k; L.offset = L.T.starts[k] - Math.max(0, L.last); L.pos = L.T.starts[k];
+    return true;
+  };
+
+  // Story progress for the news: flags and completed missions.
+  function progress() {
+    var M = GTP.Missions && GTP.Missions.state, flags = (M && M.flags) || {}, done = M && M.completed;
+    return { flags: flags, done: function (id) { return !!done && (typeof done.has === 'function' ? done.has(id) : (Array.isArray(done) ? done.indexOf(id) >= 0 : !!done[id])); } };
+  }
+  function reached(key, p) { return key.indexOf('mission:') === 0 ? p.done(key.slice(8)) : !!p.flags[key]; }
+  function linesFor(key) { return key.indexOf('mission:') === 0 ? NEWS.byMission[key.slice(8)] : NEWS.byFlag[key]; }
+  // The top-of-the-hour bulletin: two headlines from the latest story beat the
+  // player has reached, one from an earlier beat (or the start pool, then the
+  // general ticker). `prog` may be {flags:{...}, completed:[ids]} for tests.
+  RADIO.bulletin = function (stationId, hk, prog) {
+    hk = hk == null ? hourKey() : hk;
+    var p = prog ? { flags: prog.flags || {}, done: function (id) { return (prog.completed || []).indexOf(id) >= 0; } } : progress();
+    var got = [];
+    for (var i = 0; i < NEWS.order.length; i++) if (reached(NEWS.order[i], p) && linesFor(NEWS.order[i])) got.push(NEWS.order[i]);
+    var latest = got.length ? got[got.length - 1] : null;
+    var lead = latest ? linesFor(latest) : NEWS.start, n = Math.abs(hk | 0), heads = [];
+    heads.push(lead[n % lead.length]);
+    if (lead.length > 1) heads.push(lead[(n + 1) % lead.length]);
+    var older = got.length > 1 ? linesFor(got[n % (got.length - 1)]) : (latest ? NEWS.start : RADIO.ticker);
+    var third = older[(n * 7 + 3) % older.length];
+    if (heads.indexOf(third) < 0) heads.push(third);
+    var intro = NEWS.intros[stationId] || NEWS.intros.wail_101;
+    return { station: stationId || null, hour: hk, stage: latest, headlines: heads, intro: intro, text: intro + ' ' + heads.join(' · ') };
+  };
+
+  // ------------------------------------------------------- news runner --
+  // Shows the bulletin on the ticker when a game hour turns over while the
+  // player listens in a vehicle, and emits 'radio:news'. It rides on
+  // GTP.Audio.update (wrapped here, listed in docs/v03/radio.md) and stands
+  // down when the UI sets GTP.UI.radioNews = true.
+  var newsState = { lastHour: null, shown: 0 };
+  RADIO._newsState = newsState;
+  function newsTick() {
+    var g = GTP.game; if (!g || !g.time || g.state !== 'playing') return;
+    var hk = hourKey();
+    if (newsState.lastHour == null) { newsState.lastHour = hk; return; }
+    if (hk === newsState.lastHour) return;
+    newsState.lastHour = hk;
+    if (((g.time.clock || 0) % 1) * 60 > 6) return;   // a jump (load, setClock), not the top of the hour
+    if (GTP.UI && GTP.UI.radioNews) return;
+    var p = g.player, A = GTP.Audio;
+    if (!p || !p.inVehicle || !A || !A.radio || (A.radio.isPlaying && !A.radio.isPlaying())) return;
+    var cur = A.radio.current ? A.radio.current() : null;
+    var b = RADIO.bulletin(cur && cur.id, hk);
+    newsState.shown++;
+    if (GTP.UI && typeof GTP.UI.ticker === 'function') GTP.UI.ticker(b.text);
+    if (GTP.Events && GTP.Events.emit) GTP.Events.emit('radio:news', b);
+  }
+  RADIO._newsTick = newsTick;
+  if (GTP.Audio && typeof GTP.Audio.update === 'function' && !GTP.Audio._radioNewsWrapped) {
+    var audioUpdate = GTP.Audio.update;
+    GTP.Audio.update = function () {
+      var r = audioUpdate.apply(this, arguments);
+      try { newsTick(); } catch (e) { if (GTP.util && GTP.util.reportError) GTP.util.reportError(e, 'radio.news'); }
+      return r;
+    };
+    GTP.Audio._radioNewsWrapped = true;
+  }
 
   // ---------------------------------------------------------- streets --
   // GDD section 9. 20_content_world.js owns the grid; if it already named the
