@@ -89,9 +89,10 @@ H.run('systems', async (t) => {
     const St = GTP.Systems.stocks, p = GTP.game.player, out = {};
     GTP.game.debug.setMoney(10000);
     const q0 = St.quote('NAPD'); const m0 = p.money;
-    const b = St.buy('NAPD', 10); out.buy = b.ok; out.cost = +(m0 - p.money).toFixed(2); out.expect = +(q0.price * 10 + 10).toFixed(2);
+    const b = St.buy('NAPD', 10); out.buy = b.ok; out.cost = +(m0 - p.money).toFixed(2); out.expect = Math.ceil(q0.price * 10 + 10);
     out.qty = St.quote('NAPD').qty;
-    out.bad = [St.buy('NOPE', 1).reason, St.buy('NAPD', 0).reason, St.sell('VLVT', 1).reason, St.buy('VLTW', 100000).reason];
+    out.bad = [St.buy('NOPE', 1).reason, St.buy('NAPD', 0).reason, St.sell('VLVT', 1).reason, St.buy('VLTW', 100000).reason, St.sell('NAPD', 'all').reason];
+    out.moneyOk = Number.isFinite(p.money);
     const h0 = St.history('PNDT').length, px0 = St.price('PNDT');
     for (let k = 0; k < 3; k++) { GTP.game.debug.setClock(Math.floor(GTP.game.time.clock) + 0.99); GTP.game.advance(1.5); }   // three hour boundaries crossed
     out.histGrew = St.history('PNDT').length - h0; out.moved = St.price('PNDT') !== px0;
@@ -108,8 +109,8 @@ H.run('systems', async (t) => {
     return out;
   });
   console.log('  stocks: ' + JSON.stringify(r));
-  t.assert(r.buy && Math.abs(r.cost - r.expect) < 0.02 && r.qty === 10, 'buy charges price x qty + the fee');
-  t.assert(r.bad.join() === 'unknown,qty,none,money', 'trade refusals: ' + r.bad);
+  t.assert(r.buy && r.cost === r.expect && Number.isInteger(r.cost) && r.qty === 10, 'buy charges price x qty + the fee');
+  t.assert(r.bad.join() === 'unknown,qty,none,money,qty' && r.moneyOk, 'trade refusals: ' + r.bad);
   t.assert(r.histGrew >= 2 && r.moved && r.allPositive, 'the market walks on the game clock');
   t.assert(Math.abs(r.pllt + 0.35) < 0.01 && r.once && r.news >= 1, 'm10_pellets sinks PLLT 35% once');
   t.assert(r.sell && r.gain === r.realized && r.trades === 2 && r.pf === 0 && r.ach, 'sell realizes the gain');
@@ -129,6 +130,10 @@ H.run('systems', async (t) => {
     G.selectClub(st.club);
     // aim with the keys
     const a0 = G.state().aim; GTP.Input.set('left', true); GTP.game.advance(0.3); GTP.Input.set('left', false); out.aimMoved = +GTP.util.wrapAngle(G.state().aim - a0).toFixed(2);
+    // Enter is both `enter` and `confirm`: it swings, it never quits
+    GTP.Input.set('enter', true); GTP.Input.set('confirm', true); GTP.game.advance(1 / 60); GTP.Input.set('enter', false); GTP.Input.set('confirm', false); GTP.game.advance(1 / 60);
+    out.enterKeeps = G.active && G.state().phase === 'swing';
+    G.state(); GTP.Systems.debug.golfRun().phase = 'aim';
     G.aimAtPin();
     // the two-press swing on Space: start, wait for the meter, lock
     T_.press('jump'); out.phase1 = G.state().phase;
@@ -140,7 +145,7 @@ H.run('systems', async (t) => {
   });
   console.log('  golf start: ' + JSON.stringify(r));
   t.assert(r.startS > 0 && r.hole === 0 && r.par === 3, 'the tee marker starts the round');
-  t.assert(r.frozen && r.aimMoved > 0.2, 'golf freezes walking and the arrows aim');
+  t.assert(r.frozen && r.aimMoved > 0.2 && r.enterKeeps, 'golf freezes walking and the arrows aim');
   t.assert(r.phase1 === 'swing' && r.shot && r.shot.power > 0.4 && r.phase2 === 'flight', 'two presses swing: ' + JSON.stringify(r.shot));
   t.assert(r.restS > 0 && r.after.strokes === 1 && r.after.dist < r.after.len, 'the ball flies toward the pin and rests');
   await t.shot(page, 'systems_golf');
@@ -269,7 +274,7 @@ H.run('systems', async (t) => {
     GTP.game.debug.setMoney(5000);
     const mesh0 = p.mesh;
     out.buy = Wr.buy('top_blazer_pink').ok; out.money = 5000 - p.money;
-    out.shirt = p.look.shirt; out.outfit = p.look.outfit && p.look.outfit.top; out.rebuilt = p.mesh !== mesh0 && !!p.mesh;
+    out.shirt = p.look.shirt; out.outfit = p.look.outfit && p.look.outfit.top; out.rebuilt = p.mesh !== mesh0 && !!p.mesh; GTP.game.advance(0.1); out.parts = !p._parts || (p._parts.torso ? p.mesh.getObjectById(p._parts.torso.id) != null : true);
     out.hat = Wr.buy('hat_cap').ok && p.look.hat;
     out.reequip = Wr.buy('top_blazer_pink').price;   // owned: free
     out.locked = Wr.buy('top_gold_suit').reason;
@@ -279,7 +284,7 @@ H.run('systems', async (t) => {
     return out;
   });
   console.log('  wardrobe: ' + JSON.stringify(r));
-  t.assert(r.poor === 'money' && r.buy && r.money === 420 && r.shirt === '#ff3fa4' && r.outfit === 'top_blazer_pink' && r.rebuilt, 'clothing buy applies the look and rebuilds the mesh');
+  t.assert(r.poor === 'money' && r.buy && r.money === 420 && r.shirt === '#ff3fa4' && r.outfit === 'top_blazer_pink' && r.rebuilt && r.parts, 'clothing buy applies the look and rebuilds the mesh');
   t.assert(r.hat === 'cap' && r.reequip === 0 && r.locked === 'locked' && r.items >= 5, 'hats, re-equip free, locked items');
   t.assert(r.hair === 'mohawk' && r.hairColor === '#ff3fa4' && r.hairPrice === 150 && r.evs[0] === 2 && r.evs[1] === 1, 'barber');
   await t.shot(page, 'systems_wardrobe');
@@ -296,13 +301,17 @@ H.run('systems', async (t) => {
     GTP.game.advance(0.2);
     const after = JSON.stringify({ o: S.state.properties.owned, a: Object.keys(S.state.achievements.unlocked).sort(), w: S.state.wardrobe.equipped, c: S.state.cheats.found, g: S.state.golf.rounds, j: S.state.jobs.best });
     const p = GTP.game.player;
+    // the perk applied twice (v4 registry + v3 hook) never stacks; the systems rng survives the load
+    const jb = GTP.SaveRegistry.sys_jobs.get(); jb.done = { damage_control: true };
+    GTP.SaveRegistry.sys_jobs.set(jb); GTP.SaveRegistry.sys_jobs.set(jb); const hp2 = p.maxHp;
+    const st = GTP.SaveRegistry.sys_stats.get(), r1 = GTP.Systems.debug.rng().random(); GTP.SaveRegistry.sys_stats.set(st); const r2 = GTP.Systems.debug.rng().random();
     // SaveRegistry set: restore the earlier stocks snapshot
     GTP.SaveRegistry.sys_stocks.set(reg);
-    return { ok, wiped, loaded, same: before === after, yell: (S.state.stocks.holdings.YELL || {}).qty, hair: p.look.hair, shirt: p.look.shirt, regYell: (S.state.stocks.holdings.YELL || { qty: 0 }).qty };
+    return { ok, wiped, loaded, same: before === after, yell: (S.state.stocks.holdings.YELL || {}).qty, hair: p.look.hair, shirt: p.look.shirt, regYell: (S.state.stocks.holdings.YELL || { qty: 0 }).qty, hp2, rngSame: r1 === r2 };
   });
   console.log('  saves: ' + JSON.stringify(r));
   t.assert(r.ok && r.wiped && r.loaded && r.same, 'save / new game / load round trip');
-  t.assert(r.hair === 'mohawk' && r.shirt === '#ff3fa4' && r.regYell === 0, 'look restored; SaveRegistry set works');
+  t.assert(r.hair === 'mohawk' && r.shirt === '#ff3fa4' && r.regYell === 0 && r.hp2 === 125 && r.rngSame, 'look restored; SaveRegistry set works; perk never stacks; rng restored: ' + JSON.stringify(r));
 
   // ---- 10. stats page, errors ----
   r = await page.evaluate(() => {

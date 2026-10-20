@@ -121,7 +121,7 @@
     { id: 'safe_suburb', name: 'Culdesac Split-Level', kind: 'safehouse', landmark: 'safe_suburb', near: 'culdesac_gas', price: 19000, income: 0, garage: 3, unlock: { mission: 'm05_peer' },
       flavor: 'Comes with an HOA binder thicker than the mortgage.' },
     { id: 'safe_penthouse', name: 'Goldplate Tower Penthouse 10', kind: 'safehouse', landmark: 'safe_penthouse', near: 'goldplate_tower', price: 90000, income: 0, garage: 4, unlock: { mission: 'm12_memo' },
-      flavor: 'Floor 10 of 10. Every floor is floor 10.' },
+      flavor: 'Top floor. The elevator plays a sponsor read on the way up.' },
     { id: 'biz_fish_shack', name: 'Fresh Takes Fish Shack', kind: 'business', landmark: 'fish_shack', offset: { x: 5, z: 0 }, price: 9000, income: 320,
       flavor: 'The catch of the day is whatever the chat is mad about.' },
     { id: 'biz_octane', name: 'Octane Opinions Gas', kind: 'business', landmark: 'strip_gas', offset: { x: 5, z: 0 }, price: 16000, income: 520,
@@ -166,7 +166,7 @@
     { id: 'g1', name: 'The Ribbon Cutting', par: 3, tee: { u: 0.4, v: 0.03 }, pin: { u: 0.45, v: 0.4 }, wind: 2, hazards: [{ kind: 'sand', u: 0.62, v: 0.36, r: 4 }] },
     { id: 'g2', name: 'Renamed Twice', par: 3, tee: { u: 0.75, v: 0.42 }, pin: { u: 0.15, v: 0.1 }, wind: 3, hazards: [{ kind: 'water', u: 0.45, v: 0.25, r: 5 }] },
     { id: 'g3', name: 'The Hedge', par: 4, tee: { u: 0.05, v: 0.42 }, pin: { u: 0.72, v: 0.1 }, wind: 4, hazards: [{ kind: 'sand', u: 0.45, v: 0.22, r: 5 }, { kind: 'sand', u: 0.6, v: 0.13, r: 3 }] },
-    { id: 'g4', name: 'Executive Time', par: 3, tee: { u: 0.7, v: 0.05 }, pin: { u: 0.3, v: 0.2 }, wind: 1, hazards: [] },
+    { id: 'g4', name: 'The Long Lunch', par: 3, tee: { u: 0.7, v: 0.05 }, pin: { u: 0.3, v: 0.2 }, wind: 1, hazards: [] },
     { id: 'g5', name: 'Ten Out of Ten', par: 3, tee: { u: 0.4, v: 0.57 }, pin: { u: 0.5, v: 0.9 }, wind: 3, hazards: [{ kind: 'water', u: 0.42, v: 0.78, r: 5 }] },
     { id: 'g6', name: 'The Gilded Bunker', par: 3, tee: { u: 0.8, v: 0.95 }, pin: { u: 0.1, v: 0.62 }, wind: 2, hazards: [{ kind: 'sand', u: 0.22, v: 0.66, r: 4 }, { kind: 'sand', u: 0.05, v: 0.7, r: 3 }] },
     { id: 'g7', name: 'Dogleg of Due Diligence', par: 4, tee: { u: 0.05, v: 0.58 }, pin: { u: 0.72, v: 0.9 }, wind: 4, hazards: [{ kind: 'water', u: 0.45, v: 0.78, r: 6 }, { kind: 'sand', u: 0.6, v: 0.88, r: 3 }] },
@@ -411,7 +411,7 @@
     emit('property:open', payload);
     if (payload.handled) return;
     if (own && d.kind === 'safehouse') { var r = props.save(id); if (!r.ok) toast(d.name + ': ' + (r.reason === 'wanted' ? 'lose the heat before you save.' : r.reason === 'mission' ? 'finish the mission first.' : 'could not save.')); }
-    else if (!own) toast(d.name + ': for sale, ' + money(d.price) + (payload.locked ? ' (not yet available)' : ' (Systems.properties.buy)'));
+    else if (!own) toast(d.name + ': for sale, ' + money(d.price) + (payload.locked ? ' (not yet available)' : ', buy it from the phone'));
     else toast(d.name + ': yours. ' + money(d.income) + ' a day.');
   }
 
@@ -441,11 +441,11 @@
       if (!d) return { ok: false, reason: 'unknown' };
       if (qty <= 0) return { ok: false, reason: 'qty' };
       if (!p) return { ok: false, reason: 'noplayer' };
-      var px = stocks.price(t), cost = Math.round((px * qty + stocks.fee()) * 100) / 100;
+      var px = stocks.price(t), cost = Math.ceil(px * qty + stocks.fee());   // whole dollars: saves keep money as an integer
       if (p.money < cost) return { ok: false, reason: 'money', need: cost - p.money };
       p.money -= cost;
       var h = S.stocks.holdings[t] || (S.stocks.holdings[t] = { qty: 0, cost: 0 });
-      h.qty += qty; h.cost += px * qty;
+      h.qty += qty; h.cost += cost;   // the basis includes the buy fee
       S.stocks.trades++;
       emit('stocks:trade', { ticker: t, side: 'buy', qty: qty, price: px, total: cost });
       sfx('cash', 0.5);
@@ -456,12 +456,11 @@
       var d = stocks.def(t), p = player(), h = S.stocks.holdings[t];
       if (!d) return { ok: false, reason: 'unknown' };
       if (!h || h.qty <= 0) return { ok: false, reason: 'none' };
-      qty = qty == null ? h.qty : Math.floor(qty);
-      if (qty <= 0) return { ok: false, reason: 'qty' };
-      if (qty > h.qty) return { ok: false, reason: 'qty' };
-      var px = stocks.price(t), basis = h.cost * (qty / h.qty), gross = px * qty, net = Math.max(0, gross - stocks.fee());
+      qty = qty == null ? h.qty : Math.floor(+qty);
+      if (!(qty > 0) || qty > h.qty) return { ok: false, reason: 'qty' };
+      var px = stocks.price(t), basis = h.cost * (qty / h.qty), gross = px * qty, net = Math.max(0, Math.floor(gross - stocks.fee()));
       h.qty -= qty; h.cost -= basis; if (h.qty <= 0) { h.qty = 0; h.cost = 0; }
-      if (p) p.money += Math.round(net);
+      if (p) p.money += net;
       var gain = net - basis;
       S.stocks.realized += gain; S.stocks.trades++;
       if (gain > 0) S.stats.systemsEarned += gain;
@@ -758,6 +757,7 @@
       S.golf.lastCard = { card: r.card.filter(Boolean), strokes: strokes, par: par, full: full };
       golfRun = null;
       golf._dropMeshes();
+      disarmNear();
       var p2 = player(); if (p2) { p2.intent = p2.intent || {}; p2.intent.x = 0; p2.intent.z = 0; }
       emit('golf:end', { strokes: strokes, par: par, toPar: strokes - par, holes: played.length, full: full, reason: reason || 'quit', card: S.golf.lastCard.card });
       checkAchievements();
@@ -769,6 +769,7 @@
       var r = golfRun; if (!r) return null;
       var n = Math.round((maxSeconds || 30) * 60);
       for (var i = 0; i < n && golfRun && golfRun.phase === 'flight'; i++) golf._stepBall(1 / 60);
+      if (golfRun) golf._syncMeshes();
       return golf.state();
     },
     update: function (dt) {
@@ -783,8 +784,8 @@
           if (In.pressed('forward')) golf.selectClub(-1);
           if (In.pressed('back') && !In.pressed('cancel')) golf.selectClub(1);
         }
+        if (In.pressed('enter') && !In.pressed('confirm')) { golf.quit(); return; }
         if (In.pressed('jump') || In.pressed('shoot') || In.pressed('confirm')) golf.press();
-        if (In.pressed('enter')) { golf.quit(); return; }
       }
       if (r.phase === 'swing') {
         // the meter climbs to full and falls back over meterPeriod; a late second press is a weak shot
@@ -841,7 +842,7 @@
         ball: { x: b.x, y: b.y, z: b.z, lie: b.lie }, pin: { x: h.pin.x, z: h.pin.z }, tee: { x: h.tee.x, z: h.tee.z }, hazards: h.hazards,
         aim: r.aim, club: cl[r.club].id, clubName: cl[r.club].name, clubCarry: cl[r.club].carry, clubs: cl.map(function (c) { return c.id; }),
         meter: r.meter, power: r.power, wind: { speed: r.wind.speed, dir: r.wind.dir }, distToPin: dist(b.x, b.z, h.pin.x, h.pin.z),
-        card: r.card.slice(), total: total, totalPar: par, message: r.message, last: r.last, course: golf.course().name };
+        card: r.card.filter(Boolean), total: total, totalPar: par, message: r.message, last: r.last, course: golf.course().name };
     }
   };
 
@@ -1021,7 +1022,7 @@
     else if (effect === 'moonjump') { /* tickCheats boosts each jump while on */ }
     else if (effect === 'weather') {
       var Wt = GTP.Render && GTP.Render.weather, order = ['clear', 'overcast', 'rain'];
-      var cur = Wt && (Wt.state || Wt.current), nx = order[(order.indexOf(cur) + 1) % order.length] || 'rain';
+      var cur = Wt && (Wt.target || Wt.state || Wt.current), nx = order[(order.indexOf(cur) + 1) % order.length] || 'rain';
       if (g && g.debug && g.debug.setWeather) g.debug.setWeather(nx, false);
     } else if (effect === 'slowmo') { if (g) g.timeScale = on ? 0.5 : 1; }
   }
@@ -1030,11 +1031,14 @@
     var s = effectOn('bigheads') ? 2.1 : 1;
     for (var i = 0; i < E.list.length; i++) {
       var e = E.list[i]; if ((e.kind !== 'ped' && e.kind !== 'player') || !e.mesh || !e.mesh.getObjectByName) continue;
-      var h = e.mesh.getObjectByName('head'); if (h && h.scale.x !== s) h.scale.set(s, s, s);
+      if (e.mesh._sysHead === s) continue;
+      var h = e.mesh.getObjectByName('head'); if (h) h.scale.set(s, s, s);
+      e.mesh._sysHead = s;
     }
   }
   var jumpWas = false, bigWas = false;
-  function effectOn(eff) { var L = cheats.defs(); for (var i = 0; i < L.length; i++) if (L[i].effect === eff && S.cheats.on[L[i].id]) return true; return false; }
+  var cheatDefsCache = null, cheatDefsT = -1;
+  function effectOn(eff) { var g = game(), st = g ? g.steps : 0; if (!cheatDefsCache || cheatDefsT !== st) { cheatDefsCache = cheats.defs(); cheatDefsT = st; } var L = cheatDefsCache; for (var i = 0; i < L.length; i++) if (L[i].effect === eff && S.cheats.on[L[i].id]) return true; return false; }
   function tickCheats() {
     var p = player(); if (!p) return;
     var any = bigWas; for (var k in S.cheats.on) { any = true; break; }
@@ -1059,7 +1063,7 @@
   if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('keydown', onKey, { passive: true });
 
   // ================================================================= jobs ==
-  var job = null;          // the running job strand (not saved: saving is blocked while one runs)
+  var job = null;          // the running job strand (not saved: a load or new game drops it)
   var jobs = {
     defs: function () { return table('jobs', FB.jobs).map(function (d) { var fb = d.id === 'hot_take_brigade' || d.kind === 'douse' ? FB.jobs[1] : FB.jobs[0]; return Object.assign({}, fb, d, { lines: Object.assign({}, fb.lines, d.lines || {}), perk: d.perk || fb.perk }); }); },
     def: function (id) { var L = jobs.defs(); for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; },
@@ -1079,7 +1083,7 @@
       var why = opts && opts.force ? null : jobs.canStart(id);
       if (why) return { ok: false, reason: why };
       var d = jobs.def(id);
-      job = { id: id, def: d, level: Math.max(1, (opts && opts.level) | 0 || 1), phase: 'between', t: 2, timer: 0, calls: [], aboard: 0, earned: 0, offT: 0, holdT: 0, message: d.lines.start };
+      job = { id: id, def: d, level: clamp((opts && opts.level) | 0 || 1, 1, d.levels || 12), phase: 'between', t: 2, timer: 0, calls: [], aboard: 0, earned: 0, offT: 0, holdT: 0, message: d.lines.start };
       S.jobs.runs++;
       emit('job:start', { id: id, name: d.name, level: job.level });
       toast(d.lines.start);
@@ -1117,7 +1121,7 @@
       if (Wd.solidAt && Wd.solidAt(x, z, y + 0.5)) continue;
       return { x: x, z: z, y: y };
     }
-    var rp = Wd.randomRoadPoint ? Wd.randomRoadPoint() : null;
+    var a2 = rrange(-Math.PI, Math.PI), rp = Wd.nearestRoadPoint ? Wd.nearestRoadPoint(p.x + Math.cos(a2) * minR, p.z + Math.sin(a2) * minR) : null;   // never the world's own rng
     return rp ? { x: rp.x, z: rp.z, y: rp.y || 0 } : { x: p.x + 60, z: p.z, y: 0 };
   }
   function deliverPoint() { return job ? landmarkPoint({ landmark: job.def.deliver || job.def.start }) : null; }
@@ -1185,6 +1189,7 @@
     if (!job) return;
     var j = job; job = null;
     j.calls.forEach(dropCall);
+    disarmNear();
     var lines = j.def.lines;
     var text = reason === 'timeout' ? lines.timeout : reason === 'lost' ? lines.lost : reason === 'vehicle' ? lines.vehicle : null;
     if (text) toast(text);
@@ -1254,12 +1259,11 @@
     if (job.calls.every(function (cc) { return cc.state === 'done'; })) return levelComplete();
     if (d.kind === 'rescue' && job.timer <= 0) return endJob('timeout');
   }
-  var perkBase = null;
   function applyPerks() {
     var p = player(); if (!p) return;
-    if (perkBase == null || perkBase.p !== p) perkBase = { p: p, maxHp: p.maxHp };
+    if (p._sysBaseMaxHp == null) p._sysBaseMaxHp = p.maxHp;   // the unboosted max lives on the player, so re-applying never stacks
     var dc = jobs.def('damage_control'), mul = S.jobs.done.damage_control && dc && dc.perk && dc.perk.maxHp ? dc.perk.maxHp : 1;
-    var want = Math.round(perkBase.maxHp * mul);
+    var want = Math.round(p._sysBaseMaxHp * mul);
     if (p.maxHp !== want) { var full = p.hp >= p.maxHp; p.maxHp = want; if (full || p.hp > want) p.hp = want; }
   }
 
@@ -1360,6 +1364,7 @@
     try {
       if (Rd.rebuildEntityMesh) Rd.rebuildEntityMesh(e);
       else if (e.mesh && Rd.detach && Rd.attach) { Rd.detach(e); e.mesh = null; Rd.attach(e); }
+      e._parts = null;   // Ped.syncMesh caches the pivots of the old mesh (12_cutscenes does the same)
     } catch (err) { report(err, 'systems.rebuildMesh'); }
   }
 
@@ -1390,6 +1395,7 @@
     marks.forEach(function (m) { m.armed = !p || dist(p.x, p.z, m.x, m.z) > m.r + 1; m.holdT = 0; m.mesh = null; });
   }
   function groundY(x, z) { var Wd = W(); try { var y = Wd && Wd.heightAt ? Wd.heightAt(x, z, 0) : 0; return y > -1 ? y : 0; } catch (e) { return 0; } }
+  function disarmNear() { var p = player(); if (!p) return; marks.forEach(function (m) { if (dist(p.x, p.z, m.x, m.z) <= m.r + 1.5) { m.armed = false; m.holdT = 0; } }); }
   function busy() { return inMission() || inStrand() || !!golfRun || !!job || inInterior(); }
   function tickMarkers(dt) {
     if (markersDirty) rebuildMarks();
@@ -1397,10 +1403,10 @@
     var g = game(), cut = g && g.state === 'cutscene', hide = cut || inMission() || !!golfRun || !!job;
     for (var i = 0; i < marks.length; i++) {
       var m = marks[i], d = dist(p.x, p.z, m.x, m.z);
-      var want = !hide && d < MARKER_DRAW;
+      var want = !hide && (m.mesh ? d < MARKER_DRAW + 12 : d < MARKER_DRAW);
       if (want && !m.mesh) m.mesh = markerAt(m.x, m.y, m.z, m.color);
       else if (!want && m.mesh) { unmarker(m.mesh); m.mesh = null; }
-      if (m.mesh && m.mesh.userData && typeof m.mesh.userData.pulse === 'function') { try { m.mesh.userData.pulse((g ? g.time.t : 0) * 2 + i); } catch (e) { /* optional */ } }
+      if (m.mesh && m.mesh.userData && typeof m.mesh.userData.pulse === 'function') { try { m.mesh.userData.pulse(0.5 + 0.5 * Math.sin((g ? g.time.t : 0) * 2.2 + i)); } catch (e) { /* optional */ } }
       if (d > m.r + 1.5) { m.armed = true; m.holdT = 0; continue; }
       if (!m.armed || d > m.r || !playing() || busy()) { m.holdT = 0; continue; }
       if (m.foot && p.inVehicle) continue;
@@ -1464,7 +1470,7 @@
     marks.forEach(function (m) { unmarker(m.mesh); }); marks = [];
     S = blank();
     R = GTP.rng && GTP.rng.fork ? GTP.rng.fork(0x5157) : GTP.rng;
-    perkBase = null; cheatBuf = ''; jumpWas = false; achT = 0;
+    cheatBuf = ''; jumpWas = false; achT = 0;
     props.defs().forEach(function (d) { if (d.start || (d.price | 0) === 0) S.properties.owned[d.id] = { day: 1, price: 0 }; });
     stocks.ensure();
     S.stocks.lastHour = absHour();
@@ -1480,6 +1486,7 @@
   // ================================================================ saves ==
   Systems.serialize = function () {
     var out = copy(S);
+    if (R && R.state) out.rng = R.state();
     return out;
   };
   Systems.deserialize = function (data) {
@@ -1487,6 +1494,7 @@
     var base = blank();
     for (var k in base) if (data[k] && typeof data[k] === 'object') base[k] = Object.assign(base[k], copy(data[k]));
     S = base;
+    if (data.rng != null && R && R.setState) R.setState(data.rng);
     if (golfRun) { golfRun = null; golf._dropMeshes(); }
     if (job) { var j = job; job = null; j.calls.forEach(dropCall); }
     stocks.ensure();
@@ -1494,7 +1502,7 @@
     var g = game(); S.properties.lastDay = g && g.time ? g.time.day : S.properties.lastDay;
     // toggles that are runtime-only are restored from the saved set
     var g2 = game(); if (g2) g2.timeScale = effectOn('slowmo') ? 0.5 : 1;
-    perkBase = null; applyPerks();
+    applyPerks();
     if (Object.keys(S.wardrobe.equipped).length || S.wardrobe.hair || S.wardrobe.hairColor) applyLook();
     markersDirty = true;
     emit('systems:loaded', {});
@@ -1505,13 +1513,14 @@
   GTP.SaveRegistry = GTP.SaveRegistry || {};
   REG_KEYS.forEach(function (k) {
     GTP.SaveRegistry['sys_' + k] = {
-      get: function () { return copy(S[k]); },
+      get: function () { var o = copy(S[k]); if (k === 'stats' && R && R.state) o.rng = R.state(); return o; },
       set: function (json) {
         if (!json || typeof json !== 'object') return;
         S[k] = Object.assign(blank()[k], copy(json));
+        if (k === 'stats' && json.rng != null && R && R.setState) { R.setState(json.rng); delete S.stats.rng; }
         if (k === 'stocks') { stocks.ensure(); S.stocks.lastHour = absHour(); }
         if (k === 'properties') { var g = game(); S.properties.lastDay = g && g.time ? g.time.day : S.properties.lastDay; markersDirty = true; }
-        if (k === 'jobs') { perkBase = null; applyPerks(); }
+        if (k === 'jobs') applyPerks();
         if (k === 'wardrobe' && (Object.keys(S.wardrobe.equipped).length || S.wardrobe.hair || S.wardrobe.hairColor)) applyLook();
         if (k === 'cheats') { var g2 = game(); if (g2) g2.timeScale = effectOn('slowmo') ? 0.5 : 1; }
       }
@@ -1526,7 +1535,7 @@
   // =============================================================== events ==
   if (GTP.Events && GTP.Events.on) {
     GTP.Events.on('mission:complete', function (e) {
-      try { if (e && !e.replay) stocks.react(e.id || (e.mission && e.mission.id)); checkAchievements(); } catch (err) { report(err, 'systems.missionComplete'); }
+      try { markersDirty = true; if (e && !e.replay) stocks.react(e.id || (e.mission && e.mission.id)); checkAchievements(); } catch (err) { report(err, 'systems.missionComplete'); }
     });
     GTP.Events.on('mission:start', function () { if (job) endJob('mission'); if (golfRun) golf.end('interrupted'); });
     GTP.Events.on('strand:start', function () { if (job) endJob('busy'); if (golfRun) golf.end('interrupted'); });

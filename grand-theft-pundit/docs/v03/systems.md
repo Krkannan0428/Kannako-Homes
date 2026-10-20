@@ -11,7 +11,7 @@ screenshots: `tests/out/systems_golf.png`, `tests/out/systems_wardrobe.png`). `n
 | Part | What it does |
 |---|---|
 | Properties | 5 safehouses (`safe_dorm` owned from the start, `safe_brownstone`, `safe_marina_loft`, `safe_suburb`, `safe_penthouse`) and 6 businesses. Buy with cash, some gated by a mission. Businesses pay income once per game day (`time.day` increments; up to 7 days are caught up at once). Owned safehouses are save points (`save`) and beds (`sleep`: +6 game hours, full health, then save). |
-| Stocks | 8 invented tickers (NAPD, VLTW, GLDP, VLVT, PLLT, PNDT, YELL, BSCO). Each game hour every price takes one log-normal random-walk step (`vol`, `drift`, a soft pull toward the listing price), driven by the systems' own `GTP.rng.fork(0x5157)` stream. `mission:complete` (not a replay, first time only) applies the shock from the reactions table (for example `m10_pellets`: PLLT -35%). Buy and sell whole shares with a flat $10 fee, average cost basis, realized profit, 96 hours of history. |
+| Stocks | 8 invented tickers (NAPD, VLTW, GLDP, VLVT, PLLT, PNDT, YELL, BSCO). Each game hour every price takes one log-normal random-walk step (`vol`, `drift`, a soft pull toward the listing price), driven by the systems' own `GTP.rng.fork(0x5157)` stream. `mission:complete` (not a replay, first time only) applies the shock from the reactions table (for example `m10_pellets`: PLLT -35%). Buy and sell whole shares with a flat $10 fee. Money moves in whole dollars (buys round up, sells round down) because saves store cash as an integer. The cost basis includes the buy fee, and realized profit is net of both fees. History keeps 96 hours. |
 | Golf | Goldplate Links, 9 holes (par 29). The aim moves with left/right, clubs with forward/back (driver, 7 iron, wedge, putter; the club is picked automatically for each shot). Swinging takes two presses (Space, left mouse or Enter): the first starts the meter (it climbs and falls over 1.6 s), the second locks the power. Ball flight has gravity, wind drift (each hole rolls its own wind), loft, bounces with backspin by club, and roll friction per lie (tee, fairway, green, rough, sand). Misses scatter on the seeded stream, more from rough and sand. Water (painted ponds and the real sea tiles) and out of bounds (beyond the lot, or resting on a road or building tile) cost a stroke and replay from the last spot. The cup catches a slow ball passing within 0.45 m. After par+4 strokes the ball is picked up. A scorecard tracks birdies, aces and best round, and the clubhouse pays $100 per stroke under par. F quits. A ball and a flag mesh are added to the scene only during a round. |
 | Achievements | 25, each `{id, name, desc, stat, goal}` and unlocked when `Systems.stats()[stat] >= goal` (checked every second and after every systems action). `Systems.unlock(id)` emits `achievement {id, name, desc}` once. |
 | Stats | `Systems.stats()` is a flat model: `player.stats` plus missions, money peak, properties, stocks, golf, jobs, cheats, wardrobe and play time. `Systems.statsPage()` returns 6 sections (`career money combat travel leisure jobs`) of `{label, value (string), raw}` rows for the UI's stats page. |
@@ -19,7 +19,7 @@ screenshots: `tests/out/systems_golf.png`, `tests/out/systems_wardrobe.png`). `n
 | Jobs | **Damage Control** (paramedic parody): in any vehicle, stop in the job marker at Goldplate Memorial. Level n spawns n clients (at most 8) on sidewalks 60 to 140+ m away. Stop next to one to pick them up (3 seats), then stop at the hospital door to drop them off: $40 each, +8 s on the clock. **Hot Take Brigade** (firefighter parody): starts at The Yell Network. Level n lights n hot takes (at most 6, fire and smoke fx) on roads, each with its own fuse. Park within 9 m for 2.5 s to cool one off ($30). A level pays level x $150 or $175. The job fails when the clock or a fuse runs out, when the player is on foot for more than 12 s, dies, gets busted, or a mission or strand starts, or a client is knocked out. Clearing level 12 pays a $5,000 bonus, sets the flag `sys_job_<id>` and grants a perk: Damage Control gives +25% max health, Hot Take Brigade respawns you with 50 armor. |
 | Wardrobe | Clothing in 5 slots (`top bottom shoes hat glasses`, 18 items, some gated by a mission, free items count as owned). `buy` buys and wears an item; `equip` wears an owned one. The barber sells 9 styles and 6 colours. Every change writes `player.look.outfit[slot] = itemId` (for the models track) plus the item's `look` overrides (`shirt`, `pants`, `hat`, `hatColor`, `glasses`, `shoes`) for the current renderer, then calls `GTP.Render.rebuildEntityMesh(player)` (fallback: `Render.detach` + `attach`). The look is re-applied on load and respawn. |
 | Markers | World markers (`Render.markerMesh` / `addMarker`, created only within 90 m of the player and hidden in cutscenes, missions, golf and jobs) for properties for sale, owned safehouses, the golf tee and the two job starts. Walking into one (on foot, 0.5 s) or stopping in one in a vehicle (jobs, 1 s) fires it once, and it re-arms when you leave. Minimap entries: `Systems.markers()` (kind `system` with icons `property`, `home`, `golf`, `job`; kind `objective` for job calls, the drop-off and the golf pin). They are deliberately not appended to `Missions.allMarkers` (tests/strands.js counts that list exactly): the UI's `allMarkers()` should concat them as it does the gun shops. |
-| Saves | 8 entries in `GTP.SaveRegistry` (`sys_properties sys_stocks sys_golf sys_achievements sys_cheats sys_jobs sys_wardrobe sys_stats`, each `{get() -> json, set(json)}`) plus a `GTP.SaveHooks` entry `systems` (`data.systems`) for today's v3 saves. Both paths are idempotent, so running both is harmless. A golf round and a running job are not saved: the round ends when a save loads, and a job does not survive a load. |
+| Saves | 8 entries in `GTP.SaveRegistry` (`sys_properties sys_stocks sys_golf sys_achievements sys_cheats sys_jobs sys_wardrobe sys_stats`, each `{get() -> json, set(json)}`) plus a `GTP.SaveHooks` entry `systems` (`data.systems`) for today's v3 saves. Both paths are idempotent, so running both is harmless (the max-health perk computes from `player._sysBaseMaxHp`, so it never stacks). The systems' random stream state is saved too (`data.systems.rng` / `sys_stats.rng`), so a load cannot replay known stock moves. A golf round and a running job are not saved: the round ends when a save loads, and a job does not survive a load. |
 
 ## Decisions
 
@@ -129,6 +129,26 @@ Each wrapper is installed once (`._sys` marker on the wrapped function) and call
 - **Content:** the schemas above. The ids I key on are `damage_control`, `hot_take_brigade` and the cheat effects.
 - **Story (saves v4):** iterate `GTP.SaveRegistry`. The `systems` SaveHook can then be dropped.
 - **Vehicles:** `property.garage` holds the slot count per safehouse for `GTP.Vehicles.store`.
+
+## Adversarial review
+
+A reviewer subagent read the module against the engine. Fixed:
+- Enter (both `enter` and `confirm`) quit golf. It now swings.
+- The cached animation pivots (`_parts`) went stale after a look change. They are now cleared.
+- Properties unlocked by a mission got no marker until a reload.
+- A job restarted when it ended on its own start marker. Nearby markers are now disarmed when a job or round ends.
+- The marker pulse input was unbounded.
+- The max-health perk could stack.
+- The random stream was not saved.
+- `sell(t, 'all')` turned cash into NaN.
+- Money rounding in trades.
+- `settle()` left the ball mesh stale.
+- WEATHERBALLOON entered twice quickly.
+- `jobs.start` did not clamp its level.
+- The job spawn fallback drew from the world's rng.
+- Per-step allocations from cheats and big heads.
+- Marker churn at the draw edge: 12 m of hysteresis added.
+- Two strings were too close to real-world references and were renamed.
 
 ## Known issues / limits
 
