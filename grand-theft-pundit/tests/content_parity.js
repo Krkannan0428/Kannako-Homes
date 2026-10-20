@@ -288,7 +288,8 @@ for (const m of P.missions) {
   ok(CAST.has(m.giver), where + ': giver ' + m.giver);
   ok(LANDMARKS.has(m.marker), where + ': marker ' + m.marker + ' is a real landmark');
   ok(Array.isArray(m.requires) && m.requires.length === 1, where + ': requires one mission');
-  ok(typeof m.reward === 'number' && m.reward >= 0 && m.reward <= 5000, where + ': reward');
+  ok(typeof m.reward === 'number' && m.reward >= 0 && m.reward <= (m.heist ? 10000 : 5000), where + ': reward');
+  ok(m.story === true, where + ': story:true (09 drops expansion.missions entries outside expansion.chain otherwise)');
   ok([1, 2, 3].indexOf(m.act) >= 0 && P.actOf(m.id) === m.act, where + ': act matches acts table');
   lines(m.intro, where + ' intro'); lines(m.outro, where + ' outro');
   ok(m.intro.length >= 3 && m.intro.length <= 6 && m.outro.length >= 3 && m.outro.length <= 6, where + ': 3 to 6 intro and outro lines');
@@ -305,6 +306,10 @@ for (const m of P.missions) {
     const bo = m.objectives.filter((o) => o.type === 'boss');
     ok(bo.length === 1 && bo[0].bossId === m.id && m.objectives.indexOf(bo[0]) > 0, where + ': one boss objective with its own bossId, after an approach objective');
   }
+}
+for (const id of BOSSES) {
+  const g = P.missionById(id).objectives[0];
+  ok(g.type === 'goto' && g.target.metres === true && g.target.offset && LANDMARKS.has(g.target.landmark) && g.radius >= 120, id + ': the approach goes to the boss arena (landmark + metres offset): ' + JSON.stringify(g.target));
 }
 const m01c = P.missionById('m01c_both_sides');
 const seq = m01c.objectives.map((o) => o.type);
@@ -356,9 +361,11 @@ for (const id of P.chain) {
   if (c) { lines(c.lines, 'call ' + id); ok(c.lines.length >= 2 && c.lines.length <= 4, 'call ' + id + ': 2 to 4 lines'); }
 }
 ok(Object.keys(P.calls).length === 35, 'exactly one call per story mission');
-uniqueIds(P.chapters, 'chapters');
-for (const ch of P.chapters) ok(P.chain.indexOf(ch.first) >= 0 && P.actOf(ch.first) === ch.act && typeof ch.title === 'string', 'chapter ' + ch.id + ' starts at a chain mission in its act');
-for (const a of [1, 2, 3]) ok(P.chapters.some((c) => c.act === a && c.first === P.acts[a][0]), 'act ' + a + ' has a chapter card at its first mission');
+uniqueIds(P.chapters.concat(P.interludes), 'chapters and interludes');
+ok(P.chapters.length === 3, 'chapters are the three acts only (09 lets a later entry of the same act override its title)');
+for (const ch of P.chapters.concat(P.interludes)) ok(P.chain.indexOf(ch.from) >= 0 && P.actOf(ch.from) === ch.act && typeof ch.title === 'string', 'chapter ' + ch.id + ' starts (`from`) at a chain mission in its act');
+for (const ch of P.chapters) ok(!/^act\b/i.test(ch.title), 'chapter ' + ch.id + ': bare title (the UI prints ACT I itself): ' + ch.title);
+for (const a of [1, 2, 3]) ok(P.chapters.some((c) => c.act === a && c.from === P.acts[a][0]), 'act ' + a + ' has a chapter card at its first mission');
 
 // ------------------------------------------------------------------ heist --
 const H = P.heists.hedge_job;
@@ -378,6 +385,17 @@ for (const a of H.approaches) {
     onFootLegs(objs || [], 'heist ' + a.id + ' ' + mid); tagsCovered(P.missionById(mid), objs || [], 'heist ' + a.id + ' ' + mid);
   }
 }
+// the shape GTP.Heist (09_missions.js) reads
+const PH = P.heist;
+ok(PH && PH.missions.join() === H.missions.join(), 'parity.heist.missions');
+for (const a of PH.approaches) ok(typeof a.id === 'string' && typeof a.name === 'string' && a.hostiles > 0 && a.payout > 0 && a.wanted >= 1 && typeof a.line === 'string', 'parity.heist approach ' + a.id + ' {id, name, hostiles, payout, wanted, line}');
+for (const c of PH.crew) ok(CAST.has(c.id) && typeof c.name === 'string' && c.cut >= 0 && typeof c.perk === 'string', 'parity.heist crew ' + c.id + ' {id, name, cut, perk}');
+for (const mid of ['h02_prep', 'h03_job']) {
+  const objs = P.missionById(mid).objectives;
+  ok(objs.every((o) => H.approaches.some((a) => a.id === o.approach)), mid + ': every objective is tagged with an approach');
+  for (const a of H.approaches) ok(objs.filter((o) => o.approach === a.id).length >= 3, mid + ': approach ' + a.id + ' has its own objectives');
+}
+ok(Math.round(P.missionById('h03_job').reward * Math.min(...PH.approaches.map((a) => a.payout)) * (1 - 0.6)) >= H.payout.minimum, 'the heist take after the 60% cut cap still clears the minimum');
 const worst = Math.min(...H.approaches.map((a) => a.payoutMul)) * 0.6 * (1 - 0.2 - 0.12 - 0.15);
 ok(H.payout.base * worst >= H.payout.minimum, 'the priciest crew still clears the minimum payout');
 
@@ -418,13 +436,25 @@ if (H2) {
       return {
         parity: !!P, weapons: P && P.weapons.length, calls: P && Object.keys(P.calls).length,
         inGame: ids.filter((id) => all.indexOf(id) >= 0), total: all.length,
-        intros: ids.filter((id) => GTP.Content.expansion.cutscenes['cs_intro_' + id]).length
+        intros: ids.filter((id) => GTP.Content.expansion.cutscenes['cs_intro_' + id]).length,
+        story: (GTP.Story && GTP.Story.order ? GTP.Story.order() : []).filter((id) => ids.indexOf(id) >= 0).length,
+        arenas: ['b01_goldplate', 'b02_velvetine', 'b03_warbanner', 'b04_redacted', 'b05_dunk', 'b06_panel'].map((id) => {
+          const m = P.missionById(id), B = GTP.Bosses, a = B && B.arena ? B.arena(id) : null, lm = GTP.World.landmark(m.marker), d = lm && (lm.door || lm);
+          const t = m.objectives[0].target, at = GTP.Missions.resolvePoint ? GTP.Missions.resolvePoint(t) : null;
+          return { id, arena: !!a, off: a && at ? Math.hypot(a.x - at.x, a.z - at.z) : null, fromMarker: a && d ? Math.round(Math.hypot(a.x - d.x, a.z - d.z)) : null };
+        })
       };
     }, NEW_IDS);
     console.log('  live: ' + JSON.stringify(live));
     t.assert(live.parity && live.weapons >= 32 && live.calls === 35, 'parity tables reach the game: ' + JSON.stringify(live));
     t.assert(live.inGame.length === NEW_IDS.length && live.total >= 35, 'Missions.allMissions sees all 35 story missions: ' + JSON.stringify(live));
     t.assert(live.intros === NEW_IDS.length, 'every new mission has its intro cutscene in the live game');
+    t.assert(live.story === NEW_IDS.length, 'GTP.Story.order() counts all ten new missions as story: ' + live.story);
+    for (const a of live.arenas) {
+      t.assert(a.arena, a.id + ': GTP.Bosses knows the arena');
+      t.assert(a.off == null || a.off < 1, a.id + ': the approach target is the live arena centre (off by ' + a.off + ' m)');
+      t.assert(a.fromMarker == null || a.id === 'b03_warbanner' || a.fromMarker < 260, a.id + ': the arena is within walking distance of the marker (' + a.fromMarker + ' m)');
+    }
     const errs = (await t.errors(ctx)).filter((e) => /25_content_parity/.test(e));
     t.assert(errs.length === 0, 'no errors from 25_content_parity.js: ' + errs.join('\n'));
   });

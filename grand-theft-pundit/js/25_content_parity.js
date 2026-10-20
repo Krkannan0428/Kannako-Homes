@@ -42,6 +42,14 @@
   var SHOTTY = ['muzzle', 'mag', 'grip', 'light'];
   var SCOPE = ['muzzle', 'mag', 'optic', 'grip'];
   function un(mission) { return mission ? { mission: mission } : null; }
+  // a boss fight's arena as a mission target: the bosses track's own centre when 08b is loaded, else the same numbers
+  // copied from docs/v03/bosses.md (offsets in metres). The fight fails if the player stays 150 m away for 10 s.
+  var ARENAS = { b01_goldplate: ['stadium', -40, 30], b02_velvetine: ['afterparty_yacht', -10, 10], b03_warbanner: ['airport_runway', 0, 26],
+    b04_redacted: ['balloon_depot', 50, 10], b05_dunk: ['campus_quad', 0, -20], b06_panel: ['protest_plaza', 100, 40] };
+  function arena(id) {
+    var B = GTP.Bosses, t = B && typeof B.arenaTarget === 'function' ? B.arenaTarget(id) : null, a = ARENAS[id];
+    return t || { landmark: a[0], offset: { x: a[1], z: a[2] }, metres: true };
+  }
 
   var P = GTP.Content.parity = { version: '0.3' };
 
@@ -594,7 +602,7 @@
 
     // ------------------------------------------------------------- Act I --
     {
-      id: 'm01c_both_sides', title: 'Free Sample', act: 1,
+      id: 'm01c_both_sides', story: true, title: 'Free Sample', act: 1,
       giver: 'merle', marker: 'both_sides_strip', requires: ['m01_van'], reward: 150,
       intro: [
         { who: 'merle', text: "Bryce Takesworth. Saw your van. Saw your face on your van. Twice. Merle Firmness, Both Sides Arms." },
@@ -627,17 +635,17 @@
 
     // ------------------------------------------------------------ Act II --
     {
-      id: 'b01_goldplate', title: 'Rated a Ten', act: 2,
-      giver: 'sloane', marker: 'goldplate_tower', requires: ['m06_rally'], reward: 1800,
+      id: 'b01_goldplate', story: true, title: 'Rated a Ten', act: 2,
+      giver: 'sloane', marker: 'stadium', requires: ['m06_rally'], reward: 1800,
       intro: [
-        { who: 'sloane', text: "He renamed the show. Now he's flying the new name over the city. On a ribbon. Behind a gold helicopter." },
+        { who: 'sloane', text: "He renamed the show. Now he's flying the new name over his own stadium. On a ribbon. Behind a gold helicopter." },
         { who: 'player', text: "He has a helicopter?" },
         { who: 'sloane', text: "He has one. The roof sign says two. That's why the ticker says both." },
         { who: 'goldplate', radio: true, text: "Takesworth! Look up! THE GOLDPLATE HOUR WITH GOLDPLATE. The ribbon's a ten. The helicopter's a ten. You're a guest." },
         { who: 'gus', text: "The ribbon's on four spools under the skids. Shoot the spools. I'm sound, but even I can hear that's physics." }
       ],
       objectives: [
-        { type: 'goto', target: { landmark: 'goldplate_tower' }, radius: 64, text: 'Get under Goldplate Tower' },
+        { type: 'goto', target: arena('b01_goldplate'), radius: 160, text: 'Get under the gold helicopter, over the stadium lots' },
         { type: 'boss', bossId: 'b01_goldplate', text: 'Shoot the four ribbon spools under the gold helicopter to ground it' },
         { type: 'dialogue', lines: [
           { who: 'goldplate', text: "I'm landing. On purpose. It's a ten-point landing. In a bunker. On purpose." },
@@ -658,7 +666,7 @@
     },
 
     {
-      id: 'b02_velvetine', title: 'The Silent Yacht', act: 2,
+      id: 'b02_velvetine', story: true, title: 'The Silent Yacht', act: 2,
       giver: 'gus', marker: 'velvetine_pier', requires: ['m07b_ferry'], reward: 2000,
       intro: [
         { who: 'gus', text: "The Baron's yacht has forty speakers and none of them are on. That offends me professionally." },
@@ -668,7 +676,7 @@
         { who: 'kip', text: "I'm the DJ tonight. I'm reading a spreadsheet. Is this paid?" }
       ],
       objectives: [
-        { type: 'goto', target: { landmark: 'afterparty_yacht' }, radius: 64, text: "Get aboard the Baron's yacht" },
+        { type: 'goto', target: arena('b02_velvetine'), radius: 160, text: "Get to the Baron's yacht" },
         { type: 'boss', bossId: 'b02_velvetine', text: 'Wreck the silent speakers on deck to expose the Baron' },
         { type: 'dialogue', lines: [
           { who: 'velvetine', text: "To... the drop. Oh no. It dropped." },
@@ -688,7 +696,7 @@
     },
 
     {
-      id: 'b03_warbanner', title: 'Volume Is Policy', act: 2,
+      id: 'b03_warbanner', story: true, title: 'Volume Is Policy', act: 2,
       giver: 'roz', marker: 'bravadia_embassy', requires: ['m08b_jets'], reward: 2200,
       intro: [
         { who: 'roz', text: "WE'RE NOT HERE TO STOP THE PARADE. We're here to stand in front of it. Loudly." },
@@ -698,7 +706,7 @@
         { who: 'sloane', text: "Runway. Dodge the flyover, wreck the scooter column. Two minutes. One." }
       ],
       objectives: [
-        { type: 'drive_to', target: { landmark: 'airport_runway' }, vehicle: 'any', text: 'Get to Runway 10/10 before the flyover' },
+        { type: 'goto', target: arena('b03_warbanner'), radius: 160, text: 'Get to Runway 10/10 before the flyover. Drive; it is across the bay' },
         { type: 'boss', bossId: 'b03_warbanner', text: 'Dodge the jet flyover and wreck the Defense Scooter column' },
         { type: 'dialogue', lines: [
           { who: 'warbanner', text: "The jet has landed. On its side. In the sea. And that's why we need the jets. Plural, now." },
@@ -718,7 +726,7 @@
     },
 
     {
-      id: 'b04_redacted', title: 'Weather Balloon, Repaired', act: 2,
+      id: 'b04_redacted', story: true, title: 'Weather Balloon, Repaired', act: 2,
       giver: 'kip', marker: 'balloon_depot', requires: ['m09b_hotmic'], reward: 2400,
       intro: [
         { who: 'kip', text: "I'm in the balloon. I'm not supposed to be in the balloon. There is a balloon. It's huge. Is this paid?" },
@@ -728,7 +736,7 @@
         { who: 'gus', text: "It's got panels. Each one pops at about ninety decibels. Pop them all. You'll be peaking." }
       ],
       objectives: [
-        { type: 'goto', target: { landmark: 'balloon_depot' }, radius: 64, text: 'Get to the Weather Balloon Repair Depot' },
+        { type: 'goto', target: arena('b04_redacted'), radius: 160, text: 'Get into the depot lot, under the balloon' },
         { type: 'boss', bossId: 'b04_redacted', text: 'Pop the giant weather balloon panel by panel while the vans circle' },
         { type: 'dialogue', lines: [
           { who: 'redacted', text: "The [REDACTED] has been [REDACTED]." },
@@ -749,7 +757,7 @@
 
     // ----------------------------------------------------------- Act III --
     {
-      id: 'h01_casing', title: 'Casing the Hedge', act: 3,
+      id: 'h01_casing', story: true, title: 'Casing the Hedge', act: 3,
       giver: 'gus', marker: 'pod_garage', requires: ['m12b_scope'], reward: 500,
       intro: [
         { who: 'gus', text: "Vaultwright sold your contract to the President, then kept it in his own vault. As a hedge. Vaultwright Capital, downtown." },
@@ -780,7 +788,7 @@
     },
 
     {
-      id: 'h02_prep', title: 'Prep Work', act: 3,
+      id: 'h02_prep', story: true, title: 'Prep Work', act: 3,
       giver: 'sloane', marker: 'pod_garage', requires: ['h01_casing'], reward: 500, heist: 'hedge_job',
       intro: [
         { who: 'sloane', text: "Prep day. Whatever you picked on the board, we need a vehicle and a costume. The board says which." },
@@ -806,8 +814,8 @@
     },
 
     {
-      id: 'h03_job', title: 'The Hedge Job', act: 3,
-      giver: 'gus', marker: 'pod_garage', requires: ['h02_prep'], reward: 2500, heist: 'hedge_job',
+      id: 'h03_job', story: true, title: 'The Hedge Job', act: 3,
+      giver: 'gus', marker: 'pod_garage', requires: ['h02_prep'], reward: 9000, heist: 'hedge_job',
       intro: [
         { who: 'gus', text: "Job day. The vault, the contract, and the cash Vaultwright keeps as a hedge. In, out, levels steady." },
         { who: 'sloane', text: "Crew's in position. Everyone knows their segment. Nobody improvises. You will improvise." },
@@ -840,7 +848,7 @@
     },
 
     {
-      id: 'b05_dunk', title: 'Next Table Over', act: 3,
+      id: 'b05_dunk', story: true, title: 'Next Table Over', act: 3,
       giver: 'sloane', marker: 'campus_quad', requires: ['m13_thursday'], reward: 3000,
       intro: [
         { who: 'sloane', text: "Dunk's set up on the Quad. Next to your table. Bigger table. He's calling it a debate. It's a brawl with a sign." },
@@ -850,7 +858,7 @@
         { who: 'gus', text: "He plays cards: shove, slam, flip. Counter the card, then hit him. He telegraphs. He's peaking." }
       ],
       objectives: [
-        { type: 'goto', target: { landmark: 'campus_quad' }, radius: 48, text: 'Get to the Quad' },
+        { type: 'goto', target: arena('b05_dunk'), radius: 160, text: "Get to Dunk's table on the Quad" },
         { type: 'boss', bossId: 'b05_dunk', text: "Brawl table to table: counter Dunk's cards, then hit back" },
         { type: 'dialogue', lines: [
           { who: 'dunk', text: "Didn't read it. Lost anyway." },
@@ -869,17 +877,17 @@
     },
 
     {
-      id: 'b06_panel', title: 'The Undercard', act: 3,
-      giver: 'chyron', marker: 'stadium', requires: ['m13b_ratio'], reward: 3500,
+      id: 'b06_panel', story: true, title: 'The Undercard', act: 3,
+      giver: 'chyron', marker: 'protest_plaza', requires: ['m13b_ratio'], reward: 3500,
       intro: [
-        { who: 'chyron', text: "BREAKING. Undercard. Stadium. Five rounds. Between rounds: the audience." },
+        { who: 'chyron', text: "BREAKING. Undercard. Outdoor set. Five rounds. Between rounds: the audience." },
         { who: 'player', text: "The audience?" },
         { who: 'chyron', text: "Everyone's goons. Debate a round, survive a wave, debate a round. WE'LL HAVE TO LEAVE IT THERE. Eventually." },
         { who: 'sloane', text: "It's a rehearsal for tonight. Rehearsals are live now. Everything's live. Go." },
         { who: 'kip', text: "I'm the floor manager. Nobody told me. Is this paid?" }
       ],
       objectives: [
-        { type: 'goto', target: { landmark: 'stadium' }, radius: 64, text: 'Get to Goldplate Goldplate Stadium' },
+        { type: 'goto', target: arena('b06_panel'), radius: 160, text: "Get to The Yell Network's outdoor set past the plaza" },
         { type: 'boss', bossId: 'b06_panel', text: 'Win the undercard: debate rounds and audience waves, alternating' },
         { type: 'dialogue', lines: [
           { who: 'chyron', text: "BREAKING. Kid wins the undercard. The main event is tonight." },
@@ -898,9 +906,12 @@
   ];
 
   // =================================================================== heists ==
-  // heist:plan {approach, crew:[castIds]} picks one approach and one crew member per role. Payout rule:
-  // take = base * approach.payoutMul * (0.6 + 0.4 * mean crew skill) * (1 - sum of crew cuts), paid on h03_job's outro
-  // on top of the mission reward. variants[approach] = {missionId: objectives} replaces that mission's objectives.
+  // heists.hedge_job is the design table (board text, roles, skills, per-approach objective lists). The story runtime
+  // (GTP.Heist in 09_missions.js) reads P.heist, built from it below: {missions, approaches:[{id, name, hostiles, payout,
+  // wanted, line}], crew:[{id, name, cut, perk}]}. heist:plan {approach, crew:[castIds]} picks the plan; 09 pays each heist
+  // mission's reward x approach.payout x (1 - crew cuts, capped at 60%), multiplies defeat/survive counts by
+  // approach.hostiles, and runs only the objectives whose `approach` tag matches the plan. h02/h03's objectives are
+  // therefore all three approaches' lists, tagged (built at load from the mission's quiet list and `variants`).
   P.heists = {
     hedge_job: {
       id: 'hedge_job', name: 'The Hedge Job', target: 'vault_bank', missions: ['h01_casing', 'h02_prep', 'h03_job'],
@@ -971,6 +982,22 @@
     }
   };
 
+  (function buildHeist() {
+    var H = P.heists.hedge_job, cast = GTP.Content.cast || {};
+    P.heist = {
+      id: H.id, name: H.name, missions: H.missions.slice(), board: H.board, roles: H.roles,
+      approaches: H.approaches.map(function (a) { return { id: a.id, name: a.name, hostiles: a.guardsMul, payout: a.payoutMul, wanted: a.wanted, line: a.pitch }; }),
+      crew: H.crew.map(function (c) { return { id: c.castId, name: cast[c.castId] ? cast[c.castId].name : c.castId, cut: c.cut, perk: c.role, role: c.role, skill: c.skill, line: c.pitch }; })
+    };
+    function tag(list, a) { return list.map(function (o) { var t = { approach: a }; for (var k in o) t[k] = o[k]; return t; }); }
+    ['h02_prep', 'h03_job'].forEach(function (mid) {
+      var m = null; for (var i = 0; i < P.missions.length; i++) if (P.missions[i].id === mid) m = P.missions[i];
+      if (!m || m._tagged) return;
+      m.objectives = tag(m.objectives, 'quiet').concat(tag(H.variants.loud[mid], 'loud'), tag(H.variants.both_sides[mid], 'both_sides'));
+      Object.defineProperty(m, '_tagged', { value: true, enumerable: false });
+    });
+  })();
+
   // ============================================================= chain & acts ==
   P.chain = ['m00_intro', 'm01_van', 'm01c_both_sides', 'm01b_airport', 'm02_read', 'm03_ratio', 'm03b_range', 'm04_hit',
     'm05_peer', 'm05b_provenance', 'm06_rally', 'b01_goldplate', 'm07_listen', 'm07b_ferry', 'b02_velvetine', 'm08_scooters', 'm08b_jets',
@@ -994,13 +1021,16 @@
     b06_panel: ['m13b_ratio'], m14_grift: ['b06_panel']
   };
 
-  // chapter cards: `chapter {act, title}` when the first mission of a chapter starts
+  // chapter cards: `chapter {act, title}` when an act's first mission starts (09 and the UI print "ACT I" before the title)
   P.chapters = [
-    { id: 'act1', act: 1, title: 'Act I: Folding Table', subtitle: 'Minds changed so far: zero.', first: 'm00_intro' },
-    { id: 'act2', act: 2, title: 'Act II: Four Clients', subtitle: 'Everyone wants the podcast. Everyone gets it.', first: 'm05_peer' },
-    { id: 'act3', act: 3, title: 'Act III: The Monday Memo', subtitle: 'Respectfuly. One L.', first: 'm12_memo' },
-    { id: 'heist', act: 3, title: 'Interlude: The Hedge Job', subtitle: 'A retrieval. With a crew.', first: 'h01_casing' },
-    { id: 'finale', act: 3, title: 'Finale: Primetime or the Table', subtitle: 'Two minutes. One.', first: 'm14_grift' }
+    { id: 'act1', act: 1, title: 'Folding Table', subtitle: 'Minds changed so far: zero.', from: 'm00_intro' },
+    { id: 'act2', act: 2, title: 'Four Clients', subtitle: 'Everyone wants the podcast. Everyone gets it.', from: 'm05_peer' },
+    { id: 'act3', act: 3, title: 'The Monday Memo', subtitle: 'Respectfuly. One L.', from: 'm12_memo' }
+  ];
+  // cards inside an act (not acts: the story shows these only if it wants a mid-act card)
+  P.interludes = [
+    { id: 'heist', act: 3, title: 'Interlude: The Hedge Job', subtitle: 'A retrieval. With a crew.', from: 'h01_casing' },
+    { id: 'finale', act: 3, title: 'Finale: Primetime or the Table', subtitle: 'Two minutes. One.', from: 'm14_grift' }
   ];
   P.actTitles = { 1: 'Folding Table', 2: 'Four Clients', 3: 'The Monday Memo' };
 
@@ -1039,7 +1069,7 @@
     m13_thursday: call('kip', [['kip', 'It\'s Thursday. I have to tell you something. Dorm 4B.'], ['player', 'Is this about being paid?'], ['kip', 'No. For once, no. Just come.']]),
     b05_dunk: call('sloane', [['sloane', 'Dunk has built a bigger table next to yours on the Quad. He\'s calling it a debate.'], ['player', 'Is it a debate?'], ['sloane', 'It\'s a brawl with a sign. Bring your fists. And your cards.']]),
     m13b_ratio: call('moonsworth', [['moonsworth', 'Pivot, bro. $PUNDIT is a launcher now. The container yard.'], ['player', 'How is a coin a launcher?'], ['moonsworth', 'Utility. Come point it at things.']]),
-    b06_panel: call('chyron', [['chyron', 'BREAKING. The undercard. The stadium. Five guests, five rounds, one kid.'], ['player', 'Tonight?'], ['chyron', 'Before tonight. WE\'LL HAVE TO LEAVE IT THERE.']]),
+    b06_panel: call('chyron', [['chyron', 'BREAKING. The undercard. Outdoor set, by the plaza. Five guests, five rounds, one kid.'], ['player', 'Tonight?'], ['chyron', 'Before tonight. WE\'LL HAVE TO LEAVE IT THERE.']]),
     m14_grift: call('sloane', [['sloane', 'Chyron\'s panel. The tower. Five guests, one memo.'], ['player', 'The same memo?'], ['sloane', 'It\'s always the same memo. Two minutes. One.']]),
     m15a_primetime: call('chyron', [['chyron', 'BREAKING. The chair. It is yours. Come to the tower.'], ['player', 'Forever?'], ['chyron', 'Forever is a segment. WE\'LL HAVE TO LEAVE IT THERE.']]),
     m15b_liveread: call('gus', [['gus', 'Or. Dorm 4B. Eleven people. One memo, read out loud.'], ['player', 'What happens after?'], ['gus', 'You walk back. No van. You\'re not peaking. For once.']])
@@ -1065,7 +1095,7 @@
   // specs for 24_content_expansion.js's cs_intro builder (see INTRO_SHOTS there)
   P.introShots = {
     m01c_both_sides: { camA: [7, 4, 8], camB: [3, 2, 4], split: 2, extras: [{ castId: 'sloane', at: [-2.4, 3], anim: 'idle' }], look: 'merle', note: 'neon target sign on; the podium by the door' },
-    b01_goldplate: { camA: [-16, 10, 14], camB: [-5, 3, 5], split: 3, tilt: 0.5, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane', note: 'camA tilts up the tower; the gold helicopter and its ribbon cross the sky' },
+    b01_goldplate: { camA: [-16, 10, 14], camB: [-5, 3, 5], split: 3, tilt: 0.5, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane', note: 'camA tilts up past the stadium mast; the gold helicopter and its ribbon cross the sky' },
     b02_velvetine: { camA: [-10, 5, -9], camB: [-3, 2, -3], split: 3, extras: [{ castId: 'velvetine', at: [6, -8], anim: 'talk' }], look: 'velvetine', note: 'the yacht behind, forty silent speakers on deck' },
     b03_warbanner: { camA: [9, 5, 9], camB: [3, 2, 4], split: 3, extras: [{ castId: 'warbanner', at: [-3, 1], anim: 'talk' }, { castId: 'sloane', at: [4, 3] }], look: 'warbanner', note: 'two embassy flags; scooters idling on the kerb' },
     b04_redacted: { camA: [8, 6, 8], camB: [3, 2, 3], split: 2, tilt: 0.6, extras: [{ castId: 'redacted', at: [-2.6, 1.4], anim: 'idle' }, { castId: 'gus', at: [3.6, 3] }], look: 'redacted', note: "Kip waves from the balloon's basket at the door; the balloon of Bryce's face fills the sky" },
@@ -1073,7 +1103,7 @@
     h02_prep: { camA: [-9, 4, 8], camB: [-3, 2, 4], split: 2, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane' },
     h03_job: { camA: [10, 5, 10], camB: [4, 2, 4], split: 2, extras: [{ castId: 'sloane', at: [2, 3] }, { castId: 'kip', at: [3, 2], anim: 'wave' }], look: 'gus', note: 'the crew lined up in front of the bay' },
     b05_dunk: { camA: [-10, 6, 10], camB: [-4, 2, 5], split: 3, extras: [{ castId: 'dunk', at: [6, -6], anim: 'table' }, { castId: 'gus', at: [-4, -4] }], look: 'dunk', note: 'nine folding tables in frame; Dunk at the biggest one' },
-    b06_panel: { camA: [-26, 12, 0], camB: [-8, 3, 2], split: 3, protesters: 6, extras: [{ castId: 'sloane', at: [3, 4] }], look: 'chyron', note: 'the stadium lights; the audience is goons' }
+    b06_panel: { camA: [-14, 8, 10], camB: [-5, 3, 4], split: 3, protesters: 6, extras: [{ castId: 'sloane', at: [3, 4] }], look: 'chyron', note: 'the plaza, a TYN rig behind; the audience is goons' }
   };
 
   // ================================================================== helpers ==
@@ -1086,14 +1116,14 @@
   P.missionById = function (id) { for (var i = 0; i < P.missions.length; i++) if (P.missions[i].id === id) return P.missions[i]; return null; };
   P.call = function (missionId) { return P.calls[missionId] || null; };
   P.actOf = function (missionId) { for (var a in P.acts) if (P.acts[a].indexOf(missionId) >= 0) return +a; return null; };
-  P.chapterFor = function (missionId) { for (var i = 0; i < P.chapters.length; i++) if (P.chapters[i].first === missionId) return P.chapters[i]; return null; };
+  P.chapterFor = function (missionId) { var all = P.chapters.concat(P.interludes); for (var i = 0; i < all.length; i++) if (all[i].from === missionId) return all[i]; return null; };
   P.nextInChain = function (missionId) { var i = P.chain.indexOf(missionId); return i >= 0 && i + 1 < P.chain.length ? P.chain[i + 1] : null; };
   P.stock = function (ticker) { for (var i = 0; i < P.stocks.length; i++) if (P.stocks[i].ticker === ticker) return P.stocks[i]; return null; };
   P.property = function (id) { for (var i = 0; i < P.properties.length; i++) if (P.properties[i].id === id) return P.properties[i]; return null; };
+  // the objectives a mission runs under an approach (untagged ones always run, as in GTP.Heist.objectiveRuns)
   P.heistObjectives = function (heistId, missionId, approach) {
-    var h = P.heists[heistId], v = h && approach && h.variants[approach];
-    if (v && v[missionId]) return v[missionId];
-    var m = P.missionById(missionId); return m ? m.objectives : null;
+    var m = P.missionById(missionId); if (!m) return null;
+    return m.objectives.filter(function (o) { return o.approach == null || o.approach === approach || (Array.isArray(o.approach) && o.approach.indexOf(approach) >= 0); });
   };
   // the landmarks the world track adds in v0.3 (ids referenced here before they exist; the content test accepts them)
   P.pendingLandmarks = ['spin_doctor_strip', 'spin_doctor_port', 'lanyard_strip', 'lanyard_uptown', 'clip_joint',
