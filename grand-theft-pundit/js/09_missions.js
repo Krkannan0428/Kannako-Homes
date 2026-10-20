@@ -53,10 +53,20 @@
     retryBonus: 15,           // seconds added to a timer on RETRY (never past the original)
     stopNear: 6, stopNearFoot: 3, escapeTime: 5,   // stop_vehicle: the player's car this close (or on foot), beyond maxDist this long = escaped
     boardRadius: 4, boardHold: 1, dropRadius: 12, passengerLeaveTime: 10,
-    cutsceneAfterDelay: 2.6,  // the MISSION PASSED card shows before an act cutscene starts
-    subsPerReward: 5,         // story subscribers: reward x 5
+    cutsceneAfterDelay: 5,    // the MISSION PASSED card (4.8 s) is gone before an act cutscene starts (QA-C1-12)
+    subsPerReward: 3,         // story subscribers: reward x 3, so the story alone ends in tier 3 (GDD_EXPANSION §5.8, QA-STR-16)
     chaosCapPerMinute: 500,
-    weaponAmmo: { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16, tableleg: Infinity, revolver: 24, rifle: 60, hotmic: 4, sniper: 10, ratio: 4 },
+    weaponAmmo: { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16, tableleg: Infinity, revolver: 24, rifle: 90, hotmic: 4, sniper: 10, ratio: 3 },
+    meleeSwing: [1.3, 2.0],   // seconds between a mission goon's punches (a wind-up, not the fist's 2.5/s player rate; QA-C1-01)
+    meleeWindup: 0.35,        // the goon telegraphs a punch this long before it lands
+    meleeAttackers: 2,        // goons that punch at once; the rest circle at arm's length
+    followGrace: 4,           // a tail's 'too close' clock starts after this many seconds or once the target first pulls away
+    followLead: 14,           // the tailing target starts this far ahead of the player along its path
+    ammoRefillDelay: 2,       // a weapon-restricted objective refills its weapon this long after it runs dry (QA-C1-03)
+    stationaryFireRange: 140, // stationary ranged goons (snipers, couriers on a causeway) open fire from this far, badly
+    beaconHeight: 140,        // the story light's sky beam: seen from 200 m and more
+    callDelay: 3.5,           // seconds after MISSION PASSED (and any act cutscene) before the next giver phones
+    retryExpire: 180,         // a RETRY offer goes stale after this many seconds of free roam
     colors: { mission: 0x2f6cff, objective: 0xffd45a, strand: 0xff3fa4, race: 0xffffff, hoa: 0xff3b30 }
   }, C.MISSIONS || {});
 
@@ -91,13 +101,17 @@
   function expansion() { return (GTP.Content && GTP.Content.expansion) || {}; }
   // the story: the base seventeen plus the expansion's missions, in content order (the expansion's slot in by `requires`)
   var _all = null, _allKey = null;
+  // v0.3: plus GTP.Content.parity.missions (m01c, the boss missions, the heist), which the content track slots into the chain
+  // through `requires`
+  function parityMissions() { var P = GTP.Content && GTP.Content.parity; return (P && Array.isArray(P.missions)) ? P.missions : []; }
   function allMissions() {
-    var Ct = GTP.Content, base = (Ct && Ct.missions) || [], ext = expansion().missions || [];
-    var key = base.length + ':' + ext.length;
+    var Ct = GTP.Content, base = (Ct && Ct.missions) || [], ext = expansion().missions || [], par = parityMissions();
+    var key = base.length + ':' + ext.length + ':' + par.length;
     if (_all && _allKey === key) return _all;
     var out = base.slice(), seen = {};
     for (var i = 0; i < out.length; i++) seen[out[i].id] = true;
     for (i = 0; i < ext.length; i++) if (ext[i] && ext[i].id && !seen[ext[i].id]) { out.push(ext[i]); seen[ext[i].id] = true; }
+    for (i = 0; i < par.length; i++) if (par[i] && par[i].id && !seen[par[i].id] && Array.isArray(par[i].objectives)) { out.push(par[i]); seen[par[i].id] = true; }
     _all = out; _allKey = key;
     return out;
   }
@@ -284,7 +298,7 @@
     else { p = new GTP.Ped({ x: x, z: z, role: role, persistent: true }); p.y = W().heightAt(x, z, 0); p.snap(); E().add(p); }
     if (opts.weapon && p.weapons) { p.weapons[opts.weapon] = Infinity; p.weapon = opts.weapon; }
     p.hostile = true; p.aimTarget = player();
-    p.ai = missionBrain('hostile', { role: isRole ? role : (role === 'cutout' ? 'cutout' : 'thug'), ctx: ctx, stationary: !!opts.stationary, passive: opts.hostile === false });
+    p.ai = missionBrain('hostile', { role: isRole ? role : (role === 'cutout' ? 'cutout' : 'thug'), ctx: ctx, stationary: !!opts.stationary, passive: opts.hostile === false, fireRange: opts.fireRange || 0 });
     if (opts.stationary) { p.ai.homeX = p.x; p.ai.homeZ = p.z; }
     track(p, 'hostile');
     return p;
@@ -399,7 +413,7 @@
       // two markers on one door: nudge the second along the sidewalk
       for (var j = 0; j < avail.length; j++) if (U.dist2d(avail[j].x, avail[j].z, pt.x, pt.z) < 3) { pt.x += 4; }
       var mk = { id: mm.id, m: mm, x: pt.x, z: pt.z, y: pt.y, landmark: mm.marker, mesh: markerMesh(K.colors.mission), giver: null, kip: null, armed: false, holdT: 0 };
-      if (mk.mesh) mk.mesh.position.set(mk.x, mk.y, mk.z);
+      if (mk.mesh) { mk.mesh.position.set(mk.x, mk.y, mk.z); addBeacon(mk.mesh, K.colors.mission); }
       var pl = player();
       mk.armed = !pl || U.dist2d(pl.x, pl.z, mk.x, mk.z) > K.markerRadius + 0.6;
       avail.push(mk);
@@ -467,11 +481,18 @@
   }
   function animateMarkers(dt) {
     var t = simT(), i, mk, ud, inCut = !!(GTP.Cutscenes && GTP.Cutscenes.active);
+    var pl = player(), nxt = state ? storyNextMission() : null;
     for (i = 0; i < avail.length; i++) {
       mk = avail[i]; if (!mk.mesh) continue;
       mk.mesh.visible = !inCut;   // the blue lights go dark while a cutscene plays
       ud = mk.mesh.userData; mk.mesh.rotation.y = t * 0.35;
       if (ud && ud.pulse) ud.pulse(0.5 + 0.5 * Math.sin(t * 2.2 + i));
+      // the beam fades out up close (no blinding the intro) and burns brightest over the next story mission
+      if (ud && ud.beacon && pl) {
+        var bd = U.dist2d(pl.x, pl.z, mk.x, mk.z), story = nxt && nxt.id === mk.id;
+        ud.beacon.material.opacity = U.clamp((bd - 12) / 60, 0.04, 1) * (story ? 0.55 : 0.25) * (0.85 + 0.15 * Math.sin(t * 1.7 + i));
+        var wk = U.clamp(bd / 45, 1, 8); ud.beacon.scale.set(wk, 1, wk);   // about the same width on screen from any distance
+      }
     }
     for (i = 0; i < objMarkers.length; i++) {
       mk = objMarkers[i];
@@ -571,7 +592,8 @@
       p.stop();
       if (d < 60) p.yaw = U.angleDamp(p.yaw, U.dirToYaw(pl.x - p.x, pl.z - p.z), 4, dt);
       if (ai.passive || !ranged || !wdef) { p.aiming = false; return; }
-      var rng = wdef.range || 30;
+      // a stationary shooter opens up from far beyond the gun's range (it misses there: 'badly'; QA-CMB-10)
+      var rng = Math.max(wdef.range || 30, ai.fireRange || K.stationaryFireRange);
       if (d <= rng && !pl.inVehicle) {
         p.aiming = true; p.aimYaw = U.dirToYaw(pl.x - p.x, pl.z - p.z);
         ai.shotT -= dt;
@@ -612,8 +634,29 @@
       if (ai.shotT <= 0 && CB && CB.fire) { ai.shotT = 1.2; try { CB.fire(p, p.weapon); } catch (e) { U.reportError(e, 'missions.fire'); } }
     } else {
       p.yaw = p.aimYaw;
-      if (!pl.inVehicle && CB && CB.fire) { try { CB.fire(p, 'fist'); } catch (e) { U.reportError(e, 'missions.fire'); } }
+      meleeTick(p, ai, pl, dt);
     }
+  }
+  // a goon's punch: a cooldown between swings, a short wind-up (the arm draws back) before it lands, and at most
+  // K.meleeAttackers goons swinging at once; the others hold at arm's length until a slot frees (QA-C1-01)
+  function meleeAttackers(pl, self) {
+    var n = 0, list = E().hash.query(pl.x, pl.z, 3, scratch);
+    for (var i = 0; i < list.length; i++) { var o = list[i]; if (o !== self && o.kind === 'ped' && o.alive && o.ai && o.ai.swinging) n++; }
+    return n;
+  }
+  function meleeTick(p, ai, pl, dt) {
+    var CB = GTP.Combat;
+    if (pl.inVehicle || !CB || !CB.fire) { ai.swinging = false; return; }
+    if (ai.swingT == null) ai.swingT = R().range(0.4, K.meleeSwing[1]);
+    ai.swingT -= dt;
+    if (ai.windT > 0) {
+      ai.windT -= dt;
+      if (ai.windT <= 0) { ai.swinging = false; try { CB.fire(p, 'fist'); } catch (e) { U.reportError(e, 'missions.fire'); } ai.swingT = R().range(K.meleeSwing[0], K.meleeSwing[1]); }
+      return;
+    }
+    if (ai.swingT > 0) return;
+    if (meleeAttackers(pl, p) >= K.meleeAttackers) { ai.swingT = R().range(0.3, 0.7); return; }
+    ai.swinging = true; ai.windT = K.meleeWindup;
   }
   function followerTick(p, ai, dt) {
     var c = ai.ctx, pl = player();
@@ -695,6 +738,30 @@
     return { tag: String(ref) };
   }
   function taggedVehicle(tag) { var t = run && run.tagged[tag]; return t && !t.removed ? t : null; }
+  // readable vehicle names for hints: 'Get back in the SUV', 'Get back on the scooter' (QA-C1-15)
+  var VEHICLE_NAMES = { suv: 'SUV', bike: 'scooter', sports: 'sports car', sedan: 'car', cop: 'cruiser', taxi: 'taxi', bus: 'bus', truck: 'truck', van: 'van', moto: 'motorbike', heli: 'helicopter', plane: 'plane', jet: 'jet', speedboat: 'speedboat', jetski: 'jet ski' };
+  var ON_VEHICLES = { bike: 1, moto: 1, jetski: 1 };
+  function vehicleName(type) { return VEHICLE_NAMES[type] || (type ? String(type) : 'vehicle'); }
+  function backIn(type) { return 'Get back ' + (ON_VEHICLES[type] ? 'on' : 'in') + ' the ' + vehicleName(type); }
+  function refType(ref, fallback) { if (!ref || ref.any) return fallback || 'car'; var tv = taggedVehicle(ref.tag) || liveTagged(ref.tag); return tv ? tv.type : (fallback || 'vehicle'); }
+
+  // a weapon-restricted objective never strands the player: once the named weapon runs dry with targets left, a fresh
+  // supply arrives after K.ammoRefillDelay seconds (QA-C1-03; the shop may lock the item until the mission is done)
+  function ammoLeft(p, id) { var n = p.weapons[id]; return n === Infinity ? Infinity : (n | 0); }
+  function supplyWeapon(c, p) {
+    var CB = GTP.Combat, id = c.weapon; if (!id || !p || !CB || !CB.WEAPONS || !CB.WEAPONS[id] || CB.WEAPONS[id].melee) return;
+    if (ammoLeft(p, id) > 0) { c.dryT = 0; return; }
+    c.dryT = (c.dryT || 0) + C.STEP;
+    if (c.dryT < K.ammoRefillDelay) return;
+    c.dryT = 0;
+    var w = CB.WEAPONS[id], n = K.weaponAmmo[id] || Math.max(1, (w.mag || 1) * 2);
+    if (CB.giveAmmo) CB.giveAmmo(p, id, n, false); else p.weapons[id] = n;
+    if (!(p.weapons[id] > 0)) p.weapons[id] = n;
+    p.weapon = id;
+    c.refills = (c.refills || 0) + 1;
+    toast('Mission supply: +' + n + ' for the ' + ((CB.weaponName && CB.weaponName(id)) || id));
+    emit('supply', { weapon: id, ammo: n });
+  }
 
   var H = {};
   H.goto = {
@@ -705,8 +772,17 @@
     },
     check: function (o, c, p) {
       if (!c.target) return 'done';
-      if (p.inVehicle) return null;
-      return (U.dist2d(p.x, p.z, c.target.x, c.target.z) <= c.radius && Math.abs(p.y - c.target.y) < 4) ? 'done' : null;
+      var v = p.inVehicle, e = v || p;
+      var inside = U.dist2d(e.x, e.z, c.target.x, c.target.z) <= c.radius + (v ? (v.hl || 2) : 0) && Math.abs(e.y - c.target.y) < 4;
+      if (!inside) return null;
+      // arriving by car counts once it has stopped in the light (the long return legs are driven; QA-C1-10); `onFoot` insists
+      if (v) return (!o.onFoot && Math.abs(v.speed || 0) < 2) ? 'done' : null;
+      return 'done';
+    },
+    hint: function (o, c, p) {
+      if (!p.inVehicle || !c.target) return null;
+      if (U.dist2d(p.inVehicle.x, p.inVehicle.z, c.target.x, c.target.z) > c.radius + 6) return null;
+      return o.onFoot ? 'Get out on foot' : 'Stop in the light';
     },
     target: function (o, c) { return c.target; }
   };
@@ -723,7 +799,7 @@
       if (!c.ref.any) { var tv = taggedVehicle(c.ref.tag); if (!tv || v !== tv) return null; }
       return (U.dist2d(v.x, v.z, c.target.x, c.target.z) <= c.radius && Math.abs(v.y - c.target.y) < 4) ? 'done' : null;
     },
-    hint: function (o, c, p) { if (!p.inVehicle && !c.ref.any) return 'Get back in the ' + ((taggedVehicle(c.ref.tag) || {}).type || 'vehicle'); return null; },
+    hint: function (o, c, p) { if (!p.inVehicle && !c.ref.any) return backIn(refType(c.ref)); return null; },
     target: function (o, c) { return c.target; }
   };
   H.enter_vehicle = {
@@ -789,15 +865,19 @@
   };
   H.follow = {
     start: function (o, c) {
-      var sp = o.spawn || {}, at = resolvePoint(sp.at) || { x: player().x + 6, z: player().z, y: player().y };
-      var s = randomSpot(at.x, at.z, 1.5, 5, { clear: 1 });
+      var sp = o.spawn || {}, pl = player(), at = resolvePoint(sp.at) || { x: pl.x + 6, z: pl.z, y: pl.y };
+      var wps = [], path = sp.path || [];
+      for (var i = 0; i < path.length; i++) { var pt = resolvePoint(path[i]); if (pt) wps.push(pt); }
+      // the target starts well ahead along its route (QA-C1-05): K.followLead metres from the player toward the first waypoint
+      var aim = wps[0] || at, ax = aim.x - pl.x, az = aim.z - pl.z, al = Math.sqrt(ax * ax + az * az) || 1, lead = Math.min(K.followLead, Math.max(al - 2, 0));
+      var base = lead > 4 ? { x: pl.x + ax / al * lead, z: pl.z + az / al * lead } : at;
+      var s = randomSpot(base.x, base.z, 0, 3, { clear: 1 });
+      if (U.dist2d(s.x, s.z, pl.x, pl.z) < K.followTooClose + 3) s = randomSpot(at.x, at.z, K.followTooClose + 3, K.followTooClose + 9, { clear: 1 });
       var p = spawnCastPed(sp.ped || 'courier', s.x, s.z, 'npc', { brain: 'follower', ai: { ctx: c } });
       track(p, 'follow');
-      c.ped = p; c.wps = [];
-      var path = sp.path || [];
-      for (var i = 0; i < path.length; i++) { var pt = resolvePoint(path[i]); if (pt) c.wps.push(pt); }
+      c.ped = p; c.wps = wps;
       if (!c.wps.length) c.wps.push({ x: s.x, z: s.z, y: s.y });
-      c.wi = 0; c.arrived = false; c.closeT = 0; c.farT = 0; c.maxDist = metres(o.maxDist, 40);
+      c.wi = 0; c.arrived = false; c.closeT = 0; c.farT = 0; c.maxDist = metres(o.maxDist, 40); c.pulledAway = false;
       c.marker = addObjMarker({ x: p.x, z: p.z, y: p.y }, p);
       if (c.marker.mesh) c.marker.mesh.scale.set(0.55, 0.45, 0.55);
     },
@@ -806,7 +886,10 @@
       if (!t || t.removed || !t.alive) { c.failReason = 'target_lost'; return 'fail'; }
       if (c.arrived) return 'done';
       var d = U.dist2d(p.x, p.z, t.x, t.z), dt = C.STEP;
-      if (d < K.followTooClose && !c.arrived) c.closeT += dt; else c.closeT = 0;
+      if (d >= K.followTooClose) c.pulledAway = true;
+      // the spotted clock only runs once the player has had a moment to react (or the target has pulled away once)
+      var live = c.pulledAway || c.t >= K.followGrace;
+      if (live && d < K.followTooClose && !c.arrived) c.closeT += dt; else c.closeT = 0;
       if (d > c.maxDist) c.farT += dt; else c.farT = 0;
       if (c.closeT >= K.followCloseTime) { c.failReason = 'spotted'; return 'fail'; }
       if (c.farT >= K.followFarTime) { c.failReason = 'target_escaped'; return 'fail'; }
@@ -838,7 +921,8 @@
       c.total = o.seconds || 30; c.t = 0; c.nextWave = 0; c.hostiles = [];
       var waves = o.waves || {}, n = Math.max(1, Math.floor(c.total / K.waveEvery));
       c.quota = {}; c.spawned = {}; c.perWave = {};
-      for (var role in waves) { c.quota[role] = waves[role] | 0; c.spawned[role] = 0; c.perWave[role] = Math.max(1, Math.ceil(waves[role] / n)); }
+      var hm = Heist.hostileMul();
+      for (var role in waves) { c.quota[role] = Math.max(1, Math.round((waves[role] | 0) * hm)); c.spawned[role] = 0; c.perWave[role] = Math.max(1, Math.ceil(c.quota[role] / n)); }
     },
     update: function (o, c, p) {
       // c.t is the objective clock (ticked by the interpreter, paused during dialogue)
@@ -915,7 +999,9 @@
         var nv = H.destroy._spawnOne(c, q.i); if (nv) c.vehicles[q.i] = nv;
       }
       c.done = n;
-      return n >= c.total ? 'done' : null;
+      if (n >= c.total) return 'done';
+      supplyWeapon(c, player());
+      return null;
     },
     progress: function (o, c) { return { n: c.done || 0, total: c.total }; },
     target: function (o, c, p) {
@@ -927,14 +1013,14 @@
   H.defeat = {
     start: function (o, c) {
       var sp = o.spawn || {}, center = resolvePoint(sp.around) || { x: player().x, z: player().z, y: player().y };
-      var radius = metres(sp.radius, 20), count = sp.count || 1;
+      var radius = metres(sp.radius, 20), count = Math.max(1, Math.round((sp.count || 1) * Heist.hostileMul()));
       c.peds = []; c.holdT = 0; c.weapon = o.weapon || null; c.mustKill = !!o.mustKill; c.spawn = sp; c.center = center; c.radius = radius; c.respawnQ = []; c.wrong = 0;
       for (var i = 0; i < count; i++) c.peds.push(H.defeat._spawnOne(c));
       c.total = c.peds.length;
     },
     _spawnOne: function (c) {
       var sp = c.spawn, s = randomSpot(c.center.x, c.center.z, Math.min(8, c.radius * 0.4), c.radius, { clear: 1.2, others: c.peds, gap: 2.5 });
-      return spawnHostile(sp.ped || 'thug', s.x, s.z, c, { stationary: !!sp.stationary, hostile: sp.hostile, weapon: sp.weapon });
+      return spawnHostile(sp.ped || 'thug', s.x, s.z, c, { stationary: !!sp.stationary, hostile: sp.hostile, weapon: sp.weapon, fireRange: sp.fireRange ? metres(sp.fireRange) : 0 });
     },
     check: function (o, c) {
       var out = 0, i, k;
@@ -961,7 +1047,7 @@
         c.peds[q.i] = H.defeat._spawnOne(c);
       }
       c.down = out;
-      if (out >= c.total) c.holdT += C.STEP; else c.holdT = 0;
+      if (out >= c.total) c.holdT += C.STEP; else { c.holdT = 0; supplyWeapon(c, player()); }
       return c.holdT >= K.defeatHold ? 'done' : null;
     },
     progress: function (o, c) { return { n: c.down || 0, total: c.total }; },
@@ -1060,7 +1146,7 @@
       return null;
     },
     hint: function (o, c, p) {
-      if (c.phase === 'hail') return (p.inVehicle ? 'Stop beside them' : 'Pick them up in the ' + (c.ref.any ? 'car' : ((taggedVehicle(c.ref.tag) || {}).type || 'vehicle')));
+      if (c.phase === 'hail') { if (p.inVehicle) return 'Stop beside them'; var ty = refType(c.ref); return 'Pick them up ' + (ON_VEHICLES[ty] ? 'on' : 'in') + ' the ' + vehicleName(ty); }
       if (c.phase === 'ride') return p.inVehicle === c.v ? 'Stop at the drop-off' : 'Get back in';
       return null;
     },
@@ -1131,7 +1217,7 @@
       toast('CONTEXT STAMPED: ' + (r.reason === 'short' ? 'not enough air' : r.reason === 'slow' ? 'too slow off the ramp' : 'bad landing') + '. Line it up again');
       return null;
     },
-    hint: function (o, c, p) { if (!p.inVehicle) return 'Get back in the ' + (c.ref.any ? 'car' : ((taggedVehicle(c.ref.tag) || {}).type || 'vehicle')); return 'Hit the ramp flat out'; },
+    hint: function (o, c, p) { if (!p.inVehicle) return backIn(refType(c.ref)); return 'Hit the ramp flat out'; },
     target: function (o, c) { return c.ramp ? { x: c.ramp.x, z: c.ramp.z, y: c.ramp.y } : null; },
     cleanup: function (o, c) { var St = GTP.Strands && GTP.Strands.stunts; if (c.watch && St) St.unwatch(c.watch); }
   };
@@ -1190,6 +1276,197 @@
     cleanup: function (o, c) { GTP.Events.off('shop:open', c.onOpen); GTP.Events.off('shop:buy', c.onBuy); }
   };
 
+  // ------------------------------------------------ v0.3 objective types (PLAN_V03 "story") --
+  // An event-driven objective: `on` names the events, `match(o, c, e)` says whether one completes it. The listeners live on
+  // the objective context and come off in cleanup.
+  function listen(c, name, fn) { c._ls = c._ls || []; c._ls.push([name, fn]); GTP.Events.on(name, fn); }
+  function unlisten(c) { if (!c || !c._ls) return; for (var i = 0; i < c._ls.length; i++) GTP.Events.off(c._ls[i][0], c._ls[i][1]); c._ls = null; }
+  // the door a kind of interior is entered by: the objective's own landmark, else the nearest landmark of that kind
+  var INTERIOR_KINDS = { armory: ['armory', 'gunshop'], range: ['armory', 'gunshop'], clothing: ['clothing'], barber: ['barber'], safehouse: ['safehouse'], modshop: ['modshop'] };
+  function interiorDoor(o, want) {
+    if (o.target) return resolvePoint(o.target);
+    if (o.landmark) return resolvePoint({ landmark: o.landmark });
+    var Wd = W(), pl = player(), kinds = INTERIOR_KINDS[want] || [want], best = null, bd = 1e9;
+    for (var i = 0; i < Wd.landmarks.length; i++) {
+      var l = Wd.landmarks[i]; if (!l.door || kinds.indexOf(l.kind) < 0) continue;
+      var d = pl ? U.dist2d(pl.x, pl.z, l.door.x, l.door.z) : 0; if (d < bd) { bd = d; best = l; }
+    }
+    return best ? resolvePoint({ landmark: best.id }) : null;
+  }
+  function interiorMatches(want, store, e) {
+    if (!e) return false;
+    if (store && e.store !== store && e.id !== store) return false;
+    if (!want) return true;
+    var ks = INTERIOR_KINDS[want] || [want];
+    return e.id === want || e.kind === want || ks.indexOf(e.kind) >= 0 || ks.indexOf(e.id) >= 0;
+  }
+  // interior: {interior:'armory'|'clothing'|..., store?, landmark?} completes on interior:enter. Without GTP.Interiors (the
+  // interiors track not merged) reaching the door on foot counts, so the story never waits on a room that does not exist
+  H.interior = {
+    start: function (o, c) {
+      c.want = o.interior || o.kind || null; c.store = o.store || null; c.done = false; c.radius = o.radius != null ? metres(o.radius) : 3;
+      listen(c, 'interior:enter', function (e) { if (interiorMatches(c.want, c.store, e)) c.done = true; });
+      var I = GTP.Interiors;
+      if (I && I.active && I.current && interiorMatches(c.want, c.store, typeof I.current === 'object' ? I.current : { id: I.current })) c.done = true;
+      c.target = interiorDoor(o, c.want);
+      if (c.target && !c.done) c.marker = addObjMarker(c.target, null);
+    },
+    check: function (o, c, p) {
+      if (c.done) return 'done';
+      var I = GTP.Interiors;
+      if ((!I || !I.enter) && c.target && !p.inVehicle && U.dist2d(p.x, p.z, c.target.x, c.target.z) <= Math.max(c.radius, K.markerRadius + 1)) return 'done';
+      return null;
+    },
+    hint: function (o, c, p) { return c.target && U.dist2d(p.x, p.z, c.target.x, c.target.z) < 12 ? 'Walk in through the door' : null; },
+    target: function (o, c) { return c.done ? null : c.target; },
+    cleanup: function (o, c) { unlisten(c); }
+  };
+  // buy: {item} (an item id, a shop tab like 'ammo', a weapon id, or 'any') completes on shop:buy. `fund` tops the wallet up to
+  // that amount at the start, so a broke player is never locked out of the tutorial purchase
+  function buyMatches(want, e) {
+    if (!e) return false;
+    var it = e.item, id = typeof it === 'string' ? it : (it && (it.id || it.itemId)) || null;
+    if (!want || want === 'any') return true;
+    if (id === want) return true;
+    if (it && typeof it === 'object' && (it.tab === want || it.kind === want || it.weapon === want || it.weaponId === want)) return true;
+    return typeof id === 'string' && id.indexOf(want + '_') === 0;
+  }
+  H.buy = {
+    start: function (o, c) {
+      var p = player();
+      c.want = o.item || 'any'; c.done = false;
+      if (o.fund && p && p.money < o.fund) { p.money = o.fund | 0; toast('Gus spotted you ' + U.fmtMoney(o.fund) + '. He wants it back. He will not ask.'); }
+      listen(c, 'shop:buy', function (e) { if (buyMatches(c.want, e)) c.done = true; });
+      if (o.target || o.landmark) { c.target = resolvePoint(o.target || { landmark: o.landmark }); if (c.target) c.marker = addObjMarker(c.target, null); }
+      // nothing to buy from (no shop module at all): it passes
+      if (!GTP.Combat || (!GTP.Combat.buy && !(GTP.Combat.shop && GTP.Combat.shop.buy))) c.done = true;
+    },
+    check: function (o, c) { return c.done ? 'done' : null; },
+    hint: function (o, c) { return c.want === 'any' ? 'Buy something at the counter' : 'Buy it at the counter'; },
+    target: function (o, c) { return c.target || null; },
+    cleanup: function (o, c) { unlisten(c); }
+  };
+  // range: {medal:'bronze'|'silver'|'gold'} completes on range:end with that medal or better; a worse run says go again.
+  // Without a range runtime (no GTP.Interiors) it passes after a beat, with a toast
+  var MEDALS = { none: 0, bronze: 1, silver: 2, gold: 3 };
+  H.range = {
+    start: function (o, c) {
+      c.want = MEDALS[o.medal] != null ? MEDALS[o.medal] : 1; c.done = false; c.tries = 0;
+      listen(c, 'range:end', function (e) {
+        var got = MEDALS[e && e.medal] || 0; c.tries++;
+        if (got >= c.want) c.done = true; else toast('No ' + (o.medal || 'bronze') + ' yet (' + ((e && e.score) | 0) + ' points). Merle resets the targets.');
+      });
+      c.fallback = !GTP.Interiors;
+      if (o.target || o.landmark) { c.target = resolvePoint(o.target || { landmark: o.landmark }); if (c.target) c.marker = addObjMarker(c.target, null); }
+    },
+    check: function (o, c) {
+      if (c.done) return 'done';
+      if (c.fallback && c.t > 1) { toast('The range is closed for repainting. Merle signs you off anyway.'); return 'done'; }
+      return null;
+    },
+    hint: function (o, c) { return c.tries ? 'Beat the clock for a ' + (o.medal || 'bronze') : 'Step up to the range'; },
+    target: function (o, c) { return c.target || null; },
+    cleanup: function (o, c) { unlisten(c); }
+  };
+  // heist_board: opens the planning board (emits heist:board {missionId}) and completes on heist:plan {approach, crew}.
+  // With nobody listening for heist:board (no UI board) the default plan is picked after a beat
+  H.heist_board = {
+    start: function (o, c) {
+      c.done = false; c.mission = run ? run.id : null;
+      listen(c, 'heist:plan', function (e) { Heist.setPlan(e || {}, c.mission); c.done = true; });
+      GTP.Events.emit('heist:board', { missionId: c.mission, approaches: Heist.approaches(), crew: Heist.crewList(), mission: run ? run.m : null });
+      c.auto = !(hasListener('heist:board') || (GTP.UI && (GTP.UI.heistBoard || GTP.UI.openHeistBoard)));
+    },
+    check: function (o, c) {
+      if (c.done) return 'done';
+      if (c.auto && c.t > 1.5) { var def = Heist.defaultPlan(); Heist.setPlan(def, c.mission); toast('Plan: ' + Heist.approachName(def.approach) + '. Gus picked for you. Gus always picks.'); return 'done'; }
+      return null;
+    },
+    hint: function () { return 'Pick an approach and a crew'; },
+    cleanup: function (o, c) { unlisten(c); }
+  };
+  // boss: a fallback for the bosses track's own type (it replaces this through registerObjectiveType): GTP.Bosses.spawn and
+  // boss:defeated when that module is there, else the fight is skipped with a toast so the story never stops on it
+  H.boss = {
+    start: function (o, c) {
+      c.done = false; c.id = o.bossId || o.boss || null;
+      listen(c, 'boss:defeated', function (e) { if (!c.id || (e && e.id === c.id)) c.done = true; });
+      var B = GTP.Bosses, ok = false;
+      if (B && B.spawn && c.id) { try { ok = !!B.spawn(c.id, Object.assign({ mission: run ? run.id : null }, o.opts || {})); } catch (e) { U.reportError(e, 'missions.boss'); } }
+      if (!ok) { c.done = true; toast('The set piece is still in rehearsal. Ratio\'d anyway.'); }
+    },
+    check: function (o, c) { return c.done ? 'done' : null; },
+    cleanup: function (o, c) { unlisten(c); }
+  };
+
+  // listener counts for the fallbacks above (does anyone draw the heist board, the phone, the chapter card?): GTP.Events.on /
+  // off are wrapped once at load to keep a tally (a wrapper on 00_util, listed in docs/v03/story.md)
+  var evCount = {};
+  (function wrapEvents() {
+    var Ev = GTP.Events; if (!Ev || Ev._counted) return;
+    var on = Ev.on, off = Ev.off;
+    Ev.on = function (name, fn) { evCount[name] = (evCount[name] || 0) + 1; return on.call(Ev, name, fn); };
+    Ev.off = function (name, fn) { if (evCount[name] > 0) evCount[name]--; return off.call(Ev, name, fn); };
+    Ev._counted = true;
+  })();
+  function hasListener(name) { return (evCount[name] | 0) > 0; }
+
+  // ------------------------------------------------------------- the heist (three missions: h01_casing, h02_prep, h03_job) --
+  // The planning board's choice arrives as heist:plan {approach, crew:[castIds]}; it changes the job's spawns (hostile counts
+  // x approach.hostiles, objectives tagged `approach` run only for that approach) and its payout (x approach.payout, minus the
+  // crew's cuts). Tables come from GTP.Content.parity.heist when the content has them.
+  var HEIST_DEFAULTS = {
+    missions: ['h01_casing', 'h02_prep', 'h03_job'],
+    approaches: [
+      { id: 'quiet', name: 'The Quiet Take', hostiles: 0.6, payout: 1.0, wanted: 2, line: 'In through the loading dock, out before the panel ends.' },
+      { id: 'loud', name: 'The Loud Take', hostiles: 1.5, payout: 1.3, wanted: 4, line: 'Through the front door, on air, with a megaphone.' }
+    ],
+    crew: [
+      { id: 'gus', name: 'Gus', cut: 0.1, perk: 'driver' },
+      { id: 'roz', name: 'Roz', cut: 0.08, perk: 'crowd' },
+      { id: 'kip', name: 'Kip', cut: 0.02, perk: 'hacker' }
+    ]
+  };
+  function heistData() {
+    var P = GTP.Content && GTP.Content.parity, X = (P && P.heist) || {};
+    return { missions: X.missions || HEIST_DEFAULTS.missions, approaches: X.approaches || HEIST_DEFAULTS.approaches, crew: X.crew || HEIST_DEFAULTS.crew };
+  }
+  var heistPlan = null;   // {approach, crew, missionId, at}
+  var Heist = GTP.Heist = {
+    approaches: function () { return heistData().approaches.slice(); },
+    crewList: function () { return heistData().crew.slice(); },
+    approach: function (id) { var A = heistData().approaches; for (var i = 0; i < A.length; i++) if (A[i].id === id) return A[i]; return A[0] || null; },
+    approachName: function (id) { var a = Heist.approach(id); return a ? a.name : String(id); },
+    defaultPlan: function () { var A = heistData().approaches, C2 = heistData().crew; return { approach: A[0] ? A[0].id : 'quiet', crew: C2.length ? [C2[0].id] : [] }; },
+    plan: function () { return heistPlan; },
+    setPlan: function (e, missionId) {
+      var a = Heist.approach(e.approach) || Heist.approach(Heist.defaultPlan().approach), crew = Array.isArray(e.crew) ? e.crew.slice(0, 4) : [];
+      heistPlan = { approach: a ? a.id : 'quiet', crew: crew, missionId: missionId || null };
+      if (state) { state.flags.heist_planned = true; state.flags['heist_' + heistPlan.approach] = true; }
+      emit('heistPlan', heistPlan);
+      return heistPlan;
+    },
+    isHeist: function (m) { return !!m && (!!m.heist || heistData().missions.indexOf(m.id) >= 0); },
+    // the multiplier on the job's hostile spawns
+    hostileMul: function () { if (!run || !Heist.isHeist(run.m)) return 1; var a = Heist.approach((heistPlan || Heist.defaultPlan()).approach); return a && a.hostiles ? a.hostiles : 1; },
+    // the reward after the approach and the crew's cuts (whole dollars)
+    payout: function (m, base) {
+      if (!Heist.isHeist(m)) return base;
+      var plan = heistPlan || Heist.defaultPlan(), a = Heist.approach(plan.approach), cut = 0, C2 = heistData().crew;
+      for (var i = 0; i < plan.crew.length; i++) for (var k = 0; k < C2.length; k++) if (C2[k].id === plan.crew[i]) cut += C2[k].cut || 0;
+      return Math.max(0, Math.round(base * (a && a.payout ? a.payout : 1) * (1 - Math.min(0.6, cut))));
+    },
+    // an objective tagged {approach:'loud'} (or ['loud', ...]) runs only for that plan; untagged ones always run
+    objectiveRuns: function (def) {
+      if (!def || def.approach == null) return true;
+      var want = Array.isArray(def.approach) ? def.approach : [def.approach], plan = heistPlan || Heist.defaultPlan();
+      return want.indexOf(plan.approach) >= 0;
+    },
+    reset: function () { heistPlan = null; },
+    serialize: function () { return heistPlan ? JSON.parse(JSON.stringify(heistPlan)) : null; },
+    load: function (d) { heistPlan = d && d.approach ? { approach: d.approach, crew: Array.isArray(d.crew) ? d.crew.slice() : [], missionId: d.missionId || null } : null; }
+  };
+
   // ----------------------------------------------------- checkpoints --
   // Every objective start takes a snapshot (GDD_EXPANSION §6.4): the player, their vehicle, the wanted level, the cursor into the
   // objective tree with the timers, the flags and the live tagged vehicles (re-spawned from the record on RETRY, never kept)
@@ -1236,6 +1513,20 @@
   }
 
   // -------------------------------------------------------- the cursor --
+  // objective types: the built-ins (H), the ones other modules registered (Missions.registerObjectiveType), and any left in
+  // GTP.ObjectiveTypes by a file that loaded before this one (08b_bosses)
+  var pluginTypes = {};
+  function objectiveType(name) {
+    if (pluginTypes[name]) return pluginTypes[name];
+    var Q = GTP.ObjectiveTypes;
+    if (Q && Q[name] && registerObjectiveType(name, Q[name])) return pluginTypes[name];
+    return H[name] || null;
+  }
+  function registerObjectiveType(name, def) {
+    if (!name || !def || (typeof def.check !== 'function' && typeof def.start !== 'function')) return false;
+    pluginTypes[name] = Object.assign({ start: function () { }, check: function () { return null; } }, def);
+    return true;
+  }
   function frame() { return run.stack[run.stack.length - 1]; }
   function beginObjective() {
     for (var guard = 0; guard < 64; guard++) {
@@ -1250,12 +1541,14 @@
         run.stack.push({ list: def.objectives || [], i: 0, timer: { remaining: def.seconds || 60, total: def.seconds || 60, text: def.text || null }, def: def });
         continue;
       }
-      var h = H[def.type];
+      if (!Heist.objectiveRuns(def)) { f.i++; continue; }   // the other heist approach's objective
+      var h = objectiveType(def.type);
       if (!h) { U.reportError(new Error('unknown objective type ' + def.type), 'missions'); f.i++; continue; }
       try { run.checkpoint = takeSnapshot(); } catch (e) { U.reportError(e, 'missions.snapshot'); }
       run.obj = { def: def, h: h, c: { t: 0, failReason: null }, startedAt: simT() };
       try { h.start(def, run.obj.c, player()); } catch (e) { U.reportError(e, 'missions.start ' + def.type); }
       syncObjectiveState();
+      objectiveGps();
       emit('objective', { mission: run.m, objective: def, index: run.stack[0].i, text: def.text || '' });
       return;
     }
@@ -1350,7 +1643,7 @@
     return id;
   }
   function completeRun() {
-    var m = run.m, p = player(), replay = !!run.replay, reward = replay ? 0 : (m.reward | 0), r = run;
+    var m = run.m, p = player(), replay = !!run.replay, reward = replay ? 0 : Heist.payout(m, m.reward | 0), r = run;
     cleanupEntities(run.entities, true);
     clearObjMarkers();
     if (p && reward) { p.money += reward; textFx('+' + U.fmtMoney(reward), p.x, p.y + 2.2, p.z, '#9dff3c', 1.8); sfx('cash', p.x, p.z, 0.9); }
@@ -1373,6 +1666,8 @@
     var finish = function () { if (ending) { emit('ending', { id: id }); callUI('credits', id); } };
     if (cs) pendingCut = { id: cs, t: K.cutsceneAfterDelay, then: finish };
     else finish();
+    clearGps();
+    storyAfterComplete(m, replay);
   }
   var FAIL_TEXT = {
     player_dead: 'You got ratio\'d.', busted: 'You got deplatformed.', timer: 'Out of time.', target_escaped: 'You lost them.',
@@ -1382,7 +1677,7 @@
   };
   function failText(reason) {
     if (!reason) return '';
-    if (reason.indexOf('vehicle_lost:') === 0) { var tag = reason.slice(13), v = run && run.tagged[tag]; return 'The ' + (v ? v.type : tag) + ' is gone.'; }
+    if (reason.indexOf('vehicle_lost:') === 0) { var tag = reason.slice(13), v = run && run.tagged[tag]; return 'The ' + (v ? vehicleName(v.type) : (tag === 'podvan' ? 'pod van' : tag)) + ' is gone.'; }
     if (reason.indexOf('minigame:') === 0) return reason.slice(9) === 'ratio' ? 'You were the ratio.' : 'Minds changed: zero. Crowd: theirs.';
     return FAIL_TEXT[reason] || String(reason);
   }
@@ -1527,6 +1822,10 @@
       CB.shop.discountHook = function (p) {
         var d = 0;
         try { if (typeof prev === 'function') d += prev(p) || 0; } catch (e) { /* another hook's problem */ }
+        // Content.expansion.shop.discount already counts tier 3 and the memo discount, and Combat adds both: only one of them
+        // may (QA-STR-08)
+        var X = expansion().shop;
+        if (X && typeof X.discount === 'function') return d;
         if (subsTier >= 3) d += 0.25;
         if (state && state.flags && state.flags.memo_discount) d += 0.15;
         return d;
@@ -1547,6 +1846,208 @@
   }
   function chaosSubs(n, why) { if (chaos.budget <= 0) return; n = Math.min(n, chaos.budget); chaos.budget -= n; addSubs(n, why); }
 
+  // ======================================================================================== GTP.Story ==
+  // The story you cannot miss (PLAN_V03 "story"): the chain in order, the next mission and where it is, the GPS to it after
+  // every mission (gps:set {x, z, label, kind:'story'}), the next giver's phone call (phone:call {from, lines}), chapter cards
+  // on act changes (chapter {act, title}), and the new game's hand-off from the opening cutscene into the first mission.
+  var ACT_TITLES = { 1: 'Folding Table', 2: 'Four Clients', 3: 'The Monday Memo' };
+  var ACT_STARTS = { m00_intro: 1, m05_peer: 2, m12_memo: 3 };   // GDD §3: the act cutscenes play after m04 and m11
+  var ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  var CALL_TEMPLATES = [
+    'It\'s me. {landmark}. The take is cooling and so is my patience. It\'s called {title}.',
+    'You\'re trending, which is bad, which is good. Get to {landmark}. {title}. Don\'t make it a whole thing.',
+    'Don\'t talk, walk. {landmark}. The GPS knows. The GPS has always known. {title}.',
+    'Pick up. You did. Great. {landmark}, now, for {title}. Bring the table energy, not the table.'
+  ];
+  function parity() { return (GTP.Content && GTP.Content.parity) || {}; }
+  function storyMission(m) { return !!m && m.story !== false && !m.side && !registry[m.id]; }
+  var _order = null, _orderKey = null;
+  // the story missions in play order: a topological sort over `requires`, ranked by the content's chain (new missions without
+  // a rank slot in wherever their prerequisites put them)
+  function storyOrder() {
+    var all = allMissions(), chain = expansion().chain || [], key = _allKey + '|' + chain.length;
+    if (_order && _orderKey === key) return _order;
+    var list = all.filter(storyMission), ids = {}, i;
+    for (i = 0; i < list.length; i++) ids[list[i].id] = list[i];
+    function rank(m) { var k = chain.indexOf(m.id); return k >= 0 ? k : 1000 + list.indexOf(m); }
+    var placed = {}, out = [], left = list.slice();
+    for (var guard = 0; left.length && guard < 1000; guard++) {
+      var best = -1, br = 1e9;
+      for (i = 0; i < left.length; i++) {
+        var req = left[i].requires || [], ok = true;
+        for (var k = 0; k < req.length; k++) if (ids[req[k]] && !placed[req[k]]) { ok = false; break; }
+        if (ok && rank(left[i]) < br) { br = rank(left[i]); best = i; }
+      }
+      if (best < 0) best = 0;   // a cycle in the data: keep going in list order
+      var m = left.splice(best, 1)[0]; placed[m.id] = true; out.push(m);
+    }
+    _order = out; _orderKey = key;
+    return out;
+  }
+  // chapters: GTP.Content.parity.chapters as [{act, title, from?}] or {act: title}; the GDD's three acts otherwise
+  function chapterTable() {
+    var T = parity().chapters, out = { titles: {}, starts: {} };
+    if (Array.isArray(T)) T.forEach(function (c) { if (!c) return; var a = c.act | 0; if (a) { if (c.title) out.titles[a] = c.title; if (c.from || c.start) out.starts[c.from || c.start] = a; } });
+    else if (T && typeof T === 'object') for (var k in T) { var a2 = parseInt(String(k).replace(/\D/g, ''), 10); if (a2) out.titles[a2] = typeof T[k] === 'string' ? T[k] : (T[k] && T[k].title) || null; }
+    return out;
+  }
+  function chapterTitle(act) { var t = chapterTable().titles[act]; return t || ACT_TITLES[act] || ('Act ' + act); }
+  function actOf(m) {
+    if (!m) return 1;
+    var order = storyOrder(), starts = chapterTable().starts, act = 1;
+    for (var i = 0; i < order.length; i++) {
+      var o = order[i];
+      if (typeof o.act === 'number' && o.act > 0) act = o.act; else if (starts[o.id]) act = starts[o.id]; else if (ACT_STARTS[o.id]) act = ACT_STARTS[o.id];
+      if (o.id === m.id) return act;
+    }
+    return typeof m.act === 'number' ? m.act : act;
+  }
+  function requiresMet(m) { var req = m.requires || []; for (var k = 0; k < req.length; k++) if (!state.completed.has(req[k])) return false; return true; }
+  function storyNextMission() {
+    var order = storyOrder();
+    for (var i = 0; i < order.length; i++) { var m = order[i]; if (!state.completed.has(m.id) && requiresMet(m)) return m; }
+    return null;
+  }
+  function storyInfo(m) {
+    if (!m) return null;
+    var pt = null;
+    for (var i = 0; i < avail.length; i++) if (avail[i].id === m.id) pt = { x: avail[i].x, z: avail[i].z, y: avail[i].y };
+    if (!pt) pt = resolvePoint({ landmark: m.marker });
+    var lm = W().landmark ? W().landmark(m.marker) : null, cast = castOf(m.giver), act = actOf(m);
+    var lmName = lm ? ((GTP.UI && GTP.UI.landmarkLabel) ? GTP.UI.landmarkLabel(lm) : (lm.name || m.marker)) : m.marker;
+    return { missionId: m.id, title: m.title, giver: m.giver || null, giverName: cast ? cast.name : (m.giver || ''), landmark: m.marker, landmarkName: lmName,
+      x: pt ? pt.x : 0, z: pt ? pt.z : 0, y: pt ? pt.y : 0, act: act, chapter: chapterTitle(act) };
+  }
+  var pendingCall = null;   // {missionId, t}: the next giver's call, waiting for the cards and cutscenes to clear
+  var lastGps = null;
+  function gpsPayload(x, z, label, kind, extra) {
+    var pl = player(), Wd = W(), route = null;
+    if (pl && Wd.route) { try { route = Wd.route(pl.x, pl.z, x, z) || null; } catch (e) { U.reportError(e, 'story.route'); route = null; } }
+    return Object.assign({ x: x, z: z, label: label, kind: kind, route: route }, extra || {});
+  }
+  function setGps(payload) {
+    lastGps = payload;
+    Story.gpsTarget = payload;
+    GTP.Events.emit('gps:set', payload);
+  }
+  function clearGps() { if (!lastGps) return; lastGps = null; Story.gpsTarget = null; GTP.Events.emit('gps:clear', {}); }
+  // the objective's own GPS during a mission: a fixed target (a door, a drop-off) gets the line, a moving one the arrow only
+  var GPS_TYPES = { goto: 1, drive_to: 1, interior: 1, shop: 1, buy: 1, range: 1 };
+  function objectiveGps() {
+    var o = run && run.obj; if (!o) return;
+    var t = null;
+    if (GPS_TYPES[o.def.type] && o.h.target) { try { t = o.h.target(o.def, o.c, player()); } catch (e) { t = null; } }
+    if (t) setGps(gpsPayload(t.x, t.z, o.def.text || run.m.title, 'objective', { missionId: run.id }));
+    else clearGps();
+  }
+  function storyGps(force) {
+    if (run) return null;
+    var n = storyInfo(storyNextMission());
+    if (!n) { clearGps(); return null; }
+    if (!force && lastGps && lastGps.kind === 'story' && lastGps.missionId === n.missionId) return lastGps;
+    var p = gpsPayload(n.x, n.z, n.title + ': ' + n.landmarkName, 'story', { missionId: n.missionId, giver: n.giver, landmark: n.landmark });
+    setGps(p);
+    return p;
+  }
+  function callLines(m) {
+    var calls = parity().calls || {}, raw = calls[m.id], giver = m.giver || 'sloane', lines = [];
+    if (raw && !Array.isArray(raw) && typeof raw === 'object') { if (raw.from) giver = raw.from; raw = raw.lines; }
+    if (typeof raw === 'string') raw = [raw];
+    if (Array.isArray(raw)) for (var i = 0; i < raw.length; i++) { var l = raw[i]; if (!l) continue; lines.push(typeof l === 'string' ? { who: giver, text: l } : { who: l.who || l.from || giver, text: l.text || '' }); }
+    if (!lines.length) {
+      var info = storyInfo(m), h = 0; for (i = 0; i < m.id.length; i++) h = (h * 31 + m.id.charCodeAt(i)) | 0;
+      var tpl = CALL_TEMPLATES[Math.abs(h) % CALL_TEMPLATES.length];
+      lines.push({ who: giver, text: tpl.replace('{landmark}', info ? info.landmarkName : m.marker).replace('{title}', m.title) });
+    }
+    return { from: giver, lines: lines.map(function (l) { var e = enrich(l); return { who: e.who, name: e.name, color: e.color, text: e.text }; }) };
+  }
+  function placeCall(id) {
+    var m = missionById(id); if (!m || state.completed.has(id)) return false;
+    var c = callLines(m), cast = castOf(c.from), info = storyInfo(m), pl = player();
+    state.flags['called_' + id] = true;
+    var payload = { from: c.from, name: cast ? cast.name : c.from, lines: c.lines, missionId: id, title: m.title, landmark: info ? info.landmark : m.marker, landmarkName: info ? info.landmarkName : null };
+    Story.lastCall = payload;
+    if (pl) sfx('phone', pl.x, pl.z, 0.8);
+    GTP.Events.emit('phone:call', payload);
+    // nobody draws the phone (the UI track not merged): the lines go to the ticker / toasts so the call still lands
+    if (!hasListener('phone:call') && !callUI('phoneCall', payload)) for (var i = 0; i < c.lines.length && i < 3; i++) toast(c.lines[i].name + ' (phone): ' + c.lines[i].text);
+    return true;
+  }
+  function scheduleCall(id) { if (!id || state.flags['called_' + id]) return; pendingCall = { missionId: id, t: K.callDelay }; }
+  function tickStory(dt) {
+    var g = game(); if (!g) return;
+    if (pendingCall) {
+      var Cs = GTP.Cutscenes, busy = run || pendingCut || dlg.active || mg.active || (Cs && Cs.active) || g.state !== 'playing' || (g.loading && g.loading.active);
+      if (!busy) { pendingCall.t -= dt; if (pendingCall.t <= 0) { var pc = pendingCall; pendingCall = null; placeCall(pc.missionId); } }
+    }
+  }
+  function maybeChapter(m) {
+    if (!storyMission(m)) return null;
+    var act = actOf(m);
+    if (act <= (state.flags.story_act | 0)) return null;
+    state.flags.story_act = act;
+    var c = { act: act, title: chapterTitle(act), roman: ROMAN[act] || String(act), missionId: m.id };
+    Story.chapter = { act: act, title: c.title };
+    GTP.Events.emit('chapter', c);
+    if (!hasListener('chapter') && !callUI('chapter', c)) toast('ACT ' + c.roman + ': ' + c.title.toUpperCase());
+    return c;
+  }
+  // after a story mission: the GPS to the next one, its giver's call once the cards clear
+  function storyAfterComplete(m, replay) {
+    if (replay || !storyMission(m)) return;
+    var n = storyNextMission();
+    Story.refresh();
+    if (!n) { clearGps(); GTP.Events.emit('story:done', { last: m.id }); return; }
+    storyGps(true);
+    scheduleCall(n.id);
+  }
+  var Story = GTP.Story = {
+    chapter: { act: 1, title: ACT_TITLES[1] },
+    gpsTarget: null,
+    lastCall: null,
+    // {missionId, title, giver, giverName, landmark, landmarkName, x, z, y, act, chapter} | null when the story is done
+    next: function () { return state ? storyInfo(storyNextMission()) : null; },
+    order: function () { return storyOrder().map(function (m) { return m.id; }); },
+    actOf: function (id) { return actOf(missionById(id)); },
+    chapterTitle: chapterTitle,
+    progress: function () { var o = storyOrder(), n = 0; for (var i = 0; i < o.length; i++) if (state.completed.has(o[i].id)) n++; return { done: n, total: o.length }; },
+    refresh: function () { var n = storyNextMission(), last = null; if (!n) { var o = storyOrder(); last = o[o.length - 1]; } var act = actOf(n || last); Story.chapter = { act: act, title: chapterTitle(act) }; return Story.chapter; },
+    // re-point the GPS at the next story mission (after a load, a fail, an abort)
+    gps: function (force) { return storyGps(force !== false); },
+    call: function (id) { var n = id || (storyNextMission() || {}).id; return n ? placeCall(n) : false; },
+    pendingCall: function () { return pendingCall; },
+    // the new game's hand-off: the first (next) story mission starts at once, the player at its door when far.
+    // opts: {teleport: false}
+    begin: function (opts) {
+      opts = opts || {};
+      if (run || !state) return false;
+      var m = storyNextMission(); if (!m) return false;
+      var info = storyInfo(m), pl = player(), g = game();
+      if (pl && info && opts.teleport !== false && U.dist2d(pl.x, pl.z, info.x, info.z) > 40 && g && g.debug) g.debug.teleport(info.x, info.z);
+      var ok = Missions.start(m.id);
+      if (!ok) storyGps(true);
+      GTP.Events.emit('story:begin', { missionId: m.id, started: ok });
+      return ok;
+    },
+    reset: function () { pendingCall = null; lastGps = null; Story.gpsTarget = null; Story.lastCall = null; Story.chapter = { act: 1, title: chapterTitle(1) }; }
+  };
+
+  // story beacons: a tall light over every mission marker so a door is found from 200 m and more (the next story mission's is
+  // brighter); one shared geometry, a material per marker (removeMarker disposes materials and unshared geometry)
+  var beaconGeo = null;
+  function addBeacon(grp, color) {
+    var T = window.THREE; void color; if (!grp || !T || (grp.userData && grp.userData.beacon)) return;
+    try {
+      var h = K.beaconHeight;
+      if (!beaconGeo) { beaconGeo = new T.CylinderGeometry(0.45, 1.25, h, 12, 1, true); beaconGeo.translate(0, h / 2 + 1.5, 0); beaconGeo.userData.shared = true; }
+      // normal blending: an additive blue column vanished against the dusk sky
+      var mat = new T.MeshBasicMaterial({ color: 0x5aa0ff, transparent: true, opacity: 0.2, depthWrite: false, side: T.DoubleSide, fog: false });
+      var beam = new T.Mesh(beaconGeo, mat); beam.frustumCulled = false; beam.renderOrder = 7; beam.name = 'beacon';
+      grp.add(beam);
+      grp.userData = grp.userData || {}; grp.userData.beacon = beam;
+    } catch (e) { U.reportError(e, 'story.beacon'); }
+  }
+
   // ------------------------------------------------------------- API --
   var Missions = GTP.Missions = {
     K: K,
@@ -1566,6 +2067,9 @@
       subsTier = 0; chaos.t = 0; chaos.budget = K.chaosCapPerMinute;
       loadTiers();
       applyPerks();
+      pendingCall = null; _order = null;
+      Heist.reset(); Story.reset();
+      var Q = GTP.ObjectiveTypes; if (Q) for (var qn in Q) registerObjectiveType(qn, Q[qn]);
     },
     update: function (dt) {
       if (!state) Missions.init();
@@ -1588,6 +2092,8 @@
             if (run && (stepN % 6) === 0) syncObjectiveState();
           }
         } else if (g.state === 'playing') updateAvailable(dt);
+        tickStory(dt);
+        if (lastFail && !run && g.state === 'playing' && simT() - (lastFail.at || 0) > K.retryExpire) lastFail = null;   // a stale RETRY offer expires
         if (pendingCut && !run && g.state === 'playing') {
           pendingCut.t -= dt;
           if (pendingCut.t <= 0) { var pc = pendingCut; pendingCut = null; if (!(GTP.Cutscenes && GTP.Cutscenes.playOnce && GTP.Cutscenes.playOnce(pc.id, pc.then))) pc.then(); }
@@ -1605,7 +2111,10 @@
       var m = missionById(id); if (!m) return false;
       var p = player(), g = game();
       if (!p) return false;
+      // a start from the pause menu (the phone's REPLAY / MISSIONS rows) closes the pause first, so the intro plays (QA-C1-09)
+      if (g && g.state === 'paused') g.setState('playing');
       if (GTP.Strands && GTP.Strands.active && GTP.Strands.active() && GTP.Strands.end) GTP.Strands.end('mission');
+      if (pendingCall && pendingCall.missionId === m.id) pendingCall = null;   // walked in before the phone rang
       run = newRun(m, opts);
       if (!opts.replay) lastFail = null;
       state.active = m.id; state.mission = m; state.objective = 0; state.objectiveText = ''; state.progress = null; state.timer = null; state.phase = 'intro'; state.holdBar = null;
@@ -1616,6 +2125,8 @@
       }
       refreshAvailable(true);
       sfx('mission', p.x, p.z, 1);
+      if (!run.replay) maybeChapter(m);
+      clearGps();
       if (!callUI('banner', m.title, run.replay ? 'REPLAY' : (m.giver ? (castOf(m.giver) || {}).name : null))) toast(m.title);
       emit('start', { mission: m, id: m.id, replay: run.replay });
       if (p.inVehicle) p.inVehicle.setControls(0, 0, false, 1);
@@ -1651,6 +2162,7 @@
       toast(failText('abort'));
       emit('abort', { mission: m, id: m.id });
       refreshAvailable(true);
+      clearGps(); storyGps(true);
       return true;
     },
     fail: function (reason) {
@@ -1660,7 +2172,7 @@
       var text = failText(reason);
       var snap = run.checkpoint, retries = run.retries, replay = run.replay;
       teardownRun();
-      lastFail = { m: m, id: m.id, snapshot: snap, reason: reason, text: text, replay: replay, retries: retries };
+      lastFail = { m: m, id: m.id, snapshot: snap, reason: reason, text: text, replay: replay, retries: retries, at: simT() };
       state.failed[m.id] = (state.failed[m.id] || 0) + 1;
       var Rd = GTP.Content && GTP.Content.radio, title = (Rd && Rd.failTexts && Rd.failTexts.missionFailed) || 'CONTEXT STAMPED';
       if (!callUI('card', 'failed', title, text)) toast(title + ': ' + text);
@@ -1669,11 +2181,19 @@
       // the retry card (GDD_EXPANSION §6.4): RETRY from the checkpoint, RESTART MISSION, QUIT
       emit('failed', { mission: m, id: m.id, reason: reason, text: text, retry: !!snap, objective: snap ? snap.cursor[0] : 0, retries: retries });
       refreshAvailable(true);
+      clearGps(); storyGps(true);
       return true;
     },
     // RETRY: the last failed mission resumes at its last checkpoint (the snapshot restored, tagged vehicles re-spawned, timers +15 s)
     canRetry: function () { var g = game(), p = player(); return !!(lastFail && lastFail.snapshot && !run && g && g.state === 'playing' && p && p.alive); },
     lastFail: function () { return lastFail; },
+    // QUIT on the CONTEXT STAMPED card: the offer is gone for good (QA-C1-02; js/11_ui.js retryActivate calls it)
+    _dropRetry: function () { lastFail = null; return true; },
+    dropRetry: function () { lastFail = null; return true; },
+    // other modules add objective types: def = {start(o, c, p), check(o, c, p) -> 'done'|'fail'|null, update?, cleanup?, hint?,
+    // target?, progress?}; a file that loads before this one can leave them in GTP.ObjectiveTypes[name] instead
+    registerObjectiveType: function (name, def) { return registerObjectiveType(name, def); },
+    objectiveTypes: function () { var out = Object.keys(H); for (var k in pluginTypes) if (out.indexOf(k) < 0) out.push(k); return out; },
     retry: function () {
       if (!Missions.canRetry()) return false;
       var lf = lastFail, s = lf.snapshot, m = lf.m, p = player();
@@ -1766,7 +2286,8 @@
     // [{id, kind:'mission'|'objective', x, z, y, missionId, title, landmark, color}] for the minimap
     markers: function () {
       var out = [], i;
-      for (i = 0; i < avail.length; i++) { var a = avail[i]; out.push({ id: a.id, kind: 'mission', x: a.x, z: a.z, y: a.y, missionId: a.id, title: a.m.title, giver: a.m.giver, landmark: a.landmark, color: K.colors.mission }); }
+      var pl = player(), nxt = storyNextMission();
+      for (i = 0; i < avail.length; i++) { var a = avail[i]; out.push({ id: a.id, kind: 'mission', x: a.x, z: a.z, y: a.y, missionId: a.id, title: a.m.title, giver: a.m.giver, landmark: a.landmark, color: K.colors.mission, story: !!(nxt && nxt.id === a.id), beacon: true, labelRange: 400, dist: pl ? U.dist2d(pl.x, pl.z, a.x, a.z) : null, act: actOf(a.m) }); }
       for (i = 0; i < objMarkers.length; i++) { var o = objMarkers[i]; out.push({ id: run ? run.id + ':' + i : 'objective', kind: 'objective', x: o.x, z: o.z, y: o.y, missionId: run ? run.id : null, title: state.objectiveText, color: K.colors.objective }); }
       return out;
     },
@@ -1812,6 +2333,9 @@
   Missions.init();
 
   // ------------------------------------------------------------ events --
+  // a later, unrelated death or bust never brings back an old mission's RETRY card (QA-C1-02); these run before the fail below
+  GTP.Events.on('player:wasted', function () { if (!run) lastFail = null; });
+  GTP.Events.on('busted', function () { if (!run) lastFail = null; });
   GTP.Events.on('player:wasted', function () { if (run) Missions.fail('player_dead'); });
   GTP.Events.on('busted', function () { if (run) Missions.fail('busted'); });
   // the weapon behind a vehicle's last hit (destroy's `weapon` rule reads it on the wreck)
@@ -1830,6 +2354,13 @@
   // chaos subscribers: stars, props, wrecks, honks (capped per minute)
   GTP.Events.on('wanted', function (e) { if (e && e.level > (e.prev | 0) && e.prev !== e.level) chaosSubs(25 * (e.level - (e.prev | 0)), 'wanted'); });
   GTP.Events.on('prop:knocked', function (e) { if (e && e.vehicle && e.vehicle.hasPlayer && e.vehicle.hasPlayer()) chaosSubs(10, 'prop'); });
+  // a direct rocket hit wrecks a van without a vehicle:damage event: the blast is the kill, credited to the weapon in the
+  // player's hands (QA-CMB-01: m13b's Ratio Launcher vans counted WRONG TAKE)
+  GTP.Events.on('vehicle:exploded', function (e) {
+    var p = player(), v = e && e.vehicle; if (!p || !v || v._igniteHit) return;
+    var s = e.src, mine = s === p || (s && (s.owner === p || s.shooter === p || s.src === p)) || v.lastDamageSrc === p;
+    if (mine) v._igniteHit = { type: e.type || (s && s.weapon) || 'explosion', weapon: (s && s.weapon) || p.weapon, src: s || p };
+  });
   GTP.Events.on('vehicle:exploded', function (e) {
     var p = player(), v = e && e.vehicle; if (!p || !v) return;
     if (e.src === p || v.lastDamageSrc === p || (e.src && e.src.driver === p) || (v._lastHit && v._lastHit.weapon)) chaosSubs(40, 'wreck');
@@ -1845,6 +2376,12 @@
   });
   GTP.SaveHooks = GTP.SaveHooks || [];
   GTP.SaveHooks.push({ name: 'subs', save: function () { }, load: function () { Missions.syncSubs(); } });
+  // the story's own save state (the heist plan); chapters and calls live in the flags (PLAN_V03 GTP.SaveRegistry)
+  GTP.SaveRegistry = GTP.SaveRegistry || {};
+  GTP.SaveRegistry.story = {
+    get: function () { return { v: 1, heist: Heist.serialize() }; },
+    set: function (d) { Heist.load(d && d.heist); }
+  };
   GTP.Events.on('pickup', function (e) {
     var pk = e && e.pickup; if (!pk || pk.pickupType !== 'mission' || !pk.missionCtx || !run) return;
     var c = pk.missionCtx, n = 0;
@@ -1860,7 +2397,8 @@
   // when the content has it; DEFAULTS below mirror the GDD's tables so the strands play before that file lands.
   var SK = C.STRANDS = Object.assign({
     hailRadius: 4, hailHold: 1, fareMin: 150, fareMax: 450, fareSpawnMin: 60, fareSpawnMax: 140, farePerMetre: 0.25, fareBase: 20, fareLeave: 10, fareWantedEnd: 3,
-    hoaTargetMin: 120, hoaTargetMax: 240, hoaStopHold: 2, hoaNextDelay: 4, hoaLevels: 12, hoaLeave: 10,
+    hoaTargetMin: 120, hoaTargetMax: 240, hoaStopHold: 2, hoaNextDelay: 4, hoaLevels: 12, hoaLeave: 10, stopNear: 6,   // a stop: the patrol car this close (QA-STR-02)
+    raceRepeatPay: 0.2, raceCooldown: 120,   // a repeat win pays a fifth of the prize, and the start light rests two minutes (QA-STR-17)
     sponsorLeave: 15, sponsorArrive: 14, sponsorCrash: 20, sponsorMinPay: 100,
     rampageCountdown: 3, rampageWave: 4, rampageRadius: 40, rampageRespawn: 60, rampageReplay: 600,
     raceRing: 8, raceDnfLeave: 8, raceRacers: 3, raceSpeed: 0.95, raceBand: 0.08, raceCountdown: 3, racerHp: 320,
@@ -2329,7 +2867,9 @@
         var rv = new GTP.Vehicle({ x: spot.x, z: spot.z, type: 'sports', color: ['#ff2d6f', '#ffd400', '#15e0ff', '#ff7a00'][i % 4], tag: 'racer', persistent: true });
         rv.y = spot.y; rv.yaw = spot.yaw; rv.maxHp = SK.racerHp; rv.hp = SK.racerHp; rv.snap(); E().add(rv);   // a racer survives the barriers it scrapes
         var route = [];
-        for (var k = 0; k < def.cps.length; k++) route.push({ x: def.cps[k].x, z: def.cps[k].z, y: def.cps[k].y, r: SK.raceRing + 2, direct: true });
+        // a leg is driven straight only when the line from the previous checkpoint is clear; a leg through a block paths on the
+        // roads (QA-STR-04: lr_03's cp5 -> cp6 crosses a tower)
+        for (var k = 0; k < def.cps.length; k++) { var pc = def.cps[(k + def.cps.length - 1) % def.cps.length]; route.push({ x: def.cps[k].x, z: def.cps[k].z, y: def.cps[k].y, r: SK.raceRing + 2, direct: segmentClear(pc, def.cps[k]) && (k > 0 || !def.startPt || segmentClear(def.startPt, def.cps[k])) }); }
         var racer = { v: rv, cp: 0, lap: 0, finished: false, place: 0, score: 0 };
         (function (rc) {
           rc.c = drivers.take(rv, 'route', { role: 'civ', speedMul: SK.raceSpeed, route: route, loop: true, track: false, onCheckpoint: function (ci) {
@@ -2400,7 +2940,12 @@
         if (P.best[id] == null || res.time < P.best[id]) P.best[id] = res.time;
         if (!r.mission) {
           var RL = raceRules();
+          // the full purse once per race; a repeat win (or a repeat podium) pays a fifth of it (QA-STR-17)
+          var repeat = res.place === 1 ? !firstWin : (P.finishes[id] > 1);
+          if (prize && repeat) prize = Math.round(prize * SK.raceRepeatPay);
           if (prize) pay(prize, 'race');
+          var smk = null; for (var mi = 0; mi < strandMarkers.length; mi++) if (strandMarkers[mi].id === id) smk = strandMarkers[mi];
+          if (smk) smk.cooldown = SK.raceCooldown;
           addSubs(res.place === 1 ? (firstWin ? RL.subsFirstWin : RL.subsRepeat) : 0, 'race');
           var ord = ['1st', '2nd', '3rd', '4th'][res.place - 1] || res.place + 'th';
           if (!callUI('card', res.place === 1 ? 'passed' : 'failed', 'RACE: ' + ord.toUpperCase(), r.def.name + '  ' + U.fmtTime(res.time) + (prize ? '  ' + U.fmtMoney(prize) : ''))) toast('RACE: ' + ord + ' ' + U.fmtTime(res.time));
@@ -2425,6 +2970,12 @@
       refreshMarkerVisibility();
     }
   };
+  // no building on the straight line between two points (sampled every 2 m at car height)
+  function segmentClear(a, b) {
+    var Wd = W(), dx = b.x - a.x, dz = b.z - a.z, l = Math.sqrt(dx * dx + dz * dz), n = Math.max(1, Math.ceil(l / 2));
+    for (var i = 1; i < n; i++) { var t = i / n, x = a.x + dx * t, z = a.z + dz * t, y = U.lerp(a.y || 0, b.y || 0, t); if (Wd.solidAt(x, z, y + 0.8)) return false; }
+    return true;
+  }
   // a heckler's cardboard sign: the look changes, so the mesh is rebuilt
   function setSign(ped, text) {
     if (!ped || !ped.look) return;
@@ -2435,6 +2986,8 @@
 
   // ------------------------------------------------------------------------- the six strands --
   var S = {};
+  // the content's passengers carry `archetype`, the DEFAULTS `name` (QA-STR-05)
+  function fareName(def) { return (def && (def.name || def.archetype)) || 'a passenger'; }
   // Loud Cab (§5.1): fares in any taxi, started with `action` while stopped
   S.loud_cab = {
     title: 'Loud Cab',
@@ -2459,7 +3012,7 @@
       var a = srng().random() * TAU, d = srng().range(SK.fareSpawnMin, SK.fareSpawnMax);
       var sp = Wd.nearestSidewalkPoint(v.x + Math.cos(a) * d, v.z + Math.sin(a) * d) || Wd.nearestSidewalkPoint(v.x + 40, v.z);
       var s = randomSpot(sp.x, sp.z, 0, 4, { clear: 1 });
-      var ped = spawnCastPed(def.cast || def.id, s.x, s.z, 'npc', { brain: 'passenger', look: def.cast ? null : def.look, name: def.name });
+      var ped = spawnCastPed(def.cast || def.id, s.x, s.z, 'npc', { brain: 'passenger', look: def.cast ? null : def.look, name: fareName(def) });
       ped.persistent = true;
       if (GTP.Cutscenes && GTP.Cutscenes.pose) GTP.Cutscenes.pose(ped, 'wave');
       // the destination: the line's landmark when it is 150..450 m away, else any landmark door in that band
@@ -2475,8 +3028,9 @@
       var p = player(), v = cur.v, f = cur.fare, P = progress.loud_cab;
       if (vehicleLost(v)) { endCurrent('wreck'); return; }
       if ((p.wanted | 0) >= SK.fareWantedEnd && f) { endCurrent('wanted'); return; }
-      if (p.inVehicle !== v) { cur.leaveT += dt; if (f && f.phase !== 'hail' && cur.leaveT > SK.fareLeave) { endCurrent('left'); return; } } else cur.leaveT = 0;
-      if (!f) { cur.nextT -= dt; if (cur.nextT <= 0) S.loud_cab.spawnFare(); return; }
+      // out of the cab for fareLeave seconds ends the shift, a fare aboard or not (QA-STR-10)
+      if (p.inVehicle !== v) { cur.leaveT += dt; if (cur.leaveT > SK.fareLeave) { endCurrent('left'); return; } } else cur.leaveT = 0;
+      if (!f) { cur.nextT -= dt; if (cur.nextT <= 0 && p.inVehicle === v) S.loud_cab.spawnFare(); return; }
       var t = f.ped;
       if (!t || t.removed || !t.alive) { S.loud_cab.dropFare(); cur.nextT = 2; toast('The fare walked. Respectfully.'); return; }
       if (f.phase === 'hail') {
@@ -2535,13 +3089,14 @@
       var sh = cur.shift;
       toast('Shift over: ' + sh.fares + ' fare' + (sh.fares === 1 ? '' : 's') + ', ' + U.fmtMoney(sh.money) + (why === 'wanted' ? '. The passenger bailed.' : why === 'wreck' ? '. The cab is a take now.' : '.'));
     },
-    hud: function () { var f = cur.fare, sh = cur.shift; return { line: f ? (f.phase === 'ride' ? 'FARE ' + (sh.fares + 1) + ' to ' + f.dest.name : 'Pick up ' + f.def.name) : 'Waiting for a hail', timer: f && f.phase === 'ride' ? { remaining: Math.max(0, f.timer), total: f.total } : null, progress: sh.fares + ' fares  ' + U.fmtMoney(sh.money) + (sh.hot ? '  HOT STREAK' : ''), target: f ? (f.phase === 'ride' ? f.dest : { x: f.ped.x, z: f.ped.z, y: f.ped.y }) : null }; },
+    hud: function () { var f = cur.fare, sh = cur.shift; return { line: f ? (f.phase === 'ride' ? 'FARE ' + (sh.fares + 1) + ' to ' + f.dest.name : 'Pick up ' + fareName(f.def)) : 'Waiting for a hail', timer: f && f.phase === 'ride' ? { remaining: Math.max(0, f.timer), total: f.total } : null, progress: sh.fares + ' fares  ' + U.fmtMoney(sh.money) + (sh.hot ? '  HOT STREAK' : ''), target: f ? (f.phase === 'ride' ? f.dest : { x: f.ped.x, z: f.ped.z, y: f.ped.y }) : null }; },
     canStart: function (v) { return !!v && v.type === 'taxi'; }
   };
   // HOA Patrol (§5.2): flagged cars that flee; stop them
   S.hoa_patrol = {
     title: 'HOA Patrol',
-    canStart: function (v) { return !!v && (v.type === 'cop' || (v.type === 'suv' && v.tag === 'hoa')); },
+    // the strand's own SUV at the HOA Hall is tagged 'hoasuv': suburb traffic SUVs carry 'hoa' (QA-STR-11)
+    canStart: function (v) { return !!v && (v.type === 'cop' || (v.type === 'suv' && v.tag === 'hoasuv')); },
     begin: function () {
       var v = playerVehicle(); if (!S.hoa_patrol.canStart(v)) return false;
       progress.hoa_patrol.patrols++;
@@ -2666,7 +3221,7 @@
       var p = player(), CB = GTP.Combat; if (!def || !CB) return false;
       cur = { id: 'ratio_rampages', title: 'Ratio Rampage', def: def, countdown: SK.rampageCountdown, t: 0, timer: def.seconds, kills: 0, wrong: 0, spawned: 0, hecklers: [], cars: [], before: { weapons: Object.assign({}, p.weapons), ammo: copyAmmo(p.ammo), weapon: p.weapon }, started: false, center: pos(def), done: false };
       var w = CB.WEAPONS[def.weapon];
-      if (w) { if (w.melee) p.weapons[def.weapon] = Infinity; else { var need = Math.max(def.hecklers * 6, (w.mag || 1) * 3); p.weapons[def.weapon] = (p.weapons[def.weapon] || 0) + need; if (CB.ammo) CB.ammo(p, def.weapon); } p.weapon = def.weapon; }
+      if (w) { if (w.melee) p.weapons[def.weapon] = Infinity; else { var need = Math.max(def.hecklers * 6, (w.mag || 1) * 3); cur.loan = need; p.weapons[def.weapon] = (p.weapons[def.weapon] || 0) + need; if (CB.ammo) CB.ammo(p, def.weapon); } p.weapon = def.weapon; }
       if (!callUI('card', 'passed', 'RATIO RAMPAGE', (CB.weaponName ? CB.weaponName(def.weapon) : def.weapon).toUpperCase() + ' · ' + def.hecklers + ' HECKLERS · ' + def.seconds + ' s')) toast('RATIO RAMPAGE: ' + def.hecklers + ' hecklers, ' + def.seconds + ' s');
       refreshMarkerVisibility();   // the bubble goes out for the duration
       return true;
@@ -2717,6 +3272,7 @@
     },
     finish: function (win, why) {
       var P = progress.ratio_rampages, def = cur.def, p = player(), mk = S.ratio_rampages.markerFor(def.id);
+      cur.won = !!win;
       if (win) {
         var first = P.best[def.id] == null, t = Math.round(cur.t * 10) / 10;
         if (first || t < P.best[def.id]) P.best[def.id] = t;
@@ -2729,7 +3285,7 @@
         var allId = (RR.allEight && RR.allEight.flag) || 'rampage_king';
         if (P.done >= rampageDefs().length && !flagHas(allId)) { flagSet(allId); toast('RAMPAGE KING: ' + ((RR.allEight && RR.allEight.text) || 'every reserve is x1.5 and the ammo readout is pink.')); }
       } else {
-        if (!callUI('card', 'failed', 'CONTEXT STAMPED', why === 'dead' ? 'You got ratio\'d by the hecklers.' : 'Out of time. ' + cur.kills + ' / ' + def.hecklers)) toast('Rampage failed');
+        if (!callUI('card', 'failed', 'CONTEXT STAMPED', why === 'dead' ? 'You got ratio\'d by the hecklers.' : why === 'busted' ? 'Deplatformed mid-rampage.' : 'Out of time. ' + cur.kills + ' / ' + def.hecklers)) toast('Rampage failed');
         if (mk) mk.cooldown = rampageRules().markerReturnFail || SK.rampageRespawn;
       }
       refreshMarkerVisibility();
@@ -2740,15 +3296,30 @@
       var p = player(), def = cur.def;
       for (var i = 0; i < cur.hecklers.length; i++) { var h = cur.hecklers[i]; if (h && !h.removed) { if (h.inVehicle) h.inVehicle.exit(h); if (h.alive) releasePed(h, true); else removeEntity(h); } }
       for (i = 0; i < cur.cars.length; i++) { var v = cur.cars[i]; if (v && !v.removed) { drivers.release(v); v.persistent = false; } }
-      // the loaner goes back; leftover rampage rounds stay
-      var left = p.weapons[def.weapon], had = cur.before.weapons[def.weapon] || 0;
+      // the loaner goes back. On a win the player keeps what they had plus the unused loaner rounds, capped at the weapon's
+      // mag + reserve (QA-STR-06); on a fail, a death or a bust the loaner is the job's and goes back whole (QA-STR-07); a weapon
+      // the shop still locks is never kept from a loaner
+      var w = def.weapon, left = p.weapons[w], had = cur.before.weapons[w] || 0, won = cur.won === true;
       p.weapons = Object.assign({ fist: Infinity }, cur.before.weapons); p.ammo = copyAmmo(cur.before.ammo);
-      if (left > 0 && left !== Infinity && had !== Infinity) p.weapons[def.weapon] = (had || 0) + left; else if (left === Infinity) p.weapons[def.weapon] = Infinity;
-      p.weapon = p.weapons[def.weapon] ? def.weapon : (p.weapons[cur.before.weapon] ? cur.before.weapon : 'fist');
+      if (won && left === Infinity) p.weapons[w] = Infinity;
+      else if (won && left > 0 && had !== Infinity && (had > 0 || !shopLocked(w))) {
+        var keep = Math.max(had, Math.min(left, weaponCap(w)));
+        if (keep > 0) p.weapons[w] = keep;
+        if (p.ammo) delete p.ammo[w];
+        if (GTP.Combat && GTP.Combat.ammo && keep > 0) GTP.Combat.ammo(p, w);
+      }
+      p.weapon = p.weapons[cur.before.weapon] ? cur.before.weapon : 'fist';
     },
     markerFor: function (id) { for (var i = 0; i < strandMarkers.length; i++) if (strandMarkers[i].id === id) return strandMarkers[i]; return null; },
     hud: function () { var def = cur.def; return { line: 'Hecklers ratioed: ' + cur.kills + ' / ' + def.hecklers, timer: cur.countdown > 0 ? null : { remaining: Math.max(0, cur.timer), total: def.seconds }, progress: (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(def.weapon) : def.weapon) + (cur.wrong ? '  WRONG TAKES ' + cur.wrong : ''), target: null, countdown: Math.max(0, cur.countdown) }; }
   };
+  // a weapon's carry cap (mag + reserve) and whether the shop still locks it
+  function weaponCap(id) { var CB = GTP.Combat, w = CB && CB.WEAPONS ? CB.WEAPONS[id] : null; if (!w) return Infinity; var c = (w.mag || 0) + (w.reserve || w.maxReserve || 0); return c > 0 ? c : Infinity; }
+  function shopLocked(id) {
+    var sh = GTP.Combat && GTP.Combat.shop; if (!sh || !sh.items) return false;
+    try { var it = sh.items('weapons'); for (var i = 0; i < it.length; i++) if (it[i].weapon === id) return !!it[i].locked; } catch (e) { /* shop optional */ }
+    return false;
+  }
   // Monday Memos (§5.5): fifty envelopes, one memo
   var memoPickups = {}, memoGeo = null;
   S.monday_memos = {
@@ -2882,8 +3453,21 @@
     if (state.completed.has(SR.requires || 'm02_read')) ensure('sponsorvan', SR.depot || 'nap_depot', 'van', { color: '#2d5f8a', wrap: 'nap' });
     if (flagHas('race_car')) ensure('ratiocar', 'pod_garage', 'sports', { color: '#ff3fa4', wrap: 'ratio' });
     if (flagHas('cab_home')) ensure('homecab', 'pod_garage', 'taxi', { color: '#ffc21a' });
-    if (state.completed.has('m10_pellets')) ensure('hoa', 'hoa_hall', 'suv', { color: '#f4ead8', pickup: flagHas('hoa_vest') });
+    if (state.completed.has('m10_pellets')) ensure('hoasuv', 'hoa_hall', 'suv', { color: '#f4ead8' });
     if (flagHas('sponsored_van')) { var van = liveTagged('podvan'); if (van && van.maxHp < 320) { van.maxHp = 320; van.hp = Math.max(van.hp, 320); } }
+    // the vests appear when their flag is set, not only when the car is first parked (QA-STR-11, QA-STR-15): the Firmness Vest by
+    // the HOA SUV after patrol level 6, the memo-20 vest by the pod garage
+    if (flagHas('hoa_vest')) ensureVest('hoa', liveTagged('hoasuv'), 'FIRMNESS VEST');
+    if (flagHas('memo_vest')) { var pg = Wd.landmark('pod_garage'); ensureVest('memo', liveTagged('podvan') || (pg && pg.door ? { x: pg.door.x, z: pg.door.z } : null), 'MEMO VEST'); }
+  }
+  var vests = {};
+  function ensureVest(id, at, label) {
+    var CB = GTP.Combat, pk = vests[id];
+    if (!at || !CB || !CB.spawnPickup) return;
+    if (pk && !pk.removed) return;
+    if (pk && pk.removed && pk.respawn) return;   // collected: Combat respawns it a game day later
+    var x = at.x + 2.2, z = at.z, r = W().resolveCapsule(x, z, W().heightAt(x, z, 0) + 0.5, 0.5);
+    vests[id] = CB.spawnPickup({ type: 'armor', value: 100, x: r.x, z: r.z, persistent: true, respawn: 24 * C.DAY.secondsPerHour, label: label, tag: 'strand' });
   }
   function endCurrent(why) {
     if (!cur) return;
@@ -2923,16 +3507,28 @@
       var v = playerVehicle(), d = U.dist2d(p.x, p.z, mk.x, mk.z), onFoot = !p.inVehicle;
       if (mk.kind === 'rampage') {
         var inside = onFoot && d <= K.markerRadius && Math.abs(p.y - mk.y) < 2.5;
-        if (!inside) { mk.holdT = 0; if (d > K.markerRadius + 0.6) mk.armed = true; continue; }
+        if (!inside) { mk.holdT = 0; if (d > K.markerRadius + 0.6) { mk.armed = true; mk.told = false; } continue; }
+        if (mk.armed && cur && !mk.told) { mk.told = true; toast('One strand at a time. Finish the ' + (cur.title || 'one') + ' first.'); }   // QA-STR-10
         if (!mk.armed || cur || run) { mk.holdT = 0; continue; }
         mk.holdT += dt;
-        if (mk.holdT >= K.startHold) { mk.holdT = 0; mk.armed = false; startStrand('ratio_rampages', mk.data); }
+        if (mk.holdT >= K.startHold) { mk.holdT = 0; mk.armed = false; mk.told = false; startStrand('ratio_rampages', mk.data); }
       } else if (mk.kind === 'race') {
-        // the handbrake (Space in a car) held for a second on the line; the foot brake would reverse out of it
-        var In = GTP.Input, braking = !!(In && (In.down('jump') || (v && v.handbrake))), insideR = !!v && U.dist2d(v.x, v.z, mk.x, mk.z) <= 6 && Math.abs(v.y - mk.y) < 3;
-        if (!insideR || !braking || !stopped(v) || cur || run) { mk.holdT = 0; continue; }
+        // the handbrake (Space in a car) or the foot brake held for a second on the line; while stopped in the light the foot
+        // brake holds the car instead of reversing it out (QA-STR-12), and a chip says how to start
+        var In = GTP.Input, insideR = !!v && U.dist2d(v.x, v.z, mk.x, mk.z) <= 6 && Math.abs(v.y - mk.y) < 3;
+        if (!insideR) { mk.holdT = 0; mk.told = false; continue; }
+        var footBrake = !!(In && In.down('back') && !In.down('forward')) && Math.abs(v.speed) < 1.5;
+        if (footBrake) v.setControls(0, 0, true, 1);
+        var braking = !!(In && (In.down('jump') || footBrake || v.handbrake));
+        if (!mk.told && stopped(v) && !cur && !run) {
+          mk.told = true;
+          var glyph = GTP.UI && GTP.UI.glyph ? GTP.UI.glyph('jump') : 'SPACE';
+          var chip = 'Hold ' + glyph + ' (or the brake) to start: ' + (mk.title || 'the race');
+          if (!callUI('chip', chip)) toast(chip);
+        }
+        if (!braking || !stopped(v) || cur || run) { if (braking && cur && !mk.told2) { mk.told2 = true; toast('One strand at a time. Respectfully.'); } mk.holdT = 0; continue; }
         mk.holdT += dt;
-        if (mk.holdT >= 1) { mk.holdT = 0; startStrand('loop_races', mk.data); }
+        if (mk.holdT >= 1) { mk.holdT = 0; mk.told = false; startStrand('loop_races', mk.data); }
       }
     }
   }
@@ -3024,10 +3620,23 @@
     },
     debug: { markers: function () { return strandMarkers; }, cur: function () { return cur; } }
   };
+  // WASTED or BUSTED ends whatever strand is running right away (QA-STR-01): the rampage fails (CONTEXT STAMPED, the loaner taken
+  // back) before Combat's respawn takes its cut, so the hospital penalty is never undone and no wave follows the player to the
+  // hospital. The tier-3 weapon stash (taken on the same event, earlier) is re-taken from the cleaned loadout
+  function strandDown(why) {
+    if (!cur) return;
+    try { if (cur.id === 'ratio_rampages') S.ratio_rampages.finish(false, why); else endCurrent(why); } catch (e) { U.reportError(e, 'strands.down'); cur = null; }
+    var p = player();
+    if (stashedWeapons && p) stashedWeapons = { weapons: Object.assign({}, p.weapons), ammo: copyAmmo(p.ammo), weapon: p.weapon };
+  }
+  GTP.Events.on('player:wasted', function () { strandDown('dead'); });
+  GTP.Events.on('busted', function () { strandDown('busted'); });
   GTP.Events.on('pickup', function (e) { var pk = e && e.pickup; if (pk && pk.pickupType === 'memo') { try { S.monday_memos.collect(pk); } catch (err) { U.reportError(err, 'strands.memo'); } } });
   GTP.Events.on('vehicle:enter', function (e) {
     if (!e || !e.ped || e.ped.kind !== 'player' || !e.vehicle || e.seat !== 0) return;
-    if (e.vehicle.tag === 'sponsorvan' && !cur && !run) startStrand('sponsor_runs');
+    if (e.vehicle.tag !== 'sponsorvan' || run) return;
+    if (cur) { toast('One strand at a time. The ' + (cur.title || 'strand') + ' is still running.'); return; }   // QA-STR-10
+    startStrand('sponsor_runs');
   });
   GTP.SaveHooks.push({ name: 'strands', save: function (data) { data.strands = Strands.serialize(); data.memos = progress.monday_memos.collected.slice(); }, load: function (data) { Strands.load(data); } });
 })();
