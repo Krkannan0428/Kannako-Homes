@@ -23,6 +23,10 @@ compression: normal
 npmRebuild: false
 removePackageScripts: true
 beforePack: ./sync-game.js
+# Releases are plain downloads attached to a GitHub Release by the workflow, not electron-updater
+# feeds. null also stops electron-builder from guessing a publisher when a GH_TOKEN happens to be
+# in the environment (which makes it crash on repository detection).
+publish: null
 
 # ---------------------------------------------------------------- macOS: Apple Silicon and Intel
 mac:
@@ -86,6 +90,9 @@ linux:
   synopsis: Open-city parody game about the pundit-industrial complex
   maintainer: Grievance City Games
   executableName: grand-theft-pundit
+  # desktopName in package.json + syncDesktopName lets desktop environments match the running
+  # window (WM_CLASS) to the .desktop entry inside the AppImage
+  syncDesktopName: true
   target:
     - target: AppImage
       arch: [x64]

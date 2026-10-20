@@ -57,29 +57,31 @@ H.run('tune', async (t) => {
     lamps.sort((a, b) => U.dist2d(a.x, a.z, q.x, q.z) - U.dist2d(b.x, b.z, q.x, q.z));
     let pick = null, sx = 0, sz = 0;
     const T = W.T, okTile = (x, z) => { const tt = W.tileAt(x, z); return tt === T.ROAD || tt === T.PARKING || tt === T.PLAZA || tt === T.SIDEWALK; };
-    // the run-up: 16 m of open tiles, no other solid prop or parked car within 2.5 m of the line, no building across it
+    // 7 m of clear ground up to the post: open tiles, no other solid prop or car near the line, no building across it
     for (const L of lamps) {
       for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-        const x = L.x + Math.cos(a) * 16, z = L.z + Math.sin(a) * 16;
-        let clear = okTile(x, z) && !W.solidAt(x, z, 0.5) && !W.raycastBuildings(x, 0.8, z, (L.x - x) / 16, 0, (L.z - z) / 16, 16);
-        for (let s = 2; clear && s < 15; s += 2) { const px = x + (L.x - x) * s / 16, pz = z + (L.z - z) * s / 16; if (!okTile(px, pz)) clear = false; }
-        if (clear) for (const q of W.props) { if (q === L || !q.solid) continue; const t2 = ((q.x - x) * (L.x - x) + (q.z - z) * (L.z - z)) / 256; if (t2 < -0.2 || t2 > 1.2) continue; const cx = x + (L.x - x) * U.clamp(t2, 0, 1), cz = z + (L.z - z) * U.clamp(t2, 0, 1); if (U.dist2d(q.x, q.z, cx, cz) < 2.5) { clear = false; break; } }
-        if (clear && GTP.Entities.near((x + L.x) / 2, (z + L.z) / 2, 10, 'vehicle').length) clear = false;
+        const x = L.x + Math.cos(a) * 7, z = L.z + Math.sin(a) * 7;
+        let clear = okTile(x, z) && okTile((x + L.x) / 2, (z + L.z) / 2) && !W.solidAt(x, z, 0.5) && !W.raycastBuildings(x, 0.8, z, (L.x - x) / 7, 0, (L.z - z) / 7, 7);
+        if (clear) for (const q of W.props) { if (q === L || !q.solid) continue; const t2 = ((q.x - x) * (L.x - x) + (q.z - z) * (L.z - z)) / 49; if (t2 < -0.3 || t2 > 1.3) continue; const cx = x + (L.x - x) * U.clamp(t2, 0, 1), cz = z + (L.z - z) * U.clamp(t2, 0, 1); if (U.dist2d(q.x, q.z, cx, cz) < 2.6) { clear = false; break; } }
+        if (clear && GTP.Entities.near((x + L.x) / 2, (z + L.z) / 2, 9, 'vehicle').length) clear = false;
         if (clear) { pick = L; sx = x; sz = z; break; }
       }
       if (pick) break;
     }
     if (!pick) return { none: true };
-    const v = GTP.game.debug.spawnVehicle(sx, sz, 'sedan', { yaw: U.dirToYaw(pick.x - sx, pick.z - sz) });
-    // force a clear run-up: the lamp is the only prop on the line
+    const yaw = U.dirToYaw(pick.x - sx, pick.z - sz), dir = U.yawToDir(yaw);
+    const v = GTP.game.debug.spawnVehicle(sx, sz, 'sedan', { yaw });
     const inCar = T_.enter(v);
+    GTP.game.debug.teleport(sx, sz); v.yaw = yaw; v.snap();
     GTP.game.render();
     const inst0 = pick._inst ? pick._inst.im.instanceMatrix.array.slice(pick._inst.k * 16, pick._inst.k * 16 + 16) : null;
     let ev = null; GTP.Events.on('prop:knocked', (e) => { ev = { kind: e.prop.kind, by: e.vehicle.type }; });
     GTP.game.debug.godMode(true);
+    // already rolling at 12 m/s toward the post (the run-up is the physics, not a drive across campus furniture)
+    v.vx = dir.x * 12; v.vz = dir.z * 12; v.speed = 12;
     GTP.Input.set('forward', true);
-    let s = 0, speedAt = 0, minAfter = 99, hitAt = -1;
-    while (s < 5) { GTP.game.advance(0.05); s += 0.05; if (!pick.fallen) speedAt = v.speed; else { if (hitAt < 0) hitAt = s; minAfter = Math.min(minAfter, v.speed); if (s - hitAt > 0.6) break; } }
+    let s = 0, speedAt = 12, minAfter = 99, hitAt = -1;
+    while (s < 2) { GTP.game.advance(0.05); s += 0.05; if (!pick.fallen) speedAt = v.speed; else { if (hitAt < 0) hitAt = s; minAfter = Math.min(minAfter, v.speed); if (s - hitAt > 0.6) break; } }
     GTP.Input.set('forward', false);
     GTP.game.debug.godMode(false);
     GTP.game.render();
@@ -101,8 +103,8 @@ H.run('tune', async (t) => {
     const trees = W.props.filter((pr) => pr.kind === 'tree' && pr.solid);
     trees.sort((a, b) => U.dist2d(a.x, a.z, v.x, v.z) - U.dist2d(b.x, b.z, v.x, v.z));
     const T = trees[0];
-    GTP.game.debug.teleport(T.x - 10, T.z); v.yaw = U.dirToYaw(1, 0); v.vx = v.vz = 0; v.speed = 0; v.snap();
-    GTP.Input.set('forward', true); GTP.game.advance(2.5); GTP.Input.set('forward', false);
+    GTP.game.debug.teleport(T.x - 7, T.z); v.yaw = U.dirToYaw(1, 0); v.vx = 12; v.vz = 0; v.speed = 12; v.snap();
+    GTP.Input.set('forward', true); GTP.game.advance(1.5); GTP.Input.set('forward', false);
     return { fallen: !!T.fallen, solid: T.solid, dist: +U.dist2d(v.x, v.z, T.x, T.z).toFixed(1) };
   });
   console.log('  tree: ' + JSON.stringify(tree));

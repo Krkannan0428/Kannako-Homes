@@ -768,7 +768,7 @@
   }
 
   // ------------------------------------------------ banner, cards, toasts ----
-  function banner(title, sub) { ui.banner = { title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: 4.2 }; }
+  function banner(title, sub) { ui.banner = { title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: 4.2 }; if (ui.card && ui.card.kind === 'passed') ui.card = null; }   // the next mission's banner replaces a lingering PASSED card
   function card(kind, title, sub) { ui.card = { kind: kind || 'passed', title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: kind === 'failed' ? 4.2 : 4.8 }; }
   function toast(text) {
     text = String(text == null ? '' : text);

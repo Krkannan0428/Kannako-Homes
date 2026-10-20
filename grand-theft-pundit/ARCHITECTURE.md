@@ -426,8 +426,11 @@ the `'spawned:<tag>'` one; `enter_vehicle` spawns the tagged vehicle in a free
 bay (or on the road) near `at`, marker follows it; `pickup` spawns `count`
 mission crates around the landmark, collectable on foot or from a vehicle,
 progress in the objective text; `follow` spawns the cast ped at `at` walking the
-`path` of landmark doors (A* on sidewalks, brisk walk) and fails when the player
-is within 6 m for 3 s (`spotted`) or beyond `maxDist` for 5 s (`target_escaped`);
+`path` of landmark doors (A* on sidewalks at a brisk 3.2 m/s; a tail that stops
+closing on its route point for 2.5 s, e.g. pushing on a car stopped on the
+crosswalk, sidesteps, re-routes and every third time is nudged past) and fails
+when the player is within 6 m for 3 s (`spotted`) or beyond `maxDist` for 5 s
+(`target_escaped`);
 `escape_wanted` sets the stars (`AI.wanted.set`) and completes at 0;
 `survive` spawns waves of the given roles (totals spread over `seconds/10`
 waves, capped at `maxHostiles` live) around the player and completes when the

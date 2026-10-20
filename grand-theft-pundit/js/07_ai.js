@@ -1579,7 +1579,7 @@
       if (!U.pointInRect(v.x, v.z, gr.x, gr.z, gr.w, gr.d)) continue;
       var cost = wanted.level * C.WANTED.sprayCostPerStar;
       if (pl.money >= cost) {
-        pl.money -= cost; wanted.clear(); v.hp = v.maxHp; v.damage = 0;
+        pl.money -= cost; wanted.clear(); v.hp = v.maxHp; v.damage = 0; v.burning = false; v.burnT = 0;   // a respray also puts the fire out
         if (v.cls && v.cls.colors && v.cls.colors.length > 1) { var nc = R().pick(v.cls.colors); if (nc !== v.color && v.mesh && v.mesh.userData.paint) { v.color = nc; v.mesh.userData.paint.color.set(nc); } }
         fx({ type: 'puff', x: v.x, y: v.y + 1, z: v.z, size: 3, life: 0.8, color: 0xffe6a0 });
         sfx('cash', v.x, v.z, 0.8);

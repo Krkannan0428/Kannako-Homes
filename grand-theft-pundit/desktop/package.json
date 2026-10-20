@@ -9,6 +9,7 @@
     "name": "Grievance City Games"
   },
   "main": "main.js",
+  "desktopName": "grand-theft-pundit.desktop",
   "engines": {
     "node": ">=20"
   },

@@ -34,7 +34,7 @@ const OUT = [
   try {
     const page = await browser.newPage({ viewport: { width: 1100, height: 2200 }, deviceScaleFactor: 1 });
     await page.goto(PAGE);
-    await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => document.fonts.ready); // eslint-disable-line no-undef -- runs in the page
     for (const o of OUT) {
       const el = await page.$('#' + o.id);
       await el.screenshot({ path: o.file, omitBackground: true, type: 'png' });

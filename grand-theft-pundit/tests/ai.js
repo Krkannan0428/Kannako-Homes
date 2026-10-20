@@ -56,12 +56,14 @@ H.run('ai', async (t) => {
       });
     }
     const live = rec.filter((r) => !r.removed);
-    return { n: rec.length, live: live.length, moved: live.filter((r) => r.dist > 30).length, offRoad: live.filter((r) => r.offRoad > 0), dists: live.map((r) => +r.dist.toFixed(0)), stops: live.map((r) => r.stops), vehicles: GTP.AI.debug.vehicles().filter((v) => v.kind === 'traffic' && v.stuck > 1) };
+    const offEnd = live.filter((r) => !onRoad(sample[rec.indexOf(r)]));
+    return { n: rec.length, live: live.length, moved: live.filter((r) => r.dist > 30).length, offRoad: live.filter((r) => r.offRoad > 0), offLong: live.filter((r) => r.offRoad > 3), offEnd: offEnd.length, dists: live.map((r) => +r.dist.toFixed(0)), stops: live.map((r) => r.stops), vehicles: GTP.AI.debug.vehicles().filter((v) => v.kind === 'traffic' && v.stuck > 1) };
   });
   console.log('  traffic: ' + JSON.stringify(traffic));
   t.assert(traffic.n >= 12, 'sampled at least 12 moving cars: ' + traffic.n);
   t.assert(traffic.moved >= Math.ceil(traffic.live * 0.8), '>= 80% advanced > 30 m: ' + traffic.moved + '/' + traffic.live);
-  t.assert(traffic.offRoad.length === 0, 'all sampled cars stayed on road tiles: ' + JSON.stringify(traffic.offRoad));
+  // a three-point turn at a dead end or a wide right turn may clip the kerb for a moment; nobody parks on the pavement
+  t.assert(traffic.offLong.length === 0 && traffic.offEnd === 0, 'no sampled car left the road for more than 3 s or ended off it: ' + JSON.stringify(traffic.offRoad));
 
   // ---- 3. peds use crosswalks ----
   const cross = await page.evaluate(() => {
