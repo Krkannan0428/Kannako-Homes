@@ -28,7 +28,7 @@ H.run('vehicles', async (t) => {
       press(a) { GTP.Input.set(a, true); GTP.game.advance(1 / 60); GTP.Input.set(a, false); GTP.game.advance(1 / 60); },
       hold(a, s) { GTP.Input.set(a, true); GTP.game.advance(s); GTP.Input.set(a, false); },
       board(v) { const d = v.doorWorld(0); GTP.game.debug.teleport(d.x, d.z); GTP.game.advance(0.1); T_.press('enter'); GTP.game.advance(1.0); return GTP.game.player.inVehicle === v; },
-      brief(v) { const h = v.hud(); return { sp: h.speed, alt: h.alt, p: h.pitch, r: h.roll, hd: h.heading, thr: h.throttle, gear: h.gear, og: h.onGround, wreck: !!v.wreck, x: Math.round(v.x), z: Math.round(v.z) }; },
+      brief(v) { const h = v.hud(); return { sp: h.speed, alt: h.alt, p: h.pitch, r: h.roll, hd: h.headingDeg, thr: h.throttle, gear: h.gear, og: h.onGround, wreck: !!v.wreck, x: Math.round(v.x), z: Math.round(v.z) }; },
       rw() { return GTP.World.landmark('airport_runway').points.west; },
       clearAround(x, z, r) { GTP.Entities.list.slice().forEach((e) => { if (e.kind === 'vehicle' && !e.persistent && !e.hasPlayer() && GTP.util.dist2d(e.x, e.z, x, z) < r) e.destroy(); }); GTP.game.advance(1 / 60); }
     };
@@ -51,7 +51,7 @@ H.run('vehicles', async (t) => {
   console.log('  registration: ' + JSON.stringify({ types: reg.types, fleet: reg.fleet.map((s) => s.type + '@' + s.x + ',' + s.z), state: { installed: reg.state.installed, render: reg.state.render, saves: reg.state.saves } }));
   t.assert(reg.types.length === 7 && reg.types.every((x) => x.fam && x.mesh), 'seven types with a family and a mesh builder');
   t.assert(['moto', 'heli', 'plane', 'jet', 'speedboat', 'jetski', 'parachute'].every((ty) => reg.types.some((x) => x.ty === ty)), 'every planned type is registered');
-  t.assert(reg.sedanHud && reg.sedanHud.family === 'car' && 'speed' in reg.sedanHud && 'alt' in reg.sedanHud && 'heading' in reg.sedanHud && 'gear' in reg.sedanHud && 'throttle' in reg.sedanHud && 'pitch' in reg.sedanHud && 'roll' in reg.sedanHud, 'hud() on a car: ' + JSON.stringify(reg.sedanHud));
+  t.assert(reg.sedanHud && reg.sedanHud.family === 'car' && 'speed' in reg.sedanHud && 'alt' in reg.sedanHud && 'heading' in reg.sedanHud && 'headingDeg' in reg.sedanHud && 'gear' in reg.sedanHud && 'throttle' in reg.sedanHud && 'pitch' in reg.sedanHud && 'roll' in reg.sedanHud, 'hud() on a car: ' + JSON.stringify(reg.sedanHud));
   t.assert(reg.api.length === 0 && reg.registry, 'the API and the save registry entry exist: ' + reg.api.join(','));
   t.assert(reg.state.installed && reg.state.render && reg.state.saves, 'the deferred hooks installed');
   const fleetTypes = new Set(reg.fleet.map((s) => s.type));
@@ -99,11 +99,11 @@ H.run('vehicles', async (t) => {
     return out;
   });
   // the real Q key through the raw listener
-  const hd0 = await page.evaluate(() => window._heli.hud().heading);
+  const hd0 = await page.evaluate(() => window._heli.hud().headingDeg);
   await page.keyboard.down('KeyQ');
   await page.evaluate(() => GTP.game.advance(1.2));
   await page.keyboard.up('KeyQ');
-  const hd1 = await page.evaluate(() => { GTP.game.advance(0.2); return window._heli.hud().heading; });
+  const hd1 = await page.evaluate(() => { GTP.game.advance(0.2); return window._heli.hud().headingDeg; });
   await page.evaluate(() => GTP.game.advance(0.3));
   console.log('  ' + await t.shot(page, 'veh_heli_flight'));
   const bail = await page.evaluate(() => {
@@ -171,9 +171,9 @@ H.run('vehicles', async (t) => {
     h.enter(p, 0); g.advance(2.6);
     fake.buttons[7] = { pressed: true, value: 1 }; g.advance(3); fake.buttons[7] = { pressed: false, value: 0 };
     out.climb = T_.brief(h);
-    const y0 = h.hud().heading;
+    const y0 = h.hud().headingDeg;
     fake.buttons[5] = { pressed: true, value: 1 }; g.advance(1); fake.buttons[5] = { pressed: false, value: 0 };
-    out.yaw = [y0, h.hud().heading];
+    out.yaw = [y0, h.hud().headingDeg];
     fake.axes[1] = -1; g.advance(2); fake.axes[1] = 0; out.fwd = T_.brief(h);
     fake.buttons[6] = { pressed: true, value: 1 }; g.advance(2); fake.buttons[6] = { pressed: false, value: 0 }; out.down = T_.brief(h);
     navigator.getGamepads = () => []; g.advance(1 / 60); GTP.Input._device('keyboard');
@@ -241,7 +241,7 @@ H.run('vehicles', async (t) => {
     // past the south edge at speed: turned back, never stopped dead or crashed
     j.x = (W.bounds.x0 + W.bounds.x1) / 2; j.z = W.bounds.z1 + 100; j.y = 150; j.yaw = GTP.util.dirToYaw(0, 1); j.pitch = 0; j.roll = 0; j.air = 80; j.thr = 0.7; j.snap();
     g.advance(12);
-    out.z = Math.round(j.z); out.limit = Math.round(W.bounds.z1 + 260); out.wreck = j.wreck; out.heading = j.hud().heading;
+    out.z = Math.round(j.z); out.limit = Math.round(W.bounds.z1 + 260); out.wreck = j.wreck; out.heading = j.hud().headingDeg;
     T_.press('enter'); g.advance(0.3);
     const ch = GTP.game.player.inVehicle; if (ch) ch.destroy();
     GTP.game.player.alive = true; GTP.game.player.hp = 100; GTP.game.player.knockedDown = false;

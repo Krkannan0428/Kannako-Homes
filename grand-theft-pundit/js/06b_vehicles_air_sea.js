@@ -745,7 +745,8 @@
       family: f, type: v.type, name: S.name || v.type,
       speed: +sp.toFixed(2), kmh: Math.round(sp * 3.6), mph: Math.round(sp * 2.237),
       alt: +(v.y - g).toFixed(1), altSea: +(v.y - WATER_Y).toFixed(1), vs: +(v.vy || 0).toFixed(2),
-      pitch: +v.pitch.toFixed(3), roll: +v.roll.toFixed(3), heading: Math.round(heading(v.yaw)),
+      // heading: radians like pitch / roll (0 = north, clockwise; the UI's tape reads radians); headingDeg for text
+      pitch: +v.pitch.toFixed(3), roll: +v.roll.toFixed(3), heading: +(heading(v.yaw) * Math.PI / 180).toFixed(4), headingDeg: Math.round(heading(v.yaw)),
       throttle: +thr.toFixed(3), gear: gear, rotor: +(v.rotor || 0).toFixed(3), stall: !!v.stall,
       hp: +(Math.max(0, v.hp) / v.maxHp).toFixed(3), onGround: !!v.onGround, chute: v.chute || null,
       wheelie: +(v._wheelie || 0).toFixed(3), lean: +(v._lean || 0).toFixed(3), beached: !!v.beached, prompt: prompt

@@ -70,7 +70,7 @@ GTP.C.VEHICLES.{moto, heli, plane, jet, speedboat, jetski, parachute}   // regis
 GTP.Assets.vehicleMeshes[type](vehicle) -> THREE.Group                  // for the environment track's buildEntityMesh
 GTP.Vehicle.prototype.hud() -> { family: 'car'|'moto'|'heli'|'plane'|'boat'|'chute', type, name,
   speed (m/s), kmh, mph, alt (m above the surface or roof below), altSea, vs (m/s), pitch, roll (rad),
-  heading (deg, 0 = north, clockwise), throttle (0..1), gear (car / moto: 1..6 | 'R' | 'N'; plane: 'down' | 'up';
+  heading (rad, 0 = north, clockwise), headingDeg (0..359), throttle (0..1), gear (car / moto: 1..6 | 'R' | 'N'; plane: 'down' | 'up';
   heli: 'skids'; boat: 'F' | 'N' | 'R'; chute: 'free' | 'open' | 'landed'), rotor (0..1), stall, hp (0..1),
   onGround, chute, wheelie (rad), lean (rad), beached, prompt ('Open the parachute' | 'Bail out' | null) }
 GTP.Vehicles = {

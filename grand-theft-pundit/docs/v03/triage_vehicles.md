@@ -55,6 +55,11 @@ No bug in `qa_r1_bugs.json`, `qa_a.json`, `qa_b.json` or `qa_c.json` points at 0
   **The exact call:** `GTP.Vehicles.buyMod(vehicle, categoryId, value, shownPrice)` -> `{ok: true, price, mods}` (it has
   charged `player.money`, applied the mod, rebuilt the mesh and emitted `shop:buy {item: 'mod:<cat>:<value>', price,
   vehicle}`; the UI must not charge again) or `{ok: false, reason: 'funds' | 'owned' | 'unknown part'}`.
+- **The vehicle HUD (UI track)**: the UI reads `hud().heading` in radians (its tape converts with `* 180 / PI`); 06b
+  returned degrees. `heading` is now radians (0 = north, clockwise), like `pitch` / `roll`, plus `headingDeg`.
+  **For the UI track:** `vehCat()` in 11_ui.js tests `/plane|jet|.../` before `/boat|jetski|.../`, so the jet ski gets
+  the aircraft panel ("GEAR UP", an attitude ball): test the boat pattern first, or use `vehicle.cls.family` /
+  `hud().family` (`car moto heli plane boat chute`).
 - **Garages**: `capacity(propertyId)` now reads `Content.parity.properties[].garage` (safe_dorm 1, suburb 3, brownstone 2,
   marina loft 2, penthouse 4); the test uses the penthouse.
 
