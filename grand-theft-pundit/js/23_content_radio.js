@@ -41,12 +41,16 @@
  * Ads and DJ lines are never spoken: they scroll on the ticker strip. Every
  * station runs its Nap Dynasty ad at minute 20 of the game hour
  * (`napMinute`); `napAd` is the index of that line in each station's `ads`.
- * WAIL 101's `dj` is the current call-in segment (rotates every game hour);
- * `djAll` lists every line. News: `news` (bulletins keyed by story flag and by
- * completed mission), GTP.Content.radio.bulletin() builds the top-of-the-hour
- * bulletin; a small runner shows it on the ticker unless the UI sets
- * GTP.UI.radioNews = true (it then calls bulletin() itself). `ticker` stays a
- * plain array. Every string obeys CONTENT_RULES.md.
+ * For the UI ticker every station exposes getters: `nowPlaying` ({kind:'song',
+ * title, artist} or WAIL's {kind:'show', title, text}), `bulletins` ([{text}]:
+ * this hour's story-reactive bulletin) and, on WAIL 101, `callers` ([{caller,
+ * text}] of the call-in segment on air) with `dj` holding the host's lines for
+ * that segment (segments rotate every game hour; `djAll` lists every line).
+ * GTP.Audio.radio.nowPlaying() is wrapped to return the same object (its
+ * toString() is still the engine's station text). News data: `news`;
+ * GTP.Content.radio.bulletin() builds a bulletin and 'radio:news' fires at
+ * the top of each game hour in a car. `ticker` stays a plain array. Every
+ * string obeys CONTENT_RULES.md.
  */
 (function () {
   'use strict';
@@ -1466,14 +1470,17 @@
     if (!st.jingle) delete st.jingle;
   }
 
+  // a segment intro without a repeat of the segment title ("HOA Hotline. Report..." -> "Report...")
+  function introText(seg) { var t = seg.title + '. '; return seg.intro.indexOf(t) === 0 ? seg.intro.slice(t.length) : seg.intro; }
   // WAIL 101's `dj`: the call-in segment for this game hour, framed by the
   // GDD lines; `djAll` holds every line (credits, audits).
   (function () {
     var wail = station('wail_101');
     if (!wail || wail.id !== 'wail_101') return;
     var segLists = CALLIN.segments.map(function (seg, i) {
-      var base = wail.djBase, list = [CALLIN.show.toUpperCase() + ': ' + seg.title.toUpperCase() + '. ' + seg.intro];
-      for (var e = 0; e < seg.exchanges.length; e++) { list.push(seg.exchanges[e]); if (e === 1 || e === 3) list.push(base[(i * 2 + e) % base.length]); }
+      var base = wail.djBase, list = [CALLIN.show.toUpperCase() + ': ' + seg.title.toUpperCase() + '. ' + introText(seg)];
+      // the calls themselves go out as `callers` (the UI's CALLER lines); the DJ slots carry the host
+      for (var e = 0; e < 4; e++) list.push(base[(i * 4 + e) % base.length]);
       list.push(seg.outro);
       return list;
     });
@@ -1547,10 +1554,11 @@
   };
 
   // ------------------------------------------------------- news runner --
-  // Shows the bulletin on the ticker when a game hour turns over while the
-  // player listens in a vehicle, and emits 'radio:news'. It rides on
-  // GTP.Audio.update (wrapped here, listed in docs/v03/radio.md) and stands
-  // down when the UI sets GTP.UI.radioNews = true.
+  // Emits 'radio:news' (the bulletin) when a game hour turns over while the
+  // player listens in a vehicle. The v0.3 UI shows `station.bulletins` itself
+  // (tag NEWS hh:00); only a UI without that support (GTP.UI.radioNews ===
+  // false) gets the bulletin pushed through GTP.UI.ticker. Rides on
+  // GTP.Audio.update (wrapped here, listed in docs/v03/radio.md).
   var newsState = { lastHour: null, shown: 0 };
   RADIO._newsState = newsState;
   function newsTick() {
@@ -1560,13 +1568,12 @@
     if (hk === newsState.lastHour) return;
     newsState.lastHour = hk;
     if (((g.time.clock || 0) % 1) * 60 > 6) return;   // a jump (load, setClock), not the top of the hour
-    if (GTP.UI && GTP.UI.radioNews) return;
     var p = g.player, A = GTP.Audio;
     if (!p || !p.inVehicle || !A || !A.radio || (A.radio.isPlaying && !A.radio.isPlaying())) return;
     var cur = A.radio.current ? A.radio.current() : null;
     var b = RADIO.bulletin(cur && cur.id, hk);
     newsState.shown++;
-    if (GTP.UI && typeof GTP.UI.ticker === 'function') GTP.UI.ticker(b.text);
+    if (GTP.UI && GTP.UI.radioNews === false && typeof GTP.UI.ticker === 'function') GTP.UI.ticker(b.text);
     if (GTP.Events && GTP.Events.emit) GTP.Events.emit('radio:news', b);
   }
   RADIO._newsTick = newsTick;
@@ -1578,6 +1585,56 @@
       return r;
     };
     GTP.Audio._radioNewsWrapped = true;
+  }
+
+  // ------------------------------------------------------ UI ticker feed --
+  // The shapes docs/v03/ui.md reads: station.nowPlaying, station.bulletins,
+  // station.callers. All are getters, computed when the ticker asks.
+  function callerOf(line) {
+    var m = /^CALLER, ([^:]+): (.*)$/.exec(line);
+    return m ? { caller: m[1], text: m[2] } : { caller: 'A caller', text: line };
+  }
+  var callerLists = CALLIN.segments.map(function (seg) { return seg.exchanges.map(callerOf); });
+  RADIO.callers = function (hk) { return callerLists[RADIO.segmentIndex(hk)]; };
+  // what the ticker should call "on air" for a station
+  RADIO.onAir = function (id) {
+    var st = station(id); if (!st) return null;
+    if (st.id === CALLIN.station) {
+      var seg = RADIO.segment();
+      return { kind: 'show', id: seg.id, station: st.id, title: CALLIN.show + ': ' + seg.title, text: introText(seg), host: CALLIN.host };
+    }
+    var np = RADIO.nowPlaying(st.id); if (!np) return null;
+    return { kind: 'song', id: np.song, station: st.id, title: np.title, artist: np.artist, section: np.section };
+  };
+  var bulletinCache = {};
+  STATIONS.forEach(function (st) {
+    Object.defineProperty(st, 'nowPlaying', { enumerable: false, configurable: true, get: function () { return RADIO.onAir(st.id); } });
+    Object.defineProperty(st, 'bulletins', {
+      enumerable: false, configurable: true,
+      get: function () {
+        var b = RADIO.bulletin(st.id), key = st.id + '|' + b.text, c = bulletinCache[st.id];
+        if (!c || c.key !== key) c = bulletinCache[st.id] = { key: key, list: [{ text: b.text, headline: b.headlines[0], stage: b.stage, hour: b.hour }] };
+        return c.list;
+      }
+    });
+    if (st.id === CALLIN.station) Object.defineProperty(st, 'callers', { enumerable: false, configurable: true, get: function () { return RADIO.callers(); } });
+  });
+  // The UI asks GTP.Audio.radio.nowPlaying() first; the engine returns a
+  // station string. Wrapped: while a station plays it returns RADIO.onAir()
+  // with toString() giving the engine's text, so string users keep working.
+  if (GTP.Audio && GTP.Audio.radio && typeof GTP.Audio.radio.nowPlaying === 'function' && !GTP.Audio.radio._radioWrapped) {
+    var engineNowPlaying = GTP.Audio.radio.nowPlaying;
+    GTP.Audio.radio.nowPlaying = function () {
+      var text = engineNowPlaying.apply(this, arguments);
+      if (!text) return text;
+      var cur = null;
+      try { cur = GTP.Audio.radio.current ? GTP.Audio.radio.current() : null; } catch (e) { cur = null; }
+      var o = cur && RADIO.onAir(cur.id);
+      if (!o) return text;
+      o.toString = function () { return String(text); };
+      return o;
+    };
+    GTP.Audio.radio._radioWrapped = true;
   }
 
   // ---------------------------------------------------------- streets --

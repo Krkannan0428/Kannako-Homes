@@ -214,7 +214,7 @@ H.run('radio', async (t) => {
     for (let i = 0; i < Rd.stations.length + 1; i++) { out.cycle.push(A.radio.current().id); press('radio'); }
     out.errorsBefore = (GTP.errors || []).length;
     out.tickerIsArray = Array.isArray(Rd.ticker);
-    // the news runner: a game hour turns over in the car
+    // the top of the hour in the car: radio:news fires once (the v0.3 UI shows station.bulletins itself)
     const shown = [], events = [];
     const origTicker = GTP.UI.ticker;
     GTP.UI.ticker = function (text) { shown.push(text); return origTicker.apply(this, arguments); };
@@ -222,26 +222,40 @@ H.run('radio', async (t) => {
     A.radio.setStation(Rd.stations.findIndex((s) => s.id === 'quiet_signal'));
     GTP.game.debug.setClock(13 + 59.5 / 60); GTP.game.advance(0.1);
     GTP.game.advance(1.2);   // 1.2 s real = 0.8 game minutes: crosses 14:00
-    out.shownInCar = shown.slice(); out.eventsInCar = events.map((e) => ({ station: e.station, stage: e.stage, n: e.headlines.length }));
-    out.tickerCur = GTP.UI.state && GTP.UI.state.ticker && GTP.UI.state.ticker.cur ? GTP.UI.state.ticker.cur.text : null;
-    // on foot: no bulletin
+    out.eventsInCar = events.map((e) => ({ station: e.station, stage: e.stage, n: e.headlines.length, text: e.text.slice(0, 40) }));
+    // what the UI ticker shows per station (docs/v03/ui.md: nowPlaying, bulletins, callers)
+    const tk = GTP.UI.state.ticker, feed = {};
+    for (const sid of ['pennant_fm', 'wail_101', 'loop_174']) {
+      A.radio.setStation(Rd.stations.findIndex((s) => s.id === sid)); GTP.game.debug.setClock(14.01);
+      tk.lastNp = null; tk.lastBulletin = -1; tk.n = 0; tk.queue.length = 0; const lines = [];
+      for (let i = 0; i < 15; i++) { tk.cur = null; GTP.UI.update(1 / 60); if (tk.cur) lines.push(tk.cur.tag + ': ' + tk.cur.text); }
+      feed[sid] = lines;
+    }
+    out.feed = feed;
+    const np = A.radio.nowPlaying();
+    out.np = { kind: np && np.kind, title: np && np.title, str: String(np) };
+    // on foot: no bulletin event
     const vv = p.inVehicle; if (vv) { vv.speed = 0; vv.vx = 0; vv.vz = 0; } GTP.game.advance(0.1);
     press('enter'); GTP.game.advance(0.6);
     out.onFoot = !p.inVehicle;
     GTP.game.debug.setClock(15 + 59.5 / 60); GTP.game.advance(0.1); GTP.game.advance(1.2);
-    out.shownTotal = shown.length;
+    out.eventsTotal = events.length; out.shownTotal = shown.length;
     GTP.UI.ticker = origTicker;
-    out.wailDj = Rd.station('wail_101').dj.slice(0, 2);
     out.errors = (GTP.errors || []).map((e) => e.where + ': ' + e.message);
     return out;
   });
-  console.log('  headless: ' + JSON.stringify({ inCar: hl.inCar, cycle: hl.cycle, shown: hl.shownInCar, events: hl.eventsInCar, onFoot: hl.onFoot, shownTotal: hl.shownTotal }));
+  console.log('  headless: ' + JSON.stringify({ inCar: hl.inCar, cycle: hl.cycle, events: hl.eventsInCar, np: hl.np, onFoot: hl.onFoot, eventsTotal: hl.eventsTotal }));
+  console.log('  ticker feed:\n    ' + Object.keys(hl.feed).map((k) => k + ':\n      ' + hl.feed[k].map((l) => l.slice(0, 110)).join('\n      ')).join('\n    '));
   t.assert(hl.inCar, 'in a car');
   t.assert(hl.cycle.length === stationIds.length + 1 && new Set(hl.cycle).size === stationIds.length && hl.cycle[0] === hl.cycle[hl.cycle.length - 1], 'R cycles through every station and wraps: ' + hl.cycle.join(' > '));
   t.assert(hl.tickerIsArray, 'the ticker is still a plain array after every content file loaded');
-  t.assert(hl.shownInCar.length === 1 && /^A BULLETIN HAS BEEN ISSUED/.test(hl.shownInCar[0]) && hl.eventsInCar.length === 1 && hl.eventsInCar[0].station === 'quiet_signal', 'the top of the hour shows one bulletin in the station voice and emits radio:news');
-  t.assert(hl.tickerCur && /BULLETIN/.test(hl.tickerCur), 'the bulletin is on the ticker strip');
-  t.assert(hl.onFoot && hl.shownTotal === 1, 'no bulletin on foot');
+  t.assert(hl.eventsInCar.length === 1 && hl.eventsInCar[0].station === 'quiet_signal' && /^A BULLETIN HAS BEEN ISSUED/.test(hl.eventsInCar[0].text), 'the top of the hour emits one radio:news bulletin in the station voice');
+  const F = hl.feed;
+  t.assert(F.pennant_fm.some((l) => /^NOW PLAYING: .+  ·  .+/.test(l)) && F.loop_174.some((l) => /^NOW PLAYING: /.test(l)), 'the ticker names the song and artist on music stations');
+  t.assert(F.pennant_fm.some((l) => /^NEWS 14:00: PENNANT FM NEWS/.test(l)) && F.loop_174.some((l) => /^NEWS 14:00: LOOP 174 NEWS/.test(l)), 'the hourly bulletin shows in each station voice');
+  t.assert(F.wail_101.some((l) => /^ON AIR: Uproar at Large: /.test(l)) && F.wail_101.some((l) => /^CALLER: .+ on the line: /.test(l)) && F.wail_101.some((l) => /^NEWS 14:00: WAIL 101 NEWS/.test(l)), 'WAIL 101 shows the show on air, callers and the bulletin');
+  t.assert(hl.np.kind === 'song' && /Loop 174/.test(hl.np.str), 'Audio.radio.nowPlaying() returns the song object and still reads as the station text: ' + JSON.stringify(hl.np));
+  t.assert(hl.onFoot && hl.eventsTotal === 1 && hl.shownTotal === 0, 'no bulletin on foot, and nothing pushed past the UI');
   t.assert(hl.errors.length === 0, 'headless errors: ' + hl.errors.join('\n'));
   const herrs = await t.errors(hctx);
   t.assert(herrs.length === 0, 'headless page errors:\n' + herrs.join('\n'));
