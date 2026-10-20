@@ -56,7 +56,7 @@
       // ------------------------------------------------------------- Act I --
       {
         id: 'm01b_airport', title: 'Baggage Claim', act: 1,
-        giver: 'sloane', marker: 'pod_garage', requires: ['m01_van'], reward: 250,
+        giver: 'sloane', marker: 'pod_garage', requires: ['m01c_both_sides'], reward: 250,
         intro: [
           { who: 'sloane', text: 'The sponsor\'s demo mattress lands at Goldplate International in five minutes. Four. Kip\'s at Arrivals with a sign.' },
           { who: 'player', text: 'We have an airport?' },
@@ -264,7 +264,7 @@
 
       {
         id: 'm13b_ratio', title: 'Ratio Launcher', act: 3,
-        giver: 'moonsworth', marker: 'container_yard', requires: ['m13_thursday'], reward: 3500,
+        giver: 'moonsworth', marker: 'container_yard', requires: ['b05_dunk'], reward: 3500,
         intro: [
           { who: 'moonsworth', text: 'Bryce. Pivot. $PUNDIT is a launcher now. Trustless. You point it, it ratios.' },
           { who: 'player', text: 'Why is the coin a rocket launcher?' },
