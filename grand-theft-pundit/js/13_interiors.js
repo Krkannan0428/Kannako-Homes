@@ -554,6 +554,19 @@
       for (var ch = -4; ch <= 4; ch += 4) { room.cyl('metal', ch, 3.7, 1.5, 0.02, 0.02, 0.5, 6, col('#e8b53a')); room.cyl('gloss', ch, 3.45, 1.5, 0.35, 0.12, 0.25, 12, col('#e8b53a')); room.cyl('glow', ch, 3.42, 1.5, 0.3, 0.3, 0.04, 12, [1.6, 1.4, 1.0]); }
     }
 
+    // category signs hanging over each wall, Ammu-style, and a security camera in each corner
+    function hangSign(key, text, x, z, w, face) {
+      var m = texMat(signTex('cat-' + key + '-' + branch, text, { w: 768, h: 128, bg: '#101114', fg: B.accent, border: B.accent, size: 64 }), { basic: true });
+      room.plane(m, x, 3.62, z, w, w / 6, face);
+      room.box('metal', x - 0.01, 3.62 + w / 12, z - 0.01, 0.02, 4.2 - 3.62 - w / 12, 0.02, steel);
+    }
+    hangSign('hand', 'HANDGUNS', -8.6, 2.1, 2.6, 'e'); hangSign('long', 'RIFLES & SHOTGUNS', 8.6, 2.1, 3.0, 'w');
+    room.plane(texMat(signTex('cat-ammo-' + branch, 'AMMO', { w: 512, h: 128, bg: '#101114', fg: '#ffd27a', border: '#ffd27a', size: 76 }), { basic: true }), -8.95, 0.98, 5.0, 0.9, 0.22, 'e');
+    [[-8.7, 6.7], [8.7, 6.7], [-8.7, -6.7]].forEach(function (q) {
+      room.box('matte', q[0] - 0.08, 3.9, q[1] - 0.08, 0.16, 0.3, 0.16, black);
+      room.box('gloss', q[0] - 0.1 + (q[0] < 0 ? 0.12 : -0.12), 3.72, q[1] - 0.12 + (q[1] < 0 ? 0.1 : -0.1), 0.2, 0.16, 0.28, col('#e8e2d0'));
+      room.box('glow', q[0] + (q[0] < 0 ? 0.12 : -0.12), 3.8, q[1] + (q[1] < 0 ? 0.25 : -0.25), 0.03, 0.03, 0.01, [2.2, 0.2, 0.2]);
+    });
     // stock the racks
     var list = stock(B.store), longs = [], shorts = [], i;
     for (i = 0; i < list.length; i++) (list[i].long ? longs : shorts).push(list[i]);
@@ -630,9 +643,9 @@
     room.light(6, 3.58, -9.4, 0xfff0dc, 0.55, 8); room.light(3, 3.58, -20, 0xffffff, 0.75, 14); room.light(9, 3.58, -20, 0xffffff, 0.75, 14);
     room.light(3, 3.58, -30, 0xffffff, 0.8, 14); room.light(9, 3.58, -30, 0xffffff, 0.8, 14); room.light(6, 3.58, -25, 0xffffff, 0.5, 14);
     // the scoreboard hangs over the line
-    var sb = scoreboardTex(); room.box('matte', 4.4, 2.75, -12.25, 3.2, 0.9, 0.1, col('#111214'));
-    room.plane(texMat(sb, { basic: true }), 6.0, 3.2, -12.14, 3.0, 0.8, 's');
-    room.solid(4.4, 2.75, -12.25, 3.2, 0.9, 0.1, { ray: false });
+    var sb = scoreboardTex(); room.box('matte', 4.4, 2.82, -12.25, 3.2, 0.76, 0.1, col('#111214'));
+    room.plane(texMat(sb, { basic: true }), 6.0, 3.2, -12.14, 2.6, 0.69, 's');
+    room.solid(4.4, 2.82, -12.25, 3.2, 0.76, 0.1, { ray: false });
     room.range = rangeTargets(room);
     room.booth = room.interact({ kind: 'range', x: 6.5, z: -10.1, r: 0.9, label: 'Stand on the line to start the range' });
   }
@@ -642,14 +655,14 @@
     var wallM = texMat(TX.plaster('cloth', '#e9e1d4'), { rough: 0.9 }), floorM = texMat(TX.wood('clothfloor', '#a07850', '#6a4a30'), { rough: 0.45 });
     room.bounds = { x0: -8, z0: -6, x1: 8, z1: 6 };
     room.shell(-8, -6, 8, 6, 3.8, { wall: wallM, floor: floorM, ceil: texMat(TX.ceiling('cloth', '#f2efe8'), { rough: 0.95 }), ts: 2.5, floorTs: 1.6, skirt: col('#3a3430') });
-    room.spawn = { x: 0, z: 4.6, yaw: 0 };
+    room.spawn = { x: 0, z: 3.7, yaw: 0 };
     room.zone('store', -8, -6, 8, 6);
     room.fill = 0.65;
     for (var lx = -5; lx <= 5; lx += 5) for (var lz = -3; lz <= 3; lz += 3) room.light(lx, 3.78, lz, 0xfff4e6, 0.5, 10);
     var outM = texMat(outsideTex(), { basic: true }), steel = col('#b0b4bb'), dark = col('#2a2624');
     room.plane(outM, 0, 1.2, 6.18, 2, 2.4, 'n'); room.plane(mats().glass, 0, 1.2, 5.95, 2, 2.4, 'n');
     room.box('metal', -1.08, 0, 5.88, 0.08, 2.5, 0.14, steel); room.box('metal', 1.0, 0, 5.88, 0.08, 2.5, 0.14, steel); room.box('metal', -1.08, 2.42, 5.88, 2.16, 0.08, 0.14, steel);
-    room.exitDoor = room.interact({ kind: 'exit', x: 0, z: 5.35, r: 1.1, label: 'Leave', face: Math.PI });
+    room.exitDoor = room.interact({ kind: 'exit', x: 0, z: 5.45, r: 0.95, label: 'Leave', face: Math.PI });
     room.plane(texMat(signTex('lanyard', 'LANYARD & CO.', { w: 1024, h: 256, bg: '#1e2a3a', fg: '#f2d48a', sub: 'DRESS FOR THE PANEL YOU WANT', subColor: '#e8e2d0' }), { rough: 0.5 }), 0, 3.0, -5.96, 5, 1.25, 's');
     // racks of shirts and jackets
     var shirts = ['#c0392b', '#2b5aa0', '#f2efe4', '#2f8a4f', '#d9a520', '#7a3fa0', '#1e2a44', '#e07a5f', '#5a6c8c', '#3a3a3a'];
@@ -698,7 +711,7 @@
     var floorM = texMat(TX.tiles('barber', '#f0ece2', '#1c1c1e', '#888', 8), { rough: 0.3 });
     room.bounds = { x0: -6, z0: -5, x1: 6, z1: 5 };
     room.shell(-6, -5, 6, 5, 3.4, { wall: wallM, floor: floorM, ceil: texMat(TX.ceiling('barber', '#f2efe8'), { rough: 0.95 }), ts: 2.5, floorTs: 1.2, skirt: col('#1c1c1e') });
-    room.spawn = { x: 0, z: 3.7, yaw: 0 };
+    room.spawn = { x: 0, z: 2.9, yaw: 0 };
     room.zone('store', -6, -5, 6, 5);
     room.fill = 0.65;
     for (var lx = -3; lx <= 3; lx += 3) room.light(lx, 3.38, -1, 0xfff6ea, 0.55, 9);
@@ -706,7 +719,7 @@
     var outM = texMat(outsideTex(), { basic: true }), steel = col('#b0b4bb'), red = col('#a0242a'), chrome = col('#d8dce2');
     room.plane(outM, 0, 1.2, 5.18, 2, 2.4, 'n'); room.plane(mats().glass, 0, 1.2, 4.95, 2, 2.4, 'n');
     room.box('metal', -1.08, 0, 4.88, 0.08, 2.5, 0.14, steel); room.box('metal', 1.0, 0, 4.88, 0.08, 2.5, 0.14, steel); room.box('metal', -1.08, 2.42, 4.88, 2.16, 0.08, 0.14, steel);
-    room.exitDoor = room.interact({ kind: 'exit', x: 0, z: 4.35, r: 1.1, label: 'Leave', face: Math.PI });
+    room.exitDoor = room.interact({ kind: 'exit', x: 0, z: 4.45, r: 0.95, label: 'Leave', face: Math.PI });
     room.plane(texMat(signTex('clipjoint', 'THE CLIP JOINT', { w: 1024, h: 256, bg: '#14181c', fg: '#e8e2d0', sub: 'A FRESH FADE READS AS A FRESH TAKE', subColor: '#d23a2a' }), { rough: 0.5 }), 0, 2.85, -4.96, 4.2, 1.05, 's');
     // two chairs facing the mirror wall (north), with mirror bulbs and counters
     [-2.4, 2.4].forEach(function (cx, i) {
@@ -735,7 +748,7 @@
     safe_brownstone: { wall: 'brick', base: '#8a4a3a', floor: '#7a5230', rug: '#2b5aa0', night: true },
     safe_marina_loft: { wall: 'plaster', base: '#cfe2ea', floor: '#c8b08a', rug: '#e07a5f', night: false },
     safe_suburb: { wall: 'plaster', base: '#e8dcc0', floor: '#9a7a50', rug: '#2f8a4f', night: false },
-    safe_penthouse: { wall: 'plaster', base: '#2a2a30', floor: '#e8e4dc', rug: '#c8a040', night: true },
+    safe_penthouse: { wall: 'plaster', base: '#4a4f5c', floor: '#e8e4dc', rug: '#c8a040', night: true },
     def: { wall: 'plaster', base: '#d8cfc0', floor: '#8a6a48', rug: '#7a3fa0', night: true }
   };
   function buildSafehouse(room, branch) {
@@ -744,14 +757,14 @@
     var floorM = texMat(TX.wood('safefloor-' + branch, Sx.floor, '#3a2818'), { rough: 0.5 });
     room.bounds = { x0: -7, z0: -5.5, x1: 7, z1: 5.5 };
     room.shell(-7, -5.5, 7, 5.5, 3.2, { wall: wallM, floor: floorM, ceil: texMat(TX.ceiling('safe', '#ece8e0'), { rough: 0.95 }), ts: Sx.wall === 'brick' ? 1.6 : 2.5, floorTs: 1.6, skirt: col('#2a2018') });
-    room.spawn = { x: 0, z: 4.2, yaw: 0 };
+    room.spawn = { x: -1.7, z: 3.75, yaw: 0 };
     room.zone('home', -7, -5.5, 7, 5.5);
     room.fill = 0.6;
     room.light(-3.5, 3.18, -1.5, 0xffe6c4, 0.55, 9); room.light(3.5, 3.18, -1.5, 0xffe6c4, 0.55, 9); room.light(0, 3.18, 2.5, 0xffe6c4, 0.45, 9);
     var wood = col('#5a3a22'), dark = col('#2a2624'), steel = col('#9aa0a8');
     // the door back out
     room.box('matte', -0.6, 0, 5.4, 1.2, 2.3, 0.08, col('#5a3a22')); room.box('metal', 0.35, 1.0, 5.36, 0.12, 0.04, 0.04, col('#e8b53a'));
-    room.exitDoor = room.interact({ kind: 'exit', x: 0, z: 4.9, r: 1.0, label: 'Leave', face: Math.PI });
+    room.exitDoor = room.interact({ kind: 'exit', x: 0, z: 5.0, r: 0.9, label: 'Leave', face: Math.PI });
     // the window on the city (north wall)
     room.plane(texMat(windowTex('safe-' + branch, Sx.night), { basic: true }), 2.5, 1.75, -5.47, 4.0, 1.7, 's');
     room.box('gloss', 0.45, 0.85, -5.5, 4.1, 0.08, 0.15, col('#f2efe4')); room.box('gloss', 0.45, 2.6, -5.5, 4.1, 0.08, 0.1, col('#f2efe4'));
@@ -770,8 +783,8 @@
     room.plane(texMat(TX.carpet('safe-' + branch, Sx.rug, '#f2efe4'), { rough: 0.95 }), 1.5, 0.006, 1.2, 4.2, 3.0, 'up', 4.2);
     room.box('matte', -0.5, 0, 2.4, 3.6, 0.45, 0.95, dark, true); room.box('matte', -0.5, 0.45, 3.1, 3.6, 0.6, 0.25, dark); room.box('matte', -0.5, 0.45, 2.4, 0.25, 0.3, 0.95, dark); room.box('matte', 2.85, 0.45, 2.4, 0.25, 0.3, 0.95, dark);
     room.box('matte', 0.4, 0, 0.8, 1.6, 0.4, 0.8, wood, true);
-    room.box('matte', 0.0, 0, -1.4, 3.2, 0.5, 0.5, dark, true); room.box('gloss', 0.25, 0.55, -1.25, 2.7, 1.5, 0.08, col('#0a0a0c'));
-    room.plane(texMat(signTex('tv-' + branch, 'LOUD & CORRECT', { w: 512, h: 256, bg: '#14243a', fg: '#ffd27a', sub: 'ON AIR: YOU, PROBABLY', subColor: '#e8e2d0' }), { basic: true }), 1.6, 1.3, -1.16, 2.55, 1.35, 's');
+    room.box('matte', 0.4, 0, -1.4, 2.4, 0.5, 0.5, dark, true); room.box('gloss', 0.7, 0.55, -1.25, 1.8, 1.05, 0.08, col('#0a0a0c'));
+    room.plane(texMat(signTex('tv-' + branch, 'LOUD & CORRECT', { w: 512, h: 256, bg: '#14243a', fg: '#ffd27a', sub: 'ON AIR: YOU, PROBABLY', subColor: '#e8e2d0' }), { basic: true }), 1.6, 1.075, -1.16, 1.7, 0.95, 's');
     room.box('matte', 4.2, 0, 2.6, 1.6, 0.75, 0.8, wood, true); room.cyl('metal', 4.6, 0.75, 2.9, 0.08, 0.08, 0.02, 8, steel); room.cyl('metal', 4.6, 0.77, 2.9, 0.012, 0.012, 0.25, 6, steel); room.cyl('gloss', 4.6, 1.02, 2.9, 0.05, 0.05, 0.12, 8, col('#2a2a2e'));
     room.plane(texMat(posterTex('safe-poster', 'LOUD & CORRECT', 'Season four. Minds changed: still zero.', '#1a1a2a', '#ffd27a', '#c0392b'), { rough: 0.6 }), -1.5, 1.8, -5.46, 0.9, 1.3, 's');
     if (branch === 'safe_penthouse') { room.plane(texMat(signTex('pent', 'PENTHOUSE', { w: 512, h: 128, bg: '#14141a', fg: '#e8b53a', neon: true }), { basic: true }), -3.5, 2.6, 5.45, 1.8, 0.45, 'n'); }
@@ -800,7 +813,7 @@
     var left = R.running ? (R.t < COUNTDOWN ? ROUND : Math.max(0, ROUND - (R.t - COUNTDOWN))) : 0;
     c.textAlign = 'left'; c.font = '900 52px "Arial Black", Impact, sans-serif';
     c.fillStyle = left < 10 && R.running ? '#ff5a4a' : '#ffd27a';
-    var tt = R.running && R.t < COUNTDOWN ? String(Math.ceil(COUNTDOWN - R.t)) : '0:' + (left < 9.5 ? '0' : '') + Math.ceil(left - 0.0001);
+    var secs = Math.ceil(left - 0.0001), tt = R.running && R.t < COUNTDOWN ? String(Math.ceil(COUNTDOWN - R.t)) : Math.floor(secs / 60) + ':' + (secs % 60 < 10 ? '0' : '') + (secs % 60);
     c.fillText(tt, 22, 52);
     c.textAlign = 'right'; c.fillStyle = '#3fd27f'; c.fillText(String(R.score), w - 22, 52);
     c.shadowBlur = 0; c.font = '700 20px Arial'; c.fillStyle = '#e8e2d0';

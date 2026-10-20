@@ -143,7 +143,9 @@ H.run('interiors', async (t) => {
   console.log('  range: ' + JSON.stringify(range));
   t.assert(range.started && range.started.seconds === 60, 'standing on the line starts a 60 s round');
   t.assert(range.during.canShoot === true && range.hits.length >= 1 && range.hits[0].points > 0 && range.during.score > 0, 'a shot at a standing target scores: ' + JSON.stringify(range.hits));
-  await view('int_range_targets', [6.5, 1.75, -9.6, 6, 1.0, -30]);
+  await page.evaluate(() => { const p = GTP.game.player; p.yaw = 0; p.aimYaw = 0; GTP.Render.rig.yaw = 0; GTP.Render.rig.pitch = 0.05; GTP.Render.rig.snap(); GTP.game.advance(0.1); });
+  await shot('int_range_player');
+  await view('int_range_targets', [7.6, 2.3, -8.6, 6, 0.9, -30]);
   const rend = await page.evaluate((before) => {
     const I = GTP.Interiors, p = GTP.game.player;
     window.__ev = [];
