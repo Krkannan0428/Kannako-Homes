@@ -190,7 +190,7 @@
       }
       setMaps(Assets._mats.ground, Assets.atlasNormal, Assets.atlasRough);
       for (k in Assets._facadeMats) { m = Assets._facadeMats[k]; var f = Assets._facades[k]; if (f) setMaps(m, f.normal, f.rough); }
-      if (Assets._mats.water) { var wm = Assets._mats.water; var wn = nm ? Assets.waterNormal : null; if (wm.normalMap !== wn) { wm.normalMap = wn; wm.needsUpdate = true; } }
+      if (Assets._mats.water && nm) { Assets.waterUniforms.tGtpRip.value = Assets.waterNormal; Assets._mats.water.needsUpdate = true; }
       var aniso = q.anisotropy || 4;
       [Assets.atlas, Assets.atlasNormal, Assets.atlasRough, Assets.water].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } });
       for (k in Assets._facades) { var ff = Assets._facades[k]; [ff.day, ff.night, ff.normal, ff.rough].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } }); }
@@ -349,8 +349,48 @@
         if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
         M.ground = new THREE.MeshStandardMaterial({ map: Assets.atlas, normalMap: C.QUALITY.normalMaps ? Assets.atlasNormal : null, normalScale: new THREE.Vector2(0.8, 0.8), roughnessMap: C.QUALITY.normalMaps ? Assets.atlasRough : null, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.5 });
         M.ground.name = 'ground';
+        Assets._groundShader(M.ground);
       }
       return M.ground;
+    },
+    // The ground's world-space layer: a macro variation from two octaves of the cloud noise (no two blocks of asphalt
+    // read alike and the atlas stops looking tiled), and the rain: everything darkens and turns glossy with
+    // Render.weather.wet, and puddles fill the low spots of a noise field on flat ground (mirror-smooth, flat-normal, so
+    // the sky, the lamps and the neon reflect in them; the post pass adds screen-space reflections on top at high).
+    groundUniforms: { tGtpNoise: { value: null }, uGtpWet: { value: 0 }, uGtpRain: { value: 0 }, uGtpTime: { value: 0 } },
+    _groundShader: function (m) {
+      var GU = Assets.groundUniforms;
+      GU.tGtpNoise.value = Assets.clouds;
+      m.onBeforeCompile = function (sh) {
+        for (var k in GU) sh.uniforms[k] = GU[k];
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vGtpW;\nvarying float vGtpUp;')
+          .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvGtpW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\nvGtpUp = normalize( mat3( modelMatrix ) * objectNormal ).y;');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\nuniform sampler2D tGtpNoise; uniform float uGtpWet, uGtpRain, uGtpTime; varying vec3 vGtpW; varying float vGtpUp;')
+          .replace('#include <map_fragment>', [
+            '#include <map_fragment>',
+            'vec2 gWp = vGtpW.xz;',
+            'float gN1 = texture2D( tGtpNoise, gWp / 97.0 ).r, gN2 = texture2D( tGtpNoise, gWp / 23.0 + 0.37 ).r;',
+            'diffuseColor.rgb *= 1.0 + ( gN1 - 0.5 ) * 0.24 + ( gN2 - 0.5 ) * 0.12;',
+            'float gFlat = smoothstep( 0.9, 0.99, vGtpUp );',
+            'float gPn = texture2D( tGtpNoise, gWp / 11.0 + 0.71 ).r * 0.65 + gN2 * 0.35;',
+            'float gtpPuddle = smoothstep( 0.6 - 0.1 * uGtpWet, 0.66 - 0.1 * uGtpWet, gPn ) * gFlat * smoothstep( 0.12, 0.55, uGtpWet );',
+            'float gtpWetK = uGtpWet * ( 0.55 + 0.45 * gFlat );',
+            'diffuseColor.rgb *= mix( 1.0, 0.6, gtpWetK );',
+            'diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 0.45, gtpPuddle );'
+          ].join('\n'))
+          .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, roughnessFactor * 0.5, gtpWetK );\nroughnessFactor = mix( roughnessFactor, 0.035, gtpPuddle );')
+          .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nvec3 gtpGeoN = normal;')
+          .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\niblIrradiance *= ' + IBL_DIFFUSE + ';')
+          .replace('#include <normal_fragment_maps>', [
+            '#include <normal_fragment_maps>',
+            // rain rings on the puddles: two scrolling layers of noise bent into ripples while it rains
+            'float gRip = ( texture2D( tGtpNoise, gWp / 1.7 + vec2( uGtpTime * 0.31, 0.0 ) ).r - texture2D( tGtpNoise, gWp / 1.3 - vec2( 0.0, uGtpTime * 0.27 ) ).r ) * uGtpRain * 0.35;',
+            'normal = normalize( mix( normal, gtpGeoN + vec3( gRip, 0.0, -gRip ), gtpPuddle ) );'
+          ].join('\n'));
+      };
+      m.customProgramCacheKey = function () { return 'gtp-ground'; };
     },
     groundMaterialFar: function () {
       var M = Assets._mats;
@@ -361,10 +401,34 @@
       var M = Assets._mats;
       if (!M.water) {
         if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
-        M.water = new THREE.MeshStandardMaterial({ map: Assets.water, normalMap: C.QUALITY.normalMaps ? Assets.waterNormal : null, normalScale: new THREE.Vector2(0.55, 0.55), color: 0xffffff, roughness: 0.22, metalness: 0.08, envMapIntensity: 1.1, transparent: true, opacity: 0.94 });
+        M.water = new THREE.MeshStandardMaterial({ map: Assets.water, color: 0xffffff, roughness: 0.06, metalness: 0.0, envMapIntensity: 1.0 });
         M.water.name = 'water';
+        Assets._oceanShader(M.water);
       }
       return M.water;
+    },
+    // The ocean: four directional swells (analytic slopes, no tessellation) plus two scrolling ripple layers give the
+    // normal; three's own Fresnel reflects the sky in it and the sun glitters on the slopes. The colour runs from a
+    // shallow teal by the shore to deep blue-green (Render's shore distance texture: 0 at the land, 1 eight tiles out)
+    // and a band of foam breathes against every seawall, beach and pier.
+    waterUniforms: { tGtpShore: { value: null }, tGtpNoise: { value: null }, tGtpRip: { value: null }, uGtpTime: { value: 0 }, uGtpMap: { value: 896 }, uGtpChop: { value: 0.5 } },
+    _oceanShader: function (m) {
+      var WU = Assets.waterUniforms;
+      WU.tGtpNoise.value = Assets.clouds;
+      m.onBeforeCompile = function (sh) {
+        if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
+        WU.tGtpRip.value = Assets.waterNormal || Assets.clouds;
+        for (var k in WU) sh.uniforms[k] = WU[k];
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vGtpW;')
+          .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvGtpW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\n' + OCEAN_PARS)
+          .replace('#include <map_fragment>', OCEAN_MAP)
+          .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix( 0.045 + 0.05 * uGtpChop, 0.7, gtpFoam );')
+          .replace('#include <normal_fragment_maps>', OCEAN_NORMAL);
+      };
+      m.customProgramCacheKey = function () { return 'gtp-ocean' + (Assets.waterNormal ? '-rip' : ''); };
     },
     // vehicle paint: a clearcoated metallic at high / ultra, a plain metallic standard below (Render.quality may change
     // the preset after a car is built; the car keeps its material until it is respawned)
@@ -408,11 +472,34 @@
       drawCommonBands(dctx, nctx, style, GTP.makeRng(seed + 1));
       var td = new THREE.CanvasTexture(day), tn = new THREE.CanvasTexture(night);
       [td, tn].forEach(function (t) { t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = C.QUALITY.anisotropy; t.colorSpace = THREE.SRGBColorSpace; t.minFilter = THREE.LinearMipmapLinearFilter; });
-      f = Assets._facades[style] = { day: td, night: tn, normal: null, rough: null, style: style };
+      f = Assets._facades[style] = { day: td, night: tn, mask: Assets._facadeMask(style, seed), normal: null, rough: null, style: style };
       // the surface maps (half resolution): brick courses, mullions, sills, siding laps and corrugations as relief; glass glossy
       if (Assets.atlasNormal) Assets._facadeMaps(f);
       return f;
     },
+    // The glass mask (same layout as the facade): the night painters run once more in MASKING mode, then every pixel of
+    // bands 0-4 becomes R = glass, G = lit at night, B = a cool (LED) light rather than a warm one. The facade shader
+    // draws an interior-mapped room behind the glass and reflects the sky on it (Assets.facadeMaterial).
+    _facadeMask: function (style, seed) {
+      var cv = canvas(FW, FH), ctx = cv.getContext('2d');
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, FW, FH);
+      MASKING = true;
+      try { FACADES[style](ctx, true, GTP.makeRng(seed)); } finally { MASKING = false; ctx.shadowBlur = 0; ctx.globalAlpha = 1; }
+      var img = ctx.getImageData(0, 0, FW, FH), d = img.data, lim = 5 * BAND * FW * 4;
+      for (var i = 0; i < d.length; i += 4) {
+        var r = d[i], g = d[i + 1], b = d[i + 2];
+        if (i >= lim) { d[i] = d[i + 1] = d[i + 2] = 0; d[i + 3] = 255; continue; }
+        var glass = Math.max(r, g, b) >= 4;
+        d[i] = glass ? 255 : 0; d[i + 1] = glass && g >= 60 ? 255 : 0; d[i + 2] = glass && g >= 60 && b > g * 0.85 ? 255 : 0; d[i + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      Assets.masks = Assets.masks || {}; Assets.masks[style] = cv;
+      return dataTexture(cv, false, true);
+    },
+    // the light behind every window (Render.updateEnvironment): day = the daylight a room gets through its window,
+    // night = the lamps of the lit rooms (the mask's G); one shared uniform for all facade materials
+    interiorLight: { value: new THREE.Vector4(0.3, 0.0, 0.0, 0.0) },
+    setInteriorLight: function (day, night) { Assets.interiorLight.value.x = day; Assets.interiorLight.value.y = night; },
     facadeMaterial: function (style) {
       if (!FACADES[style]) style = 'downtown';
       var m = Assets._facadeMats[style];
@@ -422,9 +509,69 @@
       // vertexColors: the chunk builder tints each building slightly so a style is not a row of clones
       m = new THREE.MeshStandardMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true, normalMap: C.QUALITY.normalMaps ? f.normal : null, normalScale: new THREE.Vector2(0.75, 0.75), roughnessMap: C.QUALITY.normalMaps ? f.rough : null, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.7 });
       m.userData.style = style; m.name = 'facade:' + style;
+      Assets._glassShader(m, f, style);
       Assets._facadeMats[style] = m;
       return m;
     },
+    // Glass behind the facade mask: dark, glossy (the sky and the sun reflect in it with three's own Fresnel), and an
+    // interior-mapped room seen through it (a ray from the eye is cut against the room box behind each window cell:
+    // back wall, side walls, floor, ceiling, a furniture card half way in, blinds at the pane; shops on the ground
+    // floor get deeper rooms with shelves). The room adds emissive light: daylight by day, the room's lamp at night
+    // when the mask marks the window lit, warm or cool. C.QUALITY.interiors off compiles none of it.
+    _glassShader: function (m, f, style) {
+      var room = ROOMS[style] || ROOMS.downtown;
+      var U2 = { tGtpMask: { value: f.mask }, uGtpRoom: { value: new THREE.Vector4(room[0], room[1], C.FLOOR_H, room[2]) }, uGtpInt: Assets.interiorLight };
+      m.userData.glass = U2;
+      m.onBeforeCompile = function (sh) {
+        if (!C.QUALITY.interiors) return;
+        sh.uniforms.tGtpMask = U2.tGtpMask; sh.uniforms.uGtpRoom = U2.uGtpRoom; sh.uniforms.uGtpInt = U2.uGtpInt;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vGtpW;\nvarying vec3 vGtpN;')
+          .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvGtpW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\nvGtpN = normalize( mat3( modelMatrix ) * objectNormal );');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\n' + GLASS_PARS)
+          .replace('#include <map_fragment>', '#include <map_fragment>\n' + GLASS_MAP)
+          .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, 0.07, gtpGlass );')
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance = mix( totalEmissiveRadiance, gtpEmit, gtpGlass );')
+          .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\niblIrradiance *= ' + IBL_DIFFUSE + ';');
+      };
+      m.customProgramCacheKey = function () { return C.QUALITY.interiors ? 'gtp-glass' : 'gtp-facade'; };
+    },
+    // window layout of a style for the chunk builder: {cols: [u in the 8 m repeat], w: u, sill, head} or null (curtain walls)
+    windowLayout: function (style) {
+      var L = WINDOWS[style]; if (!L) return null;
+      if (!L.u) L.u = { cols: L.cols.map(function (px) { return px / FW; }), w: L.w / FW, sill: L.sill, head: L.head };
+      return L.u;
+    },
+    // the storefront sign atlas: 32 invented shop names as backlit fascia boards (2 x 16 cells of 512 x 64), plus a dark
+    // frame colour in the last cell's corner; shopSignUV(i) -> [u0, v0, u1, v1] of name i, shopSignFrameUV() a point
+    shopSigns: function () {
+      if (Assets._shopSigns) return Assets._shopSigns;
+      var W = SIGN_W * SIGN_COLS, H = SIGN_H * SIGN_ROWS, cv = canvas(W, H), ctx = cv.getContext('2d'), R = rngTex.fork(0x5150);
+      var bgs = ['#1d2233', '#2c3e7a', '#8a2f2f', '#2f6b4a', '#4a3a6a', '#e8e2c8', '#1a1a1a', '#c94040', '#f4efe4', '#2a7a7a', '#e2b43a', '#3a3a3a'];
+      var inks = { '#e8e2c8': '#1d2233', '#f4efe4': '#8a2f2f', '#e2b43a': '#1a1a1a' };
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (var i = 0; i < SIGN_COLS * SIGN_ROWS; i++) {
+        var x = (i % SIGN_COLS) * SIGN_W, y = Math.floor(i / SIGN_COLS) * SIGN_H, bg = bgs[Math.floor(R.random() * bgs.length)], ink = inks[bg] || '#f4efe4';
+        ctx.fillStyle = '#15161a'; ctx.fillRect(x, y, SIGN_W, SIGN_H);
+        ctx.fillStyle = bg; ctx.fillRect(x + 4, y + 4, SIGN_W - 8, SIGN_H - 8);
+        ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 4, y + 4, SIGN_W - 8, 6);
+        var name = SHOP_NAMES[i % SHOP_NAMES.length], size = 40;
+        do { ctx.font = (R.random() < 0.5 ? '900 ' : '700 ') + size + 'px "Arial Black", Impact, Arial, sans-serif'; size -= 2; } while (ctx.measureText(name).width > SIGN_W - 40 && size > 12);
+        ctx.fillStyle = ink; ctx.fillText(name, x + SIGN_W / 2, y + SIGN_H / 2 + 2);
+      }
+      var tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      var m = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.05, roughness: 0.45, metalness: 0.0, envMapIntensity: 0.6 });
+      m.name = 'shopSigns'; m.userData.signAtlas = true;
+      Assets._shopSigns = { texture: tex, material: m, count: SIGN_COLS * SIGN_ROWS };
+      return Assets._shopSigns;
+    },
+    shopSignUV: function (i) {
+      i = ((i | 0) % (SIGN_COLS * SIGN_ROWS) + SIGN_COLS * SIGN_ROWS) % (SIGN_COLS * SIGN_ROWS);
+      var W = SIGN_W * SIGN_COLS, H = SIGN_H * SIGN_ROWS, x = (i % SIGN_COLS) * SIGN_W, y = Math.floor(i / SIGN_COLS) * SIGN_H;
+      return [x / W, 1 - (y + SIGN_H) / H, (x + SIGN_W) / W, 1 - y / H];
+    },
+    shopSignFrameUV: function () { var u = 1 / (SIGN_W * SIGN_COLS), v = 1 - 1 / (SIGN_H * SIGN_ROWS); return [[u, v], [u, v], [u, v], [u, v]]; },
     // the LOD's far facade: the old Lambert look, no relief, no reflections
     facadeMaterialFar: function (style) {
       if (!FACADES[style]) style = 'downtown';
@@ -441,6 +588,7 @@
       var out = [], k;
       for (k in Assets._facadeMats) out.push(Assets._facadeMats[k]);
       for (k in Assets._facadeMatsFar) out.push(Assets._facadeMatsFar[k]);
+      if (Assets._shopSigns) out.push(Assets._shopSigns.material);
       return out;
     },
     facadeStyles: function () { return Object.keys(FACADES); },
@@ -554,6 +702,10 @@
     setPropGlow: function (k) { var m = Assets.propMaterial(); if (m.userData.glow) m.userData.glow.value = k; },
     prop: function (kind) {
       if (Assets._props[kind]) return Assets._props[kind];
+      if (TREES[kind]) {
+        var tg = TREES[kind](GTP.makeRng(U.hash('tree:' + kind)));
+        return (Assets._props[kind] = { geometry: tg, material: Assets.treeMaterial(), materialFar: Assets.treeMaterialFar(), castShadow: true, foliage: true });
+      }
       var fn = PROPS[kind] || PROPS.crate;
       var g = new GB({ color: true });
       g._glow = [];
@@ -566,6 +718,58 @@
       }
       var rec = Assets._props[kind] = { geometry: geo, material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' && kind !== 'edgelight' && kind !== 'beacon' };
       return rec;
+    },
+    // Foliage: leaf cards cut out of a leaf-cluster canvas (alpha tested, so the shadow map cuts the same holes), the
+    // trunk on an opaque corner of it; the vertex colours carry the greens. The wind sways everything above 1.5 m by
+    // the height and the tree's own position (Render drives uGtpTime / uGtpWind).
+    treeUniforms: { uGtpTime: { value: 0 }, uGtpWind: { value: 0.6 } },
+    leafTexture: function () {
+      if (Assets._leafTex) return Assets._leafTex;
+      var cv = canvas(256, 256), ctx = cv.getContext('2d'), R = rngTex.fork(0x1EAF);
+      ctx.clearRect(0, 0, 256, 256);
+      for (var i = 0; i < 150; i++) {
+        var a = R.random() * TAU, r = Math.pow(R.random(), 0.6) * 84, x = 96 + Math.cos(a) * r, y = 96 + Math.sin(a) * r * 0.9;
+        var t = 150 + Math.floor(R.random() * 105);
+        ctx.fillStyle = 'rgb(' + Math.floor(t * 0.92) + ',' + t + ',' + Math.floor(t * 0.86) + ')';
+        ctx.save(); ctx.translate(x, y); ctx.rotate(R.random() * TAU); ctx.beginPath(); ctx.ellipse(0, 0, 7 + R.random() * 6, 3 + R.random() * 2.5, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-6, -0.5, 12, 1); ctx.restore();
+      }
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(216, 0, 40, 256);   // the opaque strip (trunks, palm fronds)
+      var tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      Assets._leafTex = tex;
+      return tex;
+    },
+    treeMaterial: function () {
+      var M = Assets._mats;
+      if (!M.tree) {
+        var m = M.tree = new THREE.MeshStandardMaterial({ vertexColors: true, map: Assets.leafTexture(), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.82, metalness: 0, envMapIntensity: 0.35 });
+        m.name = 'tree';
+        var TU = Assets.treeUniforms;
+        m.onBeforeCompile = function (sh) {
+          sh.uniforms.uGtpTime = TU.uGtpTime; sh.uniforms.uGtpWind = TU.uGtpWind;
+          sh.vertexShader = sh.vertexShader
+            .replace('#include <common>', '#include <common>\nuniform float uGtpTime, uGtpWind;')
+            .replace('#include <begin_vertex>', [
+              '#include <begin_vertex>',
+              '#ifdef USE_INSTANCING',
+              'vec3 gIp = vec3( instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2] );',
+              '#else',
+              'vec3 gIp = vec3( 0.0 );',
+              '#endif',
+              'float gSw = max( transformed.y - 1.5, 0.0 ) * 0.03 * uGtpWind;',
+              'float gPh = uGtpTime * 1.3 + gIp.x * 0.37 + gIp.z * 0.21;',
+              'transformed.x += sin( gPh ) * gSw + sin( uGtpTime * 3.7 + transformed.y * 2.0 + gIp.z ) * 0.025 * uGtpWind * step( 2.2, transformed.y );',
+              'transformed.z += cos( gPh * 0.83 + 1.1 ) * gSw * 0.7;'
+            ].join('\n'));
+        };
+        m.customProgramCacheKey = function () { return 'gtp-tree'; };
+      }
+      return M.tree;
+    },
+    treeMaterialFar: function () {
+      var M = Assets._mats;
+      if (!M.treeFar) { M.treeFar = new THREE.MeshLambertMaterial({ vertexColors: true, map: Assets.leafTexture(), alphaTest: 0.45, side: THREE.DoubleSide }); M.treeFar.name = 'treeFar'; }
+      return M.treeFar;
     },
     colorMaterial: function (hex) {
       var m = Assets._mats['c:' + hex];
@@ -1104,11 +1308,44 @@
   // Each draws a 4 m tile into a 240 px square. "Top" of the cell is north at rotation 0.
   function asphaltBase(ctx, S, R, tone) {
     ctx.fillStyle = tone || PAL.asphalt; ctx.fillRect(0, 0, S, S);
-    speckle(ctx, S, S, 0.045, 'rgba(255,255,255,0.07)', 'rgba(0,0,0,0.16)', R);
-    // patches and tar lines
-    for (var i = 0; i < 3; i++) alphaFill(ctx, i % 2 ? PAL.asphaltLight : PAL.asphaltDark, 0.25, R.random() * S, R.random() * S, 30 + R.random() * 90, 20 + R.random() * 60);
+    // aggregate: fine grit in two tones plus a few lighter stones
+    speckle(ctx, S, S, 0.06, 'rgba(255,255,255,0.07)', 'rgba(0,0,0,0.16)', R);
+    for (var i = 0; i < 70; i++) { ctx.fillStyle = 'rgba(200,200,205,' + (0.06 + R.random() * 0.08).toFixed(3) + ')'; ctx.fillRect(R.random() * S, R.random() * S, 1 + R.random() * 2, 1 + R.random() * 2); }
+    // tyre wear: two polished, darker tracks along the lane (the tiles run their lanes left-right)
+    for (var tk = 0; tk < 2; tk++) {
+      var ty = S * (tk ? 0.66 : 0.3), tg = ctx.createLinearGradient(0, ty - 22, 0, ty + 22);
+      tg.addColorStop(0, 'rgba(0,0,0,0)'); tg.addColorStop(0.5, 'rgba(0,0,0,0.13)'); tg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = tg; ctx.fillRect(0, ty - 22, S, 44);
+    }
+    // an oil drip line in the lane centre
+    for (i = 0; i < 5; i++) { ctx.fillStyle = 'rgba(10,10,14,' + (0.12 + R.random() * 0.12).toFixed(3) + ')'; ctx.beginPath(); ctx.ellipse(R.random() * S, S * 0.48 + (R.random() - 0.5) * 18, 4 + R.random() * 9, 3 + R.random() * 5, 0, 0, TAU); ctx.fill(); }
+    // patches with crisp edges and tar lines (sealed cracks)
+    for (i = 0; i < 3; i++) alphaFill(ctx, i % 2 ? PAL.asphaltLight : PAL.asphaltDark, 0.22, R.random() * S, R.random() * S, 30 + R.random() * 90, 20 + R.random() * 60);
+    if (R.random() < 0.6) { var px = R.random() * S * 0.6, py = R.random() * S * 0.6, pw = 50 + R.random() * 70, ph = 30 + R.random() * 50; alphaFill(ctx, '#202228', 0.45, px, py, pw, ph); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph); }
+    ctx.strokeStyle = 'rgba(8,8,10,0.55)'; ctx.lineWidth = 2.2;
+    for (i = 0; i < 2; i++) { var x = R.random() * S, y = R.random() * S; ctx.beginPath(); ctx.moveTo(x, y); for (var k = 0; k < 6; k++) { x += (R.random() - 0.3) * 34; y += (R.random() - 0.5) * 26; ctx.lineTo(x, y); } ctx.stroke(); }
     cracks(ctx, S, S, 2, 'rgba(0,0,0,0.25)', R);
   }
+  // a cast-iron manhole cover centred at (x, y) and a kerb-side storm drain grate along the top edge
+  function manhole(ctx, x, y, R) {
+    ctx.fillStyle = '#1c1d21'; ctx.beginPath(); ctx.arc(x, y, 25, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#3a3b40'; ctx.beginPath(); ctx.arc(x, y, 22, 0, TAU); ctx.fill();
+    ctx.save(); ctx.beginPath(); ctx.arc(x, y, 20, 0, TAU); ctx.clip();
+    ctx.strokeStyle = '#26272b'; ctx.lineWidth = 2;
+    for (var k = -24; k <= 24; k += 6) { ctx.beginPath(); ctx.moveTo(x + k, y - 24); ctx.lineTo(x + k + 10, y + 24); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x - 24, y + k); ctx.lineTo(x + 24, y + k - 10); ctx.stroke(); }
+    alphaFill(ctx, '#7a4a2a', 0.18, x - 20, y - 6, 40, 14);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 22, Math.PI * 1.1, Math.PI * 1.7); ctx.stroke();
+    void R;
+  }
+  function drain(ctx, x, S) {
+    ctx.fillStyle = '#18191c'; ctx.fillRect(x - 32, 22, 64, 18);
+    ctx.fillStyle = '#4a4b50'; for (var k = 0; k < 8; k++) ctx.fillRect(x - 30 + k * 8, 24, 4, 14);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - 40, 40, 80, 6);
+    void S;
+  }
+  // kerb paint on the top kerb strip of a sidewalk edge tile (red: no stopping by the corners, yellow: loading)
+  function kerbPaint(ctx, S, col) { ctx.fillStyle = col; ctx.globalAlpha = 0.85; ctx.fillRect(0, 0, S, 13); ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(0,0,0,0.15)'; for (var k = 0; k < 6; k++) ctx.fillRect(k * 40 + 7, 2 + (k % 3) * 3, 9, 3); }
   function lineH(ctx, y, color, R, dashed) {
     ctx.fillStyle = color; ctx.globalAlpha = 0.88;
     if (dashed) { ctx.fillRect(30, y - 3, 60, 6); ctx.fillRect(150, y - 3, 60, 6); }
@@ -1156,6 +1393,16 @@
     road_dead: function (ctx, S, R) { asphaltBase(ctx, S, R); lineH(ctx, 18, PAL.laneWhite, R, false); },
     ave_outer: function (ctx, S, R) { asphaltBase(ctx, S, R); lineH(ctx, 18, PAL.laneWhite, R, false); lineH(ctx, S - 3, PAL.laneWhite, R, true); },
     ave_inner: function (ctx, S, R) { asphaltBase(ctx, S, R); lineH(ctx, 3, PAL.laneWhite, R, true); lineH(ctx, S - 8, PAL.laneYellow, R, false); },
+    road_half_mh: function (ctx, S, R) { TILES.road_half(ctx, S, R); manhole(ctx, S * 0.45, S * 0.5, R); },
+    road_half_dr: function (ctx, S, R) { TILES.road_half(ctx, S, R); drain(ctx, S * 0.5, S); },
+    ave_outer_mh: function (ctx, S, R) { TILES.ave_outer(ctx, S, R); manhole(ctx, S * 0.55, S * 0.5, R); },
+    ave_outer_dr: function (ctx, S, R) { TILES.ave_outer(ctx, S, R); drain(ctx, S * 0.4, S); },
+    ave_inner_mh: function (ctx, S, R) { TILES.ave_inner(ctx, S, R); manhole(ctx, S * 0.5, S * 0.45, R); },
+    asphalt_mh: function (ctx, S, R) { asphaltBase(ctx, S, R); manhole(ctx, S * 0.5, S * 0.5, R); },
+    sidewalk_edge_red: function (ctx, S, R) { sidewalkBase(ctx, S, R); curbEdge(ctx, S); kerbPaint(ctx, S, '#b8322c'); },
+    sidewalk_edge_yel: function (ctx, S, R) { sidewalkBase(ctx, S, R); curbEdge(ctx, S); kerbPaint(ctx, S, '#e2b43a'); },
+    curbface_red: function (ctx, S, R) { TILES.curbface(ctx, S, R); alphaFill(ctx, '#b8322c', 0.85, 0, 0, S, S - 60); },
+    curbface_yel: function (ctx, S, R) { TILES.curbface(ctx, S, R); alphaFill(ctx, '#e2b43a', 0.85, 0, 0, S, S - 60); },
     cross: function (ctx, S, R) {
       asphaltBase(ctx, S, R);
       ctx.fillStyle = PAL.crosswalk; ctx.globalAlpha = 0.9;
@@ -1250,6 +1497,7 @@
   };
   // base roughness per atlas cell (the roughness map modulates it by luminance: paint reads glossier than aggregate)
   var ROUGH = {
+    road_half_mh: 0.9, road_half_dr: 0.9, ave_outer_mh: 0.9, ave_outer_dr: 0.9, ave_inner_mh: 0.9, asphalt_mh: 0.9, sidewalk_edge_red: 0.8, sidewalk_edge_yel: 0.8, curbface_red: 0.7, curbface_yel: 0.7,
     asphalt: 0.92, road_half: 0.92, road_dead: 0.92, ave_outer: 0.92, ave_inner: 0.92, cross: 0.88, cross_stop: 0.88, hw_outer: 0.9, hw_inner: 0.9,
     sidewalk: 0.84, sidewalk_edge: 0.84, sidewalk_corner: 0.84, curbface: 0.8, plaza: 0.62, plaza2: 0.6, path: 0.9, gravel: 0.98,
     grass: 1.0, grass2: 1.0, lawn: 1.0, field: 1.0, sand: 0.96, parking: 0.9, parking_bay: 0.9, apron: 0.9,
@@ -1305,15 +1553,19 @@
     if (sill) { ctx.fillStyle = sill; ctx.fillRect(x - 6, y + h + 2, w + 12, 5); }
   }
   function winNight(ctx, x, y, w, h, lit, warm, R) {
-    if (!lit) { ctx.fillStyle = '#05060a'; ctx.fillRect(x, y, w, h); return; }
+    if (!lit) { ctx.fillStyle = MASKING ? '#ff0000' : '#05060a'; ctx.fillRect(x, y, w, h); return; }
+    // the random draws happen in both modes, so the mask pass keeps the night pass's sequence (same lit windows)
+    var blinds = R.random() < 0.4, shape = !blinds && R.random() < 0.5;
+    if (MASKING) { ctx.fillStyle = warm ? PAL.windowLit : PAL.windowLitCool; ctx.fillRect(x, y, w, h); return; }
     var col = warm ? PAL.windowLit : PAL.windowLitCool;
     ctx.fillStyle = col; ctx.fillRect(x, y, w, h);
     // blinds / interior shapes
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    if (R.random() < 0.4) for (var k = 0; k < h; k += 8) ctx.fillRect(x, y + k, w, 3);
-    else if (R.random() < 0.5) ctx.fillRect(x + w * 0.3, y + h * 0.4, w * 0.4, h * 0.6);
+    if (blinds) for (var k = 0; k < h; k += 8) ctx.fillRect(x, y + k, w, 3);
+    else if (shape) ctx.fillRect(x + w * 0.3, y + h * 0.4, w * 0.4, h * 0.6);
     ctx.shadowColor = col; ctx.shadowBlur = 10; ctx.fillStyle = 'rgba(255,255,255,0.0)'; ctx.fillRect(x, y, w, h); ctx.shadowBlur = 0;
   }
+  var MASKING = false;   // the glass-mask pass (Assets.facade): night-mode painters draw glass flat, skip paint and neon
   function litDecider(R, p) { return function () { return R.random() < p; }; }
 
   // brick wall fill
@@ -1356,6 +1608,151 @@
     ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.fillRect(x, y + h - 10, w, 10);
   }
   function floorShadow(ctx, y) { ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0, y, FW, 6); }
+
+  // interior mapping per facade style: [rooms per 8 m repeat (lined up between the painted windows), room depth (m),
+  // how much the glass colour tints the room seen through it]
+  var ROOMS = {
+    downtown: [2, 5, 0.55], goldplate: [2, 5, 0.6], campus: [4, 4, 0.2], suburbs: [3, 3.5, 0.15], barn: [2, 4, 0.15], mansion: [3, 4, 0.15],
+    industrial: [3, 5, 0.25], marina: [3, 3.5, 0.15], capitol: [4, 4.5, 0.2], police: [4, 4, 0.2], hospital: [5, 4, 0.25], strip: [4, 4, 0.3],
+    stadium: [4, 4, 0.3], brownstone: [3, 4, 0.2], airport: [2, 6, 0.35], port: [3, 5, 0.25]
+  };
+  // where the upper-floor windows of each style sit (the painters above): column centres in px of the 512 px / 8 m
+  // repeat, window width px, sill and head as fractions of the floor from its bottom. The chunk builder hangs AC units
+  // under sills and lines fire escapes up with them.
+  var WINDOWS = {
+    campus: { cols: [60, 188, 316, 444], w: 72, sill: 0.21, head: 0.84 },
+    suburbs: { cols: [92, 252, 412], w: 64, sill: 0.31, head: 0.75 },
+    mansion: { cols: [92, 252, 412], w: 64, sill: 0.31, head: 0.75 },
+    industrial: { cols: [48, 132, 216, 300, 384, 468], w: 56, sill: 0.51, head: 0.81 },
+    marina: { cols: [85, 245, 405], w: 70, sill: 0.29, head: 0.81 },
+    capitol: { cols: [72, 192, 312, 432], w: 56, sill: 0.24, head: 0.78 },
+    police: { cols: [72, 192, 312, 432], w: 56, sill: 0.24, head: 0.78 },
+    hospital: { cols: [60, 160, 260, 360, 460], w: 72, sill: 0.375, head: 0.81 },
+    strip: { cols: [68, 188, 308, 428], w: 64, sill: 0.34, head: 0.79 },
+    brownstone: { cols: [96, 256, 416], w: 80, sill: 0.175, head: 0.825 },
+    port: { cols: [47, 129, 211, 293, 375, 457], w: 50, sill: 0.6, head: 0.85 }
+  };
+  // Storefront names for the fascia signs over the shops (one shared atlas, CONTENT_RULES: invented and harmless)
+  var SHOP_NAMES = ['HOT TAKE COFFEE', 'BOTH SIDES BAGELS', 'DONOR DELI', 'THE RATIO BAR', 'CHYRON CLEANERS', 'PANEL PIZZA', 'TALKING POINTS TAILOR', 'SPIN CYCLE LAUNDRY',
+    'CLICKBAIT & TACKLE', 'SPONSORED SUSHI', 'OUTRAGE OPTICAL', 'THINK TANK TOPS', 'FAIR & BALANCED FLORIST', 'AD READ ANTIQUES', 'PODCAST PAWN', 'DEBATE ME DONUTS',
+    'LIKE & SUBSCRIBE LAUNDROMAT', 'FOLDING TABLE FURNITURE', 'HOT MIC MUSIC', 'SOUNDBITE SANDWICHES', 'FOCUS GROUP FITNESS', 'BREAKING NEWS BAKERY', 'TOWN HALL HARDWARE', 'GREEN ROOM GROCER',
+    'CABLE CUTS BARBER', 'OP-ED OPTOMETRY', 'TEASER TACOS', 'B-ROLL BURGERS', 'CORRECTION CORNER', 'EXCLUSIVE NOODLES', 'PUNDIT PRINTS', 'NEWS CYCLE BIKES'];
+  var SIGN_W = 512, SIGN_H = 64, SIGN_ROWS = 16, SIGN_COLS = 2;
+
+  var OCEAN_PARS = [
+    'uniform sampler2D tGtpShore, tGtpNoise, tGtpRip; uniform float uGtpTime, uGtpMap, uGtpChop; varying vec3 vGtpW;',
+    'vec3 gtpSwell( vec2 p, float t ) {',
+    '  vec3 r = vec3( 0.0 );',
+    '  vec2 D[4]; float L[4]; float A[4];',
+    '  D[0] = vec2( 0.96, 0.28 ); L[0] = 23.0; A[0] = 0.16;',
+    '  D[1] = vec2( -0.37, 0.93 ); L[1] = 13.0; A[1] = 0.085;',
+    '  D[2] = vec2( 0.8, -0.6 ); L[2] = 7.3; A[2] = 0.042;',
+    '  D[3] = vec2( -0.98, -0.2 ); L[3] = 4.1; A[3] = 0.02;',
+    '  for ( int i = 0; i < 4; i ++ ) {',
+    '    float k = 6.2831853 / L[i], w = sqrt( 9.8 * k ), ph = dot( D[i], p ) * k - w * t;',
+    '    float a = A[i] * ( 0.6 + 0.8 * uGtpChop );',
+    '    r.xy += D[i] * a * k * cos( ph ); r.z += a * sin( ph );',
+    '  }',
+    '  return r;',
+    '}'
+  ].join('\n');
+  var OCEAN_MAP = [
+    'float gShore = texture2D( tGtpShore, vGtpW.xz / uGtpMap ).r;',
+    'vec3 gSw = gtpSwell( vGtpW.xz, uGtpTime );',
+    'vec3 gDeep = vec3( 0.018, 0.085, 0.12 ), gShallow = vec3( 0.04, 0.22, 0.24 );',
+    'vec3 gCol = mix( gShallow, gDeep, smoothstep( 0.05, 0.7, gShore ) );',
+    'gCol *= 0.9 + 0.35 * clamp( gSw.z * 4.0, -0.3, 0.6 );',   // the crests catch more light through the water
+    'float gFn = texture2D( tGtpNoise, vGtpW.xz / 7.0 + vec2( uGtpTime * 0.013, -uGtpTime * 0.009 ) ).r;',
+    'float gBand = 1.0 - smoothstep( 0.0, 0.2, gShore );',
+    'float gPulse = 0.5 + 0.5 * sin( gShore * 38.0 - uGtpTime * 1.4 + gFn * 4.0 );',
+    'float gtpFoam = clamp( gBand * ( gFn * 1.25 + gPulse * 0.55 ) - 0.42, 0.0, 1.0 ) * 1.6;',
+    'gtpFoam = max( gtpFoam, smoothstep( 0.2, 0.32, gSw.z ) * smoothstep( 0.6, 0.85, gFn ) * uGtpChop );',   // whitecaps in a chop
+    'gtpFoam = clamp( gtpFoam, 0.0, 1.0 );',
+    'diffuseColor.rgb = mix( gCol, vec3( 0.86, 0.92, 0.94 ), gtpFoam );'
+  ].join('\n');
+  var OCEAN_NORMAL = [
+    'vec3 gNw = normalize( vec3( -gSw.x, 1.0, -gSw.y ) );',
+    'vec2 gR1 = texture2D( tGtpRip, vGtpW.xz / 9.0 + vec2( uGtpTime * 0.021, uGtpTime * 0.017 ) ).xy;',
+    'vec2 gR2 = texture2D( tGtpRip, vGtpW.xz / 4.3 - vec2( uGtpTime * 0.026, -uGtpTime * 0.012 ) ).xy;',
+    'gNw.xz += ( gR1 + gR2 - 1.0 ) * ( 0.22 + 0.25 * uGtpChop ) * ( 1.0 - gtpFoam * 0.7 );',
+    'normal = normalize( ( viewMatrix * vec4( normalize( gNw ), 0.0 ) ).xyz );'
+  ].join('\n');
+
+  // the hemisphere light already carries the sky's ambient: the environment map's diffuse share on the ground and the
+  // walls is trimmed to this (its reflections stay whole), or every shadow turns sky blue
+  var IBL_DIFFUSE = '0.3';
+  var GLASS_PARS = [
+    'uniform sampler2D tGtpMask; uniform vec4 uGtpRoom; uniform vec4 uGtpInt; varying vec3 vGtpW; varying vec3 vGtpN;',
+    'float gtpH( vec3 p ) { p = fract( p * 0.3183099 + vec3( 0.71, 0.113, 0.419 ) ); p *= 17.0; return fract( p.x * p.y * p.z * ( p.x + p.y + p.z ) ); }'
+  ].join('\n');
+  var GLASS_MAP = [
+    'float gtpGlass = 0.0; vec3 gtpEmit = vec3( 0.0 );',
+    '{',
+    '  vec4 gm = texture2D( tGtpMask, vMapUv );',
+    '  vec3 gN = normalize( vGtpN );',
+    '  gtpGlass = smoothstep( 0.3, 0.7, gm.r ) * ( 1.0 - step( 0.5, abs( gN.y ) ) );',
+    '  if ( gtpGlass > 0.002 ) {',
+    '    vec3 gT = vec3( gN.z, 0.0, -gN.x );',
+    '    vec3 gV = normalize( vGtpW - cameraPosition );',
+    '    float rooms = uGtpRoom.x, roomW = 8.0 / rooms, roomH = uGtpRoom.z;',
+    '    vec2 rc = vec2( vMapUv.x * rooms, vMapUv.y * 8.0 );',
+    '    vec2 cellId = floor( rc );',
+    '    vec3 o = vec3( fract( rc ), 0.0 );',
+    '    float shop = step( 6.5, cellId.y );',                                  // band 0 (the ground floor) sits at v 7/8..1
+    '    float wallKey = floor( dot( vGtpW, gN ) * 2.0 + 0.5 ) + floor( dot( vGtpW, gT ) / 64.0 ) * 13.0;',
+    '    float h1 = gtpH( vec3( cellId, wallKey ) ), h2 = gtpH( vec3( cellId.yx + 17.0, wallKey * 0.37 ) ), h3 = gtpH( vec3( cellId * 1.7 + 3.1, wallKey + 9.0 ) );',
+    '    vec3 d = vec3( dot( gV, gT ) / roomW, gV.y / roomH, max( -dot( gV, gN ), 0.03 ) / ( uGtpRoom.y * ( 1.0 + shop * 0.6 ) ) );',
+    '    vec3 sg = step( vec3( 0.0 ), d );',
+    '    vec3 dd = mix( d, mix( vec3( -1e-4 ), vec3( 1e-4 ), sg ), step( abs( d ), vec3( 1e-4 ) ) );',
+    '    vec3 tt = ( sg - o ) / dd;',
+    '    float t = min( min( tt.x, tt.y ), tt.z );',
+    '    vec3 hp = o + dd * t;',
+    '    vec3 wallC = mix( vec3( 0.80, 0.76, 0.68 ), vec3( 0.60, 0.68, 0.73 ), h1 );',
+    '    wallC = mix( wallC, vec3( 0.78, 0.58, 0.44 ), step( 0.8, h2 ) * 0.7 );',
+    '    vec3 floorC = mix( vec3( 0.33, 0.22, 0.14 ), vec3( 0.30, 0.31, 0.34 ), step( 0.5, h2 ) );',
+    '    vec3 col;',
+    '    float face = 0.0;',                                                     // 0 back, 1 side, 2 floor, 3 ceiling
+    '    if ( t == tt.z ) {',
+    '      col = wallC;',
+    '      float art = step( abs( hp.x - 0.5 + ( h3 - 0.5 ) * 0.4 ), 0.13 ) * step( abs( hp.y - 0.58 ), 0.12 ) * step( 0.35, h3 );',
+    '      col = mix( col, mix( vec3( 0.2, 0.3, 0.45 ), vec3( 0.55, 0.25, 0.2 ), h1 ), art * ( 1.0 - shop ) );',
+    '      float door = step( abs( hp.x - h3 ), 0.09 ) * step( hp.y, 0.72 ) * step( h2, 0.45 );',
+    '      col = mix( col, vec3( 0.25, 0.18, 0.12 ), door * ( 1.0 - shop ) );',
+    '      float shelf = step( fract( hp.y * 4.0 ), 0.12 ) * step( hp.y, 0.85 );',
+    '      vec3 goods = mix( vec3( 0.75, 0.2, 0.2 ), vec3( 0.2, 0.45, 0.8 ), gtpH( vec3( floor( hp.x * 14.0 ), floor( hp.y * 4.0 ), h1 * 9.0 ) ) );',
+    '      col = mix( col, mix( goods, vec3( 0.25 ), shelf ), shop * step( hp.y, 0.85 ) * step( 0.06, fract( hp.x * 14.0 ) ) );',
+    '    } else if ( t == tt.x ) { col = wallC * 0.8; face = 1.0; }',
+    '    else if ( dd.y < 0.0 ) { col = floorC; face = 2.0; }',
+    '    else { col = vec3( 0.88 ); face = 3.0; }',
+    // a furniture card part way in: a sofa or a desk, a tall shelf at one side; a counter in a shop
+    '    float zc = 0.4 + 0.3 * h3, tc = zc / dd.z;',
+    '    if ( tc < t ) {',
+    '      vec3 fp = o + dd * tc;',
+    '      float sofa = step( fp.y, 0.26 + 0.08 * h1 ) * step( abs( fp.x - 0.3 - 0.4 * h2 ), 0.22 ) * ( 1.0 - shop );',
+    '      float tall = step( fp.y, 0.7 ) * step( fp.x, 0.08 + 0.12 * h3 ) * step( 0.5, h1 ) * ( 1.0 - shop );',
+    '      float counter = step( fp.y, 0.3 ) * step( abs( fp.x - 0.5 ), 0.3 ) * shop;',
+    '      float fur = max( max( sofa, tall ), counter );',
+    '      col = mix( col, mix( vec3( 0.16, 0.14, 0.13 ), vec3( 0.42, 0.2, 0.16 ), step( 0.6, h2 ) * sofa ), fur );',
+    '      hp.z = mix( hp.z, zc, fur );',
+    '    }',
+    '    float lit = smoothstep( 0.3, 0.7, gm.g ), cool = smoothstep( 0.3, 0.7, gm.b );',
+    '    vec3 lampC = mix( vec3( 1.0, 0.68, 0.38 ), vec3( 0.62, 0.72, 0.85 ), cool );',
+    '    float fall = face == 3.0 ? 1.4 : mix( 0.55, 1.1, smoothstep( 0.0, 1.0, hp.y ) );',
+    '    float nightL = uGtpInt.y * lit * ( 0.65 + 0.6 * h3 ) * ( 1.0 + shop * 0.5 );',
+    '    vec3 lightIn = vec3( uGtpInt.x ) * mix( 1.05, 0.4, clamp( hp.z, 0.0, 1.0 ) ) + lampC * nightL * fall;',
+    '    vec3 inter = col * lightIn;',
+    // blinds pulled part way down in some rooms (not the shops), with slats
+    '    float blind = step( 1.0 - ( 0.12 + 0.55 * h2 ) * step( 0.55, h1 ), o.y ) * ( 1.0 - shop );',
+    '    vec3 slat = vec3( 0.86, 0.82, 0.74 ) * ( 0.82 + 0.18 * step( 0.5, fract( o.y * roomH * 9.0 ) ) );',
+    '    inter = mix( inter, slat * ( vec3( uGtpInt.x * 1.1 ) + lampC * nightL * 0.7 ), blind );',
+    '    float cosT = clamp( -dot( gV, gN ), 0.0, 1.0 );',
+    '    float F = 0.04 + 0.96 * pow( 1.0 - cosT, 5.0 );',
+    '    vec3 tint = diffuseColor.rgb / max( max( diffuseColor.r, diffuseColor.g ), max( diffuseColor.b, 0.05 ) );',
+    '    gtpEmit = inter * mix( vec3( 1.0 ), tint, uGtpRoom.w ) * ( 1.0 - F );',
+    '  }',
+    '  diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 0.05, gtpGlass );',
+    '}'
+  ].join('\n');
 
   var FACADES = {
     downtown: function (ctx, night, R) { glassTower(ctx, night, R, '#3e5873', '#1a2430', false); },
@@ -1447,7 +1844,7 @@
         if (b === 0) {
           if (night) { ctx.fillStyle = U.shade(PAL.windowLitCool, -0.3); ctx.fillRect(60, y + 40, 392, BAND - 50); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(236, y + 50, 40, BAND - 60); }
           else { winDay(ctx, 60, y + 40, 392, BAND - 50, '#9aa3ad', '#8fc1e0', null); ctx.fillStyle = '#9aa3ad'; ctx.fillRect(0, y + 20, FW, 14); }
-          ctx.fillStyle = night ? '#ff4a4a' : '#d23c3c'; ctx.fillRect(238, y + 2, 36, 10); ctx.fillRect(251, y - 11 + 11, 10, 36);
+          if (!MASKING) { ctx.fillStyle = night ? '#ff4a4a' : '#d23c3c'; ctx.fillRect(238, y + 2, 36, 10); ctx.fillRect(251, y - 11 + 11, 10, 36); }
         } else {
           for (var k = 0; k < 5; k++) {
             var wx = 24 + k * 100, ww = 72, wy = y + 30, wh = 70;
@@ -1468,18 +1865,19 @@
           else { winDay(ctx, 30, y + 60, 452, BAND - 70, '#1a1a1a', '#5a7f95', null); ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0, y + 50, FW, 12); }
           // neon tubes: zigzag + rings
           ctx.lineWidth = 6; ctx.lineCap = 'round';
+          if (MASKING) ctx.globalAlpha = 0;
           if (night) { ctx.shadowBlur = 18; ctx.shadowColor = neon; ctx.strokeStyle = neon; } else { ctx.shadowBlur = 0; ctx.strokeStyle = U.shade(neon, -0.5); }
           ctx.beginPath(); for (k = 0; k < 8; k++) ctx.lineTo(40 + k * 60, y + 16 + (k % 2) * 22); ctx.stroke();
           if (night) { ctx.shadowColor = neon2; ctx.strokeStyle = neon2; } else ctx.strokeStyle = U.shade(neon2, -0.5);
           ctx.beginPath(); ctx.arc(470, y + 27, 14, 0, TAU); ctx.stroke();
           ctx.beginPath(); ctx.arc(18, y + 27, 14, 0, TAU); ctx.stroke();
-          ctx.shadowBlur = 0;
+          ctx.shadowBlur = 0; ctx.globalAlpha = 1;
         } else {
           for (k = 0; k < 4; k++) {
             var wx = 36 + k * 120, ww = 64, wy = y + 34, wh = 72;
             if (night) winNight(ctx, wx, wy, ww, wh, lit(), R.random() < 0.5, R); else winDay(ctx, wx, wy, ww, wh, '#1a1a1a', '#5a7f95', null);
           }
-          if (b === 2 && night) { ctx.strokeStyle = neon; ctx.shadowColor = neon; ctx.shadowBlur = 14; ctx.lineWidth = 5; ctx.strokeRect(14, y + 14, FW - 28, BAND - 28); ctx.shadowBlur = 0; }
+          if (b === 2 && night && !MASKING) { ctx.strokeStyle = neon; ctx.shadowColor = neon; ctx.shadowBlur = 14; ctx.lineWidth = 5; ctx.strokeRect(14, y + 14, FW - 28, BAND - 28); ctx.shadowBlur = 0; }
           if (!night) floorShadow(ctx, y);
         }
       }
@@ -1555,7 +1953,7 @@
           else { winDay(ctx, 10, y + 44, FW - 20, 64, '#8a949e', '#9fc7e0', null); ctx.fillStyle = '#8a949e'; for (k = 1; k < 8; k++) ctx.fillRect(k * 64 - 3, y + 44, 6, 64); }
           // a gate number on a panel
           ctx.fillStyle = night ? '#101418' : '#1c2a4a'; ctx.font = '900 34px "Arial Black", Impact, Arial, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-          ctx.fillText('G' + (b * 3 + (b % 2)), 18, y + 36);
+          if (!MASKING) ctx.fillText('G' + (b * 3 + (b % 2)), 18, y + 36);
           if (!night) floorShadow(ctx, y);
         }
       }
@@ -1671,6 +2069,100 @@
   function treeBlob(g, x, y, z, r, col, squash) { g.sphere(x, y, z, r, 7, 4, col, null, squash); }
   // mark the vertices a builder adds inside fn() as self-lit (the prop material's glow attribute); k scales the emission
   function glowing(g, k, fn) { var from = g.n; fn(); if (g._glow) g._glow.push([from, g.n, k == null ? 1 : k]); }
+  // ---- foliage (Assets.prop('tree' | 'palm')): smooth-normal geometry built vertex by vertex ----
+  var LEAF_UV = [[0.02, 0.27], [0.73, 0.27], [0.73, 0.98], [0.02, 0.98]], SOLID_UV = [0.93, 0.5];
+  function FoliageBuilder() { this.pos = []; this.nor = []; this.uv = []; this.col = []; this.idx = []; this.n = 0; }
+  FoliageBuilder.prototype.v = function (p, n, uv, c) { this.pos.push(p[0], p[1], p[2]); this.nor.push(n[0], n[1], n[2]); this.uv.push(uv[0], uv[1]); this.col.push(c[0], c[1], c[2]); return this.n++; };
+  FoliageBuilder.prototype.build = function () {
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setIndex(this.n > 65535 ? new THREE.Uint32BufferAttribute(this.idx, 1) : new THREE.Uint16BufferAttribute(this.idx, 1));
+    g.computeBoundingSphere(); g.computeBoundingBox();
+    return g;
+  };
+  function vnorm(a) { var l = Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }
+  function vcross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+  // a tapered tube from p0 to p1 with smooth normals (trunks, boughs)
+  function fbTube(fb, p0, p1, r0, r1, segs, col0, col1) {
+    var ax = vnorm([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]]), ref = Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    var t1 = vnorm(vcross(ax, ref)), t2 = vcross(ax, t1), base = fb.n, i;
+    for (i = 0; i <= segs; i++) {
+      var a = i / segs * TAU, ca = Math.cos(a), sa = Math.sin(a), n = [t1[0] * ca + t2[0] * sa, t1[1] * ca + t2[1] * sa, t1[2] * ca + t2[2] * sa];
+      fb.v([p0[0] + n[0] * r0, p0[1] + n[1] * r0, p0[2] + n[2] * r0], n, SOLID_UV, col0);
+      fb.v([p1[0] + n[0] * r1, p1[1] + n[1] * r1, p1[2] + n[2] * r1], n, SOLID_UV, col1);
+    }
+    for (i = 0; i < segs; i++) { var a0 = base + i * 2; fb.idx.push(a0, a0 + 2, a0 + 1, a0 + 1, a0 + 2, a0 + 3); }
+  }
+  // a smooth blob (lat-long, normals from the centre, squashed by sy)
+  function fbBlob(fb, cx, cy, cz, r, sy, col, colTop) {
+    var segs = 9, rings = 6, base = fb.n, i, j;
+    for (j = 0; j <= rings; j++) {
+      var ph = -Math.PI / 2 + j / rings * Math.PI, cp = Math.cos(ph), sp = Math.sin(ph), k = (sp + 1) / 2;
+      var cc = [col[0] + (colTop[0] - col[0]) * k, col[1] + (colTop[1] - col[1]) * k, col[2] + (colTop[2] - col[2]) * k];
+      for (i = 0; i <= segs; i++) {
+        var a = i / segs * TAU, n = [Math.cos(a) * cp, sp, Math.sin(a) * cp];
+        fb.v([cx + n[0] * r, cy + n[1] * r * sy, cz + n[2] * r], n, SOLID_UV, cc);
+      }
+    }
+    for (j = 0; j < rings; j++) for (i = 0; i < segs; i++) { var a0 = base + j * (segs + 1) + i, b0 = a0 + segs + 1; fb.idx.push(a0, b0, a0 + 1, a0 + 1, b0, b0 + 1); }
+  }
+  // a leaf card centred at p facing n (twisted by tw), size s; the vertex normals lean out from the canopy centre c
+  function fbCard(fb, p, n, c, s, tw, col) {
+    var ref = Math.abs(n[1]) < 0.95 ? [0, 1, 0] : [1, 0, 0], t1 = vnorm(vcross(n, ref)), t2 = vcross(n, t1);
+    var ct = Math.cos(tw), st = Math.sin(tw), u = [t1[0] * ct + t2[0] * st, t1[1] * ct + t2[1] * st, t1[2] * ct + t2[2] * st], w = vcross(n, u), h = s / 2;
+    var out = vnorm([p[0] - c[0], (p[1] - c[1]) * 0.8 + 0.25, p[2] - c[2]]), nn = vnorm([out[0] * 0.75 + n[0] * 0.25, out[1] * 0.75 + n[1] * 0.25, out[2] * 0.75 + n[2] * 0.25]);
+    var base = fb.n;
+    fb.v([p[0] - u[0] * h - w[0] * h, p[1] - u[1] * h - w[1] * h, p[2] - u[2] * h - w[2] * h], nn, LEAF_UV[0], col);
+    fb.v([p[0] + u[0] * h - w[0] * h, p[1] + u[1] * h - w[1] * h, p[2] + u[2] * h - w[2] * h], nn, LEAF_UV[1], col);
+    fb.v([p[0] + u[0] * h + w[0] * h, p[1] + u[1] * h + w[1] * h, p[2] + u[2] * h + w[2] * h], nn, LEAF_UV[2], col);
+    fb.v([p[0] - u[0] * h + w[0] * h, p[1] - u[1] * h + w[1] * h, p[2] - u[2] * h + w[2] * h], nn, LEAF_UV[3], col);
+    fb.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  var TREES = {
+    // a broadleaf street tree: a trunk with three boughs, a dark inner canopy of smooth blobs and ~60 leaf cards over it
+    // (lighter on top, darker underneath and inside), about 7 m tall at scale 1
+    tree: function (R) {
+      var fb = new FoliageBuilder(), bark = c('#4e3826'), barkTop = c('#5d4630'), i;
+      fbTube(fb, [0, -0.1, 0], [0, 3.0, 0], 0.27, 0.16, 9, bark, barkTop);
+      fbTube(fb, [0, 2.4, 0], [0.9, 3.9, 0.3], 0.11, 0.05, 6, barkTop, barkTop);
+      fbTube(fb, [0, 2.6, 0], [-0.8, 4.0, -0.4], 0.1, 0.05, 6, barkTop, barkTop);
+      fbTube(fb, [0, 2.8, 0], [0.1, 4.3, -0.9], 0.09, 0.04, 6, barkTop, barkTop);
+      var C0 = [0, 4.35, 0], RX = 2.25, RY = 1.85, inner = c('#1e4a1c'), innerTop = c('#2c6226');
+      fbBlob(fb, 0, 4.2, 0, 1.55, 0.85, inner, innerTop);
+      fbBlob(fb, 0.8, 4.5, 0.4, 1.1, 0.85, inner, innerTop);
+      fbBlob(fb, -0.7, 4.6, -0.4, 1.1, 0.85, inner, innerTop);
+      var greens = [c('#3c7a30'), c('#4a8a36'), c('#35702e'), c('#5b8f34')];
+      for (i = 0; i < 64; i++) {
+        var th = R.random() * TAU, y = R.random() * 2 - 1;
+        y = y < 0 ? -Math.pow(-y, 1.6) : Math.pow(y, 0.8);   // more cards on the upper half
+        var rr = Math.sqrt(Math.max(0, 1 - y * y)), d = [Math.cos(th) * rr, y, Math.sin(th) * rr], k = 0.72 + R.random() * 0.3;
+        var p = [C0[0] + d[0] * RX * k, C0[1] + d[1] * RY * k, C0[2] + d[2] * RX * k];
+        var n = vnorm([d[0] + (R.random() - 0.5) * 1.2, d[1] + (R.random() - 0.5) * 1.2 + 0.3, d[2] + (R.random() - 0.5) * 1.2]);
+        var g0 = greens[Math.floor(R.random() * greens.length)], lift = (y + 1) * 0.5;
+        var col = [g0[0] * (0.62 + 0.5 * lift), g0[1] * (0.62 + 0.5 * lift), g0[2] * (0.6 + 0.45 * lift)];
+        fbCard(fb, p, n, C0, 1.35 + R.random() * 0.75, R.random() * TAU, col);
+      }
+      return fb.build();
+    },
+    // a palm: a ringed, slightly curved trunk and drooping fronds (two segments each, opaque, both sides) round a crown
+    palm: function (R) {
+      var fb = new FoliageBuilder(), i, trunk = c('#7a5c3c'), trunkD = c('#5e4630'), y = 0, x = 0;
+      for (i = 0; i < 7; i++) { var y1 = y + 0.8, x1 = x + 0.05 * i * 0.3; fbTube(fb, [x, y, 0], [x1, y1, 0], 0.2 - i * 0.012, 0.19 - i * 0.012, 7, i % 2 ? trunk : trunkD, trunk); y = y1; x = x1; }
+      var top = [x, y, 0];
+      fbBlob(fb, top[0], top[1] + 0.05, 0, 0.32, 1, c('#5a4028'), c('#6a4a2a'));
+      var fr = c('#3e8a36'), frD = c('#2c6a28');
+      for (i = 0; i < 9; i++) {
+        var a = i / 9 * TAU + R.random() * 0.3, dx = Math.cos(a), dz = Math.sin(a), L1 = 1.5 + R.random() * 0.4, L2 = 1.3 + R.random() * 0.4, wdt = 0.32;
+        var p0 = top, p1 = [top[0] + dx * L1, top[1] + 0.35, top[2] + dz * L1], p2 = [p1[0] + dx * L2, p1[1] - 0.9 - R.random() * 0.4, p1[2] + dz * L2];
+        var sx = -dz * wdt, sz = dx * wdt, base = fb.n, up = [0, 1, 0];
+        [[p0, 0.25], [p1, 1], [p2, 0.15]].forEach(function (q, qi) { var pp = q[0], ww = q[1]; var cc = qi === 2 ? frD : fr; fb.v([pp[0] - sx * ww, pp[1], pp[2] - sz * ww], up, SOLID_UV, cc); fb.v([pp[0] + sx * ww, pp[1], pp[2] + sz * ww], up, SOLID_UV, cc); });
+        fb.idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3, base + 2, base + 4, base + 3, base + 3, base + 4, base + 5);
+      }
+      return fb.build();
+    }
+  };
+
   var PROPS = {
     tree: function (g, R) {
       // a trunk with a root flare and two boughs, then a canopy of eight blobs in three tones, dark at the core and

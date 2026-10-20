@@ -35,17 +35,17 @@
       shadows: true, shadowMap: 1024, softShadows: false, anisotropy: 4,
       post: true, ssao: false, ssaoSamples: 12, bloom: true, fxaa: true, grain: false,
       pointLights: 0, headlights: 1, weatherFx: true, rainCount: 900, puddles: 24,
-      normalMaps: true, envMap: true, clearcoat: false, lodDistance: 120, clouds: true
+      normalMaps: true, envMap: true, clearcoat: false, lodDistance: 120, clouds: true, interiors: true, grass: 6, grassRadius: 38, cascades: 2, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3
     },
     // Presets (GTP.Render.quality.set(name) applies one; 'auto' starts at medium and steps down when the measured
     // frame time stays above QUALITY_AUTO.slowMs for QUALITY_AUTO.slowSeconds). Headless boots default to low unless
     // ?quality= says otherwise. low: no post, no shadows, emissive-only night. medium: shadows 1024, FXAA, bloom.
     // high: SSAO, soft shadows 2048, real lamp / headlight lights, weather fx. ultra: shadows 4096, more lights, full SSAO.
     QUALITY_PRESETS: {
-      low:    { shadows: false, shadowMap: 1024, softShadows: false, anisotropy: 2,  post: false, ssao: false, ssaoSamples: 8,  bloom: false, fxaa: false, grain: false, pointLights: 0,  headlights: 0, weatherFx: false, rainCount: 400,  puddles: 0,  normalMaps: false, envMap: true, clearcoat: false, lodDistance: 90,  clouds: true },
-      medium: { shadows: true,  shadowMap: 1024, softShadows: false, anisotropy: 4,  post: true,  ssao: false, ssaoSamples: 8,  bloom: true,  fxaa: true,  grain: false, pointLights: 0,  headlights: 1, weatherFx: true,  rainCount: 900,  puddles: 24, normalMaps: true,  envMap: true, clearcoat: false, lodDistance: 120, clouds: true },
-      high:   { shadows: true,  shadowMap: 2048, softShadows: true,  anisotropy: 8,  post: true,  ssao: true,  ssaoSamples: 12, bloom: true,  fxaa: true,  grain: true,  pointLights: 8,  headlights: 4, weatherFx: true,  rainCount: 1600, puddles: 40, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 150, clouds: true },
-      ultra:  { shadows: true,  shadowMap: 4096, softShadows: true,  anisotropy: 16, post: true,  ssao: true,  ssaoSamples: 16, bloom: true,  fxaa: true,  grain: true,  pointLights: 12, headlights: 6, weatherFx: true,  rainCount: 2400, puddles: 60, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 200, clouds: true }
+      low:    { shadows: false, shadowMap: 1024, softShadows: false, anisotropy: 2,  post: false, ssao: false, ssaoSamples: 8,  bloom: false, fxaa: false, grain: false, pointLights: 0,  headlights: 0, weatherFx: false, rainCount: 400,  puddles: 0,  normalMaps: false, envMap: true, clearcoat: false, lodDistance: 90,  clouds: true, interiors: true, grass: 0, grassRadius: 0, cascades: 0, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3 },
+      medium: { shadows: true,  shadowMap: 1024, softShadows: false, anisotropy: 4,  post: true,  ssao: false, ssaoSamples: 8,  bloom: true,  fxaa: true,  grain: false, pointLights: 0,  headlights: 1, weatherFx: true,  rainCount: 900,  puddles: 24, normalMaps: true,  envMap: true, clearcoat: false, lodDistance: 120, clouds: true, interiors: true, grass: 6, grassRadius: 38, cascades: 2, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3 },
+      high:   { shadows: true,  shadowMap: 2048, softShadows: true,  anisotropy: 8,  post: true,  ssao: true,  ssaoSamples: 12, bloom: true,  fxaa: true,  grain: true,  pointLights: 8,  headlights: 4, weatherFx: true,  rainCount: 1600, puddles: 40, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 150, clouds: true, interiors: true, grass: 10, grassRadius: 46, cascades: 2, shadowNear: 44, shadowFar: 250, shadowMapFar: 2048, farEvery: 2 },
+      ultra:  { shadows: true,  shadowMap: 4096, softShadows: true,  anisotropy: 16, post: true,  ssao: true,  ssaoSamples: 16, bloom: true,  fxaa: true,  grain: true,  pointLights: 12, headlights: 6, weatherFx: true,  rainCount: 2400, puddles: 60, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 200, clouds: true, interiors: true, grass: 14, grassRadius: 56, cascades: 2, shadowNear: 40, shadowFar: 300, shadowMapFar: 2048, farEvery: 1 }
     },
     QUALITY_AUTO: { start: 'medium', slowMs: 22, slowSeconds: 5, cooldown: 12 },
 
@@ -202,11 +202,28 @@
 
     // --- sky / lighting by time of day (Render interpolates) ---------------
     SKY: {
-      day:    { top: '#3f7fd6', horizon: '#bcd7ee', sun: '#fff4d6', fog: '#b9cde0', hemiSky: '#9fc3f0', hemiGround: '#6c6a5c', sunI: 1.25, hemiI: 0.65, ambient: 0.0 },
-      sunset: { top: '#3f4790', horizon: '#ff8a44', sun: '#ff9a50', fog: '#e89a6c', hemiSky: '#c88aa8', hemiGround: '#5c4f44', sunI: 0.95, hemiI: 0.55, ambient: 0.0 },
+      day:    { top: '#3f7fd6', horizon: '#bcd7ee', sun: '#fff1d8', fog: '#b9cde0', hemiSky: '#b4c6de', hemiGround: '#857a66', sunI: 1.55, hemiI: 0.36, ambient: 0.0 },
+      sunset: { top: '#3f4790', horizon: '#ff8a44', sun: '#ff9a50', fog: '#e89a6c', hemiSky: '#c88aa8', hemiGround: '#5c4f44', sunI: 1.05, hemiI: 0.4, ambient: 0.0 },
       night:  { top: '#05070f', horizon: '#1b2240', sun: '#8aa0d8', fog: '#0c1020', hemiSky: '#263160', hemiGround: '#111318', sunI: 0.16, hemiI: 0.32, ambient: 0.0,
                 fill: '#6a7ab0', fillI: 0.3, fillLow: 0.6, fillLit: 0.12 }   // the moonlight fill (Render.lights.fill) at full night: medium (post, no lamp lights), low (no post), high / ultra (lamp lights)
     }
+  };
+
+  // Per-district light (Render blends toward the district under the focus over a couple of seconds): multipliers on the
+  // hemisphere's sky and ground colours by day (the bounce off grass, brick, sand or concrete) and on the night fill
+  // (sodium on the docks, neon magenta on the strip, cool LED downtown and at the airport). v0.3 environment track.
+  C.DISTRICT_LIGHT = {
+    downtown:   { sky: [0.95, 0.98, 1.05], ground: [0.9, 0.93, 1.0], night: [0.9, 0.98, 1.15] },
+    strip:      { sky: [1.03, 0.97, 1.03], ground: [1.06, 0.93, 1.0], night: [1.3, 0.82, 1.25] },
+    campus:     { sky: [1.0, 1.0, 0.98], ground: [0.9, 1.1, 0.86], night: [1.05, 1.0, 0.9] },
+    suburbs:    { sky: [1.0, 1.01, 0.98], ground: [0.9, 1.1, 0.86], night: [1.05, 1.0, 0.9] },
+    industrial: { sky: [0.97, 1.0, 0.98], ground: [0.96, 0.97, 0.92], night: [1.2, 0.98, 0.72] },
+    capitol:    { sky: [1.01, 1.0, 0.98], ground: [1.0, 1.04, 0.94], night: [1.1, 1.0, 0.85] },
+    marina:     { sky: [1.04, 1.0, 0.96], ground: [1.1, 1.02, 0.9], night: [1.1, 0.95, 1.05] },
+    hills:      { sky: [1.0, 1.0, 0.98], ground: [0.92, 1.08, 0.88], night: [1.0, 1.0, 1.0] },
+    uptown:     { sky: [1.02, 0.99, 0.97], ground: [1.1, 0.96, 0.88], night: [1.15, 1.0, 0.85] },
+    airport:    { sky: [0.98, 1.0, 1.03], ground: [0.98, 0.99, 1.0], night: [0.9, 1.0, 1.18] },
+    port:       { sky: [0.96, 1.0, 1.0], ground: [0.94, 0.98, 0.96], night: [1.22, 0.96, 0.7] }
   };
 
   // Per-district filler styles: lot sizes in tiles, floors, facade style key,

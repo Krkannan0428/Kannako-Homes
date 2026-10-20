@@ -20,6 +20,8 @@
   var CH = C.CHUNK_TILES;
   var UNIT_H = { pillar: 1, flag: 1, mast: 1, stack: 1, antenna: 1, sign: 1, bin: 1, billboard: 1, column: 1, craneleg: 1 };
   var NO_SHADOW = { pool: 1, canopy: 1, edgelight: 1, beacon: 1, railing: 1, fence: 1, steps: 1 };
+  // props big enough to throw a shadow worth seeing from far away (they stay on layer 0, in the far cascade)
+  var BIG_PROPS = { crane: 1, craneleg: 1, ship: 1, plane: 1, jet: 1, gantry: 1, billboard: 1, ferryboat: 1, yacht: 1, gazebo: 1, container: 1, canopy: 1, jetbridge: 1, cab: 1, stadium: 1 };
   var MAX_POINTS = 12, MAX_SPOTS = 6, MAX_RAIN = 2400, MAX_PUDDLES = 60;
   // which facade styles get which street-level and roof detail in _building (the building's own facade paints the
   // doors; the geometry lines up with them through the band's u offset)
@@ -29,7 +31,13 @@
     steps: { capitol: 1, police: 1, campus: 1, mansion: 1 },
     planters: { downtown: 1, goldplate: 1, hospital: 1, airport: 1, capitol: 1 },
     balconies: { brownstone: 1, marina: 1, mansion: 1, suburbs: 1 },
-    ledges: { downtown: 1, goldplate: 1, capitol: 1, hospital: 1, airport: 1, campus: 1, police: 1, brownstone: 1 }
+    ledges: { downtown: 1, goldplate: 1, capitol: 1, hospital: 1, airport: 1, campus: 1, police: 1, brownstone: 1 },
+    // v0.3 architecture: curtain-wall fins, stepped cornices with brackets, fire escapes, window AC units, shop fascia signs
+    fins: { downtown: 1, goldplate: 1, airport: 1 },
+    cornices: { campus: 1, capitol: 1, police: 1, strip: 1, marina: 1, hospital: 1 },
+    fireEscapes: { brownstone: 1, strip: 1, industrial: 1 },
+    acUnits: { brownstone: 0.16, strip: 0.2, campus: 0.08, marina: 0.12, suburbs: 0.1, industrial: 0.1, port: 0.08, hospital: 0.05 },
+    shopSigns: { strip: 5.0, marina: 3.0, brownstone: 0, downtown: 0 }
   };
   var _v = null, _v2 = null, _m = null, _q = null, _q2 = null, _col = null, _e = null, _c1 = null, _c2 = null, _c3 = null;
 
@@ -58,6 +66,7 @@
       Render.canvas = canvasGl;
       Render.headless = !!(GTP.game && GTP.game.headless);
       Render.quality.choose();                 // the preset: ?quality=, else low in headless, else auto (medium)
+      Render._patchShadowChunks();
       A.init();
       var r = Render.renderer = new THREE.WebGLRenderer({ canvas: canvasGl, antialias: !Render.headless, powerPreference: 'high-performance', alpha: false, stencil: false });
       r.outputColorSpace = THREE.SRGBColorSpace;
@@ -65,9 +74,11 @@
       r.shadowMap.enabled = !!C.QUALITY.shadows; r.shadowMap.type = C.QUALITY.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
       r.setClearColor(0x0c1020, 1);
       r.info.autoReset = false;   // frame() resets it, so stats cover the scene and every post pass
+      Render._wrapShadowMap(r);
       var s = Render.scene = new THREE.Scene();
       s.fog = new THREE.Fog(0xb9cde0, C.QUALITY.fogStart, C.QUALITY.drawDistance);
       Render.camera = new THREE.PerspectiveCamera(C.CAMERA.fov, 16 / 9, 0.3, 1500);
+      Render.camera.layers.enable(1);   // layer 1: props and people (in the near shadow cascade, not the far one)
       Render.chunkGroup = new THREE.Group(); Render.chunkGroup.name = 'chunks'; s.add(Render.chunkGroup);
       Render.entityGroup = new THREE.Group(); Render.entityGroup.name = 'entities'; s.add(Render.entityGroup);
       Render.fxGroup = new THREE.Group(); Render.fxGroup.name = 'fx'; s.add(Render.fxGroup);
@@ -75,6 +86,7 @@
       Render._initSky();
       Render._initWater();
       Render.weather.init();
+      Render.grass.init();
       Render.fx.init();
       Render.hudCanvas = document.getElementById('hud');
       if (Render.hudCanvas) Render.hudCtx = Render.hudCanvas.getContext('2d');
@@ -86,6 +98,104 @@
       Render.updateEnvironment(C.DAY.startClock);
     },
 
+    // Two sun shadow cascades in core three: the sun (near cascade, a small box round the focus at QUALITY.shadowMap) and
+    // a shadow-only twin (intensity 0, the far cascade: a wide box of buildings, ground and trees at QUALITY.shadowMapFar).
+    // three keeps one shadow per directional light, so its lights chunk is patched once, globally: with exactly two
+    // directional shadows, light 0 reads gtpCascadeShadow() (the near map inside its box, fading to the far map at the
+    // edge) and light 1 is skipped. With one shadow (or none) the stock path runs unchanged.
+    _patchShadowChunks: function () {
+      var SC = THREE.ShaderChunk;
+      if (SC.__gtpCascades) return;
+      var L = SC.lights_fragment_begin;
+      var a = L.indexOf('#if ( NUM_DIR_LIGHTS > 0 ) && defined( RE_Direct )'), b = L.indexOf('#endif', L.indexOf('#pragma unroll_loop_end', a)) + 6;
+      if (a < 0 || b < 6) { U.reportError(new Error('lights chunk layout changed'), 'cascades'); return; }
+      var loop = [
+        '#if ( NUM_DIR_LIGHTS > 0 ) && defined( RE_Direct )',
+        '\tDirectionalLight directionalLight;',
+        '\t#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0',
+        '\tDirectionalLightShadow directionalLightShadow;',
+        '\t#endif',
+        '\t#pragma unroll_loop_start',
+        '\tfor ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) {',
+        '\t\t#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS == 2 && UNROLLED_LOOP_INDEX == 1',
+        '\t\t#else',
+        '\t\tdirectionalLight = directionalLights[ i ];',
+        '\t\tgetDirectionalLightInfo( directionalLight, geometry, directLight );',
+        '\t\t#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS )',
+        '\t\tdirectionalLightShadow = directionalLightShadows[ i ];',
+        '\t\t#if NUM_DIR_LIGHT_SHADOWS == 2',
+        '\t\tdirectLight.color *= ( directLight.visible && receiveShadow ) ? gtpCascadeShadow() : 1.0;',
+        '\t\t#else',
+        '\t\tdirectLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;',
+        '\t\t#endif',
+        '\t\t#endif',
+        '\t\tRE_Direct( directLight, geometry, material, reflectedLight );',
+        '\t\t#endif',
+        '\t}',
+        '\t#pragma unroll_loop_end',
+        '#endif'].join('\n');
+      SC.lights_fragment_begin = L.slice(0, a) + loop + L.slice(b);
+      SC.shadowmap_pars_fragment = SC.shadowmap_pars_fragment + [
+        '',
+        '#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS == 2',
+        'float gtpCascadeShadow() {',
+        '  vec3 p0 = vDirectionalShadowCoord[ 0 ].xyz / vDirectionalShadowCoord[ 0 ].w;',
+        '  float edge = max( abs( p0.x - 0.5 ), abs( p0.y - 0.5 ) ) * 2.0;',
+        '  float k = ( p0.z > 1.0 ) ? 1.0 : smoothstep( 0.78, 0.97, edge );',
+        '  float s0 = 1.0, s1 = 1.0;',
+        '  if ( k < 1.0 ) s0 = getShadow( directionalShadowMap[ 0 ], directionalLightShadows[ 0 ].shadowMapSize, directionalLightShadows[ 0 ].shadowBias, directionalLightShadows[ 0 ].shadowRadius, vDirectionalShadowCoord[ 0 ] );',
+        '  if ( k > 0.0 ) s1 = getShadow( directionalShadowMap[ 1 ], directionalLightShadows[ 1 ].shadowMapSize, directionalLightShadows[ 1 ].shadowBias, directionalLightShadows[ 1 ].shadowRadius, vDirectionalShadowCoord[ 1 ] );',
+        '  return mix( s0, s1, k );',
+        '}',
+        '#endif'].join('\n');
+      SC.__gtpCascades = true;
+    },
+    // The cascades' shadow maps. three r152 filters shadow casters by the *view* camera's layers, so the renderer's
+    // shadowMap.render is wrapped (it still runs inside renderer.render, where three's render state lives) and called
+    // once per cascade with a stand-in camera: the near cascade sees every layer, the far one layer 0 only (buildings,
+    // ground, trees, the big props). The far map is redrawn every QUALITY.farEvery frames, or at once when the view has
+    // moved a fifth of its box or the sun has moved; between redraws the far light stays put, so map and matrix agree.
+    _shadowCams: null, _farT: 0, _farAt: null, _shadowFrame: false,
+    _wrapShadowMap: function (r) {
+      var sm = r.shadowMap, orig = sm.render;
+      var a = new THREE.Object3D(), b = new THREE.Object3D(); a.layers.enableAll(); b.layers.set(0);
+      Render._shadowCams = { near: a, far: b };
+      sm.render = function (lights, scene, camera) {
+        var Q = C.QUALITY, L = Render.lights;
+        if (!Render._shadowFrame || !L || !(Q.shadows && (Q.cascades | 0) >= 2) || lights.indexOf(L.sunFar) < 0) return orig.call(sm, lights, scene, camera);
+        Render._shadowFrame = false;
+        var rest = lights.filter(function (l) { return l !== L.sun && l !== L.sunFar; });
+        var fh = (Q.shadowFar || 240) / 2, cs = Render._casc || { fdx: 0, fdz: 0 }, cx = camera.position.x + cs.fdx * fh * 0.7, cz = camera.position.z + cs.fdz * fh * 0.7;
+        var sunKey = Math.round(L.sunDir.x * 200) + ':' + Math.round(L.sunDir.y * 200);
+        var moved = !Render._farAt || !L.sunFar.shadow.map || Math.abs(cx - Render._farAt.x) + Math.abs(cz - Render._farAt.z) > fh * 0.2 || Render._farAt.sun !== sunKey;
+        Render._farT--;
+        if (moved || Render._farT <= 0) {
+          Render._placeCascade(L.sunFar, cx, cz, fh, 320);
+          L.sunFar.updateMatrixWorld(); L.sunFar.target.updateMatrixWorld();
+          Render._farAt = { x: cx, z: cz, sun: sunKey };
+          Render._farT = Math.max(1, Q.farEvery | 0 || 2);
+          sm.needsUpdate = true; orig.call(sm, [L.sunFar], scene, Render._shadowCams.far);
+          Render.stats.farShadow = (Render.stats.farShadow || 0) + 1;
+        }
+        sm.needsUpdate = true; orig.call(sm, [L.sun].concat(rest), scene, Render._shadowCams.near);
+      };
+    },
+    // place a cascade's light: centred on (cx, cz) with the box half-size `half`, the centre snapped to the shadow map's
+    // texel grid in light space so the shadow edges do not crawl as the camera moves
+    _placeCascade: function (light, cx, cz, half, back) {
+      var d = Render.lights.sunDir, mapN = light.shadow.mapSize.x || 1024, texel = half * 2 / mapN;
+      var rx = d.z, rz = -d.x, rl = Math.sqrt(rx * rx + rz * rz) || 1; rx /= rl; rz /= rl;                // right: horizontal, across the light
+      var ux = -d.x * d.y, uy = d.x * d.x + d.z * d.z, uz = -d.z * d.y, ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1; ux /= ul; uy /= ul; uz /= ul;   // up, in the light's view
+      var a = Math.round((cx * rx + cz * rz) / texel) * texel, bb = Math.round((cx * ux + cz * uz) / texel) * texel;
+      var dl = cx * d.x + cz * d.z;   // the depth along the light (kept)
+      // reconstruct a point with those light-space coordinates on y = 0 (solve along the light ray)
+      var px = rx * a + ux * bb + d.x * dl, py = uy * bb + d.y * dl, pz = rz * a + uz * bb + d.z * dl;
+      var t = d.y !== 0 ? py / d.y : 0; px -= d.x * t; pz -= d.z * t;
+      light.target.position.set(px, 0, pz);
+      light.position.set(px + d.x * back, d.y * back, pz + d.z * back);
+      var sc = light.shadow.camera;
+      if (sc.right !== half) { sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.far = back * 2 + 60; sc.updateProjectionMatrix(); }
+    },
     resize: function () {
       var stage = Render.canvas.parentElement;
       var w = Math.max(320, (stage && stage.clientWidth) || window.innerWidth || 1280);
@@ -145,6 +255,10 @@
         if (L && L.sun) {
           L.sun.castShadow = !!Q.shadows;
           if (L.sun.shadow.mapSize.x !== Q.shadowMap) { L.sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (L.sun.shadow.map) { L.sun.shadow.map.dispose(); L.sun.shadow.map = null; } }
+          var two = !!Q.shadows && (Q.cascades | 0) >= 2, fm = Q.shadowMapFar || 1024;
+          L.sunFar.castShadow = two; L.sunFar.visible = two;
+          if (L.sunFar.shadow.mapSize.x !== fm) { L.sunFar.shadow.mapSize.set(fm, fm); if (L.sunFar.shadow.map) { L.sunFar.shadow.map.dispose(); L.sunFar.shadow.map = null; } }
+          L.sun.shadow.normalBias = two ? 0.05 : 0.5; L.sun.shadow.bias = two ? -0.0003 : -0.0005;
           for (i = 0; i < L.points.length; i++) L.points[i].visible = i < (Q.pointLights | 0);
           for (i = 0; i < L.spots.length; i++) L.spots[i].visible = i < (Q.headlights | 0);
         }
@@ -198,6 +312,17 @@
       sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.5; sun.shadow.radius = 2;
       var target = new THREE.Object3D();
       s.add(hemi); s.add(sun); s.add(target); sun.target = target;
+      // the far cascade: a shadow-only twin of the sun (black, so it adds no light; the patched chunk reads its map)
+      var sunFar = new THREE.DirectionalLight(0x000000, 0);
+      sunFar.castShadow = !!Q.shadows && (Q.cascades | 0) >= 2; sunFar.visible = sunFar.castShadow; sunFar.name = 'sunFar';
+      sunFar.shadow.mapSize.set(Q.shadowMapFar || 1024, Q.shadowMapFar || 1024);
+      sunFar.shadow.bias = -0.0012; sunFar.shadow.normalBias = 0.35; sunFar.shadow.radius = 1.5;
+      sunFar.shadow.camera.layers.set(0);   // buildings, ground and trees only: props and people (layer 1) stay out of it
+      var targetFar = new THREE.Object3D(); s.add(sunFar); s.add(targetFar); sunFar.target = targetFar;
+      sun.shadow.camera.layers.enableAll();
+      // the muzzle flash light lives here from the start at intensity 0 (Combat reuses Render.muzzleLight): adding a light
+      // later would recompile every lit material at the first shot (QA CMB-04)
+      var muzzle = new THREE.PointLight(0xffd27a, 0, 9, 2); muzzle.name = 'muzzleLight'; s.add(muzzle); Render.muzzleLight = muzzle;
       var fill = new THREE.AmbientLight(0x202838, 0.0);
       s.add(fill);
       // the player's car headlights (one spot, no shadows)
@@ -209,7 +334,7 @@
       var points = [], spots = [];
       for (i = 0; i < MAX_POINTS; i++) { var pl = new THREE.PointLight(0xffc27a, 0, 26, 1.6); pl.visible = i < (Q.pointLights | 0); pl.name = 'lamp' + i; s.add(pl); points.push(pl); }
       for (i = 0; i < MAX_SPOTS; i++) { var sl = new THREE.SpotLight(0xfff1d0, 0, 55, 0.5, 0.55, 1.0); sl.castShadow = false; sl.visible = i < (Q.headlights | 0); sl.name = 'head' + i; s.add(sl); s.add(sl.target); spots.push(sl); }
-      Render.lights = { hemi: hemi, sun: sun, target: target, fill: fill, headlight: head, headlightOwner: null, sunDir: new THREE.Vector3(0.5, 0.6, 0.4), points: points, spots: spots, _lampT: 0, _lamps: null, exposure: 1.0 };
+      Render.lights = { hemi: hemi, sun: sun, sunFar: sunFar, target: target, fill: fill, headlight: head, headlightOwner: null, sunDir: new THREE.Vector3(0.5, 0.6, 0.4), points: points, spots: spots, _lampT: 0, _lamps: null, exposure: 1.0 };
     },
     _initSky: function () {
       var A = Render._A, s = Render.scene;
@@ -263,9 +388,32 @@
       A.water.repeat.set(size / 10, size / 10);
       var mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(C.MAP_W * TILE / 2, WATER_Y, C.MAP_H * TILE / 2);
-      mesh.receiveShadow = true; mesh.renderOrder = -1;
+      mesh.receiveShadow = true; mesh.renderOrder = -1; mesh.name = 'ocean';
+      A.waterUniforms.uGtpMap.value = C.MAP_W * TILE;
       Render.scene.add(mesh);
       Render.water = mesh;
+    },
+
+    // the shore distance field for the ocean shader: one texel per tile, 0 on land, rising to 1 eight tiles out to sea
+    // (a multi-source BFS from every land tile over the water)
+    _buildShore: function () {
+      var W = Render._World, T = W.T, w = W.w, h = W.h, n = w * h, dist = new Int16Array(n).fill(-1), q = new Int32Array(n), qh = 0, qt = 0, i;
+      for (i = 0; i < n; i++) if (W.tiles[i] !== T.WATER && W.tiles[i] !== T.VOID) { dist[i] = 0; q[qt++] = i; }
+      while (qh < qt) {
+        var c = q[qh++], cx = c % w, cz = (c / w) | 0, d = dist[c];
+        if (d >= 8) continue;
+        if (cx > 0 && dist[c - 1] < 0) { dist[c - 1] = d + 1; q[qt++] = c - 1; }
+        if (cx < w - 1 && dist[c + 1] < 0) { dist[c + 1] = d + 1; q[qt++] = c + 1; }
+        if (cz > 0 && dist[c - w] < 0) { dist[c - w] = d + 1; q[qt++] = c - w; }
+        if (cz < h - 1 && dist[c + w] < 0) { dist[c + w] = d + 1; q[qt++] = c + w; }
+      }
+      var data = new Uint8Array(n * 4);
+      for (i = 0; i < n; i++) { var v = dist[i] < 0 ? 255 : Math.min(255, Math.round(dist[i] / 8 * 255)); data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = v; data[i * 4 + 3] = 255; }
+      if (Render._shoreTex) Render._shoreTex.dispose();
+      var tex = Render._shoreTex = new THREE.DataTexture(data, w, h, THREE.RGBAFormat);
+      tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.needsUpdate = true;
+      Render._A.waterUniforms.tGtpShore.value = tex;
+      Render._shoreSeed = W._seed;
     },
 
     // ------------------------------------------------------- day / night --
@@ -316,11 +464,14 @@
       Render.scene.fog.near = fogNear; Render.scene.fog.far = Q.drawDistance;
       Render.renderer.setClearColor(fog, 1);
       L.hemi.color.copy(mixc('hemiSky')); L.hemi.groundColor.copy(ground); L.hemi.intensity = mixn('hemiI');
+      L._skyBase = L.hemi.color.clone(); L._groundBase = L.hemi.groundColor.clone();
       // moonlight fill: low and medium have no lamp lights (the street is lit by emissives and glow decals alone), so at
       // night a cool ambient keeps the foreground readable (the player, the road at his feet); the lamp presets need less
       L.fill.color.set(C.SKY.night.fill || '#6a7ab0');
       var SN = C.SKY.night, fillK = (Q.pointLights | 0) > 0 ? SN.fillLit : (Q.post ? SN.fillI : SN.fillLow);   // low has no post lift either
       L.fill.intensity = night * U.lerp(1, 0.75, overcast) * (fillK != null ? fillK : 0.3);
+      L._fillBase = L.fill.color.clone();
+      Render._applyDistrictTint(0);
       // a physically plausible sun: the preset intensity shaped by elevation (a cosine-ish rise, warm and weak at the
       // horizon), dimmed by cloud cover; at night a faint cool moon from the opposite side
       var elevK = U.clamp(Math.sin(Math.max(0, elev)) * 2.2 + 0.08, 0, 1);
@@ -351,6 +502,8 @@
       lit = Math.max(lit, overcast * 0.35 * (1 - night) * 0.6);   // a grey afternoon turns some lights on early
       Render.lit = lit;
       A.litMaterials().forEach(function (m) { m.emissiveIntensity = lit * 0.95; });
+      // the rooms behind the glass: daylight through the window by day, the lit rooms' lamps at night
+      if (A.setInteriorLight) A.setInteriorLight((0.3 * (1 - night) * U.lerp(1, 0.75, overcast) + 0.012) * U.lerp(1, 0.85, horizonW), lit * 1.0);
       var smats = A._signMats;
       for (var k in smats) smats[k].emissiveIntensity = smats[k].userData.neon ? 0.5 + 0.8 * lit : 0.12 + 0.35 * lit;
       if (A.setPropGlow) A.setPropGlow(0.3 + 1.1 * lit);
@@ -453,7 +606,7 @@
         var Wx = Render.weather;
         if (['clear', 'overcast', 'rain'].indexOf(state) < 0) return false;
         Wx.target = state;
-        if (instant) { Wx.state = state; Wx.overcast = state === 'clear' ? 0 : 1; Wx.rain = state === 'rain' ? 1 : 0; if (state === 'rain') Wx.wet = Math.max(Wx.wet, 0.8); Wx._applyNow(); Render._envClock = null; }
+        if (instant) { Wx.state = state; Wx.overcast = state === 'clear' ? 0 : 1; Wx.rain = state === 'rain' ? 1 : 0; if (state === 'rain') Wx.wet = Math.max(Wx.wet, 0.8); else Wx.wet = 0; Wx._applyNow(); Render._envClock = null; }
         Wx._hold = Wx._nextHold();
         GTP.Events.emit('weather', { state: state, instant: !!instant });
         return true;
@@ -482,7 +635,8 @@
       _applyNow: function () {
         var Wx = Render.weather, A = Render._A, WC = C.WEATHER, wet = Wx.wet;
         var gm = A._mats.ground;
-        if (gm) { gm.roughness = U.lerp(1.0, WC.wetRoughness, wet); gm.metalness = 0.14 * wet; gm.envMapIntensity = 0.5 + 1.1 * wet; }
+        if (gm) { gm.roughness = 1.0; gm.metalness = 0.0; gm.envMapIntensity = 0.5 + 0.6 * wet; }
+        if (A.groundUniforms) { A.groundUniforms.uGtpWet.value = wet; A.groundUniforms.uGtpRain.value = Wx.rain; }
         if (Wx._puddles) { Wx._puddles.material.opacity = 0.6 * U.smoothstep(wet * 1.6); Wx._puddles.visible = wet > 0.03 && (C.QUALITY.puddles | 0) > 0; }
       },
       applyQuality: function () {
@@ -541,6 +695,79 @@
       }
     },
 
+    // ------------------------------------------------------------- grass --
+    // Instanced grass clumps on the grass tiles around the focus (QUALITY.grass clumps per tile within QUALITY.grassRadius,
+    // scaled down toward the edge so the ring never pops), re-seeded when the focus moves on; one draw call, swaying
+    // in the same wind as the trees. Off at low.
+    grass: {
+      MAX: 9000, mesh: null, _seed: null,
+      init: function () {
+        var G = Render.grass, R = GTP.makeRng(0x6A55), pos = [], nor = [], col = [], idx = [], n = 0;
+        for (var b = 0; b < 12; b++) {
+          var a = R.random() * Math.PI * 2, r = Math.sqrt(R.random()) * 0.45, x = Math.cos(a) * r, z = Math.sin(a) * r, h = 0.22 + R.random() * 0.34, w = 0.035 + R.random() * 0.03;
+          var ya = R.random() * Math.PI * 2, ux = Math.cos(ya) * w, uz = Math.sin(ya) * w, lean = (R.random() - 0.5) * 0.18, lx = Math.cos(a) * lean, lz = Math.sin(a) * lean;
+          var base = [0.16, 0.3, 0.1], tip = [0.42 + R.random() * 0.12, 0.6 + R.random() * 0.1, 0.22];
+          pos.push(x - ux, 0, z - uz, x + ux, 0, z + uz, x + lx + ux * 0.2, h, z + lz + uz * 0.2, x + lx - ux * 0.2, h, z + lz - uz * 0.2);
+          for (var k = 0; k < 4; k++) nor.push(lx * 2, 1, lz * 2);
+          col.push(base[0], base[1], base[2], base[0], base[1], base[2], tip[0], tip[1], tip[2], tip[0], tip[1], tip[2]);
+          idx.push(n, n + 1, n + 2, n, n + 2, n + 3); n += 4;
+        }
+        var geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        geo.setIndex(idx); geo.computeBoundingSphere();
+        var m = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.9, metalness: 0, envMapIntensity: 0.3 });
+        var TU = Render._A.treeUniforms;
+        m.onBeforeCompile = function (sh) {
+          sh.uniforms.uGtpTime = TU.uGtpTime; sh.uniforms.uGtpWind = TU.uGtpWind;
+          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uGtpTime, uGtpWind;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvec3 gIp = vec3( instanceMatrix[3][0], 0.0, instanceMatrix[3][2] );\nfloat gB = transformed.y * transformed.y * 2.2 * uGtpWind;\ntransformed.x += sin( uGtpTime * 2.1 + gIp.x * 0.45 + gIp.z * 0.2 ) * gB * 0.35;\ntransformed.z += cos( uGtpTime * 1.7 + gIp.z * 0.5 ) * gB * 0.25;');
+        };
+        m.customProgramCacheKey = function () { return 'gtp-grass'; };
+        var im = new THREE.InstancedMesh(geo, m, G.MAX);
+        im.count = 0; im.frustumCulled = false; im.castShadow = false; im.receiveShadow = true; im.name = 'grass'; im.visible = false;
+        im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        Render.scene.add(im); G.mesh = im;
+      },
+      frame: function () {
+        var G = Render.grass, Q = C.QUALITY, W = Render._World, per = Q.grass | 0;
+        if (!G.mesh) return;
+        G.mesh.visible = per > 0 && !!W.tiles;
+        if (!G.mesh.visible) return;
+        var fx = Render.rig.focus, key = Math.round(fx.x / 6) + ',' + Math.round(fx.z / 6) + ',' + per + ',' + W._seed;
+        if (key === G._seed) return;
+        G._seed = key;
+        var T = W.T, rad = Q.grassRadius || 40, tr = Math.ceil(rad / TILE), ctx = Math.floor(fx.x / TILE), ctz = Math.floor(fx.z / TILE), n = 0, im = G.mesh;
+        for (var tz = ctz - tr; tz <= ctz + tr; tz++) for (var tx = ctx - tr; tx <= ctx + tr; tx++) {
+          if (tx < 0 || tz < 0 || tx >= W.w || tz >= W.h || W.tiles[tz * W.w + tx] !== T.GRASS) continue;
+          var gy = W.groundY(T.GRASS) + 0.005;
+          for (var k = 0; k < per && n < G.MAX; k++) {
+            var x = tx * TILE + U.hash2(tx * 13 + k, tz, 21) * TILE, z = tz * TILE + U.hash2(tx, tz * 7 + k, 22) * TILE;
+            var d = Math.sqrt((x - fx.x) * (x - fx.x) + (z - fx.z) * (z - fx.z)); if (d > rad) continue;
+            var sc = (0.75 + U.hash2(x * 3.1, z * 1.7, 23) * 0.6) * U.clamp((rad - d) / 10, 0, 1);
+            if (sc < 0.05) continue;
+            _q.setFromAxisAngle(_v2.set(0, 1, 0), U.hash2(x, z, 24) * 6.283);
+            _m.compose(_v.set(x, gy, z), _q, _v2.set(sc * 1.3, sc, sc * 1.3));
+            im.setMatrixAt(n++, _m);
+          }
+        }
+        im.count = n; im.instanceMatrix.needsUpdate = true;
+        Render.stats.grass = n;
+      }
+    },
+
+    // the district light: the hemisphere and the night fill lean toward C.DISTRICT_LIGHT of the district under the focus
+    _dTint: null,
+    _applyDistrictTint: function (dt) {
+      var L = Render.lights, W = Render._World, DL = C.DISTRICT_LIGHT; if (!L || !L._skyBase || !DL) return;
+      var fx = Render.rig.focus, d = W.districtAt ? W.districtAt(fx.x, fx.z) : null, want = (d && DL[d.id]) || null;
+      var T = Render._dTint || (Render._dTint = { sky: [1, 1, 1], ground: [1, 1, 1], night: [1, 1, 1] });
+      var k = dt > 0 ? 1 - Math.exp(-1.4 * dt) : 1;
+      ['sky', 'ground', 'night'].forEach(function (key) { for (var i = 0; i < 3; i++) T[key][i] += ((want ? want[key][i] : 1) - T[key][i]) * k; });
+      L.hemi.color.setRGB(L._skyBase.r * T.sky[0], L._skyBase.g * T.sky[1], L._skyBase.b * T.sky[2]);
+      L.hemi.groundColor.setRGB(L._groundBase.r * T.ground[0], L._groundBase.g * T.ground[1], L._groundBase.b * T.ground[2]);
+      if (L._fillBase) L.fill.color.setRGB(L._fillBase.r * T.night[0], L._fillBase.g * T.night[1], L._fillBase.b * T.night[2]);
+      Render.districtTint = T;
+    },
     // the light pools: the nearest lamps get a point light, the nearest lit cars (not the player's, which has its own) a spot
     _updateLightPool: function (dt) {
       var L = Render.lights, Q = C.QUALITY, W = Render._World, lit = Render.lit || 0, i;
@@ -604,6 +831,8 @@
       var t = g && g.time ? g.time.t : 0, dt = Render._lastSimT == null ? 0 : U.clamp(t - Render._lastSimT, 0, 0.25);
       Render._lastSimT = t;
       if (Render.weather) Render.weather.update(dt);
+      if (Render._A.groundUniforms) Render._A.groundUniforms.uGtpTime.value = t % 1000;
+      if (Render._A.treeUniforms) { Render._A.treeUniforms.uGtpTime.value = t % 1000; Render._A.treeUniforms.uGtpWind.value = 0.45 + Render.weather.overcast * 0.35 + Render.weather.rain * 0.5; }
       var clock = g && g.time ? g.time.clock : C.DAY.startClock;
       if (Math.abs(clock - (Render._envClock == null ? -99 : Render._envClock)) > 0.02) { Render._envClock = clock; Render.updateEnvironment(clock); }
       // sky and sun follow the camera; sun light + shadow box follow the focus point
@@ -614,20 +843,31 @@
       sk.stars.position.copy(sk.dome.position);
       sk.clouds.position.set(cam.position.x, cam.position.y + 240, cam.position.z);
       sk.cloudMat.uniforms.offset.value.set(t * 0.0022 * Render.weather.wind, t * 0.0009);
-      var fx = Render.rig.focus;
-      L.target.position.set(fx.x, 0, fx.z);
-      L.sun.position.copy(L.sunDir).multiplyScalar(160).add(L.target.position);
-      // water shimmer: the colour map and the ripple normals scroll against each other
-      var wm = Render.water.material;
-      wm.map.offset.set(t * 0.012, t * 0.008);
-      if (wm.normalMap) wm.normalMap.offset.set(-t * 0.02, t * 0.015);
+      var fx = Render.rig.focus, Qf = C.QUALITY;
+      cam.getWorldDirection(_v2); var fl = Math.sqrt(_v2.x * _v2.x + _v2.z * _v2.z) || 1, fdx = _v2.x / fl, fdz = _v2.z / fl;
+      if (Qf.shadows && (Qf.cascades | 0) >= 2) {
+        var nh = (Qf.shadowNear || 44) / 2;
+        Render._placeCascade(L.sun, fx.x + fdx * nh * 0.45, fx.z + fdz * nh * 0.45, nh, 160);
+        Render._casc = { fdx: fdx, fdz: fdz };
+      } else {
+        L.target.position.set(fx.x, 0, fx.z);
+        L.sun.position.copy(L.sunDir).multiplyScalar(160).add(L.target.position);
+        var sb = (Qf.shadowBox || 120) / 2, scm = L.sun.shadow.camera;
+        if (scm.right !== sb) { scm.left = -sb; scm.right = sb; scm.top = sb; scm.bottom = -sb; scm.far = 500; scm.updateProjectionMatrix(); }
+      }
+      // the ocean: time, chop from the weather, the shore distance field of the current world
+      var WU = Render._A.waterUniforms;
+      if (WU) { WU.uGtpTime.value = t % 3600; WU.uGtpChop.value = U.clamp(0.35 + Render.weather.overcast * 0.25 + Render.weather.rain * 0.4, 0, 1); if (Render._shoreSeed !== Render._World._seed && Render._World.tiles) Render._buildShore(); }
       Render.ensureChunks();
       Render._animateFallen();
       Render._updateLightPool(dt);
+      Render._applyDistrictTint(dt);
       if (Render.weather) Render.weather.frame(dt, cam);
+      Render.grass.frame();
       // airfield beacons blink at 0.5 Hz (one shared material)
       if (Render._beaconM) Render._beaconM.opacity = (Math.floor(t * 2) % 2 === 0) ? 0.95 : 0.15;
       Render.fx.sync();
+      Render._shadowFrame = true;   // the next scene render (the frame's own) draws the cascades
       if (GTP.PostFX && GTP.PostFX.render) GTP.PostFX.render(Render.renderer, Render.scene, cam);
       else Render.renderer.render(Render.scene, cam);
       // HUD overlay
@@ -658,6 +898,7 @@
       Render._runways = null;
       if (Render.lights) { Render.lights._lamps = null; Render.lights._near = null; }
       if (Render.weather) Render.weather._pudSeed = null;
+      if (Render.grass) Render.grass._seed = null;
       while (Render.chunkGroup && Render.chunkGroup.children.length) Render.chunkGroup.remove(Render.chunkGroup.children[0]);
     },
     // Build the chunks within `radius` metres of (x, z) for a loading screen. With onDone (and not headless) a few
@@ -738,7 +979,7 @@
       ch.far = far;
       if (ch.ground) ch.ground.material = far ? A.groundMaterialFar() : A.groundMaterial();
       if (ch.buildings) ch.buildings.forEach(function (b) { b.mesh.material = far ? A.facadeMaterialFar(b.style) : A.facadeMaterial(b.style); });
-      if (ch.props) ch.props.forEach(function (im) { im.material = far ? A.propMaterialFar() : A.propMaterial(); });
+      if (ch.props) ch.props.forEach(function (im) { var rec = A.prop(im.userData.kind || 'crate'); im.material = far ? (rec.materialFar || A.propMaterialFar()) : rec.material; });
     },
     buildChunk: function (cx, cz) {
       var key = cx + ',' + cz;
@@ -783,12 +1024,20 @@
         if (hw) return [inner ? 'hw_inner' : 'hw_outer', inner ? (useH ? (lane === 1 ? 0 : 2) : (lane === 1 ? 3 : 1)) : rot];
         return [inner ? 'ave_inner' : 'ave_outer', inner ? (useH ? (lane === 1 ? 0 : 2) : (lane === 1 ? 3 : 1)) : rot];
       }
-      if (t === T.ROAD || t === T.BRIDGE || t === T.RAMP) return laneCell(h, v, m, false);
+      if (t === T.ROAD || t === T.BRIDGE || t === T.RAMP) {
+        var lc = laneCell(h, v, m, false), vh = U.hash2(tx, tz, 77);
+        // street furniture in the paint: manhole covers, kerb-side storm drains
+        if ((lc[0] === 'road_half' || lc[0] === 'ave_outer') && vh < 0.11) lc[0] += vh < 0.05 ? '_mh' : '_dr';
+        else if (lc[0] === 'ave_inner' && vh < 0.05) lc[0] = 'ave_inner_mh';
+        else if (lc[0] === 'asphalt' && vh < 0.14 && t === T.ROAD) lc[0] = 'asphalt_mh';
+        return lc;
+      }
       if (t === T.SIDEWALK) {
         var n = W.isRoadTile(W.tile(tx, tz - 1)), s = W.isRoadTile(W.tile(tx, tz + 1)), e = W.isRoadTile(W.tile(tx + 1, tz)), w = W.isRoadTile(W.tile(tx - 1, tz));
         if (m & M.WALKWAY) return ['sidewalk', 0];
         if (n && w) return ['sidewalk_corner', 0]; if (n && e) return ['sidewalk_corner', 1]; if (s && e) return ['sidewalk_corner', 2]; if (s && w) return ['sidewalk_corner', 3];
-        if (n) return ['sidewalk_edge', 0]; if (e) return ['sidewalk_edge', 1]; if (s) return ['sidewalk_edge', 2]; if (w) return ['sidewalk_edge', 3];
+        var se = 'sidewalk_edge' + Render._kerbPaint(tx, tz);
+        if (n) return [se, 0]; if (e) return [se, 1]; if (s) return [se, 2]; if (w) return [se, 3];
         return ['sidewalk', (tx + tz) & 3];
       }
       if (t === T.GRASS) return [(m & M.LAWN) ? 'lawn' : (U.hash2(tx, tz, 5) < 0.3 ? 'grass2' : 'grass'), (tx * 7 + tz * 3) & 3];
@@ -809,6 +1058,15 @@
       return ['asphalt', 0];
     },
 
+    // painted kerbs: red next to an intersection (no stopping), a yellow loading zone here and there; '' = bare concrete
+    _kerbPaint: function (tx, tz) {
+      var W = Render._World, M = W.M, T = W.T;
+      for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) {
+        var ax = tx + dx, az = tz + dz; if (ax < 0 || az < 0 || ax >= W.w || az >= W.h) continue;
+        var i = az * W.w + ax; if (W.tiles[i] === T.ROAD && (W.meta[i] & M.H) && (W.meta[i] & M.V)) return '_red';
+      }
+      return U.hash2(tx, tz, 79) < 0.07 ? '_yel' : '';
+    },
     // the runway lots (cached per world): strip rows and lot rects, for the runway paint
     _runwayAt: function (tx, tz) {
       var W = Render._World;
@@ -872,10 +1130,11 @@
           g.quad([x0, yNW, z0], [x0, ySW, z1], [x1, ySE, z1], [x1, yNE, z0], uvTop(name, rot));
           // curb faces where a raised tile meets a lower neighbour
           if (y > 0.01 && t !== T.RAMP) {
-            if (W.groundY(tS) < y - 0.01 && tS !== T.WATER && tS !== T.RAMP && tS !== T.VOID) wall(x0, z1, x1, z1, 0, y, 'curbface', 0.25);
-            if (W.groundY(tN) < y - 0.01 && tN !== T.WATER && tN !== T.RAMP && tN !== T.VOID) wall(x1, z0, x0, z0, 0, y, 'curbface', 0.25);
-            if (W.groundY(tE) < y - 0.01 && tE !== T.WATER && tE !== T.RAMP && tE !== T.VOID) wall(x1, z1, x1, z0, 0, y, 'curbface', 0.25);
-            if (W.groundY(tW) < y - 0.01 && tW !== T.WATER && tW !== T.RAMP && tW !== T.VOID) wall(x0, z0, x0, z1, 0, y, 'curbface', 0.25);
+            var cf = t === T.SIDEWALK ? 'curbface' + Render._kerbPaint(tx, tz) : 'curbface';
+            if (W.groundY(tS) < y - 0.01 && tS !== T.WATER && tS !== T.RAMP && tS !== T.VOID) wall(x0, z1, x1, z1, 0, y, cf, 0.25);
+            if (W.groundY(tN) < y - 0.01 && tN !== T.WATER && tN !== T.RAMP && tN !== T.VOID) wall(x1, z0, x0, z0, 0, y, cf, 0.25);
+            if (W.groundY(tE) < y - 0.01 && tE !== T.WATER && tE !== T.RAMP && tE !== T.VOID) wall(x1, z1, x1, z0, 0, y, cf, 0.25);
+            if (W.groundY(tW) < y - 0.01 && tW !== T.WATER && tW !== T.RAMP && tW !== T.VOID) wall(x0, z0, x0, z1, 0, y, cf, 0.25);
           }
           // sea walls, dock sides, bridge edges
           var isPier = (m & M.DOCK) || (m & M.WALKWAY);
@@ -977,6 +1236,7 @@
       var W = Render._World, A = Render._A, T = W.T, w = W.w;
       var byStyle = {};
       var seen = new Set();
+      Render._signsG = new GB({ color: false });
       for (var tz = tz0; tz < tz1; tz++) for (var tx = tx0; tx < tx1; tx++) {
         var i = tz * w + tx;
         if (W.tiles[i] !== T.BUILDING) continue;
@@ -996,6 +1256,13 @@
         mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.own = true; mesh.name = 'buildings:' + s;
         ch.group.add(mesh); ch.buildings.push({ mesh: mesh, style: s });
       }
+      // the storefront fascia signs of the whole chunk: one mesh on the shared sign atlas
+      if (Render._signsG && Render._signsG.count()) {
+        var sm = new THREE.Mesh(Render._signsG.build(), A.shopSigns().material);
+        sm.castShadow = false; sm.receiveShadow = true; sm.userData.own = true; sm.name = 'shopSigns';
+        ch.group.add(sm); ch.signs = sm;
+      }
+      Render._signsG = null;
     },
     // per-building colour tint (vertex colours multiply the shared facade texture) so a street of
     // one style is not a street of identical clones
@@ -1039,8 +1306,140 @@
         // a ledge every four floors on the taller masonry and glass styles
         if (f > 0 && f % 4 === 0 && floors >= 5 && DETAIL.ledges[b.style]) Render._ledge(g, A, x0, z0, x1, z1, fy0, tint);
       }
+      try { Render._architecture(g, b, A, walls, floors, tint); } catch (e) { U.reportError(e, 'architecture'); }
       Render._roof(g, b, A, x0, z0, x1, z1, top, tint);
       Render._roofProps(g, b, A, x0, z0, x1, z1, top, tint, floors);
+    },
+    // does wall k (S, N, E, W) of a building look onto a street (a sidewalk, road or plaza tile 2.5 m out from its middle)?
+    _facesStreet: function (b, wl) {
+      var W = Render._World, T = W.T, fr = Render._wallFrame(wl), len = Math.hypot(wl[2] - wl[0], wl[3] - wl[1]);
+      var x = fr.ax + fr.alongX * len / 2 + fr.outX * 2.5, z = fr.az + fr.alongZ * len / 2 + fr.outZ * 2.5, t = W.tileAt(x, z);
+      return t === T.SIDEWALK || t === T.ROAD || t === T.PLAZA || t === T.PARKING;
+    },
+    // the u offset _building gave wall k (the facade pattern's phase along that wall)
+    _uoff: function (b, k) { return (k * 0.37 + U.hash2(b.seed, k, 1)) % 1; },
+    // where the painted windows of a style fall along a wall: metres from the wall's start
+    _windowS: function (L, len, uoff) {
+      var out = [];
+      for (var rep = -1; rep * 8 < len + 8; rep++) for (var i = 0; i < L.cols.length; i++) {
+        var sx = (rep + L.cols[i] - uoff) * 8;
+        if (sx > 0.9 && sx < len - 0.9) out.push(sx);
+      }
+      return out.sort(function (a, b) { return a - b; });
+    },
+    // v0.3 street architecture, merged into the facade mesh: fins on the glass towers, a stepped cornice with brackets on
+    // the masonry, fire escapes and window AC units on the walk-ups, fascia signs over the shops (the sign atlas mesh)
+    _architecture: function (g, b, A, walls, floors, tint) {
+      var style = b.style, sw = A.swatchUV, R = U.hash3, top = b.y + b.h, y0 = b.y;
+      if (b.special || b.landmark && b.h > 60) { if (!DETAIL.fins[style]) return; }
+      var L = A.windowLayout ? A.windowLayout(style) : null;
+      for (var k = 0; k < 4; k++) {
+        var wl = walls[k], len = k < 2 ? b.w : b.d, fr = Render._wallFrame(wl), uoff = Render._uoff(b, k), street = Render._facesStreet(b, wl);
+        // curtain-wall fins every 2 m on the mullion lines, from the lobby's top to the roof
+        if (DETAIL.fins[style] && floors >= 3) {
+          var finC = sw(style === 'goldplate' ? 'brown' : style === 'airport' ? 'concreteLight' : 'metal'), step = style === 'downtown' ? 2 : 4, depth = style === 'downtown' ? 0.26 : 0.18;
+          for (var m = Math.ceil(uoff * 8 / step) * step; m - uoff * 8 < len; m += step) {
+            var fs = m - uoff * 8; if (fs < 0.6 || fs > len - 0.6) continue;
+            Render._wallBox(g, fr, fs - 0.05, fs + 0.05, 0.0, depth, y0 + FLOOR_H, top, finC, tint);
+          }
+        }
+        // window AC units hung under some sills
+        var acP = DETAIL.acUnits[style];
+        if (acP && L && floors >= 2) {
+          var ws = Render._windowS(L, len, uoff);
+          for (var f = 1; f < floors; f++) {
+            var sill = y0 + f * FLOOR_H + L.sill * FLOOR_H;
+            if (sill + 0.4 > top) break;
+            for (var wi = 0; wi < ws.length; wi++) {
+              if (R(b.seed, f * 31 + wi, k, 41) >= acP) continue;
+              Render._wallBox(g, fr, ws[wi] - 0.34, ws[wi] + 0.34, 0.0, 0.52, sill - 0.12, sill + 0.3, sw(R(b.seed, f, wi, 42) < 0.7 ? 'concreteLight' : 'white'), tint);
+              Render._wallBox(g, fr, ws[wi] - 0.28, ws[wi] + 0.28, 0.5, 0.53, sill - 0.06, sill + 0.24, sw('concreteDark'), tint);
+            }
+          }
+        }
+        // shop fascia signs over the doors on street walls (the sign atlas mesh of the chunk)
+        var signW = DETAIL.shopSigns[style];
+        if (signW && street && Render._signsG) {
+          Render._doorPositions(len, uoff).forEach(function (s, di) {
+            Render._shopSign(fr, s, signW, y0 + (style === 'strip' ? 2.92 : 2.9), Math.floor(R(b.seed, k, di, 43) * 1000), A);
+          });
+        }
+      }
+      // one fire escape per walk-up, on a street wall long enough, over two windows near the middle
+      if (DETAIL.fireEscapes[style] && L && floors >= 3 && R(b.seed, 1, 2, 44) < 0.75) {
+        for (var kk = 0; kk < 4; kk++) {
+          var k2 = (kk + Math.floor(R(b.seed, 3, 4, 45) * 4)) % 4, wl2 = walls[k2], len2 = k2 < 2 ? b.w : b.d;
+          if (len2 < 9 || !Render._facesStreet(b, wl2)) continue;
+          var ws2 = Render._windowS(L, len2, Render._uoff(b, k2));
+          if (ws2.length < 2) continue;
+          var mid = Math.max(0, Math.min(ws2.length - 2, Math.floor(ws2.length / 2) - 1));
+          Render._fireEscape(g, Render._wallFrame(wl2), ws2[mid], ws2[mid + 1], b, L, floors, sw, tint);
+          break;
+        }
+      }
+      if (DETAIL.cornices[style] && b.roof === 'flat' && floors >= 2) Render._cornice(g, b, A, walls, tint);
+    },
+    _shopSign: function (fr, s, w, y, idx, A) {
+      var g = Render._signsG, h = w / 8, uv = A.shopSignUV(idx), frame = A.shopSignFrameUV(), o0 = 0.02, o1 = 0.2;
+      function P(ss, o, yy) { return [fr.ax + fr.alongX * ss + fr.outX * o, yy, fr.az + fr.alongZ * ss + fr.outZ * o]; }
+      var s0 = s - w / 2, s1 = s + w / 2;
+      g.quad(P(s0, o1, y), P(s1, o1, y), P(s1, o1, y + h), P(s0, o1, y + h), [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]]);
+      g.quad(P(s0, o0, y + h), P(s0, o1, y + h), P(s1, o1, y + h), P(s1, o0, y + h), frame);
+      g.quad(P(s0, o1, y), P(s0, o0, y), P(s1, o0, y), P(s1, o1, y), frame);
+      g.quad(P(s0, o0, y), P(s0, o1, y), P(s0, o1, y + h), P(s0, o0, y + h), frame);
+      g.quad(P(s1, o1, y), P(s1, o0, y), P(s1, o0, y + h), P(s1, o1, y + h), frame);
+    },
+    // a black steel fire escape: a landing under the sills of two windows on every floor above the street, railings,
+    // a stair flight between landings (alternating direction) and a drop ladder from the first landing
+    _fireEscape: function (g, fr, sa, sb, b, L, floors, sw, tint) {
+      var steel = sw('black'), s0 = sa - 0.9, s1 = sb + 0.9, dep = 1.05, i;
+      if (s1 - s0 > 7) { s0 = sa - 1.3; s1 = sa + 1.3; }
+      var ys = [];
+      for (var f = 1; f < floors; f++) { var yy = b.y + f * FLOOR_H + L.sill * FLOOR_H - 0.12; if (yy + 1.2 > b.y + b.h) break; ys.push(yy); }
+      function P(ss, o, y) { return [fr.ax + fr.alongX * ss + fr.outX * o, y, fr.az + fr.alongZ * ss + fr.outZ * o]; }
+      for (i = 0; i < ys.length; i++) {
+        var y = ys[i];
+        Render._wallBox(g, fr, s0, s1, 0.0, dep, y - 0.06, y, steel, tint);                       // the grate
+        Render._wallBox(g, fr, s0, s1, dep - 0.04, dep, y + 0.92, y + 0.97, steel, tint);           // top rail
+        Render._wallBox(g, fr, s0, s1, dep - 0.03, dep, y + 0.46, y + 0.5, steel, tint);            // mid rail
+        Render._wallBox(g, fr, s0, s0 + 0.04, 0.0, dep, y + 0.92, y + 0.97, steel, tint);            // end rails
+        Render._wallBox(g, fr, s1 - 0.04, s1, 0.0, dep, y + 0.92, y + 0.97, steel, tint);
+        for (var pp = 0; pp <= 4; pp++) { var ps = s0 + (s1 - s0) * pp / 4; Render._wallBox(g, fr, ps - 0.025, ps + 0.025, dep - 0.05, dep, y, y + 0.95, steel, tint); }
+        Render._wallBox(g, fr, s0 + 0.2, s0 + 0.26, 0.0, 0.08, y - 0.5, y - 0.06, steel, tint);   // brackets into the wall
+        Render._wallBox(g, fr, s1 - 0.26, s1 - 0.2, 0.0, 0.08, y - 0.5, y - 0.06, steel, tint);
+        if (i + 1 < ys.length) {
+          // a flight up to the next landing, leaning one way on even floors and the other on odd ones
+          var up = ys[i + 1], a = i % 2 ? s1 - 0.35 : s0 + 0.35, c2 = i % 2 ? s0 + 1.1 : s1 - 1.1, o0 = 0.15, o1 = 0.72;
+          g.quad(P(a, o0, y), P(a, o1, y), P(c2, o1, up), P(c2, o0, up), steel, tint);
+          g.quad(P(c2, o0, up - 0.06), P(c2, o1, up - 0.06), P(a, o1, y - 0.06), P(a, o0, y - 0.06), steel, tint);
+          g.quad(P(a, o1, y), P(a, o1, y + 0.9), P(c2, o1, up + 0.9), P(c2, o1, up), steel, tint);   // the stringer rail (one sheet)
+          g.quad(P(c2, o1, up), P(c2, o1, up + 0.9), P(a, o1, y + 0.9), P(a, o1, y), steel, tint);
+        }
+      }
+      if (ys.length) {
+        var ly = ys[0], ls = s1 - 0.5;   // the drop ladder, pulled up
+        Render._wallBox(g, fr, ls - 0.22, ls - 0.18, dep - 0.2, dep - 0.16, ly - 2.0, ly, steel, tint);
+        Render._wallBox(g, fr, ls + 0.18, ls + 0.22, dep - 0.2, dep - 0.16, ly - 2.0, ly, steel, tint);
+        for (var r = 0; r < 6; r++) Render._wallBox(g, fr, ls - 0.2, ls + 0.2, dep - 0.19, dep - 0.17, ly - 1.9 + r * 0.32, ly - 1.87 + r * 0.32, steel, tint);
+      }
+    },
+    // a stepped cornice round the roofline (three projecting courses) with brackets under it on the street walls
+    _cornice: function (g, b, A, walls, tint) {
+      var top = b.y + b.h, x0 = b.x, z0 = b.z, x1 = b.x + b.w, z1 = b.z + b.d, sw = A.swatchUV;
+      var pt = A.bandUV(7, 1), pq = [[0, pt[1]], [1, pt[1]], [1, pt[3]], [0, pt[3]]];
+      var face = function (f) { return f === 'top' ? sw('concreteLight') : pq; };
+      [[0.1, top - 0.62, 0.22], [0.26, top - 0.4, 0.16], [0.42, top - 0.24, 0.24]].forEach(function (c) {
+        var o = c[0], y = c[1], h = c[2];
+        g.box(x0 - o, y, z0 - o, (x1 - x0) + 2 * o, h, o, face, tint, GB.ALL_FACES);
+        g.box(x0 - o, y, z1, (x1 - x0) + 2 * o, h, o, face, tint, GB.ALL_FACES);
+        g.box(x0 - o, y, z0, o, h, z1 - z0, face, tint, GB.ALL_FACES);
+        g.box(x1, y, z0, o, h, z1 - z0, face, tint, GB.ALL_FACES);
+      });
+      for (var k = 0; k < 4; k++) {
+        if (!Render._facesStreet(b, walls[k])) continue;
+        var fr = Render._wallFrame(walls[k]), len = k < 2 ? b.w : b.d;
+        for (var s = 0.6; s < len - 0.4; s += 0.95) Render._wallBox(g, fr, s - 0.08, s + 0.08, 0.0, 0.3, top - 0.95, top - 0.62, sw('concreteLight'), tint);
+      }
     },
     // Walls run a -> b with the outward normal to the right of travel; `out` is that normal and `along` the unit
     // direction, so a feature at distance s along the wall sits at a + along * s and protrudes along out.
@@ -1212,7 +1611,9 @@
       }
       for (var k = 0; k < n; k++) {
         var ux = x0 + 1 + R(s, k, 11) * (b.w - 3.5), uz = z0 + 1 + R(s, k, 12) * (b.d - 3), uw = 1.2 + R(s, k, 13) * 1.4, ud = 1 + R(s, k, 14) * 1.2;
-        g.box(ux, top, uz, uw, 0.8 + R(s, k, 15) * 0.6, ud, swatch(R(s, k, 16) < 0.6 ? 'metal' : 'concreteLight'), tint, GB.NO_BOTTOM);
+        var uh = 0.8 + R(s, k, 15) * 0.6, metalU = R(s, k, 16) < 0.6;
+        g.box(ux, top, uz, uw, uh, ud, swatch(metalU ? 'metal' : 'concreteLight'), tint, GB.NO_BOTTOM);
+        if (metalU) { g.cylinder(ux + uw / 2, top + uh, uz + ud / 2, Math.min(uw, ud) * 0.36, Math.min(uw, ud) * 0.36, 0.1, 10, tint, swatch('black')); g.box(ux + uw * 0.3, top, uz - 0.6, uw * 0.4, 0.35, 0.6, swatch('concreteLight'), tint, GB.NO_BOTTOM); }
       }
       if (big || b.floors >= 6) {
         var sx = x0 + 1.2 + R(s, 21, 0) * (b.w - 4.2), sz = z0 + 1.2 + R(s, 22, 0) * (b.d - 4.2);
@@ -1286,7 +1687,8 @@
       Object.keys(byKind).forEach(function (kind) {
         var list = byKind[kind], rec = A.prop(kind);
         var im = new THREE.InstancedMesh(rec.geometry, rec.material, list.length);
-        im.castShadow = rec.castShadow && !NO_SHADOW[kind]; im.receiveShadow = true; im.name = 'props:' + kind;
+        im.castShadow = rec.castShadow && !NO_SHADOW[kind]; im.receiveShadow = true; im.name = 'props:' + kind; im.userData.kind = kind;
+        if (!rec.foliage && !BIG_PROPS[kind]) im.layers.set(1);
         // Every batch gets an instance colour (white by default): the shared vertex-colour
         // material renders an instanced batch black under shadow maps when one is missing.
         im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3).fill(1), 3);
@@ -1296,7 +1698,8 @@
           if (kind === 'hedge') { sx = p.sx || 1; sz = p.sz || 1; sy = p.h || 1; }
           var py = UNIT_H[kind] ? (kind === 'sign' || kind === 'billboard' ? (p.ground != null ? p.ground : W.heightAt(p.x, p.z, 0)) : (p.y == null ? CURB : p.y)) : (p.y == null ? CURB : p.y);
           if (kind === 'sign' || kind === 'billboard') py = W.heightAt(p.x, p.z, 0);
-          _q.setFromAxisAngle(_v2.set(0, 1, 0), p.rot || 0);
+          // foliage turns by a hash of its spot (one geometry reads as many trees), the rest by the prop's yaw
+          _q.setFromAxisAngle(_v2.set(0, 1, 0), rec.foliage ? U.hash2(p.x * 7.1, p.z * 3.3, 11) * Math.PI * 2 : (p.rot || 0));
           _m.compose(_v.set(p.x, py, p.z), _q, _v2.set(sx, sy, sz));
           // remembered so a knocked-over prop can be tilted in place (and stays down across a rebuild)
           p._inst = { im: im, k: k, x: p.x, y: py, z: p.z, sx: sx, sy: sy, sz: sz, rot: p.rot || 0 };
@@ -1424,6 +1827,7 @@
         try { e.mesh = Render.buildEntityMesh(e); } catch (err) { U.reportError(err, 'attach'); }
       }
       if (e.mesh && !e.mesh.parent) Render.entityGroup.add(e.mesh);
+      if (e.mesh && !e.mesh.userData.gtpLayer) { e.mesh.traverse(function (o) { o.layers.set(1); }); e.mesh.userData.gtpLayer = 1; }
       if (e.mesh) { e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw || 0; }
     },
     detach: function (e) {
