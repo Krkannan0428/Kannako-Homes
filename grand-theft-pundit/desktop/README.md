@@ -10,10 +10,10 @@ Targets:
 
 | Platform | Output in `dist/` | Notes |
 | --- | --- | --- |
-| macOS, Apple Silicon (M1 and later) | `Grand-Theft-Pundit-0.1.0-mac-arm64.dmg` and `.zip` | drag to Applications |
-| macOS, Intel | `Grand-Theft-Pundit-0.1.0-mac-x64.dmg` and `.zip` | |
-| Windows 10/11, x64 | `Grand-Theft-Pundit-0.1.0-win-x64-setup.exe` (installer), `...-win-x64-portable.exe` (no install) | |
-| Linux, x64 | `Grand-Theft-Pundit-0.1.0-linux-x86_64.AppImage` | `chmod +x`, then run |
+| macOS, Apple Silicon (M1 and later) | `Grand-Theft-Pundit-0.2.0-mac-arm64.dmg` and `.zip` | drag to Applications |
+| macOS, Intel | `Grand-Theft-Pundit-0.2.0-mac-x64.dmg` and `.zip` | |
+| Windows 10/11, x64 | `Grand-Theft-Pundit-0.2.0-win-x64-setup.exe` (installer), `...-win-x64-portable.exe` (no install) | |
+| Linux, x64 | `Grand-Theft-Pundit-0.2.0-linux-x86_64.AppImage` | `chmod +x`, then run |
 
 The version in every file name comes from `package.json`; bump it there before tagging a release.
 
@@ -85,13 +85,16 @@ as root, add `--no-sandbox`.
 
 ## Releases from GitHub Actions
 
-`.github/workflows/desktop-release.yml` builds all three platforms and attaches the files to a
-GitHub Release whenever a tag starting with `v` is pushed:
+`.github/workflows/desktop-release.yml` builds all three platforms on every push to the
+`game/grand-theft-pundit` branch that touches the game or this folder. The builds appear as
+artifacts on the run's page in the Actions tab. To publish a GitHub Release with download links,
+either put `[release]` in the commit message (the release is tagged `v` plus the `version` in
+`desktop/package.json`, so bump that first), or push a tag starting with `v`:
 
 ```sh
 # bump "version" in desktop/package.json first so the file names match
-git tag v0.1.0
-git push origin v0.1.0
+git commit -m "Ship 0.2.0 [release]"     # or:
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 The macOS job runs on `macos-14` and produces the arm64 and x64 dmg/zip, the Windows job the
@@ -102,6 +105,29 @@ from the Actions tab builds the same files as workflow artifacts without a tag; 
 
 `npm ci` is used when `package-lock.json` is committed (it is), so CI builds use exactly the
 versions tested here; without a lockfile the workflow falls back to `npm install`.
+
+## Mods folder
+
+The desktop game loads your own files at startup, so you can change or add things without
+rebuilding. The folder is created on first launch (on macOS the app menu has **Open Mods Folder**):
+
+| Platform | Folder |
+| --- | --- |
+| macOS | `~/Library/Application Support/Grand Theft Pundit/mods` |
+| Windows | `%APPDATA%\Grand Theft Pundit\mods` |
+| Linux | `~/.config/Grand Theft Pundit/mods` |
+
+Every time the game loads, in file-name order:
+
+- images (`png`, `jpg`, `webp`, `gif`, up to 8 MB each) become data URLs in
+  `window.GTP_MODS.images["file-name.png"]`, ready for an `<img>`, a canvas or a three.js texture;
+- `*.css` files are added to the page;
+- `*.js` files run after the game's own scripts, so `window.GTP` (the whole game: content tables,
+  cast, missions, UI, renderer) is available to them. Each runs in its own `try/catch`; failures are
+  listed in `window.GTP_MODS.errors` and the console (Cmd+Option+I or Ctrl+Shift+I).
+
+Rename a file (for example to `.js.off`) to turn it off, and restart the game after changes. Mods
+are your own files on your own machine; they are not part of the release builds.
 
 ## Signing and notarization (optional, later)
 

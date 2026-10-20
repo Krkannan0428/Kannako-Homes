@@ -2,6 +2,8 @@
 # Intel), Windows and Linux, published as a GitHub Release.
 #
 #   - push a tag like v0.1.0            -> build everything and create/update the release for that tag
+#   - push to game/grand-theft-pundit   -> build everything; a commit message with [release] also publishes
+#                                          the release v<desktop/package.json version>
 #   - "Run workflow" (workflow_dispatch) -> build everything and upload workflow artifacts; fill in
 #                                          release_tag (existing or new, created at the built commit) to also publish a release
 #
@@ -18,6 +20,16 @@ on:
   push:
     tags:
       - "v*"
+    # building on every push to the game branch means nobody has to click "Run workflow"; a commit
+    # whose message contains [release] also publishes a GitHub Release tagged v<desktop/package.json version>
+    branches:
+      - game/grand-theft-pundit
+    paths:
+      - "grand-theft-pundit/index.html"
+      - "grand-theft-pundit/js/**"
+      - "grand-theft-pundit/vendor/**"
+      - "grand-theft-pundit/desktop/**"
+      - ".github/workflows/desktop-release.yml"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -30,7 +42,8 @@ permissions:
 
 concurrency:
   group: desktop-release-${{ github.ref }}
-  cancel-in-progress: false
+  # a newer push to the branch supersedes an older build; tag builds always finish
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
 
 env:
   NODE_VERSION: "22"
@@ -220,11 +233,32 @@ jobs:
   release:
     name: GitHub Release
     needs: [mac, windows, linux]
-    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    if: >-
+      github.ref_type == 'tag' ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
     runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
     steps:
+      - name: Check out (for the version number)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: grand-theft-pundit/desktop/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Decide the release tag
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${{ github.ref_name }}"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="v$(node -p "require('./grand-theft-pundit/desktop/package.json').version")"
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "Release tag: $tag"
+
       - name: Download every build
         uses: actions/download-artifact@v4
         with:
