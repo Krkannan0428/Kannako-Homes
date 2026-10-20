@@ -92,8 +92,8 @@ H.run('combat', async (t) => {
     const p = GTP.game.player;
     T_.setup(spot, EAST);
     GTP.game.debug.giveWeapon('pistol', 20);
-    const a = T_.freeze(GTP.game.debug.spawnPed(spot.x + 9, spot.z - 1.5, null, 'civ'));
-    const b = T_.freeze(GTP.game.debug.spawnPed(spot.x + 12, spot.z + 2.5, null, 'civ'));
+    const a = T_.freeze(GTP.game.debug.spawnPed(spot.x + 9, spot.z - 1.5, null, 'thug')); a.hostile = true;
+    const b = T_.freeze(GTP.game.debug.spawnPed(spot.x + 12, spot.z + 2.5, null, 'thug')); b.hostile = true;
     GTP.game.advance(0.1);
     const name = (e) => (e === a ? 'a' : e === b ? 'b' : e ? 'other' : null);
     GTP.Input.set('aim', true); GTP.game.advance(0.4);
@@ -106,7 +106,8 @@ H.run('combat', async (t) => {
     const second = name(p.lockTarget);
     GTP.Input.set('lockOn', true); GTP.game.advance(1 / 60); GTP.Input.set('lockOn', false); GTP.game.advance(0.1);
     const third = name(p.lockTarget);
-    // a shot in aim mode goes to the locked target
+    // a shot in aim mode goes to the locked target (the assist has turned the camera onto it)
+    GTP.game.advance(0.3);
     const hpA = a.hp, hpB = b.hp;
     GTP.Input.set('shoot', true); GTP.game.advance(0.3); GTP.Input.set('shoot', false);
     const hit = { a: hpA - a.hp, b: hpB - b.hp };
@@ -114,7 +115,7 @@ H.run('combat', async (t) => {
     return { aimActive, first, second, third, fov, camDist, right, screen, ts, hit, released: p.lockTarget === null && !GTP.Combat.aim.active, pose: p.aiming };
   }, { EAST, spot });
   console.log('  aim: ' + JSON.stringify(lock));
-  t.assert(lock.aimActive && lock.first === 'a', 'aim mode locked the nearest ped in the cone: ' + lock.first);
+  t.assert(lock.aimActive && lock.first === 'a', 'aim mode locked the nearest hostile in the cone: ' + lock.first);
   t.assert(lock.second === 'b' && lock.third === 'a', 'Tab cycles the lock: ' + lock.second + ', ' + lock.third);
   t.assert(lock.fov < 58 && lock.camDist < 2.6 && lock.right > 0.2, 'over-the-shoulder camera: fov ' + lock.fov + ', dist ' + lock.camDist + ', right ' + lock.right);
   t.assert(lock.screen && lock.screen.visible && lock.ts && lock.ts.visible, 'crosshair and reticle screen hooks are visible');
@@ -212,8 +213,8 @@ H.run('combat', async (t) => {
     T_.setup(spot, EAST);
     GTP.AI.wanted.clear();
     GTP.game.debug.giveWeapon('hottake', 5);
-    const a = T_.freeze(GTP.game.debug.spawnPed(spot.x + 9, spot.z - 1.2, null, 'civ'));
-    const b = T_.freeze(GTP.game.debug.spawnPed(spot.x + 10.5, spot.z + 1.6, null, 'civ'));
+    const a = T_.freeze(GTP.game.debug.spawnPed(spot.x + 9, spot.z - 1.2, null, 'thug')); a.hostile = true;
+    const b = T_.freeze(GTP.game.debug.spawnPed(spot.x + 10.5, spot.z + 1.6, null, 'thug')); b.hostile = true;
     GTP.game.advance(0.1);
     const hpA = a.hp, hpB = b.hp;
     GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false);
@@ -376,18 +377,20 @@ H.run('combat', async (t) => {
       const w = CB.WEAPONS[id];
       if (id !== 'fist') GTP.game.debug.giveWeapon(id, w.melee ? Infinity : 40);
       p.weapon = id;
-      const dist = w.melee ? 1.3 : w.cone ? 3 : (id === 'hotmic' || id === 'hottake') ? 9 : 8;
+      const dist = w.melee ? 1.3 : w.cone ? 3 : w.lobbed ? 9 : w.cls === 'shotgun' ? 5 : 8;
       const ped = T_.freeze(GTP.game.debug.spawnPed(spot.x + dist, spot.z, null, 'thug')); ped.yaw = Math.PI / 2; ped.hp = ped.maxHp = 1000; ped.hostile = true;
       GTP.game.advance(0.1);
       const hp0 = ped.hp, x0 = ped.x, ammo0 = p.weapons[id], a0 = Object.assign({}, CB.ammo(p, id));
       // the sniper and the launcher have no auto-target: they are aimed with the camera
-      GTP.Render.rig.pitch = id === 'sniper' ? 0.02 : 0.1; GTP.Render.rig.snap();
-      GTP.Input.set('aim', id === 'sniper' || id === 'ratio'); GTP.game.advance(0.3);
-      GTP.Input.set('shoot', true); GTP.game.advance(id === 'hotmic' ? 0.3 : 0.5); GTP.Input.set('shoot', false);
-      GTP.game.advance(id === 'hotmic' ? 3.4 : (id === 'hottake' || id === 'ratio') ? 1.6 : 0.3);
+      const aimed = !!(w.noAuto || w.scope);
+      GTP.Render.rig.pitch = w.scope ? 0.06 : 0.1; GTP.Render.rig.snap();
+      GTP.Input.set('aim', aimed); GTP.game.advance(aimed ? 0.5 : 0.3);
+      GTP.Input.set('shoot', true); GTP.game.advance(w.cook ? 0.3 : w.spinUp ? 1.4 : 0.5); GTP.Input.set('shoot', false);
+      GTP.game.advance(w.fuse ? w.fuse + 1.2 : w.splash ? (w.burn || 4) + 0.5 : (w.lobbed || w.rocket) ? 1.6 : 0.3);
       GTP.Input.set('aim', false); GTP.game.advance(0.1);
       const a1 = CB.ammo(p, id);
-      out[id] = { dmg: +(hp0 - ped.hp).toFixed(1), moved: +Math.hypot(ped.x - x0, 0).toFixed(2), down: ped.knockedDown, ammoUsed: ammo0 === Infinity ? null : ammo0 - (p.weapons[id] || 0), held: !!(p._held && p._held.name === 'held'), mag: a0 && w.mag ? [a0.mag, a1 ? a1.mag : null] : null, errors: GTP.errors.length };
+      out[id] = { dmg: +(hp0 - ped.hp).toFixed(1), moved: +Math.hypot(ped.x - x0, 0).toFixed(2), down: ped.knockedDown, ammoUsed: ammo0 === Infinity ? null : ammo0 - (p.weapons[id] || 0), held: !!(p._held && p._held.name === 'held'), mag: a0 && w.mag && w.mag > 1 ? [a0.mag, a1 ? a1.mag : null] : null, errors: GTP.errors.length, smoke: !!w.smoke, melee: !!w.melee, smokes: CB.smokes.length };
+      GTP.Input.set('aim', false);
     }
     return out;
   }, { EAST, spot });
@@ -395,13 +398,15 @@ H.run('combat', async (t) => {
   for (const id of Object.keys(arsenal)) {
     const r = arsenal[id];
     if (id === 'megaphone') t.assert(r.moved > 2 && r.dmg === 0 && r.ammoUsed === 1, 'megaphone pushes without damage: ' + JSON.stringify(r));
+    else if (r.smoke) t.assert(r.smokes >= 1 || r.ammoUsed >= 1, id + ' poured smoke: ' + JSON.stringify(r));
     else t.assert(r.dmg > 0, id + ' hurt the ped: ' + JSON.stringify(r));
     if (id !== 'fist') t.assert(r.held, id + ' mesh is in the hand');
-    if (id !== 'fist' && id !== 'tableleg') t.assert(r.ammoUsed >= 1, id + ' spent ammo: ' + JSON.stringify(r));
+    if (!r.melee) t.assert(r.ammoUsed >= 1, id + ' spent ammo: ' + JSON.stringify(r));
     if (r.mag) t.assert(r.mag[1] < r.mag[0], id + ' spent its magazine: ' + JSON.stringify(r.mag));
     t.assert(r.errors === 0, id + ' left no errors');
   }
-  t.assert(arsenal.tableleg.dmg >= 28, 'the table leg hits for 28: ' + arsenal.tableleg.dmg);
+  t.assert(Object.keys(arsenal).length >= 32, 'the arsenal has 32+ weapons: ' + Object.keys(arsenal).length);
+  t.assert(arsenal.tableleg.dmg >= 32, 'the table leg hits for 32: ' + arsenal.tableleg.dmg);
   t.assert(arsenal.revolver.down, 'a Rebuttal body hit floors the ped');
   t.assert(arsenal.hotmic.dmg >= 25 && arsenal.hotmic.down, 'the hot mic blast hurt and floored the ped: ' + JSON.stringify(arsenal.hotmic));
   t.assert(arsenal.ratio.dmg >= 100, 'the rocket blast hit for triple digits: ' + arsenal.ratio.dmg);
@@ -497,9 +502,18 @@ H.run('combat', async (t) => {
     const o = { x: p.x, y: p.y + 1.3, z: p.z };
     const at = (y) => { const dx = ped.x - o.x, dy = ped.y + y - o.y, dz = ped.z - o.z, l = Math.hypot(dx, dy, dz); return CB.debug.trace(o, { x: dx / l, y: dy / l, z: dz / l }, 20, p); };
     const raw = { head: at(1.55).zone, torso: at(1.0).zone, legs: at(0.3).zone, hitPed: at(1.0).entity === ped };
-    // through the sight: find the pitch that rests the crosshair on each zone, then one shot each
+    // through the sight: find the pitch that rests the crosshair on each zone, then one shot each (the aim assist off: it would pull
+    // the sight onto the chest)
+    CB.setAimAssist(false); const hs0 = p.stats.headshots || 0;
     const marks = []; GTP.Events.on('hitmarker', (e) => marks.push({ zone: e.zone, kill: e.kill }));
-    const find = (zone) => { for (let pitch = -0.1; pitch < 0.45; pitch += 0.004) { R.pitch = pitch; R.snap(); GTP.game.advance(1 / 60); if (CB.aim.hover === ped && CB.aim.zone === zone && CB.aim.point && CB.aim.point.entity === ped && Math.abs(CB.aim.point.z - ped.z) < 0.3) return pitch; } return null; };
+    // every pitch that rests the sight on the zone; the middle one (the shot leaves along the sight line, spread and all)
+    const find = (zone) => {
+      const ok = [];
+      for (let pitch = -0.1; pitch < 0.45; pitch += 0.004) { R.pitch = pitch; R.snap(); GTP.game.advance(1 / 60); if (CB.aim.hover === ped && CB.aim.zone === zone && CB.aim.point && CB.aim.point.entity === ped && Math.abs(CB.aim.point.z - ped.z) < 0.5) ok.push(pitch); }
+      if (!ok.length) return null;
+      const mid = ok[Math.floor(ok.length / 2)]; R.pitch = mid; R.snap(); GTP.game.advance(1 / 60); GTP.game.advance(1 / 60);
+      return mid;
+    };
     GTP.Input.set('aim', true); GTP.game.advance(0.2);
     const shoot = (zone) => {
       const pitch = find(zone); if (pitch == null) return { zone, pitch: null };
@@ -516,7 +530,8 @@ H.run('combat', async (t) => {
     ped.hp = 30; const hudBefore = CB.hud().hitmark;
     const kill = shoot('torso'); kill.alive = ped.alive; kill.hud = CB.hud().hitmark; kill.marks = marks.slice();
     GTP.Input.set('aim', false); GTP.game.advance(0.1);
-    return { raw, head, torso, legs, rev, kill, hudBefore };
+    CB.setAimAssist(true);
+    return { raw, head, torso, legs, rev, kill, hudBefore, headshots: (p.stats.headshots || 0) - hs0 };
   }, { EAST, spot });
   console.log('  zones: ' + JSON.stringify(zones));
   t.assert(zones.raw.head === 'head' && zones.raw.torso === 'torso' && zones.raw.legs === 'legs' && zones.raw.hitPed, 'the trace reports head / torso / legs zones: ' + JSON.stringify(zones.raw));
@@ -526,6 +541,7 @@ H.run('combat', async (t) => {
   t.assert(zones.rev.dmg === 120, 'the Rebuttal head shot is x3 (120): ' + zones.rev.dmg);
   t.assert(!zones.kill.alive && zones.kill.hud && zones.kill.hud.kill && zones.kill.texts.indexOf('RATIO\'D') >= 0, 'the kill confirm: hud hitmark kill + RATIO\'D over the victim: ' + JSON.stringify(zones.kill.hud));
   t.assert(zones.kill.marks.length >= 5 && zones.kill.marks[0].zone === 'head' && zones.kill.marks[zones.kill.marks.length - 1].kill, 'hitmarker events carry the zone and the kill: ' + JSON.stringify(zones.kill.marks));
+  t.assert(zones.headshots === 2, 'stats.headshots counts the head hits (QA CMB-14): ' + zones.headshots);
 
   // ---- 14. the hot mic: it bounces, the ON AIR cap blinks, the fuse blasts peds and wrecks a van ----
   const mic = await page.evaluate(({ EAST, spot }) => {
@@ -626,7 +642,8 @@ H.run('combat', async (t) => {
     const zoomed = { zoom: CB.scope.zoom, fov: +R.camera.fov.toFixed(1), weapon: p.weapon };
     // a scoped shot hits at 40 m
     const hp0 = ped.hp; R.rig.pitch = 0.0; R.rig.snap();
-    let hit = 0; for (let k = -0.06; k <= 0.06 && !hit; k += 0.004) { R.rig.pitch = k; R.rig.snap(); GTP.game.advance(1 / 60); if (CB.aim.hover === ped) hit = 1; }
+    const ks = []; for (let k = -0.06; k <= 0.08; k += 0.002) { R.rig.pitch = k; R.rig.snap(); GTP.game.advance(1 / 60); if (CB.aim.hover === ped) ks.push(k); }
+    let hit = ks.length ? 1 : 0; if (hit) { R.rig.pitch = ks[Math.floor(ks.length / 2)]; R.rig.snap(); GTP.game.advance(1 / 60); GTP.game.advance(1 / 60); }   // the middle of the body
     const range = Math.round(CB.scope.range);
     GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(0.2);
     const shot = { hovered: hit, range, dmg: +(hp0 - ped.hp).toFixed(1), casingsSoon: CB.debug.casings.list.length };
@@ -714,7 +731,7 @@ H.run('combat', async (t) => {
   }, { EAST, spot });
   console.log('  wheel: ' + JSON.stringify(wheel));
   t.assert(!wheel.tap.open && wheel.tap.weapon === 'fist' && wheel.tap.events === 0, 'a short Tab tap does not open the wheel');
-  t.assert(wheel.held.open && wheel.held.index === 0 && wheel.held.id === 'fist' && wheel.held.segments === 12 && wheel.held.owned.join(',') === 'fist,pistol,smg', 'holding Tab opens the twelve-segment wheel on the held weapon: ' + JSON.stringify(wheel.held));
+  t.assert(wheel.held.open && wheel.held.index === 0 && wheel.held.id === 'fist' && wheel.held.segments === 12 && wheel.held.owned.join(',') === 'fist,pistol,smg', 'holding Tab opens the twelve-slot wheel on the held weapon: ' + JSON.stringify(wheel.held));
   t.assert(wheel.slow > 0.1 && wheel.slow < 0.3, 'the world runs at about 0.2x while the wheel is open: ' + wheel.slow + ' s of a 1 s advance');
   t.assert(wheel.picked.index === 3 && wheel.picked.id === 'pistol' && wheel.picked.weaponStill === 'fist', 'the mouse picks the pistol segment without equipping yet: ' + JSON.stringify(wheel.picked));
   t.assert(!wheel.released.open && wheel.released.weapon === 'pistol' && Math.abs(wheel.normal - 0.5) < 0.02, 'release equips the pistol and time runs normally again: ' + JSON.stringify([wheel.released, wheel.normal]));
@@ -740,7 +757,7 @@ H.run('combat', async (t) => {
     buys.pellets = CB.shop.buy('clarity_pellets'); buys.hp = p.hp;
     buys.vest = CB.shop.buy('firmness_vest'); buys.armor = p.armor; buys.moneyAfter = p.money;
     p.money = 10; buys.poor = CB.shop.buy('ammo_pistol');
-    CB.shop.discountHook = () => 0.5; const disc = CB.shop.items().filter((i) => i.id === 'pistol')[0].price; CB.shop.discountHook = null;
+    const XS = GTP.Content.expansion.shop, d0 = XS.discount; XS.discount = () => 0.5; const disc = CB.shop.items().filter((i) => i.id === 'pistol')[0].price; XS.discount = d0;
     const flagshipRefusal = CB.shop.buy('range_reset').reason;   // the shop is not open: no flagship
     // the door marker (the store's green light, 3.2 m along the wall from the door so a mission light can hold the door itself):
     // stand in it on foot for half a second
@@ -767,8 +784,300 @@ H.run('combat', async (t) => {
   t.assert(shop.entry.opened.length === 1 && shop.entry.opened[0] === shop.lmId && shop.entry.state.open && shop.entry.state.landmark === shop.lmId, 'standing in the door marker opens the shop (shop:open): ' + JSON.stringify(shop.entry));
   t.assert(shop.range && shop.reopen === 1 && shop.reopened === 2, 'the range reset sells at the flagship; the marker re-arms only after leaving it: ' + JSON.stringify([shop.range, shop.reopen, shop.reopened]));
 
+  // ================================================================ v0.3 shooting track ====
+  // ---- 20. QA round 1, the shop: ammo needs the weapon (STR-09 / CMB-02), weapon starts (STR-14), the rampage_king cap (STR-15),
+  // one discount rule (STR-08) ----
+  const qashop = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat, Ms = GTP.Missions.state;
+    T_.setup(spot, EAST); GTP.AI.wanted.clear(); CB.syncArsenal();
+    ['m13_thursday', 'm12b_scope', 'm09_balloon', 'm09b_hotmic', 'm03_ratio', 'm03b_range', 'm08b_jets'].forEach((id) => Ms.completed.add(id));
+    const out = {};
+    p.weapons = { fist: Infinity }; p.ammo = {}; p.money = 20000;
+    out.ratioAmmo = CB.shop.buy('ammo_ratio').reason; out.sniperAmmo = CB.buy('ammo_sniper').reason;
+    out.after = { ratio: p.weapons.ratio || 0, sniper: p.weapons.sniper || 0, money: p.money };
+    const it = CB.shop.items('ammo').filter((i) => i.id === 'ammo_rifle')[0], ci = CB.catalog().filter((i) => i.id === 'ammo_rifle')[0];
+    out.item = { canBuy: it.canBuy, needs: it.needsWeapon, locked: ci.locked, reason: ci.lockReason };
+    p.weapons = { fist: Infinity }; p.ammo = {}; p.money = 20000;
+    CB.shop.buy('megaphone'); CB.shop.buy('hottake'); CB.shop.buy('hotmic');
+    out.starts = { megaphone: p.weapons.megaphone, hottake: p.weapons.hottake, hotmic: p.weapons.hotmic };
+    p.weapons = { fist: Infinity, pistol: 132 }; p.ammo = {};
+    out.full = CB.shop.buy('ammo_pistol').reason;
+    Ms.flags.rampage_king = true; out.king = CB.shop.buy('ammo_pistol').ok; out.kingAmmo = p.weapons.pistol; out.kingCap = CB.ammoCap(p, 'pistol'); delete Ms.flags.rampage_king;
+    out.cap = CB.ammoCap(p, 'pistol');
+    Ms.flags.memo_discount = true; out.memo = CB.shop.discount();
+    Ms.flags.sponsor_discount = true; out.both = CB.shop.discount(); delete Ms.flags.memo_discount;
+    out.tier = CB.shop.discount(); delete Ms.flags.sponsor_discount;
+    out.none = CB.shop.discount();
+    return out;
+  }, { EAST, spot });
+  console.log('  qa shop: ' + JSON.stringify(qashop));
+  t.assert(qashop.ratioAmmo === 'notOwned' && qashop.sniperAmmo === 'notOwned' && qashop.after.ratio === 0 && qashop.after.sniper === 0 && qashop.after.money === 20000, 'ammo for an unowned weapon is refused and gives nothing (STR-09 / CMB-02): ' + JSON.stringify(qashop));
+  t.assert(!qashop.item.canBuy && qashop.item.needs && qashop.item.locked && /Buy the weapon first/.test(qashop.item.reason), 'the ammo row is greyed with a reason: ' + JSON.stringify(qashop.item));
+  t.assert(qashop.starts.megaphone === 20 && qashop.starts.hottake === 3 && qashop.starts.hotmic === 1, 'weapon purchases give a sensible start (STR-14): ' + JSON.stringify(qashop.starts));
+  t.assert(qashop.full === 'full' && qashop.king && qashop.kingAmmo === 156 && qashop.kingCap === 192 && qashop.cap === 132, 'rampage_king raises the reserve cap by half (STR-15): ' + JSON.stringify(qashop));
+  t.assert(Math.abs(qashop.memo - 0.15) < 1e-9 && Math.abs(qashop.both - 0.4) < 1e-9 && Math.abs(qashop.tier - 0.25) < 1e-9 && qashop.none === 0, 'discounts count once: memos 15%, tier 3 25%, both 40% (STR-08): ' + JSON.stringify([qashop.memo, qashop.tier, qashop.both]));
+
+  // ---- 21. QA round 1, combat ----
+  const qa = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat, out = {};
+    const fresh = (id, n) => { T_.setup(spot, EAST); GTP.AI.wanted.clear(); p.weapons = { fist: Infinity }; p.ammo = {}; p.weapon = 'fist'; if (id) GTP.game.debug.giveWeapon(id, n); GTP.game.advance(0.1); };
+    const thug = (dx, dz, hp) => { const e = T_.freeze(GTP.game.debug.spawnPed(spot.x + dx, spot.z + dz, null, 'thug')); e.hostile = true; e.yaw = Math.PI / 2; if (hp) e.hp = e.maxHp = hp; return e; };
+    // CMB-04: the muzzle light is in the scene at rest
+    out.light = { exists: !!GTP.Render.muzzleLight, inScene: !!(GTP.Render.muzzleLight && GTP.Render.muzzleLight.parent), intensity: GTP.Render.muzzleLight ? GTP.Render.muzzleLight.intensity : null };
+    // CMB-03: tapping fire 30 times in a second throws at most two mics
+    fresh('hotmic', 8); GTP.game.advance(2);
+    const m0 = p.weapons.hotmic;
+    for (let i = 0; i < 30; i++) { GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(1 / 60); }
+    out.micTaps = m0 - p.weapons.hotmic; GTP.game.advance(4); p.hp = p.maxHp;
+    // CMB-05: a parked van on the sight line and a bystander 17 degrees off: the van takes the shots
+    fresh('pistol', 40);
+    const van = GTP.game.debug.spawnVehicle(spot.x + 8, spot.z + 0.7, 'van', { yaw: 0 }); const civ = T_.freeze(GTP.game.debug.spawnPed(spot.x + 10, spot.z - 3.2, null, 'civ'));
+    GTP.Render.rig.yaw = EAST; GTP.Render.rig.pitch = 0.12; GTP.Render.rig.snap(); GTP.game.advance(0.1);
+    const vh0 = van.hp, ch0 = civ.hp;
+    GTP.Input.set('aim', true); GTP.game.advance(0.4);
+    out.lockCiv = p.lockTarget === civ;
+    for (let i = 0; i < 3; i++) { GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(0.35); }
+    GTP.Input.set('aim', false); GTP.game.advance(0.1);
+    out.cmb05 = { van: +(vh0 - van.hp).toFixed(1), civ: +(ch0 - civ.hp).toFixed(1), wanted: p.wanted };
+    van.destroy(); civ.destroy(); GTP.AI.wanted.clear();
+    // CMB-08: a dropped pistol tops up to the cap and does not take the SMG out of the hand
+    fresh('pistol', 132); GTP.game.debug.giveWeapon('smg', 60);
+    GTP.Combat.spawnPickup({ type: 'weapon', weaponId: 'pistol', ammo: 12, x: p.x + 1.5, z: p.z }); GTP.Input.set('forward', true); GTP.game.advance(0.6); GTP.Input.set('forward', false);
+    out.cmb08 = { weapon: p.weapon, pistol: p.weapons.pistol };
+    GTP.Combat.spawnPickup({ type: 'weapon', weaponId: 'shotgun', ammo: 6, x: p.x + 1.5, z: p.z }); GTP.Input.set('forward', true); GTP.game.advance(0.6); GTP.Input.set('forward', false);
+    out.cmb08.newGun = p.weapon;
+    // CMB-11: an explosive kill gives a hit marker, the kill confirm and the kill stat
+    fresh('hottake', 3);
+    const weak = thug(8, 0, 10); const marks = []; const h = (e) => marks.push(e.kill); GTP.Events.on('hitmarker', h);
+    const k0 = p.stats.kills || 0, c0 = GTP.Audio.counts.confirm || 0;
+    GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(2);
+    GTP.Events.off('hitmarker', h);
+    out.cmb11 = { alive: weak.alive, kill: marks.indexOf(true) >= 0, kills: (p.stats.kills || 0) - k0, confirm: (GTP.Audio.counts.confirm || 0) - c0 };
+    // CMB-14 / CMB-15: two shotgun volleys are two shots and two hits; one volley at 4 m drops a 60 hp thug
+    fresh('shotgun', 20); GTP.game.advance(1);
+    const sg = thug(4, 0, 1000); const s0 = p.stats.shots || 0, h0 = p.stats.hits || 0;
+    GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(1.0);
+    GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(0.2);
+    out.cmb14 = { shots: (p.stats.shots || 0) - s0, hits: (p.stats.hits || 0) - h0 };
+    sg.destroy(); GTP.game.advance(1);
+    const sg2 = thug(4, 0, 60); GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(0.1);
+    out.cmb15 = { alive: sg2.alive, hp: +sg2.hp.toFixed(1) };
+    // CMB-16: the table leg kills a 60 hp thug in two swings, without sliding him out of reach first
+    fresh('tableleg', Infinity);
+    const tl = thug(1.4, 0, 60); let maxD = 0, t16 = -1;
+    GTP.Input.set('shoot', true);
+    for (let i = 0; i < 300 && tl.alive; i++) { GTP.game.advance(1 / 60); maxD = Math.max(maxD, Math.hypot(tl.x - p.x, tl.z - p.z)); if (!tl.alive) t16 = i / 60; }
+    GTP.Input.set('shoot', false); GTP.game.advance(0.3);
+    out.cmb16 = { dead: !tl.alive, at: t16, maxD: +maxD.toFixed(2) };
+    // CMB-01: a direct rocket hit on a stopped van is a 'ratio' vehicle:damage (missions credit the weapon)
+    fresh('ratio', 3);
+    const rv = GTP.game.debug.spawnVehicle(spot.x + 14, spot.z + 0.8, 'van', { yaw: 0 });
+    const rd = GTP.game.debug.spawnPed(spot.x + 14, spot.z + 3, null, 'thug'); rd.hostile = true; rv.enter(rd, 0); T_.freeze(rd);
+    const vd = []; const hv = (e) => { if (e.vehicle === rv) vd.push(e.type); }; GTP.Events.on('vehicle:damage', hv);
+    GTP.Render.rig.yaw = EAST; GTP.Render.rig.pitch = 0.1; GTP.Render.rig.snap();
+    GTP.Input.set('aim', true); GTP.game.advance(0.5); GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(1.2); GTP.Input.set('aim', false);
+    GTP.Events.off('vehicle:damage', hv);
+    out.cmb01 = { types: vd, wreck: rv.wreck || rv.exploded };
+    GTP.game.advance(0.5); p.hp = p.maxHp;
+    // CMB-12: holding fire with a hot mic in a car spends one mic, never a second cook
+    fresh('hotmic', 4);
+    const car = GTP.game.debug.spawnVehicle(spot.x + 1.5, spot.z, 'sedan', { yaw: EAST }); GTP.game.advance(0.1); p.enterVehicle(car, 0); GTP.game.advance(1.0);
+    const mc0 = p.weapons.hotmic; GTP.Input.set('shoot', true); GTP.game.advance(2.8); GTP.Input.set('shoot', false); GTP.game.advance(0.2);
+    out.cmb12 = { spent: mc0 - (p.weapons.hotmic || 0), inCar: !!p.inVehicle };
+    if (p.inVehicle) p.exitVehicle(); GTP.game.advance(3); if (!p.alive || GTP.game.state !== 'playing') { let g = 0; while (GTP.game.state !== 'playing' && g++ < 40) GTP.game.advance(0.25); } p.hp = p.maxHp;
+    // QA-C1-01: four goons punching the whole time take a while to put a passive player down (two swing at once, wind-ups, cooldowns)
+    fresh(null);
+    const goons = [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]].map(([dx, dz]) => { const g = T_.freeze(GTP.game.debug.spawnPed(p.x + dx, p.z + dz, null, 'thug')); g.hostile = true; g.aimTarget = p; return g; });
+    let maxWind = 0, firstHit = -1; const hp0 = p.hp;
+    for (let i = 0; i < 300; i++) {
+      goons.forEach((g) => { if (g.alive) CB.fire(g, 'fist'); });
+      GTP.game.advance(1 / 60);
+      const wind = goons.filter((g) => g._melee && g._melee.t < g._melee.at).length; maxWind = Math.max(maxWind, wind);
+      if (firstHit < 0 && p.hp < hp0) firstHit = i / 60;
+    }
+    out.c101 = { hp: Math.round(p.hp), maxWind, firstHit, alive: p.alive };
+    goons.forEach((g) => g.destroy()); p.hp = p.maxHp;
+    return out;
+  }, { EAST, spot });
+  console.log('  qa combat: ' + JSON.stringify(qa));
+  t.assert(qa.light.exists && qa.light.inScene && qa.light.intensity === 0, 'the muzzle light lives in the scene at rest (CMB-04): ' + JSON.stringify(qa.light));
+  t.assert(qa.micTaps >= 1 && qa.micTaps <= 2, 'thirty taps throw one or two hot mics (CMB-03): ' + qa.micTaps);
+  t.assert(!qa.lockCiv && qa.cmb05.van > 0 && qa.cmb05.civ === 0, 'the shots hit the van under the crosshair, not the bystander off to the side (CMB-05): ' + JSON.stringify(qa.cmb05));
+  t.assert(qa.cmb08.weapon === 'smg' && qa.cmb08.pistol === 132 && qa.cmb08.newGun === 'shotgun', 'a dropped gun tops up to the cap and leaves the held SMG alone; a new gun is equipped (CMB-08): ' + JSON.stringify(qa.cmb08));
+  t.assert(!qa.cmb11.alive && qa.cmb11.kill && qa.cmb11.kills === 1 && qa.cmb11.confirm >= 1, 'an explosive kill gives the marker, the confirm and the stat (CMB-11): ' + JSON.stringify(qa.cmb11));
+  t.assert(qa.cmb14.shots === 2 && qa.cmb14.hits === 2, 'shotgun volleys count one shot and one hit each (CMB-14): ' + JSON.stringify(qa.cmb14));
+  t.assert(!qa.cmb15.alive, 'one shotgun volley at 4 m drops a 60 hp ped (CMB-15): ' + JSON.stringify(qa.cmb15));
+  t.assert(qa.cmb16.dead && qa.cmb16.at < 2.2 && qa.cmb16.maxD < 3, 'the table leg finishes a 60 hp ped in two swings without the flip slide (CMB-16): ' + JSON.stringify(qa.cmb16));
+  t.assert(qa.cmb01.types.indexOf('ratio') >= 0 && qa.cmb01.wreck, 'a direct rocket hit reports vehicle:damage with the ratio (CMB-01): ' + JSON.stringify(qa.cmb01));
+  t.assert(qa.cmb12.spent === 1, 'holding fire in a car spends one hot mic (CMB-12): ' + JSON.stringify(qa.cmb12));
+  t.assert(qa.c101.alive && qa.c101.hp >= 45 && qa.c101.hp < 100 && qa.c101.maxWind <= 2 && qa.c101.firstHit >= 0.3, 'four goons punch with wind-ups, two at a time: a passive player lives 5 s (QA-C1-01): ' + JSON.stringify(qa.c101));
+
+  // ---- 22. the arsenal from GTP.Content.parity.weapons: new ids join, known ids take the numbers, unknown ids get a class mesh ----
+  const parity = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat, C = GTP.Content, A = GTP.Assets;
+    const P = C.parity = C.parity || {}, saved = P.weapons, pistol0 = CB.WEAPONS.pistol;
+    P.weapons = [
+      { id: 'pistol', name: 'Pistol', class: 'pistol', dmg: 19, rate: 4, mag: 12, reserve: 120, reload: 1.2, spread: 0.012, bloom: { add: 0.008, max: 0.04, decay: 0.1 }, recoil: 1.2, range: 35, projectile: 'hitscan', hold: 'one', price: 450, unlock: { mission: 'm03b_range' }, attachments: ['muzzle', 'mag'], flavor: 'Four fifty.' },
+      { id: 'zz_testcarbine', name: 'The Fact Sheet', class: 'rifle', dmg: 25, rate: 6, mag: 30, reserve: 120, reload: 2, spread: 0.02, bloom: { add: 0.005, max: 0.05, decay: 0.1 }, recoil: 0.5, range: 50, projectile: 'hitscan', hold: 'two', price: 1234, unlock: null, attachments: ['muzzle', 'optic'], flavor: 'One page. Bullet points.' },
+      { id: 'zz_testlobber', name: 'The Pull Quote', class: 'heavy', dmg: 80, rate: 1, mag: 4, reserve: 12, reload: 3, spread: 0, recoil: 3, range: 30, projectile: 'lobbed', hold: 'two', price: 4000, unlock: { mission: 'm14_grift' }, attachments: [], flavor: 'Out of context, on impact.' }
+    ];
+    CB.syncArsenal();
+    const W = CB.WEAPONS, c = W.zz_testcarbine, l = W.zz_testlobber;
+    const out = { carbine: c ? { cls: c.cls, slot: c.slot, mag: c.mag, auto: c.auto, hold: CB.holdOf('zz_testcarbine') } : null, lobber: l ? { cls: l.cls, slot: l.slot, lobbed: l.lobbed, impact: l.impact, unlock: CB.UNLOCK.zz_testlobber } : null,
+      pistol: { dmg: W.pistol.dmg, driveBy: W.pistol.driveBy, mag: W.pistol.mag, attachments: W.pistol.attachments }, order: CB.ORDER.indexOf('zz_testcarbine') > 0,
+      mesh: !!A.weaponMesh('zz_testcarbine'), fit: A.weaponFitFor('zz_testcarbine') && A.weaponFitFor('zz_testcarbine').hold, lobMesh: !!A.weaponMesh('zz_testlobber') };
+    const cat = CB.catalog();
+    const ci = cat.filter((i) => i.id === 'zz_testcarbine')[0];
+    out.cat = ci ? { price: ci.price, kind: ci.kind, stats: !!ci.stats } : null;
+    out.slots = cat.filter((i) => i.weaponId === 'zz_testcarbine' && i.kind === 'attachment').map((i) => i.slot).filter((v, i, a) => a.indexOf(v) === i).sort();
+    out.lobLocked = (cat.filter((i) => i.id === 'zz_testlobber')[0] || {}).locked;
+    // it fires and hurts
+    T_.setup(spot, EAST); GTP.AI.wanted.clear(); p.weapons = { fist: Infinity }; p.ammo = {};
+    GTP.game.debug.giveWeapon('zz_testcarbine', 30);
+    const e = T_.freeze(GTP.game.debug.spawnPed(spot.x + 8, spot.z, null, 'thug')); e.hostile = true; e.hp = e.maxHp = 1000;
+    GTP.game.advance(0.1); GTP.Input.set('shoot', true); GTP.game.advance(0.5); GTP.Input.set('shoot', false); GTP.game.advance(0.2);
+    out.fired = { dmg: 1000 - e.hp, held: !!p._held };
+    // put the table back
+    P.weapons = saved; delete W.zz_testcarbine; delete W.zz_testlobber; W.pistol = pistol0; CB.debug.arsenal.sig = null; CB.syncArsenal();
+    out.restored = { order: CB.ORDER.indexOf('zz_testcarbine'), pistol: CB.WEAPONS.pistol.dmg };
+    return out;
+  }, { EAST, spot });
+  console.log('  parity: ' + JSON.stringify(parity));
+  t.assert(parity.carbine && parity.carbine.cls === 'rifle' && parity.carbine.slot === 6 && parity.carbine.mag === 30 && parity.carbine.auto && parity.carbine.hold === 'two' && parity.order, 'a parity rifle joins the arsenal in the rifle slot: ' + JSON.stringify(parity.carbine));
+  t.assert(parity.lobber && parity.lobber.cls === 'launcher' && parity.lobber.lobbed && parity.lobber.impact && parity.lobber.unlock === 'm14_grift' && parity.lobLocked, 'a parity heavy lobber becomes an impact launcher, locked by its mission: ' + JSON.stringify(parity.lobber));
+  t.assert(parity.pistol.dmg === 19 && parity.pistol.driveBy && parity.pistol.mag === 12 && parity.pistol.attachments.join() === 'muzzle,mag', 'a known id takes the parity numbers and keeps its engine fields: ' + JSON.stringify(parity.pistol));
+  t.assert(parity.mesh && parity.lobMesh && parity.fit === 'two', 'unknown ids get a mesh of their class: ' + JSON.stringify(parity));
+  t.assert(parity.cat && parity.cat.price === 1234 && parity.cat.kind === 'weapon' && parity.slots.join() === 'muzzle,optic', 'the catalog sells it with its own attachment slots: ' + JSON.stringify([parity.cat, parity.slots]));
+  t.assert(parity.fired.dmg > 0 && parity.fired.held, 'it fires from the hand: ' + JSON.stringify(parity.fired));
+  t.assert(parity.restored.order < 0 && parity.restored.pistol === 18, 'the table is restored: ' + JSON.stringify(parity.restored));
+
+  // ---- 23. the catalog and buy(): attachments and tints change the numbers and the mesh ----
+  const mods = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat, Ms = GTP.Missions.state, out = {};
+    T_.setup(spot, EAST); GTP.AI.wanted.clear();
+    p.weapons = { fist: Infinity }; p.ammo = {}; p.weapon = 'fist'; p.money = 50000; p.weaponMods = {}; p.weaponModsOwned = {};
+    Ms.completed.add('m08b_jets');
+    const cat0 = CB.catalog('both_sides_strip');
+    out.kinds = ['weapon', 'ammo', 'attachment', 'tint', 'gear'].map((k) => cat0.filter((i) => i.kind === k).length);
+    out.weapons = cat0.filter((i) => i.kind === 'weapon').length;
+    const sup0 = cat0.filter((i) => i.id === 'att_rifle_muzzle_suppressor')[0];
+    out.before = { locked: sup0.locked, reason: sup0.lockReason, buy: CB.buy('att_rifle_muzzle_suppressor').reason, keys: Object.keys(sup0).sort().join(',') };
+    out.rifle = CB.buy('rifle').ok;
+    const base = CB.weaponStats('rifle', p), money0 = p.money;
+    const r1 = CB.buy('att_rifle_muzzle_suppressor');
+    out.sup = { ok: r1.ok, equipped: r1.equipped, mod: p.weaponMods.rifle.muzzle, paid: money0 - p.money, range: [base.range, CB.weaponStats('rifle', p).range] };
+    const r2 = CB.buy('att_rifle_mag_extended'); out.mag = { ok: r2.ok, magSize: CB.hud().weapon.magSize };
+    GTP.game.debug.giveWeapon('rifle', 60); p.weapon = 'rifle'; GTP.game.advance(0.1);
+    out.mag.mag = CB.ammo(p, 'rifle').mag;
+    const r3 = CB.buy('tint_rifle_gold'); out.tint = { ok: r3.ok, tint: p.weaponMods.rifle.tint };
+    GTP.game.render();
+    const kids = []; if (p._held) p._held.traverse((o) => { if (o.userData.attachment) kids.push(o.userData.attachment); });
+    out.mesh = { sig: p._heldSig, kids: kids.sort().join(',') };
+    const m0 = p.money, r4 = CB.buy('att_rifle_muzzle_suppressor');
+    out.toggle = { ok: r4.ok, price: r4.price, paid: m0 - p.money, equipped: r4.equipped, mod: p.weaponMods.rifle.muzzle };
+    CB.buy('att_rifle_muzzle_suppressor', { equip: true });
+    // a suppressed shot: no muzzle light, a quiet report
+    const shots0 = GTP.Audio.counts.shot || 0; GTP.game.advance(0.3);
+    GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false);
+    out.quiet = { light: GTP.Render.muzzleLight.intensity, shot: (GTP.Audio.counts.shot || 0) - shots0 };
+    out.pistolScope = CB.catalog().filter((i) => i.weaponId === 'pistol' && i.variant === 'scope').length;
+    out.saved = GTP.SaveRegistry && GTP.SaveRegistry.combat ? Object.keys(GTP.SaveRegistry.combat.get()).join(',') : 'no registry';
+    GTP.game.advance(0.5);
+    return out;
+  }, { EAST, spot });
+  console.log('  mods: ' + JSON.stringify(mods));
+  t.assert(mods.kinds.every((n) => n > 0) && mods.weapons >= 32, 'the catalog lists weapons, ammo, attachments, tints and gear: ' + JSON.stringify(mods.kinds));
+  t.assert(mods.before.locked && /Buy the weapon first/.test(mods.before.reason) && mods.before.buy === 'notOwned', 'an attachment needs the weapon: ' + JSON.stringify(mods.before));
+  t.assert(['equipped', 'id', 'kind', 'lockReason', 'locked', 'name', 'owned', 'price', 'stats', 'weaponId'].every((k) => mods.before.keys.indexOf(k) >= 0), 'catalog items carry the plan\'s fields: ' + mods.before.keys);
+  t.assert(mods.rifle && mods.sup.ok && mods.sup.equipped && mods.sup.mod === 'suppressor' && mods.sup.paid > 0 && mods.sup.range[1] < mods.sup.range[0], 'the suppressor buys, equips and costs range: ' + JSON.stringify(mods.sup));
+  t.assert(mods.mag.ok && mods.mag.magSize === 45 && mods.mag.mag === 45, 'the extended magazine holds 45: ' + JSON.stringify(mods.mag));
+  t.assert(mods.tint.ok && mods.tint.tint === 'gold' && /gold/.test(mods.mesh.sig) && /muzzle:suppressor/.test(mods.mesh.kids) && /mag:extended/.test(mods.mesh.kids), 'the tint and the attachments are on the held mesh: ' + JSON.stringify(mods.mesh));
+  t.assert(mods.toggle.ok && mods.toggle.price === 0 && mods.toggle.paid === 0 && !mods.toggle.equipped && mods.toggle.mod === null, 'an owned attachment toggles for free: ' + JSON.stringify(mods.toggle));
+  t.assert(mods.quiet.light === 0 && mods.quiet.shot === 0, 'a suppressed shot lights nothing and makes no loud report: ' + JSON.stringify(mods.quiet));
+  t.assert(mods.pistolScope === 0, 'a pistol takes the dot, not the long scope');
+
+  // ---- 24. the pose contract on every ped, every step ----
+  const pose = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat, out = {};
+    const KEYS = ['aim', 'aimPitch', 'aimYaw', 'fire', 'reload', 'melee', 'cover', 'hold', 'weaponId', 'drive', 'ride', 'swim', 'fall', 'ragdoll'];
+    T_.setup(spot, EAST); GTP.AI.wanted.clear(); p.weapons = { fist: Infinity }; p.ammo = {}; p.weaponMods = {};
+    GTP.game.debug.giveWeapon('rifle', 60); GTP.game.advance(0.1);
+    const ped = T_.freeze(GTP.game.debug.spawnPed(spot.x + 6, spot.z + 3, null, 'civ')); GTP.game.advance(1 / 60);
+    out.keys = KEYS.filter((k) => !(k in p.pose)); out.pedKeys = ped.pose ? KEYS.filter((k) => !(k in ped.pose)) : ['no pose'];
+    out.idle = { aim: p.pose.aim, hold: p.pose.hold, weaponId: p.pose.weaponId, reload: p.pose.reload, melee: p.pose.melee, cover: p.pose.cover };
+    GTP.Render.rig.pitch = -0.05; GTP.Input.set('aim', true); GTP.game.advance(0.4); out.aiming = { aim: p.pose.aim, pitch: +p.pose.aimPitch.toFixed(2) };
+    GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); out.fire = +p.pose.fire.toFixed(3);
+    GTP.Input.set('aim', false); GTP.game.advance(0.1);
+    GTP.Input.set('reload', true); GTP.game.advance(1 / 60); GTP.Input.set('reload', false); GTP.game.advance(0.5); out.reload = p.pose.reload;
+    GTP.game.advance(2);
+    p.knockDown(4, 0, 0, null, 'test'); GTP.game.advance(0.1); out.rag = p.pose.ragdoll ? Object.keys(p.pose.ragdoll).sort().join(',') : null; GTP.game.advance(3);
+    const car = GTP.game.debug.spawnVehicle(p.x + 2, p.z, 'sedan', { yaw: EAST }); GTP.game.advance(0.1); p.enterVehicle(car, 0); GTP.game.advance(1);
+    out.drive = p.pose.drive; p.exitVehicle(); GTP.game.advance(0.4); out.out = p.pose.drive;
+    p.weapon = 'fist'; GTP.game.advance(0.1); out.fist = p.pose.hold;
+    return out;
+  }, { EAST, spot });
+  console.log('  pose: ' + JSON.stringify(pose));
+  t.assert(pose.keys.length === 0 && pose.pedKeys.length === 0, 'ped.pose carries every field of the contract (player and peds): ' + JSON.stringify([pose.keys, pose.pedKeys]));
+  t.assert(!pose.idle.aim && pose.idle.hold === 'two' && pose.idle.weaponId === 'rifle' && pose.idle.reload === null && pose.idle.melee === null && pose.idle.cover === null, 'idle with a rifle: ' + JSON.stringify(pose.idle));
+  t.assert(pose.aiming.aim && pose.aiming.pitch > 0 && pose.fire < 0.05, 'aiming up: pose.aim, a positive aimPitch, fire resets on a shot: ' + JSON.stringify([pose.aiming, pose.fire]));
+  t.assert(pose.reload > 0.1 && pose.reload < 0.6 && pose.rag === 'spin,vx,vy,vz' && pose.drive && !pose.out && pose.fist === 'none', 'reload progress, ragdoll velocity, drive, an empty hold: ' + JSON.stringify(pose));
+
+  // ---- 25. holsters: the pistol on the hip, a long gun across the back; the held gun has hand targets ----
+  const holster = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat;
+    GTP.game.debug.setClock(15);
+    T_.setup(spot, EAST); GTP.AI.wanted.clear(); p.weapons = { fist: Infinity, pistol: 20, rifle: 30, ratio: 2 }; p.ammo = {}; p.weapon = 'fist'; p.weaponMods = {};
+    GTP.game.advance(0.2); GTP.game.render();
+    const out = { hip: p._holHId && p._holHId.split('|')[0], back: p._holBId && p._holBId.split('|')[0], held: !!p._held };
+    p.weapon = 'ratio'; GTP.game.advance(0.2); GTP.game.render();
+    out.withLauncher = { hip: p._holHId && p._holHId.split('|')[0], back: p._holBId && p._holBId.split('|')[0], held: p._heldId };
+    p.weapon = 'rifle'; GTP.Input.set('aim', true); GTP.game.advance(0.4); GTP.game.render();
+    const h = CB.handTargets(p); out.hands = h ? { left: !!h.left, raised: h.raised, d: +Math.hypot(h.right.x - h.left.x, h.right.y - h.left.y, h.right.z - h.left.z).toFixed(2) } : null;
+    GTP.Input.set('aim', false); p.weapon = 'fist'; GTP.game.advance(0.3);
+    const f = GTP.util.yawToDir(EAST); GTP.Render.freeCam(true); GTP.Render.camera.position.set(p.x - f.x * 2.2 - f.z * 1.0, p.y + 1.6, p.z - f.z * 2.2 + f.x * 1.0); GTP.Render.camera.lookAt(p.x, p.y + 1.0, p.z);
+    return out;
+  }, { EAST, spot });
+  await t.shot(page, 'combat_holsters');
+  await page.evaluate(() => { GTP.Render.freeCam(false); GTP.game.advance(0.1); });
+  console.log('  holsters: ' + JSON.stringify(holster));
+  t.assert(holster.hip === 'pistol' && holster.back === 'ratio' && !holster.held, 'with fists: the pistol on the hip, the most expensive long gun on the back: ' + JSON.stringify(holster));
+  t.assert(holster.withLauncher.held === 'ratio' && holster.withLauncher.back === 'rifle' && holster.withLauncher.hip === 'pistol', 'holding the launcher: the rifle moves to the back: ' + JSON.stringify(holster.withLauncher));
+  t.assert(holster.hands && holster.hands.left && holster.hands.raised && holster.hands.d > 0.15 && holster.hands.d < 0.7, 'a raised rifle gives the left hand a support point: ' + JSON.stringify(holster.hands));
+
+  // ---- 26. melee: a three-hit light combo floors, holding swings heavy, jump counters an incoming swing ----
+  const melee = await page.evaluate(({ EAST, spot }) => {
+    const p = GTP.game.player, CB = GTP.Combat, out = {};
+    T_.setup(spot, EAST); GTP.AI.wanted.clear(); p.weapons = { fist: Infinity }; p.ammo = {}; p.weapon = 'fist';
+    const ev = []; const h = (e) => { if (e.ped === p && e.phase === 'impact') ev.push(e.type + (e.type === 'light' ? ':' : '')); }; GTP.Events.on('melee', h);
+    const types = []; const hs = (e) => { if (e.ped === p && e.phase === 'start') types.push(e.type); }; GTP.Events.on('melee', hs);
+    const a = T_.freeze(GTP.game.debug.spawnPed(spot.x + 1.3, spot.z, null, 'thug')); a.hostile = true; a.hp = a.maxHp = 1000; a.yaw = Math.PI / 2;
+    GTP.game.advance(0.1);
+    const combos = [];
+    for (let i = 0; i < 3; i++) { GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false); GTP.game.advance(0.25); if (p._melee) combos.push(p._melee.combo); }
+    GTP.game.advance(0.4);
+    out.light = { types: types.slice(), combos, down: a.knockedDown, dmg: 1000 - a.hp };
+    GTP.game.advance(3); a.x = spot.x + 1.3; a.z = spot.z; p.yaw = EAST; types.length = 0;
+    GTP.Input.set('shoot', true); GTP.game.advance(1.0); GTP.Input.set('shoot', false); GTP.game.advance(0.6);
+    out.heavy = types.slice();
+    // the counter: a goon winds up, the player jumps inside the window
+    a.destroy(); GTP.game.advance(0.1);
+    const g = T_.freeze(GTP.game.debug.spawnPed(spot.x + 1.2, spot.z, null, 'thug')); g.hostile = true; g.aimTarget = p; g.hp = g.maxHp = 1000;
+    GTP.game.advance(0.1); const hp0 = p.hp; types.length = 0;
+    CB.fire(g, 'fist'); GTP.game.advance(0.2);
+    out.prompt = CB.hud().prompt;
+    GTP.Input.press('jump'); GTP.game.advance(1 / 60); GTP.game.advance(0.8);
+    out.counter = { types: types.slice(), hpLost: hp0 - p.hp, goonDown: g.knockedDown, jumped: !p.onGround && false };
+    GTP.Events.off('melee', h); GTP.Events.off('melee', hs);
+    g.destroy();
+    return out;
+  }, { EAST, spot });
+  console.log('  melee: ' + JSON.stringify(melee));
+  t.assert(melee.light.types.length === 3 && melee.light.types.every((x) => x === 'light') && melee.light.combos.join() === '0,1,2' && melee.light.down, 'three taps: jab, cross, hook; the hook floors: ' + JSON.stringify(melee.light));
+  t.assert(melee.heavy.indexOf('heavy') >= 0, 'holding the trigger swings heavy: ' + JSON.stringify(melee.heavy));
+  t.assert(melee.prompt === 'counter' && melee.counter.types.indexOf('counter') >= 0 && melee.counter.hpLost === 0 && melee.counter.goonDown, 'jump during a wind-up counters: no damage taken, the goon floored: ' + JSON.stringify([melee.prompt, melee.counter]));
+
   // ---- screenshots: every weapon in the hand (a free camera in front of the aim pose) ----
-  for (const id of ['tableleg', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'shotgun', 'sniper', 'hottake', 'hotmic', 'ratio']) {
+  for (const id of ['tableleg', 'bat', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'carbine', 'shotgun', 'doublebarrel', 'lmg', 'sniper', 'hottake', 'hotmic', 'ratio', 'spin']) {
     const held = await page.evaluate(({ EAST, spot, id }) => {
       const p = GTP.game.player, R = GTP.Render, U = GTP.util;
       GTP.game.debug.setClock(14);
