@@ -389,6 +389,20 @@ H.run('ai', async (t) => {
       out.race.hit = hit; out.race.at = [Math.round(rv.x), Math.round(rv.z)];
       D.release(rv); rv.destroy();
     }
+    // a gridlock cycle unwinds: two traffic cars nose to nose in one lane (a swerve gone wrong) back off and pass
+    const lane = W.landmark('vault_bank').door; const rp = W.nearestRoadPoint(lane.x + 30, lane.z);
+    g.debug.teleport(rp.x + 30, rp.z + 30); g.advance(0.2);
+    E.list.forEach((e) => { if (!e.removed && e.kind === 'vehicle' && !e.persistent && Math.hypot(e.x - rp.x, e.z - rp.z) < 40) e.destroy(); });
+    const lanes = [];
+    for (const sgn of [-1, 1]) {
+      const v = new GTP.Vehicle({ x: rp.x + rp.dx * sgn * 3.6, z: rp.z + rp.dz * sgn * 3.6, type: 'sedan' }); v.y = W.heightAt(v.x, v.z, 0); v.yaw = U.dirToYaw(-rp.dx * sgn, -rp.dz * sgn); v.snap(); E.add(v);
+      const d = AI.spawner.spawnPed(v.x, v.z, 'civ'); v.enter(d, 0); AI.drive(v, 'traffic'); lanes.push(v);
+    }
+    let grid = 0; GTP.Events.on('ai:gridlock', () => { grid++; });
+    const p0 = lanes.map((v) => [v.x, v.z]);
+    for (let i = 0; i < 40; i++) g.advance(0.5);
+    out.gridlock = { events: grid, moved: lanes.map((v, i) => Math.round(Math.hypot(v.x - p0[i][0], v.z - p0[i][1]))), gap: Math.round(Math.hypot(lanes[0].x - lanes[1].x, lanes[0].z - lanes[1].z)) };
+    lanes.forEach((v) => { if (v.driver) v.driver.destroy(); v.destroy(); });
     // motorcycles in traffic (a 'bike' stands in until the vehicles track registers 'moto'), taxis wear the pod wrap after cab_livery
     const share = GTP.Content.world.spawn.vehicles.motoShare || {};
     out.moto = { type: AI.spawner.vehicleType('moto'), has: !!GTP.C.VEHICLES.moto, districts: Object.keys(share).filter((k) => share[k] > 0).length };
@@ -412,6 +426,7 @@ H.run('ai', async (t) => {
   t.assert(v3.heli.shots >= 10 && v3.heli.hits >= 2, 'the helicopter gunner shoots and hits: ' + JSON.stringify(v3.heli));
   t.assert(v3.race.blockedBefore && v3.race.vias >= 1, 'race legs through a building get road corners: ' + JSON.stringify(v3.race));
   t.assert(v3.race.hit && v3.race.hit.join(',') === '0,1', 'a racer drives round the tower to cp6 and cp7: ' + JSON.stringify(v3.race));
+  t.assert(v3.gridlock.events >= 1 && Math.max.apply(null, v3.gridlock.moved) > 6, 'a nose-to-nose gridlock unwinds: ' + JSON.stringify(v3.gridlock));
   t.assert(v3.moto.districts >= 6 && v3.moto.seen >= 1 && (v3.moto.has ? v3.moto.type === 'moto' : v3.moto.type === 'bike'), 'motorcycles in traffic: ' + JSON.stringify(v3.moto));
   t.assert(v3.hoa.patrols >= 1 && v3.hoa.tagged === 0 && v3.hoa.patrolTag === 'hoapatrol', 'HOA patrols keep off the strand tag: ' + JSON.stringify(v3.hoa));
   t.assert(v3.errors.length === 0, 'no game errors: ' + v3.errors.join('; '));

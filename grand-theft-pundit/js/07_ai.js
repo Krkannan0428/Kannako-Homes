@@ -1175,6 +1175,28 @@
       } else if (ai.turnT > 7) { if (!adoptLane(v, ai)) ai.plan = null; }
     }
     aheadCaps(v, ai, dt);
+    breakGridlock(v, ai, dt);
+  }
+  // v0.3: a gridlock cycle (each car's speed cap is the car ahead of it, round a junction or nose to nose after a swerve
+  // into the oncoming lane) never clears by itself: seen in the campaign, five cars and a courier stood 300 s at Ratio Row.
+  // A car held more than 6 s by another car follows the chain of who holds whom; when it comes back to itself, the car
+  // with the lowest id in the loop backs up for a moment (wheels toward its own lane) and the knot unwinds.
+  function breakGridlock(v, ai, dt) {
+    ai.gridT = Math.max(0, (ai.gridT || 0) - dt);
+    var cr = ai.capReason;
+    if (ai.gridT > 0 || !cr || cr.kind !== 'vehicle' || ai.cap > 0.5 || ai.blockedT < 6 || Math.abs(v.speed) > 0.6) return false;
+    var minId = v.id, c = cr, n = 0;
+    while (c && c !== v && n < 10) {
+      if (c.kind !== 'vehicle' || !c.ai || c.ai.cap > 0.5 || !c.ai.capReason) return false;
+      if (c.id < minId) minId = c.id;
+      c = c.ai.capReason; n++;
+    }
+    if (c !== v || minId !== v.id) return false;
+    var lat = (ai.axis === 'h' ? v.z : v.x) - ai.laneC, side = Math.abs(lat) > 0.6 ? U.sign(lat) : ((v.id & 1) ? 1 : -1);   // no draw on the stream
+    ai.reverseT = 1.8; ai.revSteer = U.clamp(side * (ai.axis === 'h' ? ai.dir : -ai.dir), -1, 1) * 0.7;
+    ai.swerve = 0; ai.swerveT = 0; ai.blockedT = 0; ai.gridT = 8; ai.plan = null;
+    GTP.Events.emit('ai:gridlock', { vehicle: v, cycle: n + 1 });
+    return true;
   }
   // every step: steering + throttle from the cached plan (cheap, no queries)
   function carStep(v, ai, dt) {

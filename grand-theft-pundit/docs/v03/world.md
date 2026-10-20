@@ -151,6 +151,12 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
   `GTP.Content.expansion.subscriberTiers` and `Missions.subscribers().tier`. (rampage_king, memo_vest and the gold tables
   are Combat / Missions / Render.)
 - **CMB-09** (police heli never shoots): the gunner above.
+- Found and fixed while testing: **traffic gridlock**. A car that swerves round a stopped car into the oncoming lane
+  could end up nose to nose with oncoming traffic, and the cars round the junction then each capped their speed on the
+  next one in a loop, forever (in the campaign five cars stood 300 s at Ratio Row and Embassy Row and trapped m09's
+  courier). `breakGridlock` (07_ai): a car held more than 6 s by another car follows the chain of capReasons; when it
+  loops back, the lowest-id car in the loop reverses 1.8 s (no RNG draw) and the knot unwinds; emits
+  `ai:gridlock {vehicle, cycle}`. tests/ai.js puts two cars nose to nose in one lane and checks they get past each other.
 - Found and fixed while testing: two moored boats of the Listening Pier sat in the Sponsor Span's lanes (a solid 1.8 m
   circle on the bridge deck since the bridge was added); boats are only placed on open water now (the colour is still
   drawn so the RNG stream is unchanged). tests/world.js asserts nothing solid stands in a bridge lane.
