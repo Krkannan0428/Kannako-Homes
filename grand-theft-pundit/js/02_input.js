@@ -7,6 +7,17 @@
  *          weaponPrev horn radio map pause confirm back cameraMode lockOn
  *          reload wheel waypoint zoomIn zoomOut secondary tabNext
  *          quickUp quickRight quickDown quickLeft   (gamepad d-pad quick slots)
+ *          cover special                            (v0.3: Q / tap B; Shift+right mouse, X / L3)
+ *          pitchUp pitchDown rollLeft rollRight yawLeft yawRight throttleUp throttleDown   (aircraft)
+ *
+ * v0.3 (PLAN_V03 ui): `cover` is Q on the keyboard and a tap of B on the pad (B held is still sprint; a press shorter
+ * than 0.22 s also counts as cover). `special` is Shift + right mouse (it aims too, so Focus works while aiming), X on
+ * the keyboard, L3 on the pad (camera mode leaves the pad on foot; V keeps it). Aircraft: W / S pitch (W noses down),
+ * A / D roll, Q / E yaw, Shift / Ctrl throttle or collective up / down; on the pad the left stick pitches and rolls, LB / RB
+ * yaw, RT / LT throttle (pad context 'air'). Boats reuse the car controls. `Input.flight = {pitch, roll, yaw, throttle}`
+ * (-1..1 each, pitch +1 = nose up) is computed every step from all devices for the vehicles track.
+ * `Input.latch(actions)` holds the listed actions released until every physical source lets go: the UI latches
+ * shoot / action when a click or E closes a dialogue, so the same press never fires the gun (QA CMB-06).
  *
  * Gamepad (GDD_EXPANSION 6.8): sticks move / look (menus: navigate / zoom), A jump
  * or handbrake (menus: confirm), B sprint or horn (back), X reload or radio
@@ -24,22 +35,25 @@
   var ACTIONS = ['forward', 'back', 'left', 'right', 'run', 'jump', 'action', 'shoot', 'aim', 'enter',
     'weaponNext', 'weaponPrev', 'horn', 'radio', 'map', 'pause', 'confirm', 'cameraMode', 'lockOn',
     'reload', 'wheel', 'waypoint', 'zoomIn', 'zoomOut', 'secondary', 'tabNext', 'cancel',
-    'quickUp', 'quickRight', 'quickDown', 'quickLeft'];
+    'quickUp', 'quickRight', 'quickDown', 'quickLeft',
+    'cover', 'special', 'pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight', 'throttleUp', 'throttleDown'];
+  var AIR_TYPES = { heli: 1, plane: 1, jet: 1, helicopter: 1, aircraft: 1 };
   // 'back' is both the menu action and the move action; menus read pressed('back') via Escape/Backspace,
   // movement reads down('back') from S/ArrowDown. 'cancel' (Escape, Backspace, pad B) is the unambiguous
   // menu back-out, so S / ArrowDown / the stick can step a menu's selection down without closing it.
 
   // key code -> list of actions
   var BINDINGS = {
-    KeyW: ['forward'], ArrowUp: ['forward'],
-    KeyS: ['back'], ArrowDown: ['back'],
-    KeyA: ['left'], ArrowLeft: ['left'],
-    KeyD: ['right'], ArrowRight: ['right'],
-    ShiftLeft: ['run'], ShiftRight: ['run'],
+    KeyW: ['forward', 'pitchDown'], ArrowUp: ['forward', 'pitchDown'],
+    KeyS: ['back', 'pitchUp'], ArrowDown: ['back', 'pitchUp'],
+    KeyA: ['left', 'rollLeft'], ArrowLeft: ['left', 'rollLeft'],
+    KeyD: ['right', 'rollRight'], ArrowRight: ['right', 'rollRight'],
+    ShiftLeft: ['run', 'throttleUp'], ShiftRight: ['run', 'throttleUp'],
     Space: ['jump', 'confirm'],
-    ControlLeft: ['shoot'], ControlRight: ['shoot'],
-    KeyQ: ['aim'],
-    KeyE: ['action'],
+    ControlLeft: ['shoot', 'throttleDown'], ControlRight: ['shoot', 'throttleDown'],
+    KeyQ: ['cover', 'yawLeft'],
+    KeyE: ['action', 'yawRight'],
+    KeyX: ['special'],
     KeyF: ['enter'], Enter: ['enter', 'confirm'], NumpadEnter: ['enter', 'confirm'],
     Tab: ['lockOn', 'wheel'],
     BracketRight: ['weaponNext'], BracketLeft: ['weaponPrev'],
@@ -51,14 +65,17 @@
   var PREVENT = { Space: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, Backspace: 1, Tab: 1, ControlLeft: 1, ControlRight: 1 };
 
   // standard-layout button index -> action, per context
-  var PAD_FOOT = { 0: 'jump', 1: 'run', 2: 'reload', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'cameraMode', 11: 'lockOn', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
-  var PAD_CAR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'cameraMode', 11: 'lockOn', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
+  var PAD_FOOT = { 0: 'jump', 1: 'run', 2: 'reload', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'special', 11: 'lockOn', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
+  var PAD_CAR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'special', 11: 'cameraMode', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
+  var PAD_AIR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'yawLeft', 5: 'yawRight', 6: 'throttleDown', 7: 'throttleUp', 8: 'map', 9: 'pause', 10: 'special', 11: 'cameraMode', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
+  var COVER_TAP_MS = 220;   // a B press shorter than this is a cover tap (B held stays sprint)
   var PAD_MENU = { 0: 'confirm', 1: 'cancel', 2: 'secondary', 3: 'tabNext', 4: 'weaponPrev', 5: 'weaponNext', 6: 'zoomOut', 7: 'zoomIn', 8: 'map', 9: 'pause', 12: 'forward', 13: 'back', 14: 'left', 15: 'right' };
   var DEAD_ZONE = 0.18, LOOK_PX = 14;   // 14 px per unit deflection per step ~ 2.4 rad/s through the rig's sensitivity
 
   var keyState = {};      // action -> count of physical keys holding it
   var virt = {};          // action -> bool (Input.set)
   var pressedFlags = {};  // action -> true until endFrame
+  var latched = {};       // action -> true while held released after Input.latch (until every source lets go)
   var canvas = null;
   var inited = false;
   var lookAcc = { dx: 0, dy: 0 };   // raw deltas accumulated between frames
@@ -67,8 +84,9 @@
   var Input = GTP.Input = {
     actions: ACTIONS,
     bindings: BINDINGS,
-    padMaps: { foot: PAD_FOOT, car: PAD_CAR, menu: PAD_MENU },
-    mouse: { x: 0, y: 0, down: false, right: false, buttons: 0, moved: false },
+    padMaps: { foot: PAD_FOOT, car: PAD_CAR, air: PAD_AIR, menu: PAD_MENU },
+    mouse: { x: 0, y: 0, down: false, right: false, buttons: 0, moved: false, special: false },
+    flight: { pitch: 0, roll: 0, yaw: 0, throttle: 0 },   // aircraft axes, -1..1 (pitch +1 nose up, roll +1 right, yaw +1 right)
     look: { dx: 0, dy: 0 },          // look delta for this frame (pixels)
     move: { x: 0, z: 0 },            // normalized move intent in input space (x right, z forward)
     wheelDelta: 0,
@@ -117,9 +135,21 @@
     },
 
     down: function (action) {
-      return (keyState[action] > 0) || virt[action] === true || !!Input.touch.buttons[action] || !!pad.buttons[action];
+      if (latched[action]) return false;
+      return rawDown(action);
     },
-    pressed: function (action) { return pressedFlags[action] === true; },
+    pressed: function (action) { return pressedFlags[action] === true && !latched[action]; },
+    // hold these actions released until every source (key, button, pad, touch, virtual) lets go of them
+    latch: function (actions) {
+      if (typeof actions === 'string') actions = [actions];
+      for (var i = 0; i < (actions || []).length; i++) { var a = actions[i]; if (rawDown(a)) latched[a] = true; pressedFlags[a] = false; }
+    },
+    latched: function (action) { return !!latched[action]; },
+    // the vehicle the player drives is an aircraft (the vehicles track's heli / plane / jet, or vehicle.air)
+    inAircraft: function () {
+      var g = GTP.game, p = g && g.player, v = p && p.inVehicle;
+      return !!(v && (v.air || v.isAircraft || AIR_TYPES[v.type] || AIR_TYPES[v.kind]));
+    },
     set: function (action, on) {
       on = !!on;
       if (on && !virt[action] && !(keyState[action] > 0)) pressedFlags[action] = true;
@@ -141,10 +171,28 @@
       var l = Math.sqrt(x * x + z * z);
       if (l > 1) { x /= l; z /= l; }
       Input.move.x = x; Input.move.z = z;
+      Input.updateFlight();
       return Input.move;
+    },
+    // aircraft axes from keys, the pad (air context: left stick pitch / roll, LB RB yaw, RT LT throttle) and the touch stick
+    updateFlight: function () {
+      var f = Input.flight;
+      var pitch = (Input.down('pitchUp') ? 1 : 0) - (Input.down('pitchDown') ? 1 : 0);
+      var roll = (Input.down('rollRight') ? 1 : 0) - (Input.down('rollLeft') ? 1 : 0);
+      var yaw = (Input.down('yawRight') ? 1 : 0) - (Input.down('yawLeft') ? 1 : 0);
+      var thr = (Input.down('throttleUp') ? 1 : 0) - (Input.down('throttleDown') ? 1 : 0);
+      if (Input.touch.stick.active) { roll += Input.touch.stick.x; pitch += Input.touch.stick.y; }   // stick down = pull back = nose up
+      if (pad.index >= 0 && Input.gamepadEnabled && pad.context === 'air') {
+        roll += pad.lx; pitch += pad.ly;
+        thr += (pad.rt || 0) - (pad.lt || 0);
+        if (pad.buttons.throttleUp || pad.buttons.throttleDown) thr = U_clamp(thr, -1, 1);
+      }
+      f.pitch = U_clamp(pitch, -1, 1); f.roll = U_clamp(roll, -1, 1); f.yaw = U_clamp(yaw, -1, 1); f.throttle = U_clamp(thr, -1, 1);
+      return f;
     },
     // Called at the start of a step: publishes accumulated look deltas, polls the gamepad.
     beginFrame: function () {
+      for (var la in latched) if (latched[la] && !rawDown(la)) latched[la] = false;
       Input._pollGamepad();
       var padLook = pad.index >= 0 && Input.gamepadEnabled;
       Input.look.dx = lookAcc.dx + Input.touch.look.dx + (padLook ? pad.rx * LOOK_PX : 0);
@@ -162,7 +210,7 @@
     },
     releaseAll: function () {
       for (var i = 0; i < ACTIONS.length; i++) keyState[ACTIONS[i]] = 0;
-      Input.mouse.down = false; Input.mouse.right = false;
+      Input.mouse.down = false; Input.mouse.right = false; Input.mouse.special = false;
     },
     requestPointerLock: function () {
       if (!canvas || Input.pointerLocked || !Input.pointerLockWanted) return;
@@ -197,9 +245,11 @@
     _padContext: function () {
       var g = GTP.game;
       if (!g || g.state !== 'playing') return g && g.state === 'cutscene' ? 'foot' : 'menu';
-      if (GTP.UI && GTP.UI.state && GTP.UI.state.shopOpen) return 'menu';
+      var us = GTP.UI && GTP.UI.state;
+      if (us && (us.shopOpen || us.modal)) return 'menu';
       var p = g.player;
-      return p && p.inVehicle ? 'car' : 'foot';
+      if (p && p.inVehicle) return Input.inAircraft() ? 'air' : 'car';
+      return 'foot';
     },
     _pollGamepad: function () {
       if (!Input.gamepadEnabled || typeof navigator === 'undefined' || !navigator.getGamepads) { if (pad.index >= 0 && !Input.gamepadEnabled) Input._releasePad(); return; }
@@ -216,7 +266,7 @@
       var ax = g.axes || [];
       pad.lx = dz(ax[0] || 0); pad.ly = dz(ax[1] || 0);
       pad.rx = dz(ax[2] || 0); pad.ry = dz(ax[3] || 0);
-      var ctx = Input._padContext(), map = ctx === 'menu' ? PAD_MENU : ctx === 'car' ? PAD_CAR : PAD_FOOT;
+      var ctx = Input._padContext(), map = ctx === 'menu' ? PAD_MENU : ctx === 'car' ? PAD_CAR : ctx === 'air' ? PAD_AIR : PAD_FOOT;
       pad.context = ctx;
       var nb = {}, b, now, was, used = false;
       for (b in map) {
@@ -237,8 +287,11 @@
         st.x = sx; st.y = sy;
         if (sx || sy) used = true;
       } else { pad._stick.x = pad._stick.y = 0; }
-      for (now in nb) { was = !!pad.buttons[now]; if (!was) pressedFlags[now] = true; pad.buttons[now] = true; used = true; }
-      for (was in pad.buttons) if (pad.buttons[was] && !nb[was]) pad.buttons[was] = false;   // a context change releases the old action
+      for (now in nb) { was = !!pad.buttons[now]; if (!was) { pressedFlags[now] = true; if (now === 'run' && ctx === 'foot') pad._bDown = Date.now(); } pad.buttons[now] = true; used = true; }
+      for (was in pad.buttons) if (pad.buttons[was] && !nb[was]) {
+        pad.buttons[was] = false;   // a context change releases the old action
+        if (was === 'run' && ctx === 'foot' && pad._bDown && Date.now() - pad._bDown < COVER_TAP_MS) pressedFlags.cover = true;   // a tap of B: cover
+      }
       if (used || pad.lx || pad.ly || pad.rx || pad.ry) { Input._device('gamepad'); Input.anyKey = true; Input.lastGesture = Date.now(); }
     },
     _pointer: function (clientX, clientY) {
@@ -256,6 +309,10 @@
     _release: function (a) { keyState[a] = Math.max(0, (keyState[a] || 0) - 1); }
   };
 
+  function rawDown(action) {
+    return (keyState[action] > 0) || virt[action] === true || !!Input.touch.buttons[action] || !!pad.buttons[action];
+  }
+  function U_clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function onKeyDown(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
     var acts = BINDINGS[e.code];
@@ -292,13 +349,16 @@
     Input._gesture(); Input._device('keyboard');
     Input.mouse.buttons = e.buttons;
     if (e.button === 0) { Input.mouse.down = true; Input._press('shoot'); Input.requestPointerLock(); }
-    if (e.button === 2) { Input.mouse.right = true; Input._press('aim'); }
+    if (e.button === 2) {
+      Input.mouse.right = true; Input._press('aim');
+      if (keyState.run > 0) { Input.mouse.special = true; Input._press('special'); }   // Shift + right mouse: the special
+    }
     if (canvas && canvas.focus) canvas.focus();
     e.preventDefault();
   }
   function onMouseUp(e) {
     if (e.button === 0 && Input.mouse.down) { Input.mouse.down = false; Input._release('shoot'); }
-    if (e.button === 2 && Input.mouse.right) { Input.mouse.right = false; Input._release('aim'); }
+    if (e.button === 2 && Input.mouse.right) { Input.mouse.right = false; Input._release('aim'); if (Input.mouse.special) { Input.mouse.special = false; Input._release('special'); } }
     Input.mouse.buttons = e.buttons;
   }
   function onWheel(e) {
