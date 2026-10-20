@@ -119,7 +119,8 @@ function installPlayer(budget) {
     // follow(route) walks a list of points; stop() decides when the job is done. Returns {ok, why}.
     walk(getRoute, stop, maxSec, opts) {
       opts = opts || {};
-      const p = NP.p(); let route = getRoute(), i = 0, t = 0, lastProg = 0, best = 1e9, stuck = 0, reroutes = 0, sideT = 0;
+      const p = NP.p(); let route = getRoute(), i = 0, t = 0, lastProg = 0, best = 1e9, stuck = 0, reroutes = 0, sideT = 0, detour = null;
+      const W = GTP.World;
       while (t < maxSec && !NP.over()) {
         if (stop()) { NP.releaseAll(); return { ok: true, t }; }
         if (NP.housekeeping()) { t += 0.2; continue; }
@@ -127,7 +128,8 @@ function installPlayer(budget) {
         if (p.inVehicle) { NP.releaseAll(); return { ok: false, why: 'in a vehicle' }; }
         const pts = route.pts;
         while (i < pts.length - 1 && U.dist2d(p.x, p.z, pts[i].x, pts[i].z) < 2.6) i++;
-                const k = i, tg = pts[k], d = U.dist2d(p.x, p.z, tg.x, tg.z);
+        if (detour && (U.dist2d(p.x, p.z, detour.x, detour.z) < 1.2 || t > detour.until)) detour = null;
+        const k = i, tg = detour || pts[k], d = U.dist2d(p.x, p.z, tg.x, tg.z);
         NP.lookToward(U.dirToYaw(tg.x - p.x, tg.z - p.z));
         NP.hold('forward', true); NP.hold('run', d > 3 && !opts.walk);
         if (sideT > 0) { NP.hold(stuck % 2 ? 'left' : 'right', true); sideT -= 1 / 30; } else { NP.hold('left', false); NP.hold('right', false); }
@@ -137,6 +139,15 @@ function installPlayer(budget) {
         if (rem < best - 0.5) { best = rem; lastProg = t; }
         if (t - lastProg > 1.5) {
           stuck++; lastProg = t; NP.press('jump'); sideT = 0.5;
+          // still stuck: step around it, a few metres to one side (alternating, growing), on open ground
+          if (stuck >= 2 && !detour) {
+            const f = U.yawToDir(p.yaw), side = stuck % 2 ? 1 : -1, r = 3 + Math.min(9, stuck * 1.5);
+            for (const back of [0, -2, 2]) {
+              const dx = p.x + (-f.z) * side * r + f.x * back, dz = p.z + f.x * side * r + f.z * back;
+              if (!W.solidAt(dx, dz, p.y + 0.5)) { detour = { x: dx, z: dz, until: t + 4 }; break; }
+            }
+            NP.notes.detours = (NP.notes.detours || 0) + 1;
+          }
           if (stuck % 3 === 0 && reroutes < 12) { route = getRoute(); i = 0; best = 1e9; reroutes++; }
         }
         // at the end of the route: stand still there (a mission light needs the player to stay inside it for a moment)
@@ -164,7 +175,15 @@ function installPlayer(budget) {
         const err = U.wrapAngle(U.dirToYaw(tg.x - v.x, tg.z - v.z) - v.yaw);
         // corner ahead: slow down by the turn angle between this leg and the next
         let turn = 0; if (k < pts.length - 1) { const a1 = U.dirToYaw(tg.x - v.x, tg.z - v.z), a2 = U.dirToYaw(pts[k + 1].x - tg.x, pts[k + 1].z - tg.z); turn = Math.abs(U.wrapAngle(a2 - a1)); }
-        const want = dEnd < 25 ? 7 : (Math.abs(err) > 0.6 || turn > 0.8 ? 9 : 22);
+        let want = dEnd < 25 ? 7 : (Math.abs(err) > 0.6 || turn > 0.8 ? 8 : 16);
+        // something in the lane ahead (a car, a pedestrian): ease off like a careful new driver
+        const fwd = U.yawToDir(v.yaw);
+        const ahead = GTP.Entities.near(v.x, v.z, 14).some((e) => {
+          if (e === v || e === p || e.removed || !(e.kind === 'vehicle' || (e.kind === 'ped' && e.alive && !e.inVehicle))) return false;
+          const dx = e.x - v.x, dz = e.z - v.z, along = dx * fwd.x + dz * fwd.z, side = Math.abs(dx * -fwd.z + dz * fwd.x);
+          return along > 1.5 && along < 4 + Math.max(0, v.speed) * 0.8 && side < (e.kind === 'vehicle' ? 2.2 : 1.6);
+        });
+        if (ahead) want = Math.min(want, 4);
         if (rev > 0) {   // backing out of a wall: reverse with opposite lock
           NP.hold('forward', false); NP.hold('back', true); NP.hold(err > 0 ? 'right' : 'left', true); NP.hold(err > 0 ? 'left' : 'right', false); rev -= 1 / 30;
           if (rev <= 0) { NP.hold('back', false); NP.hold('left', false); NP.hold('right', false); }
@@ -229,14 +248,31 @@ function installPlayer(budget) {
         // "Get in the ..." with a vehicle under the arrow: walk to it and press F
         const veh = GTP.Entities.near(pt.x, pt.z, 3, 'vehicle').find((v) => !v.wreck);
         if (!p.inVehicle && veh && /get in|enter|hop in|take the/.test(txt)) {
-          NP.walk(() => NP.routeTo({ x: veh.x, z: veh.z }, 'ped', 'objective'), () => changed() || U.dist2d(p.x, p.z, veh.x, veh.z) < 3.2, 60);
+          // walk to a door of the van (the driver's side first), then press F
+          const doors = veh.doorWorld ? [veh.doorWorld(0), veh.doorWorld(1)] : [{ x: veh.x, z: veh.z }];
+          const di = (NP.notes.enterTries = (NP.notes.enterTries || 0) + 1) % doors.length, dr = doors[di];
+          NP.walk(() => NP.routeTo(dr, 'ped', 'objective'), () => changed() || U.dist2d(p.x, p.z, dr.x, dr.z) < 2.2 || U.dist2d(p.x, p.z, veh.x, veh.z) < 2.6, 30);
           if (changed()) break;
-          NP.press('enter'); NP.adv(1.5); continue;
+          NP.press('enter'); NP.adv(2); continue;
         }
         if (p.inVehicle) {
+          NP.myCar = p.inVehicle;
           const r = NP.drive(() => NP.routeTo(pt, 'car', 'objective'), () => changed() || U.dist2d(p.inVehicle ? p.inVehicle.x : p.x, p.inVehicle ? p.inVehicle.z : p.z, pt.x, pt.z) < 3.5, 40);
           if (!r.ok && r.why === 'not in a vehicle') continue;
-          if (!changed()) { const n = NP.objectivePoint(); if (n && n.x === pt.x && n.z === pt.z) NP.adv(0.5); }
+          if (!changed()) {
+            // parked beside the blip but it did not count (a kerb, a bench, a lamp in the way): roll forward a touch, then hop out for it
+            const v = p.inVehicle; NP.hold('forward', true); NP.adv(0.6); NP.releaseAll(); NP.adv(0.4);
+            if (!changed() && v && U.dist2d(v.x, v.z, pt.x, pt.z) < 6 && !/back to|bring|return|drive/.test(txt)) {
+              NP.press('enter'); NP.adv(1.2); NP.notes.hopOuts = (NP.notes.hopOuts || 0) + 1;
+              NP.walk(() => ({ pts: [{ x: pt.x, z: pt.z }] }), () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 0.6, 10);
+            }
+          }
+        } else if (NP.myCar && !NP.myCar.removed && !NP.myCar.wreck && !NP.myCar.driver && U.dist2d(p.x, p.z, pt.x, pt.z) > 20 && U.dist2d(p.x, p.z, NP.myCar.x, NP.myCar.z) < 60) {
+          // the next blip is far and the van is right there: back in
+          const v = NP.myCar, dr = v.doorWorld ? v.doorWorld(0) : { x: v.x, z: v.z };
+          NP.walk(() => ({ pts: [{ x: dr.x, z: dr.z }] }), () => changed() || U.dist2d(p.x, p.z, dr.x, dr.z) < 2.2 || U.dist2d(p.x, p.z, v.x, v.z) < 2.6, 15);
+          NP.press('enter'); NP.adv(2);
+          if (!p.inVehicle) NP.myCar = null;
         } else {
           NP.walk(() => NP.routeTo(pt, 'ped', 'objective'), () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 40);
         }
@@ -250,7 +286,17 @@ function installPlayer(budget) {
       while (NP.now() - t0 < maxSec && !NP.over() && guard++ < 200) {
         if (NP.events.complete.indexOf(id) >= 0) return { ok: true, t: NP.now() - t0 };
         const h = NP.hud();
-        if (!h.active) { if (NP.housekeeping()) continue; NP.adv(0.3); if (!NP.hud().active && NP.events.complete.indexOf(id) < 0) { if (h.retry || NP.events.fail.length) return { ok: false, why: 'mission failed: ' + JSON.stringify(NP.events.fail.slice(-1)) }; } continue; }
+        if (!h.active) {
+          if (NP.housekeeping()) continue;
+          NP.adv(0.3);
+          const h2 = NP.hud();
+          if (!h2.active && NP.events.complete.indexOf(id) < 0) {
+            // the CONTEXT STAMPED card: RETRY is highlighted; a new player takes it (twice at most)
+            if (h2.retry && (NP.notes.retries || 0) < 2) { NP.say('RETRY after ' + JSON.stringify(NP.events.fail.slice(-1))); NP.notes.retries = (NP.notes.retries || 0) + 1; NP.adv(1.2); NP.press('confirm'); NP.adv(1); continue; }
+            if (h2.retry || NP.events.fail.length) return { ok: false, why: 'mission failed: ' + JSON.stringify(NP.events.fail.slice(-1)) + (NP.notes.retries ? ' after ' + NP.notes.retries + ' retries' : '') };
+          }
+          continue;
+        }
         if (h.active !== id) return { ok: false, why: 'a different mission is running: ' + h.active };
         if (h.phase !== 'play') { if (!NP.housekeeping()) NP.adv(0.2); continue; }
         const r = NP.playObjective(90);
