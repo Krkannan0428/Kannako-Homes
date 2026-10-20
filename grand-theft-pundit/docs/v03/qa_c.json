@@ -1,0 +1,872 @@
+{
+ "reviewer": "qa-c",
+ "base": "game/grand-theft-pundit@3a5252c",
+ "date": "2026-10-20",
+ "count": 57,
+ "bySeverity": {
+  "critical": 0,
+  "high": 4,
+  "medium": 25,
+  "low": 28
+ },
+ "findings": [
+  {
+   "id": "QAC-01",
+   "origin": [
+    "AST-01",
+    "QAC soak"
+   ],
+   "severity": "high",
+   "area": "memory",
+   "title": "Ped geometry cache grows without bound: almost every rolled look adds new torso/arm/head BufferGeometries that are never evicted or disposed (2000 peds = 2412 geometries, 77 MB)",
+   "file": "js/05_assets.js:1006",
+   "evidence": "var pedGeoCache = new Map(); function pedGeo(key, fn) { var g = pedGeoCache.get(key); if (g) return g; ... g = GB.merge(list); pedGeoCache.set(key, g); } with keys torsoKey = ['torso', look.shirt, look.tie, look.extra, look.uniform, look.badge, look.skin].join('|') (l.892), arm key [..side, shirt, skin, held] (l.914), headKey = ['head', look.skin, hairStyle, look.hairColor, hat, look.hatColor, glasses, look.extra, look.mask].join('|') (l.929). Content.looks.roll picks every field on its own (skin R.int(1,6), hair, hairColor, shirt, hat, glasses, extra, tie), so the head key space is in the thousands. Render.detach never disposes ped geometry (it is shared). Runtime (scratchpad/ast_t5.js, ast_t3.js): 2000 calls of Assets.pedParts(Content.looks.roll('downtown')) -> 2412 distinct geometries, 77 MB of vertex/index arrays (4000 rolls -> 3909, still rising linearly). In a normal session with a steady ~246 entity meshes, renderer.info.memory.geometries went 188 -> 281 between t=40 s and t=320 s (+93 in under 5 min, no plateau) as ambient peds respawn with new looks. || QA-C soak (tests/regress/qa_c_soak.js, 20 game minutes, seed 7): after every chunk is built (minute 7, 195 chunks) renderer.info.memory.geometries keeps climbing 1534 -> 2513 (~75/min) while scene objects stay flat (~3850) and entities stay ~250; used JS heap 38 MB at boot -> 256 MB at minute 20. A creation-site trace of geometries uploaded in minutes 9-13 and no longer in the scene attributed all 959 to Assets.pedParts (05_assets.js:910, 925, 973) via pedGeo. tests/regress/qa_c_pedgeo.js: 500 looks from GTP.Content.looks.roll add 700+ new geometries per batch, batch after batch.",
+   "impact": "CPU and GPU memory climbs for the whole session (tens of MB per hour of play, toward hundreds of MB at the combinatorial limit), and each new look costs a fresh merge plus upload while peds spawn. Long sessions on low-memory devices run out of memory.",
+   "fix": "Key the cache by what changes the geometry and leave colour to the vertex-colour pass: build one geometry per shape (hair style, hat, glasses, extra) in neutral white and tint it per ped, or quantise looks to a small fixed set of pre-built variants. At minimum, make pedGeoCache an LRU (for example 256 entries) with refcounts and dispose evicted geometries once no live ped uses them (detach decrements).",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_pedgeo.js, tests/regress/qa_c_soak.js"
+  },
+  {
+   "id": "QAC-02",
+   "origin": [
+    "AI-01"
+   ],
+   "severity": "high",
+   "area": "correctness",
+   "title": "Heat rate-limit timestamps (heatT) are never reset: after New Game / Load, hitting or running over civilians and denting cruisers earns no heat for as long as the previous session's clock",
+   "file": "js/07_ai.js:278",
+   "evidence": "`var heatT = { ped: -9, cop: -9, car: -9 };` (module scope) is checked as `now - heatT.ped >= K.heatEvery` (lines 285-286, 293, 304-305), where now = simT() = GTP.game.time.t. Game.newGame sets `this.time = { t: 0, ... }` (30_game.js:197) and loadSlot calls newGame (30_game.js:517), but AI.reset (07_ai.js:1789-1794) never touches heatT. Runtime (scratchpad/ai/state.js): fresh game hit civ -> +1 heat; set time.t=1800, hit civ -> +1; g.newGame(7), advance 1 s, hit civ -> +0 heat; 10 s later -> still +0. Hitting a cop gave +5 only because heatT.cop had never been set in that run.",
+   "impact": "After any load or new game in the same page session, non-lethal assaults (punches, shots that don't kill), running peds or cops over, and ramming cruisers produce no wanted level until game time catches up to the old session's time.t (e.g. 30 minutes of play -> 30 minutes of free crime). Kills still count, so it is inconsistent and hard to notice.",
+   "fix": "Reset the stamps in AI.reset: `heatT.ped = heatT.cop = heatT.car = -9;` (or store them relative to a value that is also reset). Also clamp: treat `now < heatT.x` as expired.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_QAC-02.js"
+  },
+  {
+   "id": "QAC-03",
+   "origin": [
+    "MIS-01"
+   ],
+   "severity": "high",
+   "area": "correctness",
+   "title": "Abort/fail keeps the weapon and ammo an 'equip' objective handed out: start+abort m13b farms the Ratio Launcher (+6 rockets per loop, no cap), m12b the sniper (+10 per loop)",
+   "file": "js/09_missions.js:989",
+   "evidence": "H.equip.start: `else if (CB.giveAmmo) CB.giveAmmo(p, id, n, false); ... p.weapon = id; if (run) run.equipped.push(id);` (989-1003). run.equipped is recorded and copied into the checkpoint, but nothing ever reads it to take the loaner back: teardownRun (1389-1400) only does `if (run.replay) restoreWeapons(run);`. equip is the first objective of m13b_ratio, m12b_scope, m09b_hotmic and m03b, and it completes on the first step after beginPlay. Runtime (scratchpad/mis/t4.js, seed 7): Missions.prep('m13b_ratio') then 5x {start(skipIntro), advance 0.5 s, abort()}: p.weapons.ratio 6 -> 12 -> 18 -> 24 -> 30 (Combat.ammo reserve 29; the GDD/QA-STR-07 cap for the launcher is mag+reserve 7). m12b_scope: sniper 10 -> 20 -> 30 -> 40 -> 50 -> 60. Each loop is: stand 0.5 s in the light, skip the intro, open the phone, ABORT. Not covered by QA-C1-13 (unlock amounts) or QA-STR-07 (rampage loaners).",
+   "impact": "Unlimited free rockets / sniper rounds (and the weapon itself before its shop unlock when the mission is reachable first) by aborting or failing a mission; same on any fail that is not retried. Breaks the economy and the weapon-gated mission design.",
+   "fix": "Snapshot the player's weapons/ammo in newRun for every run (not only replay) or record what equip gave (id, amount, whether the weapon was owned); in teardownRun (abort and fail) take back the equipped amount / delete the weapon if it was not owned before, keeping restoreWeapons for replay. retry already restores the checkpoint's weapons, so it is unaffected.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_QAC-03.js"
+  },
+  {
+   "id": "QAC-04",
+   "origin": [
+    "UI-01"
+   ],
+   "severity": "high",
+   "area": "correctness",
+   "title": "One mouse click in the shop buys twice; clicking an unselected row also buys twice (the intended select-then-buy never happens)",
+   "file": "js/11_ui.js:3288",
+   "evidence": "Every left click is delivered twice. 1) The hud canvas mousedown listener (11_ui.js:3288-3294) calls `if (menuState() || ui.dialogue || ...) pointerTap(pt.x, pt.y);`, and menuState() is true when ui.shopOpen is set. 2) Input's own mousedown sets pressed('shoot') and mouse.down, so on the next step shopInput (2368) runs `else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);` against the same ui.hit list, because nothing has been drawn in between. The row hit (2304) is `if (sh.sel === k) shopBuy(id); else sh.sel = k;`, but hovering (2293) has already set sh.sel during draw, so the first tap buys. Runtime (scratchpad/ui/dbl.js, headless seed 7): money 100000, pistol ammo 12, AMMO tab, 'ammo_pistol' ($60) selected, one page.mouse down/up on the 'shop-buy' rect, then advance 2 steps. Result: {money:99880, shopBuys:2, ammo:60}, so two purchases ($120) from one click.",
+   "impact": "Every mouse purchase charges twice and gives the item twice. Weapons are protected by the 'owned' check, but ammo, health, armor and the $50 range reset are bought twice. The player loses money without seeing why.",
+   "fix": "Route clicks through one path only. Either remove the pointerTap from the canvas mousedown listener for states that handleInput already covers (title, paused, shop, minigame, retry card), or keep the listener and drop the `click -> pointerTap` branches in handleInput, shopInput, settingsInput, titleSlotsInput and pauseSlotsInput. As a cheap guard, record the Input step of the last pointerTap and ignore a second tap in the same press (for example, a ui.lastTapStep check).",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_QAC-04.js"
+  },
+  {
+   "id": "QAC-05",
+   "origin": [
+    "SEC-01"
+   ],
+   "severity": "medium",
+   "area": "security",
+   "title": "Packaged desktop app ships with no Electron fuses: RunAsNode, NODE_OPTIONS, --inspect and asar integrity all left at their defaults",
+   "file": "desktop/electron-builder.yml:1",
+   "evidence": "grep -rn 'fuse|electronFuses' over desktop/*.yml, *.json and *.js (package-lock excluded) finds nothing. electron-builder.yml has asar: true but no `electronFuses:` block. @electron/fuses 1.8.0 is in package-lock only as an electron-builder dependency, and electron-builder flips fuses only when `electronFuses` is configured. On macOS hardenedRuntime is false, and the release workflow turns it on (-c.mac.hardenedRuntime=true) only for signed builds.",
+   "impact": "The shipped binary (signed and notarized when the secrets exist) can be started as a plain Node.js runtime with ELECTRON_RUN_AS_NODE=1, or have code injected through NODE_OPTIONS or --inspect. On macOS that code runs under the app's identity and any TCC grants the app has. app.asar can be edited after install, because asar integrity validation and OnlyLoadAppFromAsar are off, so injected code persists inside a trusted app. This is the standard Electron hardening gap and a known abuse path for signed binaries.",
+   "fix": "Add an electronFuses block to electron-builder.yml: runAsNode: false, enableNodeOptionsEnvironmentVariable: false, enableNodeCliInspectArguments: false, enableEmbeddedAsarIntegrityValidation: true, onlyLoadAppFromAsar: true, enableCookieEncryption: true (and grantFileProtocolExtraPrivileges: false once SEC-04 limits navigation to the app file, after checking the game still loads from file://).",
+   "verified": "static",
+   "regress_test_idea": "CI step after packing: `npx @electron/fuses read --app <packed binary>` and fail if RunAsNode or EnableNodeOptionsEnvironmentVariable is Enabled."
+  },
+  {
+   "id": "QAC-06",
+   "origin": [
+    "SEC-02"
+   ],
+   "severity": "medium",
+   "area": "security",
+   "title": "Release workflow gives contents:write to every job, so third-party npm install scripts in the build jobs run with a write-capable GITHUB_TOKEN",
+   "file": "../.github/workflows/desktop-release.yml:40",
+   "evidence": "permissions:\\n  contents: write   (workflow level, lines 40-41). The mac, windows and linux jobs use `actions/checkout@v4` (lines 61, 147, 196) with the default persist-credentials: true, which writes the token into .git/config. They then run `npm ci` (lines 80, 166, 215), which executes dependency install scripts such as electron's postinstall download and the electron-builder chain. Only the `release` job needs write access. The third-party `softprops/action-gh-release@v2` (line 272) is pinned to a mutable tag rather than a commit SHA.",
+   "impact": "A compromised dependency or a compromised action tag gets a token that can push commits and tags and rewrite releases. Because tags trigger the release job, it could also replace the published game binaries. This happens on every push to game/grand-theft-pundit, not only on releases.",
+   "fix": "Set top-level `permissions: contents: read`. Give `contents: write` only to the `release` job. Add `with: persist-credentials: false` to the checkouts in the build jobs. Pin softprops/action-gh-release (and ideally the actions/* steps) to full commit SHAs.",
+   "verified": "static",
+   "regress_test_idea": "Run actionlint or zizmor on the workflow in CI; zizmor flags excessive-permissions, artipacked and unpinned-uses."
+  },
+  {
+   "id": "QAC-07",
+   "origin": [
+    "AST-02",
+    "CMB-02"
+   ],
+   "severity": "medium",
+   "area": "memory",
+   "title": "weaponMesh('hotmic') and weaponMesh('ratio') create a new geometry and material on every call, and nothing disposes them (held-weapon switches, pickup crates, every thrown hot mic)",
+   "file": "js/05b_assets_weapons.js:186",
+   "evidence": "if (id === 'hotmic') { ... var cap = new THREE.Mesh(new THREE.CylinderGeometry(0.041, 0.041, 0.022, 8), capMatProto.clone()); ... } else if (id === 'ratio') { var sm = new THREE.MeshBasicMaterial({ map: stencil() }); var a = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.07), sm); ... var b = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.07), sm); }. Callers: Combat.syncHeld (08_combat.js:1184) on every weapon change (old mesh only removed: e._held.parent.remove(e._held)), Combat.skinProjectile (1206) on every thrown hot mic, and Combat.pickupMesh (1301) per weapon crate; Render.detach disposes only userData.paint. Runtime (scratchpad/ast_t1.js): 20 calls alternating hotmic/ratio -> 32 distinct geometries and 21 distinct materials (expected 2 and 3). 60 held-weapon switches between hotmic, ratio and pistol: renderer.info.memory.geometries 318 -> 398. || Independently reproduced by CMB-02: syncHeld: `if (e._held) { if (e._held.parent) e._held.parent.remove(e._held); e._held = null; }` then `GTP.Assets.weaponMesh(want)` - no dispose. Assets.weaponMesh (js/05b_assets_weapons.js:191-195) builds per call `new THREE.Mesh(new THREE.CylinderGeometry(0.041, 0.041, 0.022, 8), capMatProto.clone())` for 'hotmic' and two `new THREE.PlaneGeometry(0.2, 0.07)` + a new MeshBasicMaterial for 'ratio'. skinProjectile (08_combat.js:1206-1208) calls A.weaponMesh('hotmic') for every mic in flight, keeps only the cap and drops the rest. Runtime (r6.js, AI frozen): 30 switches cycling hotmic/pistol/ratio -> 30 weaponMesh calls, armR keeps 1 child (old meshes detached), renderer.info.memory.geometries +33 permanently; 10 mic throws -> 11 weaponMesh calls, +11 geometries. r4.js attributes undisposed off-scene geometries to `05b_assets_weapons.js:194/195 < 08_combat.js:1184 < 08_combat.js:1457`.",
+   "impact": "Each hot-mic throw or switch leaks 1 geometry + 1 material, and each Ratio Launcher switch or crate leaks 2 geometries + 1 material, on the GPU, for the whole session. Weapon-wheel scrolling and hot-mic spam in rampages pile these up steadily.",
+   "fix": "Cache a shared cap geometry and two shared stencil plane geometries plus one stencil material at module level, and mark them userData.shared. Keep only capMatProto.clone() per instance (Combat blinks its colour), and dispose that clone when the held or projectile mesh is dropped (Combat.syncHeld and the projectile despawn), or switch the blink to a per-instance onBeforeRender colour so it needs no material at all.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_gpuleaks.js"
+  },
+  {
+   "id": "QAC-08",
+   "origin": [
+    "CMB-01",
+    "RND-01"
+   ],
+   "severity": "medium",
+   "area": "memory",
+   "title": "Every thrown hot take / hot mic / rocket leaks a GPU SphereGeometry: projectile meshes are built with a fresh geometry and never disposed on removal",
+   "file": "js/06_entities.js:1171",
+   "evidence": "Render.buildEntityMesh (js/10_render.js:1442): `var pm = new THREE.Mesh(new THREE.SphereGeometry(e.weaponId === 'hottake' ? 0.16 : 0.07, 6, 4), ...)` for every Projectile added by Combat.lob/launch (js/08_combat.js:710, 722, 937). Entities.remove (06_entities.js:1171-1174) calls Render.detach, which only does `e.mesh.parent.remove(e.mesh)` and disposes `ud.paint` (vehicles); the sphere is never disposed. Combat.skinProjectile (08_combat.js:1207) also replaces e.mesh.geometry on mics/rockets, orphaning the sphere. Runtime (scratchpad/cmb/r6.js, AI spawner frozen, player pinned): 10 hot takes thrown and landed, 0 projectiles left -> renderer.info.memory.geometries +9 for good; 10 hot mics -> +11. Full session (r1.js): 30 hot takes + 30 rockets + 15 mics + 20 car explosions, then 80 s settle: Entities.list back to 269 (boot 232), fxGroup back to 1 child, but geometries 170 -> 639. A geometry-tracking hook (r4.js) attributes 14 undisposed, off-scene geometries to `10_render.js:1442 < 10_render.js:1424 < 06_entities.js:1167`. || Independently reproduced by RND-01: buildEntityMesh: `var pm = new THREE.Mesh(new THREE.SphereGeometry(e.weaponId === 'hottake' ? 0.16 : 0.07, 6, 4), ...)` (a new geometry per projectile). detach (1429-1435) only does `e.mesh.parent.remove(e.mesh)` and `ud.paint.dispose()`; the sphere is never disposed, so WebGLGeometries keeps it (and its GL buffers) forever. Runtime (scratchpad/rnd_t1.js stage c): 200 x `new GTP.Projectile({weaponId:'hottake'})`, Entities.add, render, Entities.remove -> renderer.info.memory.geometries 169 -> 370 (+201). The same 200-cycle test with vehicles (100 spawn/remove) and health pickups showed +0.",
+   "impact": "GPU buffers grow by one geometry per projectile for the whole session; a long rampage with the launcher / hot takes keeps adding to renderer.info.memory.geometries.",
+   "fix": "Cache the two projectile sphere geometries (e.g. Render._projGeo[weaponId]) instead of `new SphereGeometry` per entity, or mark per-entity geometry userData.own and dispose it in Render.detach / Entities.remove. In skinProjectile, dispose the sphere it replaces if it is not shared.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_gpuleaks.js"
+  },
+  {
+   "id": "QAC-09",
+   "origin": [
+    "CMB-03"
+   ],
+   "severity": "medium",
+   "area": "memory",
+   "title": "Weapon/health/armor pickup meshes create 2-4 new PlaneGeometry + material each and never free them: every cop gun drop and every New Game / Load leaks",
+   "file": "js/08_combat.js:1241",
+   "evidence": "labelMesh: `var mat = new THREE.MeshBasicMaterial({ map: labelTexture(label), ... }); var m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);` called twice by bottle() (1264-1265) and twice for the crate (1298-1299), so a weapon crate gets 4 planes + 4 materials (+ a new SpriteMaterial in glowSprite 1270). Pickups are removed through Entities.remove -> Render.detach, which never disposes them; newGame (30_game.js:191) removes every entity the same way. Runtime (r6.js, AI frozen): 10 weapon pickups spawned in view -> geometries +42; destroyed and swept (not in Entities.list) -> still +42. r3.js: 5 x newGame(7) -> +10 geometries with the same world. Cops drop their gun on 50% of deaths (08_combat.js:1934), so a wanted-level fight leaks 4 geometries per dropped gun.",
+   "impact": "Unbounded GPU-geometry and material growth tied to kills and to every load/new game.",
+   "fix": "Use one cached PlaneGeometry per size (Render._planeGeo(w,h) already exists) and cache the label MeshBasicMaterial per label next to labelTex; cache glow SpriteMaterials per colour. Alternatively traverse and dispose userData.own resources in Render.detach.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_gpuleaks.js"
+  },
+  {
+   "id": "QAC-10",
+   "origin": [
+    "RND-02"
+   ],
+   "severity": "medium",
+   "area": "memory",
+   "title": "Static chunks are never unbuilt: after crossing the map, all 196 chunks (about 1M vertices) stay resident and are only hidden",
+   "file": "js/10_render.js:709-735",
+   "evidence": "ensureChunks only ever calls buildChunk for missing chunks and sets `ch.group.visible = dd < drawDistance + 70` for the rest. Nothing calls _disposeChunk except invalidateAll (new world). Runtime (rnd_t1.js stage a): boot = 54 chunks, 169 geometries, 31 textures. One teleport sweep over a 7x7 grid -> chunks 196 (the whole 14x14 map), geometries 704, textures 149, 1,006,128 chunk-owned vertices (about 44 MB of position/normal/uv/colour data, estimated) kept for the whole session. || QA-C soak: chunks 54 at boot -> 195 at minute 7, never fewer; textures 31 -> 137.",
+   "impact": "Steady-state GPU and JS memory equals the whole city, not the ring around the camera. That is fine on desktop, but it is the main memory cost on low-end and mobile GPUs and grows with every map expansion. The visible-flag loop also walks every built chunk each frame.",
+   "fix": "Add an eviction ring: in ensureChunks, when a chunk is beyond drawDistance + 140 (hysteresis) and more than N chunks are built, call _disposeChunk(ch) and delete it from Render.chunks. Limit evictions to a few per frame. _disposeChunk must also call `im.dispose()` on the props InstancedMeshes (to free their instanceMatrix and instanceColor buffers) and dispose the per-chunk PointsMaterials (pm, em) created in _buildProps. Prop `_inst` survives this, because a rebuild re-creates it.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_soak.js"
+  },
+  {
+   "id": "QAC-11",
+   "origin": [
+    "AUD-01"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Dying during a cutscene leaves the cutscene running through the WASTED screen (frozen body, cutscene camera, letterbox), then on respawn runs onDone and restores the pre-cutscene wanted stars",
+   "file": "js/12_cutscenes.js:412",
+   "evidence": "Cutscenes.update is only called from Game.step when SIM_STATES[state] (30_game.js:316, SIM_STATES = {playing, cutscene}), so the abort check `if (g && g.state !== 'cutscene' && g.state !== 'paused') { finish(true); return; }` (12_cutscenes.js:412) never runs in 'wasted'. Combat.update still runs in 'cutscene' and kills the player (08_combat.js:1722). Runtime (scratchpad/aud/c1.js, headless seed 7): wanted.set(2); Cutscenes.play('cs_opening', onDone); advance 1 s; p.hp=0. While 'wasted': {cs:true, letterbox:true, Render.free:true, player._frozen:true, own update stub, alarmMuted:true, tilt:0, camPos stuck at the cutscene shot [96.4,8.9,287.6]} - the WASTED rig orbit (deathTick rig.yaw/pitch) is invisible because the camera is free, and deathTick's p.update() is the freeze() stub so the body never falls. First step after the hospital respawn: finish(true) runs -> onDone fired (done:1) and finish() line 325 `GTP.AI.wanted.set(c.wantedWas)` puts the 2 stars back (wanted:2) right after respawnPlayer cleared them.",
+   "impact": "Death mid-cutscene (fire/explosion/traffic while the world keeps simulating) shows a frozen cutscene frame with letterbox instead of the WASTED shot, then the player respawns at the hospital with the wanted level they had before the cutscene and the cutscene's onDone (e.g. a mission start, hint, or act progression) fires as if it completed.",
+   "fix": "Listen for 'player:wasted'/'busted' (or check in Combat.onPlayerDeath) and call Cutscenes.cancel() (finish(false)); in finish() skip the wanted restore when !player.alive or when finishing because the state left 'cutscene' for a respawn state. Alternatively make the player invulnerable while Cutscenes.active.",
+   "verified": "runtime",
+   "regress_test_idea": "headless: wanted.set(2); Cutscenes.play('cs_opening', ()=>done++); advance(1); player.hp=0; advance(0.2) -> expect Cutscenes.active===false && Render.free===false; step to respawn -> expect done===0 and AI.wanted.level===0."
+  },
+  {
+   "id": "QAC-12",
+   "origin": [
+    "AUD-02"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Cutscene music 'station:<id>' is never audible: the radio only plays with the player in a vehicle, and those scripts place the player on foot",
+   "file": "js/12_cutscenes.js:305",
+   "evidence": "musicStart only does `cur.musicWas = A.station; A.radio.setStation(i);` but Audio's sequencer gates on `var inCar = !!(p && p.inVehicle) && (st === 'playing' || st === 'cutscene')` (03_audio.js:581), and actorFor() calls `ped.exitVehicle()` for the 'player' actor with an `at` (12_cutscenes.js:225). Runtime (c1.js part 2, player put in a sedan first, 300 steps each): cs_twist (station:quiet_signal) {playing:0 of 300, inVehicle:0}; cs_ending_a (station:pennant_fm) {playing:0 of 300, inVehicle:0}. Only cs_act2 played (player stayed seated). With the player on foot (the normal case after MISSION PASSED) none of the three music scripts make a sound.",
+   "impact": "The scored act/twist/ending cutscenes (cs_act2, cs_twist, cs_ending_a) are silent; the music field is dead data. It also silently changes Audio.station for the duration.",
+   "fix": "Add a cutscene override to Audio: e.g. GTP.Audio.radio.force(stationIndex|null) that sets radio.playing=true regardless of inCar while Cutscenes.active (and treat it as un-muffled), cleared in musicEnd(). Use it from musicStart for 'station:' specs.",
+   "verified": "runtime",
+   "regress_test_idea": "headless: Cutscenes.play('cs_twist'); advance(2) -> expect Audio.radio.isPlaying() true (fails today)."
+  },
+  {
+   "id": "QAC-13",
+   "origin": [
+    "CORE-01"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Load ignores the saved y: a save made on the elevated Loop deck (or any bridge deck) loads the player, and the car they sat in, on the ground under it",
+   "file": "js/30_game.js:441",
+   "evidence": "serialize() writes `y: p.y` (l.409) but applyData calls `this.debug.teleport(data.x, data.z);` (l.441). teleport computes `ty = y != null ? y : GTP.World.heightAt(x, z, y || 0)` (l.599), so heightAt gets yHint 0 and returns the ground surface. The vehicle restore at l.459 calls spawnVehicle without opts.y, and spawnVehicle uses `GTP.World.heightAt(x, z, 0)` (l.610), so the car also drops. Runtime (scratchpad/core/t2.js, seed 7): found a deck tile at (178,130) with deck y=7 and ground 0.12; teleport(178,130,7); saveSlot(2); loadSlot(2) -> player y 7 -> 0.12.",
+   "impact": "After a pause-menu save on The Loop or Lower Loop, Continue puts the player (and their car) under the highway. If water is below, they start swimming or the car sinks. Same for autosave if it fires while on a deck.",
+   "fix": "In applyData pass the saved height as the hint: `this.debug.teleport(data.x, data.z, data.y != null ? GTP.World.heightAt(data.x, data.z, data.y) : undefined)`. For the vehicle pass `y: sv.y != null ? World.heightAt(sv.x, sv.z, sv.y) : undefined` and save `y: v.y` in serialize's vehicle record.",
+   "verified": "runtime",
+   "regress_test_idea": "find a tile whose World.surfaces has a layer with y>5, teleport there with y=7, saveSlot(2), loadSlot(2), then assert Math.abs(player.y-7)<0.5."
+  },
+  {
+   "id": "QAC-14",
+   "origin": [
+    "MIS-02"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Aborting (or a timer fail) during escape_wanted leaves the mission-imposed 2-5 stars on the player",
+   "file": "js/09_missions.js:824",
+   "evidence": "H.escape_wanted.start: `wd.set(n)` (826-827); there is no cleanup, and teardownRun (1389-1400) clears dialogue, minigame, entities, markers and state but never the wanted level (RETRY does: restorePlayer `wd.clear()` then the snapshot's level). Runtime (t2.js A): prep('m09_balloon'), completeObjective until current().def.type==='escape_wanted', advance 2 s -> AI.wanted.level 3; abort(); advance 3 s -> level still 3, mission inactive. In the 300-mission start/abort sweep (loop.js) the sweep ended with wanted 5 after m13b (setWanted 5) and the game in state 'busted' a few seconds later.",
+   "impact": "QUIT/ABORT from the phone, or a 'timer' fail in m13 (the escape_wanted inside the 180 s timer_wrap), drops the player into a 4-5 star manhunt with no mission, ending in death or bust (losing weapons/money) for something the mission imposed.",
+   "fix": "Remember in c (escape_wanted start) the level before set; in a cleanup hook or teardownRun, if the run is torn down while an escape_wanted objective is running (or the level is still the one the mission set), restore the previous level / AI.wanted.clear().",
+   "verified": "runtime",
+   "regress_test_idea": "prep('m09_balloon'); force to escape_wanted; abort(); advance 1; assert AI.wanted.level === 0."
+  },
+  {
+   "id": "QAC-15",
+   "origin": [
+    "MIS-03"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "RETRY spawns a second copy of the car the player was in at the checkpoint instead of reusing it; the old car stays, so cars pile up (and a keep vehicle such as the sponsor van is duplicated)",
+   "file": "js/09_missions.js:1692",
+   "evidence": "retry: `var mine = s.vehicle.tag && run.tagged[s.vehicle.tag] ? run.tagged[s.vehicle.tag] : spawnFromRecord(s.vehicle);` (1693). The car the player sits in is deliberately kept by teardownRun's cleanupEntities (`if (pl && pl.inVehicle === e) { e.persistent = false; ... continue; }`, 348), and a keep vehicle is skipped (345), so the original survives and a new persistent, mission-tracked copy (spawnFromRecord copies keep) is created at the same spot. Runtime (t2.js B): m06_rally, player in their own sedan at the second objective (snapshot.vehicle 'sedan/null'), 10x {fail('test'), retry()}: vehicles within 8 m of the checkpoint 1 -> 2,3,4,5,5,5,6,7,8,9; total vehicles 41 -> 61; p.inVehicle is never the original car; after abort 9 cars remain stacked there.",
+   "impact": "Each retry adds an overlapping car at the checkpoint (physics push-apart, extra draw calls, more entities); the player's own car (colour/wrap/damage aside) is replaced by a clone; a keep vehicle (sponsor van, ratiocar, homecab) taken into a mission becomes two persistent never-despawning copies.",
+   "fix": "Store a reference to the vehicle in the snapshot (snap.vehicleRef = p.inVehicle) and on retry reuse it when it is still alive (!removed && !wreck && !sinking), moving it to the record's position; spawn from the record only otherwise. Never copy keep onto a spawned replacement while the original keep vehicle is alive (look it up with liveTagged(rec.tag)).",
+   "verified": "runtime",
+   "regress_test_idea": "Put the player in a car, reach the 2nd objective, fail+retry 3x, assert the number of vehicles within 8 m of the checkpoint stays 1 and p.inVehicle === the original car."
+  },
+  {
+   "id": "QAC-16",
+   "origin": [
+    "MIS-04"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Pause-menu RESTART (newGame) during a Ratio Rampage gives the fresh player the previous game's weapons",
+   "file": "js/09_missions.js:2943",
+   "evidence": "Game.newGame creates the new player, then calls Strands.init, which does `if (cur) { try { endCurrent('reset'); } ... }` (2943). S.ratio_rampages.end (2739-2748) then writes the old pre-rampage loadout into player() - which is now the NEW player: `p.weapons = Object.assign({ fist: Infinity }, cur.before.weapons); p.ammo = copyAmmo(cur.before.ammo); ... p.weapon = ...`. A load overwrites it afterwards in applyData, but RESTART (11_ui.js:1864 `g.newGame(g.seed)`) and NEW GAME do not. Runtime (t3.js D): p.weapons.smg=120, shotgun=30; Strands.start('ratio_rampages', rr_01); advance 1; g.newGame(7): new player (different object) has weapons [fist, smg, shotgun], weapon 'smg'.",
+   "impact": "A new game starts with the previous game's arsenal (any weapon, any ammo), skipping the whole weapon progression; also 'Shift over'/'Patrol over' toasts and strand:end fire into the new game for the other strands.",
+   "fix": "In Strands.init, drop the running strand without its gameplay side effects (e.g. endCurrent('reset') with S.*.end skipping the weapon restore / pay / toasts when why==='reset'), or call Strands.init/endCurrent before newGame replaces the player.",
+   "verified": "runtime",
+   "regress_test_idea": "Give smg, start a rampage, g.newGame(7); assert Object.keys(GTP.game.player.weapons) is ['fist']."
+  },
+  {
+   "id": "QAC-17",
+   "origin": [
+    "RND-05"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "The camera is not interpolated with the render alpha while entities are, so the player and the car jitter against the camera at display rates above 60 Hz (and at 60 Hz whenever the accumulator phase drifts)",
+   "file": "js/10_render.js:603",
+   "evidence": "frame(alpha): `if (GTP.Entities && GTP.Entities.sync) GTP.Entities.sync(alpha)`, where entity meshes are placed at `_px + (x - _px) * alpha` (06_entities.js:66, 360, 431, 964). It then calls `Render.rig.apply(alpha)`, but apply() (1845) takes no parameter and uses r.pos and r.focus, which update only once per fixed step in updateCamera (645, C.STEP = 1/60). game loop: `this.render(this._acc / C.STEP)` (30_game.js:397). So between steps the camera stays at the end-of-step state while the mesh is drawn up to one step behind it. A car at 30 m/s moves 0.5 m per step, so the car mesh slides back and forth by up to 0.5 m relative to the camera in a 60 Hz sawtooth.",
+   "impact": "Visible judder of the followed character or vehicle on 120/144/240 Hz monitors, worst at speed. This is the exact artifact the alpha interpolation was added to remove.",
+   "fix": "Keep the previous rig state (r._ppos, r._pfocus, r._pfov, r._proll), saved at the start of rig.update. In apply(alpha), place the camera at lerp(prev, cur, alpha) for pos, focus, roll and fov. updateCamera can keep calling apply() with alpha = 1.",
+   "verified": "static",
+   "regress_test_idea": "Drive a car at 30 m/s, render with alpha 0.5, and assert that the distance from the camera to the player-car mesh equals the distance with alpha 1 within 0.05 m."
+  },
+  {
+   "id": "QAC-18",
+   "origin": [
+    "UI-02"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Ratio War: one click on POST spends two posts (same double-tap path)",
+   "file": "js/11_ui.js:3113",
+   "evidence": "menuState() includes state 'minigame', so the mousedown listener calls pointerTap -> hit 'post' -> ratio.post(). The next step's handleInput 'minigame' case (3113, `if (click) pointerTap(In.mouse.x, In.mouse.y);`) runs the stale 'post' hit again. ratio.post only checks phase === 'play' && postsLeft > 0. Runtime (dbl.js): startMinigame('ratio', {posts:5}), one click on the 'post' rect: postsLeft 5 -> 3. Debate is unaffected because answer() returns false once phase is 'reveal'. Hottake is also unaffected because the flag clears.",
+   "impact": "Mouse and desktop players get half the posts. Both posts land on the same meter position, so a CRINGE counts twice: two clicks can reach the 3-NOTED instant loss. Ratio missions become much harder with the mouse than with E/Space.",
+   "fix": "Same as UI-01: process each click exactly once.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_QAC-04.js (same root cause)"
+  },
+  {
+   "id": "QAC-19",
+   "origin": [
+    "UI-03"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "Mouse clicks on settings toggles/choices and on pause MUTE do nothing (or skip a value): each click steps twice",
+   "file": "js/11_ui.js:1563",
+   "evidence": "The same double delivery applies to settingsInput (1563, `else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(...)`) and to the pause list (3109), plus the mousedown listener. The 'set-<id>-r' hit calls settingStep(row, 1) twice, and 'menu-mute' calls setMuted(!ui.muted) twice. Runtime (dbl.js, pause > SETTINGS / pause menu): weather true -> true (no change), quality low -> high (skips medium), muted false -> false. Each click also writes localStorage twice.",
+   "impact": "With a mouse, WEATHER/GAMEPAD/HINTS toggles, SUBTITLES (2 values) and the pause MUTE item cannot be changed. QUALITY and DRAW DISTANCE skip every other value. Keyboard and pad work, so the bug looks random to the player.",
+   "fix": "Same as UI-01 (single click path).",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_QAC-04.js (same root cause)"
+  },
+  {
+   "id": "QAC-20",
+   "origin": [
+    "WLD-01"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "A* steps sideways onto ramp tiles: car and ped paths climb the 2-7 m side wall of a Loop ramp, so the AI drives or walks into it and stops",
+   "file": "js/04_world.js:447",
+   "evidence": "_neighbors (ground layer) does `out.push(ni);` for all four neighbours, and _carCost/_pedCost give RAMP a positive cost no matter which side the step comes from. resolveCapsule treats the wedge as solid when `hTop > y + 0.6` (js/04_world.js:290), and the side rails stop lateral exits (316-333), so you can only get on or off a ramp along its axis. Node test (scratchpad/wld/t8.js, t9.js, seed 7): findPath(150,222 -> 190,230,{mode:'ped',fromY:0,toY:7}) returns [[150,222,0],[150,226,0.12],[174,226,0.12],[174,230,6.61],[178,230,7],...]. That path goes straight from sidewalk tile (43,56) at y 0.12 onto ramp tile (43,57), whose rampY is 6.61. The car path for the same pair enters ramp tile (37,57), rampY 1.94, from the side. Walking either step with resolveCapsule ends with the mover blocked at the wedge face (174.00,227.60 for the ped, 150.00,227.00 for the car). Sweep: deck-bound starts within 6 tiles of each of the six ramps' top ends. 61/156 ped paths and 84/156 car paths contain an infeasible lateral ramp step.",
+   "impact": "Cops and mission drivers (07_ai.js:1172/1306, 09_missions.js:2131, the 11_ui map route) that chase or route to a target on the Loop get a path whose step onto the ramp is a wall. They push against it until repathT runs out, then get the same path again. The same happens to peds crossing a ramp, and to the player's map route line.",
+   "fix": "In _neighbors, for ground-layer moves where either tile is RAMP, allow the step only when it runs along that ramp's axis (World.ramps[_rampIndex[i]].axis), or when both tiles are RAMP of the same ramp, or when the ramp tile's rampY <= C.PED stepUp (about 0.5).",
+   "verified": "static",
+   "regress_test_idea": "For each World.ramps rec: findPath from the ground tile beside the ramp's top end to a deck tile beyond it (car and ped). Assert that no consecutive tile pair is a lateral move into a RAMP tile with rampY > 0.5."
+  },
+  {
+   "id": "QAC-21",
+   "origin": [
+    "WLD-02"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "A* ignores solid props and puts waypoints on tile centres, so a ped path that runs head-on through a lamp, hydrant, bin, bench, pillar or billboard dead-stops the walker",
+   "file": "js/04_world.js:463",
+   "evidence": "_pedCost/_carCost look only at tile type. Path points are tile centres `(tx + 0.5) * TILE`. Furniture sits on the sidewalk's centre line along its long axis: hydrant `cx + ox * 0.8, cz + oz * 0.8`, where only the road-facing axis gets an offset. 310 solid props sit exactly on a tile centre (127 benches, 93 crates, 34 trees, 24 billboards, 16 pillars...). When a walker heads straight at a prop centre, resolveCapsule pushes it straight back (ddz == 0, so the push is purely along x), and nothing makes it slide sideways. Node sim of walkPath's follower (advance radius 1.4, 2.6 m/s, World.resolveCapsule each step; scratchpad/wld/t5.js): 8 of 269 random short ped paths deadlock on a prop (bin@306.0,226.9, hydrant@380.9,322.0, pillar@184.0,626.0 ...). Example: findPath(86,242 -> 110,242) gives [[86,242],[94,242],[110,242]], and its last segment runs through the tree at (98,242). The walker stops at 97.10,242.00 for good. I also tried this in the browser with a bare GTP.Ped driven by moveTo (scratchpad/wld/br1.js). Neither test walker arrived within 40 s, but their final positions were not next to the expected props, probably because of live-entity contacts. The browser run therefore does not confirm this; the node sim is the evidence.",
+   "impact": "About 3% of ped A* routes (cops on foot, mission walkers, 09_missions routes) freeze in front of street furniture. walkPath's 'blocked' repath runs the same A* and returns the same line, so the ped stays stuck until its goal moves more than 12 m.",
+   "fix": "Add a cost penalty for prop tiles in _pedCost/_carCost (e.g. `+ (World._propTile[node] ? 2 : 0)`). Also, in resolveCapsule's prop branch, when |cross(velocity, push)| is about 0, add a small deterministic tangential component (e.g. a sign from hash2(prop.index)) so a head-on contact slides around the prop.",
+   "verified": "static",
+   "regress_test_idea": "seed 7: spawn a bare GTP.Ped at (86,242), moveTo along findPath(86,242,110,242) for 20 s of advance(1/60), and assert it arrives within 2 m."
+  },
+  {
+   "id": "QAC-22",
+   "origin": [
+    "WLD-03"
+   ],
+   "severity": "medium",
+   "area": "correctness",
+   "title": "World.generate returns early for the same seed, so knocked-over props (fallen, solid=false) persist through Restart / Load / New Game on the same seed",
+   "file": "js/04_world.js:497",
+   "evidence": "`if (World._seed === seed && World.tiles) { prog('done', 1); return; }`. Vehicle._knockProp (06_entities.js:812-813) mutates World.props in place: `prop.fallen = {...}; prop.solid = false;`. Game.newGame(seed) (30_game.js:188) and load() -> newGame(data.seed) (30_game.js:517) call World.generate(seed), and that call is a no-op when the seed is unchanged (seed 7 is the default). Node (scratchpad/wld/t2.js): after lamp.fallen={t:5} and generate(7) again, lamp.fallen is still {\"t\":5} and it is the same object. Browser (scratchpad/wld/br1.js, seed 7): a real vehicle's _knockProp(lamp), then GTP.game.newGame(7). After restart the lamp is the same object, fallen = {t:80, ...}, solid = false, game time t = 0, Render._fallen length 1, and resolveCapsule next to the lamp is not blocked by it.",
+   "impact": "After the pause-menu RESTART ('A fresh city on the same seed') or after loading a save in the same session, every lamp, hydrant, bin, bench, table, luggage cart, pallet, stanchion or cutout the player knocked over stays down and non-solid. The save does not store this state, so the city differs depending on whether the save was loaded after a reload or within the session. fallen.t also refers to the old game clock while game time restarts at 0, so Render._animateFallen computes k = (now - t)/0.45 < 0 for props still in Render._fallen. The smoothstep ease then goes far negative and the knock animation is wrong until the chunk is rebuilt.",
+   "fix": "When generate takes the early-return path, still reset the mutable per-game prop state: `World.props.forEach(function (p) { if (p.fallen) { p.fallen = null; p.solid = true; } })`. Better: keep the original `solid` in p._solid0 and restore it. Then emit 'world:generated' (or call Render.invalidateAll, which newGame already does) so the fallen instances are rebuilt standing.",
+   "verified": "runtime",
+   "regress_test_idea": "Boot seed 7, knock a lamp with a vehicle's _knockProp, call GTP.game.newGame(7), and assert World.props[lamp.index].fallen is falsy and .solid is true."
+  },
+  {
+   "id": "QAC-23",
+   "origin": [
+    "AI-02"
+   ],
+   "severity": "medium",
+   "area": "performance",
+   "title": "The five-star helicopter adds a THREE.SpotLight to the scene, recompiling every lit material: ~0.7 s freeze on the frame it appears",
+   "file": "js/07_ai.js:1554",
+   "evidence": "Heli.buildMesh: `var light = new THREE.SpotLight(0xfff0c8, 6, 90, 0.2, 0.55, 1); ... grp.add(light)`; syncMesh toggles `ud.light.visible = on` (1528) when leaving/down, which changes the light count again. Runtime (scratchpad/ai/leak.js, SwiftShader): first render after `E.add(new GTP.AI.Heli())` took 731 ms vs 7-9 ms for later frames; renderer.info.programs went 22 -> 38. Same mechanism as CMB-04 (muzzle light) but a separate light, triggered by reaching 5 stars.",
+   "impact": "A visible hitch at the most intense moment (5-star chase, usually while driving); on real GPUs smaller than in SwiftShader but still a multi-frame stall for ~16 program compiles. Light visibility toggles on leave/shot-down re-key all materials again.",
+   "fix": "Keep one persistent SpotLight in the scene from boot (Render owns it, intensity 0 / parked when no heli) and let the heli drive its position/target/intensity instead of creating one per heli; never toggle .visible, set intensity to 0. Alternatively drop the real light and rely on the existing additive cone + ground pool.",
+   "verified": "runtime",
+   "regress_test_idea": "Render a frame, record renderer.info.programs.length, add a Heli, render: assert program count unchanged and frame time < 50 ms."
+  },
+  {
+   "id": "QAC-24",
+   "origin": [
+    "RND-03"
+   ],
+   "severity": "medium",
+   "area": "performance",
+   "title": "During a weather transition, updateEnvironment runs on every frame and repaints and re-uploads the 512x256 sky canvas twice per frame for 40 s",
+   "file": "js/10_render.js:479",
+   "evidence": "weather.update: `if (Math.abs(Wx.overcast - o0) > 1e-4 || Math.abs(Wx.rain - r0) > 1e-4) Render._envClock = null;`, and in frame (608) a null _envClock forces `Render.updateEnvironment(clock)`. That repaints the gradient and the three triple-drawn radial gradients in _paintSky and sets `A.sky.needsUpdate = true; A.env.needsUpdate = true;` (404). These are two CanvasTextures over the same canvas (05_assets.js:310/314), so there are two texImage2D uploads. It also clones 7 colours, rebuilds Render.env, walks all chunks and all lit materials. Runtime (rnd_t2.js): 60 clear-weather frames -> 0 updateEnvironment / 0 _paintSky calls; 60 frames after weather.set('rain', false) -> 60 / 60. C.WEATHER.transition = 40 s, so this lasts about 2400 frames per transition.",
+   "impact": "For 40 s every few game hours, each frame pays a canvas raster plus two 512 KB texture uploads (texture upload stalls are the costly part on integrated GPUs). This can trip the auto-quality watchdog into a downgrade exactly when rain starts.",
+   "fix": "Throttle the weather-driven repaint: only clear _envClock when overcast or rain has moved by at least 0.02 since the last repaint (keep Render._envOvercast/_envRain), or at most every 0.25 s. Share one CanvasTexture for the dome and the PMREM source, or set the env texture's needsUpdate only when _refreshEnv will actually run (when the key changes).",
+   "verified": "runtime",
+   "regress_test_idea": "Wrap Render._paintSky with a counter, call weather.set('rain'), run 60 frames, and assert at most 10 repaints."
+  },
+  {
+   "id": "QAC-25",
+   "origin": [
+    "UI-04"
+   ],
+   "severity": "medium",
+   "area": "performance",
+   "title": "Waypoint route: World.findPath with maxExpansions 20000 every 2 s on the frame thread; an unreachable waypoint costs 7-10 ms every time",
+   "file": "js/11_ui.js:606",
+   "evidence": "updateRoute(): `ui.map.routeT = 2; ... Wd.findPath(p.x, p.z, wp.x, wp.z, { mode: 'car', fromY: p.y, maxExpansions: 20000 })`. It runs while playing and on the paused map page, and it is recomputed even when neither the player tile nor the waypoint has changed. Runtime (scratchpad/ui/route.js, seed 7, player at 110,270): waypoint at the far map corner (no path, all 20000 expansions used) median 6.8 ms, max 10.2 ms. Water waypoint 1.6 / 5.3 ms. A reachable waypoint about 500 m away (perf.js): median 2.8 ms, p90 7.3 ms. mapTap accepts any in-bounds point, including water and building interiors, so an unreachable waypoint is easy to set.",
+   "impact": "A periodic 7-10 ms hitch every 2 s takes about half of a 60 fps frame budget, and it repeats for as long as an unreachable waypoint stays set. When findPath fails, the fallback straight line is drawn anyway, so all of that work is wasted.",
+   "fix": "Snap the waypoint to the nearest road tile in setWaypoint. Cache the result keyed by (player tile, waypoint) and recompute only when the player leaves the cached path corridor. After a failed search, back off (for example, retry only after 10 s or after the player moves 30 m). Optionally lower maxExpansions or spread the search over several frames.",
+   "verified": "runtime",
+   "regress_test_idea": "Set a waypoint in open water, advance 10 s, and count findPath calls (expect <= 1 failed search) via a wrapper around GTP.World.findPath."
+  },
+  {
+   "id": "QAC-26",
+   "origin": [
+    "AST-03"
+   ],
+   "severity": "medium",
+   "area": "robustness",
+   "title": "PostFX sizes its targets past MAX_TEXTURE_SIZE on very wide or high-DPR canvases: the frame is fully black with no fallback",
+   "file": "js/10b_postfx.js:277",
+   "evidence": "resize: F.width = Math.max(2, w | 0); F.height = Math.max(2, h | 0); (no upper clamp); _ensure: F._rt = new THREE.WebGLRenderTarget(w, h, ...) and F._ldrRT likewise; FXAA uses resolution.set(w, h). Runtime (scratchpad/ast_t2.js, quality high, viewport 9000x3000): PostFX [8968,3000], gl.drawingBuffer [8192,3000] (the browser clamps the canvas), MAX_TEXTURE_SIZE = MAX_RENDERBUFFER_SIZE = 8192, gl.getError() = 1282 (INVALID_VALUE), pixelStats {colors:1, mean:[0,0,0], dark:1}. GTP.errors stays empty and PostFX.enabled stays true, because a GL error does not throw and so never reaches the try/catch fallback.",
+   "impact": "Players on large or ultra-wide displays at DPR 2 (or GPUs with a 4096/8192 limit) get a black screen at medium and up, with no error and no automatic recovery. Even under the limit, a browser-clamped drawing buffer leaves the post targets and the FXAA texel size different from the real canvas.",
+   "fix": "In resize, size from renderer.getDrawingBufferSize() and clamp both sides to Math.min(renderer.capabilities.maxTextureSize, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)), keeping the aspect ratio. After _ensure, check gl.checkFramebufferStatus once (or gl.getError after the first pass) and set enabled = false on failure, so the plain render path takes over.",
+   "verified": "runtime",
+   "regress_test_idea": "setViewportSize(9000, 3000), Render.resize(), set quality high, render, and assert pixelStats.colors > 50 and gl.getError() === 0."
+  },
+  {
+   "id": "QAC-27",
+   "origin": [
+    "AUD-03"
+   ],
+   "severity": "medium",
+   "area": "robustness",
+   "title": "Engine / siren / rotor loops keep droning indefinitely in a hidden tab (no AudioContext suspend, fades only happen inside Game.step)",
+   "file": "js/03_audio.js:390",
+   "evidence": "The looping voices are only faded/stopped by updateEngine/updateSiren/updateHeli inside Audio.update, which only runs from Game.step (30_game.js:341). When the tab is hidden rAF stops, so no step runs, and nothing suspends the context: the only visibilitychange handlers are Input.releaseAll (02_input.js:98) and the dt reset (30_game.js:131). Runtime (scratchpad/aud/a2.js, real AudioContext via --autoplay-policy=no-user-gesture-required, analyser tapped on the destination): in a sedan, radio stopped, stepping: rms 0.072; with stepping stopped (= hidden tab) rms 0.058 after 1 s, 0.073 after 5 s, 0.057 after 10 s - the engine idle never fades. Control: setState('paused') with stepping -> rms 0, engine node stopped after 1.5 s.",
+   "impact": "Alt-tabbing away while driving (or with a siren chase / helicopter nearby) leaves a continuous engine/siren/rotor tone playing from the background tab until the player returns.",
+   "fix": "In Audio, add document.addEventListener('visibilitychange', ...) that calls ctx.suspend() when document.hidden and ctx.resume() when visible (unlock() already resumes on the next gesture as a fallback); or ramp master to 0 on hide.",
+   "verified": "runtime",
+   "regress_test_idea": "non-headless audio test: in a car, stop stepping 2 s and dispatch a hidden visibilitychange -> expect Audio.state().ctx === 'suspended'."
+  },
+  {
+   "id": "QAC-28",
+   "origin": [
+    "RND-04"
+   ],
+   "severity": "medium",
+   "area": "robustness",
+   "title": "One NaN target position poisons the camera rig permanently: pos and focus stay NaN after the target recovers (blank world, no chunks visible) until something calls snap()",
+   "file": "js/10_render.js:1812-1814",
+   "evidence": "rig.update: `r.pos.x = U.damp(r.pos.x, desired.x, k, dt)` with damp = `a + (b - a) * (1 - exp(-lambda*dt))`, so once r.pos.x is NaN it stays NaN whatever desired is. `far = U.dist2d(...) > 40` is false for NaN, so the 1e3 catch-up never fires. There is no finite check anywhere in update or apply. Runtime (rnd_t2.js): set player.x = NaN for one updateCamera(1/60), then restore player.x = 110 and run 120 more steps and a render -> camera.position.x, rig.pos.x and rig.focus.x are all NaN, and chunkGroup has 0 visible children. Only rig.snap() recovers it (camera x 110).",
+   "impact": "Any one-frame NaN from any module (physics, a teleport with an undefined coordinate, a cutscene target without x/z) turns into a permanently black or sky-only screen with a frozen camera. Auto-recovery never happens and the player has to reload.",
+   "fix": "At the top of rig.update, skip the update when the target has non-finite x/y/z. After the damping, if any of r.pos / r.focus / r.fov / r.yaw / r.pitch is not finite, reset it to the desired values and set r._snap = true. Guard rig.apply the same way (do not write NaN into camera.position).",
+   "verified": "runtime",
+   "regress_test_idea": "Set p.x = NaN, call Render.updateCamera(1/60), restore p.x, run 10 steps, and assert Number.isFinite(Render.camera.position.x)."
+  },
+  {
+   "id": "QAC-29",
+   "origin": [
+    "SEC-04"
+   ],
+   "severity": "medium",
+   "area": "robustness",
+   "title": "will-navigate allows any file:// URL and nothing blocks file drops: dropping a file on the window replaces the game (unsaved progress lost), then mods are injected into the dropped document",
+   "file": "desktop/main.js:106",
+   "evidence": "wc.on('will-navigate', (event, url) => { if (!isLocal(url)) { event.preventDefault(); openExternal(url); } }); with function isLocal(url) { return /^(file|about|devtools):/i.test(url); } (main.js:236). Also wc.on('did-finish-load', () => { loadMods(wc); }) (main.js:119) does not check which page finished loading. `grep -n \"'(drop|dragover|dragenter|beforeunload)'\" js/*.js index.html` finds nothing, so the page never cancels a drop. Chromium and Electron navigate the window to a dropped file by default, and that navigation passes the isLocal test.",
+   "impact": "Dragging any file (a screenshot, a mod .js, an .html) onto the game window navigates the only window away from app/index.html. Unsaved progress is lost with no prompt, and there is no menu or reload key to get the game back, so the user must restart the app. After the drop, loadMods runs again and pushes the mod scripts and the GTP_MODS images and folder path into the foreign document. A dropped HTML file runs with the file:// origin, which in Chromium shares localStorage with the game, so it can read and overwrite the save slots.",
+   "fix": "In will-navigate, allow only the app's own index: `if (url.split('#')[0].split('?')[0] !== pathToFileURL(APP_INDEX).href) event.preventDefault()`, and keep opening http(s) URLs externally. In did-finish-load, run loadMods only when wc.getURL() is the app index. Optionally also call preventDefault on dragover/drop in index.html.",
+   "verified": "static",
+   "regress_test_idea": "An Electron smoke test (Playwright _electron) that dispatches a file drop, or runs location.assign('file:///etc/hosts') from the page, then asserts the window URL is still app/index.html."
+  },
+  {
+   "id": "QAC-30",
+   "origin": [
+    "SEC-03"
+   ],
+   "severity": "low",
+   "area": "security",
+   "title": "Template injection: github.ref_name is expanded directly inside a bash script in the release job",
+   "file": "../.github/workflows/desktop-release.yml:253",
+   "evidence": "if [ \"${{ github.ref_name }}\" = \"tag\" ] ... tag=\"${{ github.ref_name }}\". The other input (release_tag) is correctly passed through env INPUT_TAG, but ref_name is not. `git check-ref-format refs/tags/'v1$(curl${IFS}x|sh)'` succeeds (also v1`id` and v1;id), so a tag name can carry a shell payload that runs inside double quotes. The workflow filter `tags: v*` does not block this.",
+   "impact": "Anyone who can push a tag matching v* gets command execution in a job that holds contents:write. Today that already requires repository write access, so this is defence in depth, but it becomes an escalation if tag creation is ever delegated through rulesets or automation.",
+   "fix": "Pass the value through the environment: `env: REF_NAME: ${{ github.ref_name }}, REF_TYPE: ${{ github.ref_type }}`, then use \"$REF_NAME\" in bash. Validate it with `[[ $tag =~ ^v[0-9A-Za-z.+-]+$ ]] || exit 1`.",
+   "verified": "runtime",
+   "regress_test_idea": "zizmor template-injection audit in CI."
+  },
+  {
+   "id": "QAC-31",
+   "origin": [
+    "SEC-07"
+   ],
+   "severity": "low",
+   "area": "security",
+   "title": "No Content-Security-Policy on the page the Electron app (and the artifact) loads",
+   "file": "index.html:6",
+   "evidence": "index.html <head> has only charset, viewport, description and claude:viewport-fit-sides metas. `grep -i content-security index.html` returns nothing, and main.js sets no CSP header through session.webRequest.onHeadersReceived. The game loads only local scripts (index.html:97-126) and makes no network requests, so a strict policy costs nothing.",
+   "impact": "Defence in depth only. The game has no innerHTML, eval or document.write sinks today (grep of js/*.js finds none), so there is no exploitable injection now. But any future sink fed by save, mod-image or URL data would run without a backstop, and Electron's insecure-CSP warning applies. CSP does not affect mods injected through executeJavaScript or insertCSS, so it would not break the mods feature.",
+   "fix": "Add <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\"> to index.html. build-artifact.js inlines all scripts, so it needs to strip this meta or swap in a hash-based policy.",
+   "verified": "static"
+  },
+  {
+   "id": "QAC-32",
+   "origin": [
+    "AI-03"
+   ],
+   "severity": "low",
+   "area": "memory",
+   "title": "Helicopter mesh geometries and materials are never disposed when it leaves or is shot down",
+   "file": "js/07_ai.js:1533",
+   "evidence": "buildMesh creates per-instance resources: three `g.build()` GeoBuilder geometries, `new THREE.ConeGeometry(1,1,24,1,true)`, `new THREE.PlaneGeometry(16,16)` and two `new THREE.MeshBasicMaterial(...)`. Heli.destroy -> Entities.remove -> Render.detach (10_render.js:1429) only does `if (ud && ud.paint) ud.paint.dispose();`. Runtime: four heli add/destroy cycles with renders raised renderer.info.memory.geometries 521 -> 523 -> 525 -> 527 -> 530 and never dropped.",
+   "impact": "A few GPU buffers leaked per helicopter; a new heli comes every time 5 stars are reached and 45 s after each shoot-down, so long sessions accumulate.",
+   "fix": "Build the heli geometries/materials once (static cache on Heli) and reuse them, or give Heli a dispose hook (e.g. mesh.userData.disposeAll) that Render.detach calls to dispose its own geometries and materials.",
+   "verified": "runtime",
+   "regress_test_idea": "Cycle 5 helis (add, render, destroy, advance, render) and assert renderer.info.memory.geometries returns to baseline."
+  },
+  {
+   "id": "QAC-33",
+   "origin": [
+    "AST-05"
+   ],
+   "severity": "low",
+   "area": "memory",
+   "title": "Stepping quality down to low (or auto stepping down) keeps every generated normal and roughness map resident on the GPU",
+   "file": "js/05_assets.js:180",
+   "evidence": "applyQuality: if (nm) Assets.ensureSurfaceMaps(); ... setMaps(mat, normal, rough) sets mat.normalMap = null when !nm, but atlasNormal, atlasRough, waterNormal and every facade's {normal, rough} are never disposed. Runtime (scratchpad/ast_t1.js): renderer.info.memory.textures is 31 at a low boot, 61 at ultra, and 46 after going back to low (15 surface-map textures still uploaded; cycling 3 times stays 46/59/61/61, so it is retained, not leaked).",
+   "impact": "Auto quality steps down because the device is struggling, yet the expensive maps it no longer uses (a 1024^2 atlas normal and roughness map plus the facade maps, several MB with mipmaps) stay in VRAM.",
+   "fix": "When normalMaps turns off, call .dispose() on those textures. Keep the CanvasTexture objects: three re-uploads a disposed texture on its next use. Alternatively null them out and let ensureSurfaceMaps rebuild them.",
+   "verified": "runtime",
+   "regress_test_idea": "Boot at low, set ultra, set low, render, and assert info.memory.textures equals the boot value."
+  },
+  {
+   "id": "QAC-34",
+   "origin": [
+    "MIS-05"
+   ],
+   "severity": "low",
+   "area": "memory",
+   "title": "Strands chauffeur leaks persistent entities: drivers.take forces the driver persistent and release never restores it; HOA Patrol's fallback sedan stays persistent forever",
+   "file": "js/09_missions.js:2069",
+   "evidence": "drivers.take: `v.driver.ai = missionBrain('driver'); v.driver.persistent = true;` (2069-2070) and new drivers come from `spawnPed(..., { persistent: true })` (2063); release only restores the vehicle (`v.persistent = c.wasPersistent`, 2079) and nulls the driver's ai. HOA flag() fallback builds `new GTP.Vehicle({ ..., persistent: true })` (2561), so wasPersistent is true and the car stays persistent after the stop or the patrol ends; nothing tracks or removes it (Entities.update only despawns !persistent, 06_entities.js:1198). Runtime (t3.js C): 3 HOA stops via the fallback path -> each target persistentCar:true, driverPersistent:true, no _chauf after release; a released traffic car: driver.persistent false -> true, car false. Missions are unaffected (mission drivers are tracked and released by cleanupEntities).",
+   "impact": "Every HOA level that finds no qualifying traffic adds a sedan + ped that never despawns and keeps ticking physics/AI and drawing for the session; a traffic violator's driver that leaves its car (or any taken car's driver) becomes an immortal persistent ped. Unbounded across repeated patrols.",
+   "fix": "Remember the driver's previous persistent flag (c.driverWasPersistent) in take and restore it in release; create the fallback sedan non-persistent (persistent only while _chauf) or mark it for release (`v.persistent = false` in HOA end/stop like ratio_rampages.end does for its cars).",
+   "verified": "runtime",
+   "regress_test_idea": "take(trafficCar,'flee'); release(trafficCar); assert trafficCar.driver.persistent === false."
+  },
+  {
+   "id": "QAC-35",
+   "origin": [
+    "AI-04"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Driverless cruisers (released roadblock cars, unloaded cruisers) count toward the cruiser quota and suppress the pursuit response",
+   "file": "js/07_ai.js:1344",
+   "evidence": "copCounts: `else if (e.type === 'cop' && e.ai.kind !== 'parked' && e.ai.mode !== 'roadblock') cars++;` with no driver check. updateRoadblocks releases cars with `car.ai.kind = 'cop'; car.ai.mode = 'parked';` (1430) and copsExit sets `ai.mode = 'parked'` (1291). Runtime (scratchpad/ai/state.js, 3 stars): debug.counts().cruisers 3 before release -> 4 after one roadblock released, the counted car being `cop/pursuit/driver=false`. In the 12-minute run up to 4 driverless cop cars existed at once.",
+   "impact": "At 2-3 stars (quota 2-3) one or two released roadblock cars left behind by a fast player stop new cruisers from spawning until those empty cars despawn at 220 m, so pursuit thins out right after the player runs a roadblock.",
+   "fix": "Only count cruisers with a living non-player driver (`e.driver && e.driver.alive && !e.hasPlayer()`), or count parked cop cars separately.",
+   "verified": "runtime",
+   "regress_test_idea": "At 3 stars, place and release a roadblock; assert copCounts().cars excludes cars with !driver."
+  },
+  {
+   "id": "QAC-36",
+   "origin": [
+    "AI-05"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Protest marchers and precinct guards vanish for good if the player goes 220-280 m (protest) / 220-260 m (precinct) away and comes back",
+   "file": "js/07_ai.js:602",
+   "evidence": "Marchers and the two guard cops are non-persistent, so Entities.update despawns them past C.ACTIVE_RADIUS = 220, but the respawn latches only clear further out: `} else if (dp > 280) spawner.protestHome = null;` (602) and `} else if (dh > 260) spawner.hqDone = false;` (577). Runtime (scratchpad/ai/gap.js): protest_plaza 7 marchers -> teleport 250 m away, 3 s -> 0 -> back, 5 s -> 0 (protestHome still set); police_hq 2 guards -> 240 m away -> 0 -> back -> 0 (hqDone still true).",
+   "impact": "The landmark crowd at Perpetual Assembly Plaza and the precinct door guards stay missing until the player happens to go beyond 280/260 m and return.",
+   "fix": "Clear the latch when the spawned peds are gone instead of by distance (keep references and check `removed`), or make the clear radius <= ACTIVE_RADIUS (e.g. 200).",
+   "verified": "runtime",
+   "regress_test_idea": "Teleport near protest_plaza, then 250 m away for 3 s, then back for 5 s; assert >= 1 protester with ai.home."
+  },
+  {
+   "id": "QAC-37",
+   "origin": [
+    "AI-06"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Helicopter respawn timer (police.heliT) survives New Game / Load and is frozen while the player has no stars",
+   "file": "js/07_ai.js:1158",
+   "evidence": "police.reset() resets footT/cruiserT/... but not heliT (or bustLevel). In spawnResponders the early `if (!lvl || ...) { ...; return; }` (1350) runs before `police.heliT = Math.max(0, (police.heliT || 0) - dt);` (1374), so heliT only counts down while wanted > 0. Runtime: `A.police.heliT = 45; g.newGame(7);` -> heliT still 45.",
+   "impact": "After shooting the heli down (heliT = 45), the next five-star episode, even in a newly loaded game or much later, gets no helicopter for up to 45 s.",
+   "fix": "Reset heliT (and bustLevel) in police.reset; decrement heliT before the no-wanted early return, or store it as an absolute simT deadline.",
+   "verified": "runtime"
+  },
+  {
+   "id": "QAC-38",
+   "origin": [
+    "AUD-04"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Intro cutscenes with `protesters: N` show a single protester: actors are keyed by castId, so all N 'protester' entries collapse onto one ped",
+   "file": "js/12_cutscenes.js:205",
+   "evidence": "actorFor: `var id = a.castId || a.id; ... var ped = cur.actors[id]; if (ped && !ped.removed) return ped;` and the generator pushes N actors all with castId 'protester' (24_content_expansion.js:933). Runtime (scratchpad/aud/c2.js): scriptFor('cs_intro_m06_rally') shot 1 has 6 protester actors; after Cutscenes.play only 1 protester ped exists in the world (moved to the last slot 567.6,140.0), spawned total 4.",
+   "impact": "m06_rally's widest establishing shot ('the widest shot in the game') shows one protester instead of a crowd of six; same for any script that repeats a role id.",
+   "fix": "Key actors by a unique id: use a.id when present and give generated extras distinct ids (e.g. 'protester#' + i) while keeping castId for the look/role; in actorFor use `var key = a.id || a.castId` for cur.actors and castId for castOf/rollLook.",
+   "verified": "runtime",
+   "regress_test_idea": "headless: Cutscenes.play('cs_intro_m06_rally'); step -> expect 6 entities with cutscene && castId==='protester'."
+  },
+  {
+   "id": "QAC-39",
+   "origin": [
+    "AUD-05"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Giving a reused ped a placard in a cutscene never rebuilds the mesh, and permanently mutates the ped's look",
+   "file": "js/12_cutscenes.js:184",
+   "evidence": "`ped.look.sign = a.sign; ... Rd.detach(ped); Rd.attach(ped); ped._parts = null;` but Render.detach only removes e.mesh from its parent and never clears e.mesh (10_render.js:1429-1435), and Render.attach only builds when `!e.mesh` (10_render.js:1423) - so the old mesh is just re-added. Runtime (c2.js): ped with Roz's look (no sign) passed via opts.reuse, actor {castId:'roz', sign:'CHEESE'}: meshRebuilt=false, look.sign now 'CHEESE'; after the cutscene look.sign is still 'CHEESE' (never restored).",
+   "impact": "When Roz (m00_intro 'CHEESE', m12_memo 'THE MEMO IS YOU') is reused rather than spawned, she has no placard in her intro; the leftover look.sign makes her suddenly carry one whenever her mesh is next rebuilt.",
+   "fix": "Set ped.mesh = null after Rd.detach(ped) (and dispose it) so attach rebuilds; remember the original look.sign in cur and restore it (plus rebuild) in removeActors for reused peds.",
+   "verified": "runtime"
+  },
+  {
+   "id": "QAC-40",
+   "origin": [
+    "CORE-02"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Events.off called from inside a listener during emit skips the next listener for that event",
+   "file": "js/00_util.js:178-181",
+   "evidence": "`off: ... l.splice(i, 1)` changes the same array that `emit` is walking with `for (var i = 0; i < l.length; i++) l[i](payload)`. Node repro (scratchpad/core/util_node.js): on('x',a) where a calls off('x',a), then on('x',b); emit('x') -> calls [a] only, so b is skipped. A second emit calls b. Listeners added during emit also run in the same emit (on-during-emit ran 5 times in one emit).",
+   "impact": "Latent in the shipped code, but it is the usual 'once' pattern. Missions.on/off (09_missions.js:1798) hands it to content and mods for mission:* events, and the game's own mission:complete autosave listener can be the one skipped. The strand end() paths (09_missions.js:2534/2653) call Events.off('vehicle:damage', ...) and can run from inside the same damage chain.",
+   "fix": "Snapshot the array in emit (`var l = listeners[name]; if (!l) return; l = l.slice();`). Or in off, replace the array (`listeners[name] = l.filter(f => f !== fn)`) so a running emit keeps walking the old one.",
+   "verified": "runtime",
+   "regress_test_idea": "node: register a self-removing listener and a second one, emit once, assert both ran."
+  },
+  {
+   "id": "QAC-41",
+   "origin": [
+    "CORE-05"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "The wanted level is not saved: a pause-menu save and load clears any number of stars for free",
+   "file": "js/30_game.js:403-418 / 438-468",
+   "evidence": "serialize stores the wanted level only in summary (`wanted: p ? (p.wanted | 0) : 0`) and applyData never restores it. The pause menu's doSave (11_ui.js:1834-1844) only gates on missions and strands, not on wanted. Runtime (t2.js): setWanted(2), saveSlot(2), loadSlot(2) -> wanted 2 -> 0. The other round-trip fields (money, subs, armor, hp, weapons, clock, day, radio, cameraMode, waypoint, flags) survived. time.t and playTime moved only by the 0.5 s advance.",
+   "impact": "Save and load is a free way to lose 5 stars, where the spray shop charges C.WANTED.sprayCostPerStar ($100) per star. The slot card also shows a wanted count that does not come back on load.",
+   "fix": "Either save `wanted`/`heat` and restore them through debug.setWanted in applyData, or refuse manual saves while p.wanted > 0 (as autosave already does in _autosaveBlocked).",
+   "verified": "runtime",
+   "regress_test_idea": "setWanted(3); saveSlot(2); loadSlot(2); assert player.wanted === 3 (or that saveSlot was refused)."
+  },
+  {
+   "id": "QAC-42",
+   "origin": [
+    "MIS-06"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Loading a save made inside a strand vehicle (sponsor van, THE RATIO, home cab, HOA SUV) produces two of it",
+   "file": "js/09_missions.js:3023",
+   "evidence": "The 'strands' SaveHook runs Strands.load -> ensureVehicles() (3023), which parks a new keep vehicle when `liveTagged(tag)` finds none (2873). Game.applyData only restores the player's saved car after the hooks (30_game.js:455-461), with the same tag but keep=false, so ensure() never sees it. Runtime (t3.js F): m02_read completed, enter the depot sponsor van (1 van), serialize(1), _loadData: 2 tagged 'sponsorvan' vehicles, keep [true,false], the player in the non-keep one.",
+   "impact": "Duplicate persistent strand vehicles after every save/load in one; the one under the player is not keep, so later mission cleanup or the AI treats it as an ordinary car while the depot copy stays.",
+   "fix": "Restore the saved vehicle before running the SaveHooks (or run ensureVehicles after it), and when data.vehicle.tag names a strand vehicle set keep/persistent on it (or reuse the liveTagged one and move it under the player).",
+   "verified": "runtime",
+   "regress_test_idea": "Save in the sponsor van, load, count E.list vehicles with tag 'sponsorvan' === 1."
+  },
+  {
+   "id": "QAC-43",
+   "origin": [
+    "SEC-05"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Mod authors cannot see mod errors: the DevTools shortcut documented in the README does not exist, and mod syntax errors never reach GTP_MODS.errors",
+   "file": "desktop/main.js:155",
+   "evidence": "The mods README (main.js:154-155) and desktop/README.md:127 say: 'press Ctrl+Shift+I or Cmd+Option+I'. But installMenu() calls Menu.setApplicationMenu(null) on Windows and Linux (main.js:252), and the macOS template (main.js:256-281) has no 'toggleDevTools' role. In Electron those shortcuts come only from the menu, and before-input-event (main.js:88) handles only F11 and Ctrl/Cmd+F. Separately, the wrapper (main.js:221) is '(function(){try{' + source + ...'}catch(e){...errors.push...}})();'. A mod with a syntax error makes the whole wrapped string fail to parse, so the try/catch never runs. executeJavaScript rejects, and the only record is console.warn('mods: ' + name + ' did not run') in the main process, which goes to stdout and is invisible in a packaged GUI app.",
+   "impact": "The mods feature's whole debugging story is broken. Syntax errors (the most common mod error) are silent, GTP_MODS.errors stays empty, and the documented console cannot be opened on any platform.",
+   "fix": "In the executeJavaScript catch at main.js:226, push the error into the page: wc.executeJavaScript('window.GTP_MODS.errors.push(' + JSON.stringify({file:name,message:String(err.message)}) + ')'). Add a before-input-event branch for Ctrl+Shift+I / Cmd+Alt+I that calls wc.toggleDevTools(), or add { role: 'toggleDevTools' } to the mac menu. If DevTools should stay off by default, enable it only when the mods folder is non-empty or a flag file exists, and fix both READMEs either way.",
+   "verified": "static",
+   "regress_test_idea": "Electron smoke test: put 'bad.js' containing `}{` in a temporary userData mods dir and assert window.GTP_MODS.errors has one entry for bad.js."
+  },
+  {
+   "id": "QAC-44",
+   "origin": [
+    "UI-06"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Title-screen animation clock advances per drawn frame (1/60), so blinks and the seed caret run 2-4x fast at 120-240 Hz",
+   "file": "js/11_ui.js:1651",
+   "evidence": "drawTitle(): `var tt = ui.title; tt.t += 1 / 60;`. tt.t drives the 'PRESS ENTER TO PLAY' blink (1666, Math.floor(tt.t*1.6)) and the seed-field caret (1699). Its speed depends on how often draw() is called, not on elapsed time. ui.t (advanced by dt in update) is already available. Static check only.",
+   "impact": "Cosmetic: at 240 Hz the blink and caret flash 4x as fast (about 6.4 Hz), and at 30 Hz they run at half speed.",
+   "fix": "Advance ui.title.t in update(dt) (the title branch at 3307), or use ui.t in drawTitle.",
+   "verified": "static"
+  },
+  {
+   "id": "QAC-45",
+   "origin": [
+    "WLD-04"
+   ],
+   "severity": "low",
+   "area": "correctness",
+   "title": "Duplicate `h` key on the highway / strip sponsor billboards makes the panels 9 x 9 m instead of 9 x 3.4 m",
+   "file": "js/04_world.js:1488",
+   "evidence": "`P({ kind: 'billboard', ..., w: 9, h: 3.4, neon: k % 3 === 0, solid: true, r: 0.5, pole: true, h: 9 });`. The later `h: 9` wins, so p.h === 9. The Sponsor Span board (line 1327) writes the same thing correctly as `h: 3.4, ..., h2: 9`. 10_render.js:1319 builds the sign plane with `Render._planeGeo(p.w || 4, p.h || 1)`, which gives a 9 x 9 plane centred at y 6.5 (y 2.0 .. 11.0), and line 1295 sizes the poles `max(0.5, p.y - p.h/2)` = 2.0 m. Node: 16 of the 33 billboards generated for seed 7 have w 9 and h 9; the abutment board is [9, 3.4, h2 9].",
+   "impact": "16 sponsor boards along the Loop, the airport, the port and uptown render as giant squares that reach nearly to the ground on stubby 2 m poles, unlike the designed 9 x 3.4 m board on the Sponsor Span. The square aspect ratio also changes the text texture ratio from 2 to 1.",
+   "fix": "Change the trailing `h: 9` to `h2: 9` (as on line 1327), or drop it.",
+   "verified": "static",
+   "regress_test_idea": "Assert every World.props billboard with pole:true has h < w."
+  },
+  {
+   "id": "QAC-46",
+   "origin": [
+    "AI-07"
+   ],
+   "severity": "low",
+   "area": "performance",
+   "title": "Per-step object allocations in the traffic and pursuit hot paths",
+   "file": "js/07_ai.js:1100",
+   "evidence": "carStep runs every fixed step for every driven car and allocates the target each time: `tgt = axis === 'h' ? { x: v.x + dir * L, z: ai.laneC + ai.swerve } : { ... }` (1100; also 1099). copCarTick allocates `ai.goal = { x: ..., z: ... }` every brain tick (1272-1273), copCarStep allocates `goal = { x: pl.x, z: pl.z }` per step while tailing (1297), and aheadCaps calls v.worldToLocal / U.yawToDir (each returns a new object) for every hash candidate (978, 985, 993).",
+   "impact": "About 40 cars x 60 steps = ~2,400 short-lived objects/s from carStep alone, plus hundreds more from aheadCaps. That is GC pressure in the 60 Hz loop that the engine otherwise avoids (scratch arrays, hash.update without allocation).",
+   "fix": "Use per-ai scratch objects (ai._tgt, ai.goal reused via assignment) and inline the local-frame maths in aheadCaps (f computed once; r = dx*-f.z + dz*f.x, fwd = dx*f.x + dz*f.z).",
+   "verified": "static"
+  },
+  {
+   "id": "QAC-47",
+   "origin": [
+    "AUD-06"
+   ],
+   "severity": "low",
+   "area": "performance",
+   "title": "Radio sequencer keeps creating nodes with the music volume at 0 (and SFX play with sfx volume 0)",
+   "file": "js/03_audio.js:596",
+   "evidence": "The sequencer stops only on `!radio.playing || Audio.muted || !radio.pat`; setVolumes({music:0}) only sets the bus gain (line 593). Runtime (scratchpad/aud/a1.js): after setVolumes({music:0}), 13 steps were scheduled in 3 s on Quiet Signal (each step builds oscillator+filter+gain chains; about 25 nodes/s on the busier stations, measured from the createX wrappers: ~70 nodes per 4 s on wail_101). play() likewise builds full voices when vol.sfx is 0. Live node counts stayed bounded (no leak: GainNode wrappers back to 8 after GC), so this is wasted work, not a leak.",
+   "impact": "Players who turn the radio slider to 0 still pay the full sequencer cost (node churn on the audio thread and GC) every time they drive.",
+   "fix": "Treat vol.music < 0.001 like muted in updateRadio (radio.live = false; return after setting the gain), and return early from play() when vol.sfx * vol.master is ~0.",
+   "verified": "runtime"
+  },
+  {
+   "id": "QAC-48",
+   "origin": [
+    "CMB-04"
+   ],
+   "severity": "low",
+   "area": "performance",
+   "title": "Vehicle/ped physics allocate about 600 short-lived objects per fixed step (yawToDir, worldToLocal, pushCircle results, occupants arrays, _sampleWheels arrays)",
+   "file": "js/06_entities.js:747",
+   "evidence": "`_sampleWheels(){ ... f = U.yawToDir(this.yaw) ... var pts = [[-hw, hl], [hw, hl], [-hw, -hl], [hw, -hl]] ... return { c: c, pitch: ..., roll: ... }; }` (5 arrays + 2 objects per moving vehicle per step); `occupants(){ var o = []; ...}` called by _syncOccupants every vehicle step; `pushCircle` -> `worldToLocal` returns a new object even on a miss, plus a result object and a yawToDir object on a hit; it runs for every ped near every vehicle (Ped._pushOutOfVehicles, Vehicle._collidePeds). U.yawToDir (00_util.js:67) returns a new object. Runtime (r5.js, 600 steps of normal city, 120 peds / 59 vehicles), calls per step: yawToDir 212, occupants 60, worldToLocal 54, pushCircle 38, _sampleWheels 37 -> roughly 600 allocations per step, about 36k objects/s at 60 Hz before any combat.",
+   "impact": "Steady GC pressure in the hottest loop; minor-GC pauses on low-end machines and with more traffic.",
+   "fix": "Add U.yawToDirInto(yaw, out) and module scratch objects; make worldToLocal/pushCircle write into a scratch (pushCircle can early-out on the cheap local test without allocating); hoist the wheel-offset table and return pitch/roll via fields on the vehicle; iterate driver + passengers directly instead of building occupants() arrays in _syncOccupants.",
+   "verified": "runtime",
+   "regress_test_idea": "Wrap GTP.util.yawToDir and Vehicle.prototype.occupants with counters; advance(10) in a warmed city; assert calls per step below a budget (e.g. < 50)."
+  },
+  {
+   "id": "QAC-49",
+   "origin": [
+    "RND-06"
+   ],
+   "severity": "low",
+   "area": "performance",
+   "title": "Per-step and per-frame garbage in the camera rig and the light pool",
+   "file": "js/10_render.js:1787-1842",
+   "evidence": "rig.update (60/s): `U.yawToDir(r.yaw)` returns a new {x,z}; `desired = { x: ..., y: ..., z: ... }` is a new object on every path (1792, 1793, 1797, 1802), and `_pullIn` returns another new object when it hits (1842). The first-person car view also calls `v.localToWorld` (new object). _updateLightPool (576-591), every frame at night when headlights > 0: `cand = []`, a new `{v, d2}` per nearby car, `cand.sort(function...)` with a fresh closure, and two `vv.localToWorld()` objects per spot. syncVehicle (1523) allocates two more for the player car.",
+   "impact": "A few hundred short-lived objects per second. Each is small, but they add to GC pauses on low-end devices together with the rest of the frame.",
+   "fix": "Reuse module-level scratch objects (_desired, _dir) and have _pullIn write into an out-parameter. Keep a persistent cand array of reusable records, and hoist the sort comparator to a named function.",
+   "verified": "static"
+  },
+  {
+   "id": "QAC-50",
+   "origin": [
+    "AST-04"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "No WebGL context-loss handling: after loseContext()/restoreContext() the frame comes back with the PMREM environment lost (reflections wrong) until the next half-hour refresh",
+   "file": "js/10_render.js:410",
+   "evidence": "grep for webglcontextlost / webglcontextrestored over js/*.js finds nothing. Runtime (scratchpad/ast_t4.js, quality high): a control re-render of the same state gives pixel diff 0. After WEBGL_lose_context.loseContext(), 300 ms, restoreContext(), 800 ms, render: no exceptions, gl.getError() 0, CanvasTextures (atlas, facades, sky) and the PostFX targets re-upload correctly (three r152 rebuilds properties). But the frame differs from before by mean 14.2/255 per channel and 3.2% of samples by more than 40: foliage and PBR surfaces render darker (screenshots scratchpad/ast_pre.png vs ast_post.png). The PMREM render target behind scene.environment (Render.envMap) holds GPU-only content and is not regenerated: it refreshes only on the half-hour clock or a weather change. The game also keeps stepping while the context is lost, with no preventDefault on webglcontextlost.",
+   "impact": "After a GPU reset, driver update or tab eviction on mobile, materials look wrong for up to 30 game minutes, and without preventDefault() the browser may never restore the context, leaving a frozen canvas.",
+   "fix": "In Render.init: canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); pause the loop }); on 'webglcontextrestored', null Render._pmrem and Render._envClock and call the env refresh at once, call PostFX._dispose(), and set needsUpdate on the sky/env CanvasTextures, then resume.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_robust.js (probe 3)"
+  },
+  {
+   "id": "QAC-51",
+   "origin": [
+    "CORE-03"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "Key presses and mouse look made during the loading screen are queued and all apply on the first step after it (Esc pauses the game, the camera jumps)",
+   "file": "js/30_game.js:386-392",
+   "evidence": "While `this.loading.active` the loop returns before step(), so Input.beginFrame/endFrame never run. pressedFlags and lookAcc (02_input.js:61,64) keep everything entered during the 1-3 s prebuild. Runtime (scratchpad/core/t1.js, manual _loop at 60 Hz): set loading.active with _loadT 0.3, Input.press('pause'), Input.setLook(400,0), ran 30 frames -> loading ended, state 'paused', rig yaw moved by -1.28 rad on the first step.",
+   "impact": "After New Game or Load, a stray Esc, click or mouse move made during the loading bar acts as soon as play begins: the game opens paused, the camera snaps around, and a click leaves a pending shoot edge (Combat firing on it was not checked).",
+   "fix": "While loading is active, call GTP.Input.endFrame() each loop frame (or once in _endLoading) and also clear lookAcc / touch.look. For example, add an Input.flush() that clears pressedFlags and lookAcc, and call it in _endLoading.",
+   "verified": "runtime",
+   "regress_test_idea": "stub rAF; set loading.active + _loadT; Input.press('pause'); drive _loop for 30 frames; assert state === 'playing'."
+  },
+  {
+   "id": "QAC-52",
+   "origin": [
+    "CORE-04"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "A non-numeric ?clock= parameter aborts boot: the UI is never initialised and the game stays on an empty 'title' state",
+   "file": "js/30_game.js:116 (setClock at :631)",
+   "evidence": "`if (opts.clock != null && opts.clock !== '') this.debug.setClock(parseFloat(opts.clock));` and `setClock: function (h) { g.time.clock = ((h % 24) + 24) % 24; GTP.Render.updateEnvironment(g.time.clock); }`. NaN goes to Render._paintSky, which throws `addColorStop ... '#000NaN'`. That throw is inside boot's single try, so GTP.UI.init(), setState and _beginLoading never run. Runtime (scratchpad/core/t4.js, ?headless=1&seed=7&skipTitle=1&clock=abc): state 'title', time.clock NaN, loading never started, GTP.errors = ['boot: Failed to execute addColorStop ... #000NaN'].",
+   "impact": "A typo in the URL (e.g. clock=9pm) gives a dead page. time.clock stays NaN everywhere (HUD clock, lighting).",
+   "fix": "In setClock: `h = Number(h); if (!isFinite(h)) return;`. Wrap the optional ?clock / ?mission setup in their own try so a bad parameter cannot stop UI.init.",
+   "verified": "runtime",
+   "regress_test_idea": "boot ?clock=abc and assert GTP.game.state === 'playing' && isFinite(GTP.game.time.clock)."
+  },
+  {
+   "id": "QAC-53",
+   "origin": [
+    "QAC-LOOP"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "Below 12 fps the game runs in slow motion: MAX_STEPS 5 caps a frame at 83 ms of simulation and the rest of the frame time is dropped",
+   "file": "js/30_game.js:389-391 (C.MAX_STEPS in js/01_config.js:16)",
+   "evidence": "_loop: while (this._acc >= C.STEP && n < C.MAX_STEPS) {...}; if (n >= C.MAX_STEPS && this._acc >= C.STEP) this._acc = 0. Driving _loop with synthetic rAF timestamps (tests/regress/qa_c_robust.js) gave 120 steps per 2 s at 240, 144, 60 and 30 Hz (correct) but 100 at 10 Hz: one sixth of game time is lost, timers and traffic slow down on weak integrated GPUs and during software-rendered fallbacks.",
+   "impact": "On very slow machines (the Medium-on-integrated-GPU target falling behind, SwiftShader fallback) mission timers and physics run slower than wall-clock; not a crash.",
+   "fix": "Raise MAX_STEPS to 8 (133 ms per frame) or make it depend on the frame time, and only drop time past MAX_FRAME_DT; keep the 0.25 s clamp for tab resumes.",
+   "verified": "runtime",
+   "regress_test": "tests/regress/qa_c_robust.js (probe 4)"
+  },
+  {
+   "id": "QAC-54",
+   "origin": [
+    "SEC-06"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "parseParams: one malformed percent escape anywhere in the query string drops every URL parameter after it, or all of them",
+   "file": "js/30_game.js:45",
+   "evidence": "q.split('&').forEach(function (kv) { ... k = decodeURIComponent(p[0]), v = ... decodeURIComponent(p[1]) ...; out[k] = v; }); sits inside one try block whose catch drops everything. Running a node copy of the function: parseParams('?ref=100%&headless=1&seed=7&skipTitle=1') -> {} (headless, seed and skipTitle are lost). parseParams('?headless=1&seed=7&x=%E0%A4%A') -> { headless:'1', seed:'7' }. Checked as well: a __proto__ key is a no-op (Object.getPrototypeOf(out)===Object.prototype), so there is no pollution.",
+   "impact": "A share or tracking link with a stray '%' silently ignores headless, seed, low, debug and skipTitle. Tests or links get a different seed or quality than requested, with no error.",
+   "fix": "Wrap each pair in its own try/catch (skip only the bad pair), or use new URLSearchParams(location.search), which never throws.",
+   "verified": "runtime",
+   "regress_test_idea": "Boot the harness with '?bad=%&headless=1&seed=7&skipTitle=1' and assert GTP.game.seed===7 and GTP.game.headless===true."
+  },
+  {
+   "id": "QAC-55",
+   "origin": [
+    "UI-05"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "Small windows (stage < 320x240): HUD is squashed non-uniformly and every click misses its button",
+   "file": "js/11_ui.js:2898",
+   "evidence": "Render.resize (10_render.js:91-92) clamps the logical size to `Math.max(320, ...)` / `Math.max(240, ...)`, but #hud is CSS width/height:100% of #stage. canvasPoint() and Input._pointer use raw `clientX - r.left` with no scaling by canvas.width / rect.width. Runtime (scratchpad/ui/tiny.js, viewport 200x150): logical 320x240, CSS 168x150, so the HUD is scaled 0.525 x 0.625 (fonts distorted, see scratchpad/ui/vp_200.png). Clicking where RESUME is drawn (CSS 100,35) leaves state 'paused' because the click lands at logical (84,35), above the button at y 48-64. At 3840x2160 the same test resumes correctly. Headless runs cap DPR at 1 and live runs at C.MAX_DPR=2, so there are no NaN or blur problems at large sizes.",
+   "impact": "In split-screen, a tiny embedded iframe or a very narrow phone landscape, menus cannot be clicked or tapped (touch uses the same canvasPoint) and the HUD text is distorted.",
+   "fix": "In canvasPoint and Input._pointer, scale by (Render.width / rect.width, Render.height / rect.height). Alternatively, stop clamping the logical size and let layout() handle small sizes (S already clamps to 0.62), or size the canvas element to the clamped size and scroll.",
+   "verified": "runtime",
+   "regress_test_idea": "Viewport 200x150: openPause('pause'), click the visible RESUME (hit rect scaled by css/logical), advance: assert state 'playing'."
+  },
+  {
+   "id": "QAC-56",
+   "origin": [
+    "WLD-05"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "resolveCapsule at a prop's exact centre neither pushes the capsule nor gives a usable normal (hitZ true, normal {0,0})",
+   "file": "js/04_world.js:303",
+   "evidence": "`var d = Math.sqrt(d2) || 0.001, push = rr - d + 0.001; x += ddx / d * push; z += ddz / d * push;`. With d2 == 0, ddx and ddz are both 0, so the push is 0. `Math.abs(ddx) > Math.abs(ddz)` is false, so hitZ = true and nz = U.sign(0) = 0. All 3 iterations still run because moved stays true. Node: resolveCapsule(bench.x, bench.z, 0.12, 0.4) returns offset (0,0), hitX false, hitZ true, normal {x:0,z:0}; a tree gives the same. Exact centres happen because 310 solid props sit on tile centres, and spawns, path waypoints, pickup and memo placements use tile centres.",
+   "impact": "A ped, pickup or memo placed on a bench, tree or crate centre is never pushed out and stays inside the prop. A vehicle gets hitZ with a zero normal, so it loses its z velocity with no bounce direction.",
+   "fix": "When d2 < 1e-9, push along a deterministic direction (e.g. +x, or yawToDir(hash2(pr.index))), and set the normal from that direction.",
+   "verified": "static"
+  },
+  {
+   "id": "QAC-57",
+   "origin": [
+    "WLD-06"
+   ],
+   "severity": "low",
+   "area": "robustness",
+   "title": "NaN positions pass through the collision queries unchanged: resolveCapsule(NaN, ...) returns NaN with no hit, heightAt(NaN) returns water, and y = NaN is not defaulted",
+   "file": "js/04_world.js:260",
+   "evidence": "Every map-edge test (`x < lim.x0 + r`) is false for NaN and Math.floor(NaN) leaves the tile loops empty, so res.x = NaN, hitX = false. heightAt/solidAt return WATER_Y / true through the inBounds check. `if (y == null) y = 0` does not catch NaN: resolveCapsule(100,100,NaN,0.4) collides with every building regardless of height, and heightAt(x,z,NaN) on a deck tile returns 0.12 instead of 7. Node fuzz (scratchpad/wld/fuzz.js, 300k calls with \u00b1Infinity, 1e9, -5, 0, edges and r 0..7) found no NaN produced from finite or infinite inputs, so the world functions never create NaN; they only fail to recover from it.",
+   "impact": "A NaN that enters an entity's position from elsewhere (e.g. a normalize of a zero vector in physics) is never clamped back into the map. The entity then sits at NaN forever, reports water underneath, and drops out of the spatial hash.",
+   "fix": "At the top of resolveCapsule: `if (x !== x || z !== z) { x = World.bounds.x1 / 2; z = World.bounds.z1 / 2; /* and U.reportError once */ }`, and `if (y !== y) y = 0;`. In heightAt, treat a NaN yHint like null.",
+   "verified": "static"
+  }
+ ],
+ "tests": {
+  "tests/regress/qa_c_soak.js": "20 game-minute soak; FAILS today (geometries, textures, heap keep growing)",
+  "tests/regress/qa_c_pedgeo.js": "QAC-01; FAILS today",
+  "tests/regress/qa_c_QAC-02.js": "FAILS today",
+  "tests/regress/qa_c_QAC-03.js": "FAILS today",
+  "tests/regress/qa_c_QAC-04.js": "FAILS today",
+  "tests/regress/qa_c_gpuleaks.js": "QAC-07/08/09; FAILS today",
+  "tests/regress/qa_c_robust.js": "storage blocked/full, context loss, 240-10 Hz loop, hidden tab, tiny/huge windows; PASSES today (guard)"
+ }
+}
