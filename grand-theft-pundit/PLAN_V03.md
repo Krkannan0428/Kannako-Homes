@@ -1,6 +1,6 @@
 # Grand Theft Pundit v0.3: the parallel build plan
 
-This file is the contract for the v0.3 build. Eleven cloud sessions build it at the same time, each
+This file is the contract for the v0.3 build. Seventeen cloud sessions build it at the same time, each
 on its own branch, each owning a disjoint set of files. Read it in full before you write code.
 `ARCHITECTURE.md` (engine contract), `CONTENT_RULES.md` (binding content rules), `GDD.md` and
 `GDD_EXPANSION.md` (existing content) still apply.
@@ -56,6 +56,10 @@ added (CONTENT_RULES.md rule 1).
 | systems | `v03/systems` | `js/14_systems.js` (new) | `tests/systems.js` |
 | content | `v03/content` | `js/25_content_parity.js` (new); in `js/22_content_missions.js` and `js/24_content_expansion.js` only the `requires` arrays (see "Story chain") | `tests/content_parity.js` |
 | ui | `v03/ui` | `js/11_ui.js`, `js/02_input.js` | `tests/ui.js` |
+| strangers | `v03/strangers` | `js/26_content_strangers.js` (new) | `tests/strangers.js` |
+| radio | `v03/radio` | `js/23_content_radio.js` | `tests/radio.js` |
+| desktop | `v03/desktop` | `desktop/**`, `.github/workflows/**` | (CI smoke job) |
+| qa-a, qa-b, qa-c | `v03/qa-a`, `v03/qa-b`, `v03/qa-c` | read-only on game code; own `docs/v03/qa_*` and `tests/regress/**`; qa-b also owns `tests/newplayer.js` | |
 
 `index.html` already loads every new file in this order (stubs exist):
 `05_assets, 05b_assets_weapons, 05d_models, 06_entities, 06b_vehicles_air_sea, 06c_animation,
