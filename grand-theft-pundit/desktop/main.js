@@ -5,8 +5,11 @@
  * the default hardening (context isolation on, node integration off, sandbox on, web security on).
  *
  * Window-level behaviour:
- *   - a small splash window (splash/splash.html) while the game boots; the game window appears once
- *     the game reports GTP.game.booted (or after BOOT_TIMEOUT_MS, whichever is first)
+ *   - a small splash window (splash/splash.html) while the game boots. It shows "Loading the game"
+ *     while the ~2.5 MB of scripts load, then mirrors the game's own loading screen (GTP.game.loading
+ *     fraction and label), and the game window appears only once that loading is done and the title
+ *     has drawn, so the player sees one loading UI and never the game's half-built loading screen
+ *     (BOOT_TIMEOUT_MS caps the wait)
  *   - size, position, maximized and full screen state remembered between runs (lib/window-state.js);
  *     1280x800 the first time, minimum 960x600, dark background so there is no white flash
  *   - macOS: a small app menu. Windows/Linux: a hidden menu bar that Alt shows (Game and Help menus)
@@ -35,10 +38,16 @@ const SPLASH = path.join(__dirname, 'splash', 'splash.html');
 const ICON = path.join(__dirname, 'splash', 'icon.png');
 const IS_MAC = process.platform === 'darwin';
 const WINDOW_DEFAULTS = { width: 1280, height: 800, minWidth: 960, minHeight: 600 };
-const BOOT_TIMEOUT_MS = 30 * 1000;
-const BOOT_POLL_MS = 150;
+const BOOT_TIMEOUT_MS = 60 * 1000;
+const BOOT_POLL_MS = 120;
 
 app.name = PRODUCT;
+// Linux: X11 shows the GTK theme's window background (light grey on Adwaita) for as long as the page
+// has not painted, which after the splash is the length of the game's first heavy frame: a white
+// flash between the splash and the title. A dark GTK theme for this app makes that background dark
+// (dialogs follow nativeTheme 'dark' anyway). Must be set before GTK starts; a user's own GTK_THEME wins.
+const SET_GTK_THEME = process.platform === 'linux' && !process.env.GTK_THEME;
+if (SET_GTK_THEME) process.env.GTK_THEME = 'Adwaita:dark';
 if (process.env.GTP_USER_DATA_DIR) app.setPath('userData', path.resolve(process.env.GTP_USER_DATA_DIR));
 
 // required after the userData path is final: both write there
@@ -67,6 +76,8 @@ function gameWindow() {
 }
 
 function start() {
+  // GTK has read it by now; programs we launch (file manager, browser) keep the user's own theme
+  if (SET_GTK_THEME) delete process.env.GTK_THEME;
   nativeTheme.themeSource = 'dark';
   app.setAboutPanelOptions({
     applicationName: PRODUCT,
@@ -203,7 +214,7 @@ function createWindow() {
 
   wc.on('did-finish-load', () => {
     loadMods(wc);
-    waitForBoot(wc).then(reveal);
+    waitForGame(wc, (p) => splashProgress(splash, p)).then(reveal);
   });
 
   // Show the game window once the game has booted, close the splash, and restore maximized or
@@ -229,25 +240,40 @@ function createWindow() {
   win.loadFile(APP_INDEX).catch((err) => crashLog.write('main', 'loadFile failed: ' + (err && err.message || err)));
 }
 
-/* Resolves once window.GTP.game.booted is true, or after BOOT_TIMEOUT_MS. */
-function waitForBoot(wc) {
+/* Resolves once the game has booted, its loading screen is done and it has drawn its first real
+ * frame (GTP.game.frames does not count loading-screen frames), or after BOOT_TIMEOUT_MS. Waiting
+ * for that frame matters: the first title frame compiles the scene's shaders and can take seconds
+ * on slow GPUs, and the page cannot answer (or paint) until it is done, so showing the window
+ * earlier would show a dark, frozen window while the splash, its own process, keeps animating.
+ * onProgress({booted, fraction, label}) is called on every poll for the splash. */
+const GAME_STATUS = '(() => { const g = window.GTP && GTP.game; if (!g) return null; const L = g.loading || {};' +
+  ' return { booted: !!g.booted, loading: !!L.active, fraction: +L.fraction || 0, label: String(L.label || ""), frames: g.frames | 0, state: g.state }; })()';
+
+function waitForGame(wc, onProgress) {
   const t0 = Date.now();
   return new Promise((resolve) => {
     const poll = () => {
       if (wc.isDestroyed()) return resolve(false);
-      wc.executeJavaScript('!!(window.GTP && GTP.game && GTP.game.booted)', true)
-        .then((booted) => {
-          if (booted) return resolve(true);
+      wc.executeJavaScript(GAME_STATUS, true)
+        .then((st) => {
+          if (st && st.booted && !st.loading && st.frames >= 1) return resolve(true);
           if (Date.now() - t0 > BOOT_TIMEOUT_MS) {
-            crashLog.write('main', 'the game did not report booted within ' + BOOT_TIMEOUT_MS / 1000 + ' s; showing the window anyway');
+            crashLog.write('main', 'the game was not ready within ' + BOOT_TIMEOUT_MS / 1000 + ' s (' + JSON.stringify(st) + '); showing the window anyway');
             return resolve(false);
           }
+          onProgress(st ? { booted: st.booted, fraction: st.booted ? st.fraction : 0, label: st.booted ? st.label : '' } : { booted: false, fraction: 0, label: '' });
           setTimeout(poll, BOOT_POLL_MS);
         })
         .catch(() => resolve(false));
     };
     poll();
   });
+}
+
+/* Hand the game's loading progress to the splash page (window.gtpSplash in splash/splash.html). */
+function splashProgress(splash, p) {
+  if (!splash || splash.isDestroyed()) return;
+  splash.webContents.executeJavaScript('window.gtpSplash && window.gtpSplash(' + JSON.stringify(p) + ')', true).catch(() => {});
 }
 
 /* MODS

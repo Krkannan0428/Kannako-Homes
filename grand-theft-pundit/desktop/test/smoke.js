@@ -17,7 +17,13 @@
  *   6. a test mod dropped into the mods folder ran (GTP_MODS.loaded), so the mods loader works
  *   7. the window state is remembered: a second start with a saved size opens at that size, and
  *      quitting writes the state back
- * It writes smoke-title.png (a screenshot) and smoke-crash.log into --out (default: test/out).
+ *   8. a new game starts the way a player starts one: Enter on NEW GAME (and on a slot picker if
+ *      one comes up), the loading screen finishes, the opening cutscene plays and is skipped by
+ *      holding Enter as its on-screen pill says, dialogue is answered with Enter, and the first
+ *      mission objective appears on the HUD. Steps 5's error checks run after this, so errors
+ *      during the new game fail the test too. (--no-new-game skips this step.)
+ * It writes smoke-title.png, smoke-cutscene.png, smoke-objective.png and smoke-crash.log into
+ * --out (default: test/out).
  */
 'use strict';
 const { spawn } = require('child_process');
@@ -31,6 +37,8 @@ const exe = args.find((a) => !a.startsWith('--') && args[args.indexOf(a) - 1] !=
 const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 && args[i + 1] ? args[i + 1] : def; };
 const OUT = path.resolve(opt('--out', path.join(__dirname, 'out')));
 const TIMEOUT_S = parseInt(opt('--timeout', '180'), 10);
+const NEW_GAME = !args.includes('--no-new-game');
+const NEW_GAME_TIMEOUT_S = 300;
 
 if (!exe || !fs.existsSync(exe)) {
   console.error('usage: node test/smoke.js <path to the app executable> [--out dir] [--timeout s]' + (exe ? '\nnot found: ' + exe : ''));
@@ -125,6 +133,81 @@ async function waitForGamePage(port, run, deadline) {
   return null;
 }
 
+/* a real key press through the renderer's input pipeline, the way the keyboard delivers it */
+const KEYS = { Enter: { code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 } };
+async function keyDown(client, name) { await client.send('Input.dispatchKeyEvent', Object.assign({ type: 'rawKeyDown' }, KEYS[name])); }
+async function keyUp(client, name) { await client.send('Input.dispatchKeyEvent', Object.assign({ type: 'keyUp' }, KEYS[name])); }
+async function press(client, name) { await keyDown(client, name); await sleep(120); await keyUp(client, name); }
+
+async function screenshot(client, name) {
+  const shot = await client.send('Page.captureScreenshot', { format: 'png' });
+  const file = path.join(OUT, name);
+  fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
+  console.log('  screenshot: ' + file);
+}
+
+/* 8. NEW GAME -> loading -> opening cutscene -> first objective, with real key presses */
+async function playNewGame(client) {
+  const evaluate = (expr) => evaluateIn(client, expr);
+  const deadline = Date.now() + NEW_GAME_TIMEOUT_S * 1000;
+  const title = await evaluate('(() => { const t = GTP.UI && GTP.UI.state && GTP.UI.state.title; return t ? { ids: (t.items || []).map((i) => i.id), labels: (t.items || []).map((i) => i.label || i.id), sel: t.sel, page: t.page } : null; })()');
+  check(title && title.ids[0] === 'play' && title.sel === 0, 'the title menu highlights NEW GAME first (' + JSON.stringify(title && title.labels) + ')');
+
+  const t0 = Date.now();
+  await press(client, 'Enter');
+  // a slot picker or a confirm may come up: Enter again takes the highlighted (empty) slot
+  for (let i = 0; i < 6; i++) {
+    await sleep(700);
+    const st = await evaluate('GTP.game.state');
+    if (st !== 'title') break;
+    await press(client, 'Enter');
+  }
+  let st = null;
+  while (Date.now() < deadline) {
+    st = await evaluate('({ state: GTP.game.state, loading: !!GTP.game.loading.active })').catch(() => null);
+    if (st && st.state !== 'title' && !st.loading) break;
+    await sleep(500);
+  }
+  check(st && st.state !== 'title' && !st.loading, 'Enter on NEW GAME starts a new game and its loading screen finishes (' + JSON.stringify(st) + ', ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s)');
+
+  const STATUS = `(() => {
+    const Cs = GTP.Cutscenes, cs = Cs && Cs.hud ? Cs.hud() : { active: !!(Cs && Cs.active) };
+    const ui = GTP.UI.state, M = GTP.Missions, h = M && M.hud ? M.hud() : {};
+    const ph = ui.phone || ui.call || ui.phoneCall;
+    return { state: GTP.game.state, cutscene: cs.active ? { title: cs.title || null, skip: cs.skip || 0, skippable: cs.skippable !== false } : null,
+      talk: !!ui.dialogue || !!(h && h.dialogue), confirm: !!ui.confirm, phone: !!(ph && (ph.ringing || ph.incoming) && !ph.answered),
+      mission: h && h.active ? { id: h.active, title: h.title, phase: h.phase, objective: h.objective || '' } : null };
+  })()`;
+  const cutscenes = [];
+  let cutShot = false, objective = null, last = null;
+  while (Date.now() < deadline) {
+    last = await evaluate(STATUS).catch(() => null);
+    if (!last) { await sleep(500); continue; }
+    if (last.cutscene) {
+      if (!cutscenes.includes(last.cutscene.title)) cutscenes.push(last.cutscene.title);
+      if (!cutShot) { await sleep(1500); await screenshot(client, 'smoke-cutscene.png'); cutShot = true; }
+      if (!last.cutscene.skippable) { await sleep(1000); continue; }
+      // HOLD TO SKIP: keep Enter down until the cutscene ends (the hold is measured in game time)
+      await keyDown(client, 'Enter');
+      for (let i = 0; i < 60; i++) {
+        await sleep(250);
+        const c = await evaluate('!!(GTP.Cutscenes && GTP.Cutscenes.active)').catch(() => true);
+        if (!c) break;
+      }
+      await keyUp(client, 'Enter');
+      await sleep(400);
+      continue;
+    }
+    if (last.mission && last.mission.phase === 'play' && last.mission.objective) { objective = last.mission; break; }
+    if (last.talk || last.confirm || last.phone) { await press(client, 'Enter'); await sleep(600); continue; }
+    await sleep(400);
+  }
+  check(cutscenes.length > 0, 'the opening cutscene played (' + JSON.stringify(cutscenes) + ')');
+  check(!!objective, 'the first mission objective is on screen' + (objective ? ' (' + objective.id + ' "' + objective.title + '": ' + objective.objective + ')' : ' (last ' + JSON.stringify(last) + ')'));
+  console.log('  new game to first objective: ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s');
+  if (objective) { await sleep(1500); await screenshot(client, 'smoke-objective.png'); }
+}
+
 async function evaluateIn(client, expr) {
   const r = await client.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
   if (r.exceptionDetails) throw new Error('evaluate failed: ' + (r.exceptionDetails.exception && r.exceptionDetails.exception.description || r.exceptionDetails.text));
@@ -206,12 +289,16 @@ async function main() {
     check(st && st.booted, 'the game booted');
     check(st && st.state === 'title', 'the game is on the title screen (state ' + (st && st.state) + ')');
     check(st && !st.loading, 'the loading screen finished');
+    // 3. the splash hands over once the title has drawn its first frame (main.js waitForGame), and
+    // the game window is the only page left
+    let splashOpen = true;
+    for (let i = 0; i < 120 && splashOpen; i++) {
+      splashOpen = (await targets(port)).some((t) => t.type === 'page' && /splash\.html/.test(t.url));
+      if (splashOpen) await sleep(500);
+    }
+    check(!splashOpen, 'the splash window has closed');
     // let a few frames of the attract camera run
     await sleep(1500);
-
-    // 3. the splash is gone and the game window is the only page
-    const pages = (await targets(port)).filter((t) => t.type === 'page');
-    check(!pages.some((t) => /splash\.html/.test(t.url)), 'the splash window has closed');
     const visible = await evaluate('document.visibilityState');
     check(visible === 'visible', 'the game window is visible (' + visible + ')');
 
@@ -234,15 +321,16 @@ async function main() {
     check(pix.gl && pix.gl.colors >= 40, 'the 3D view renders a picture (' + (pix.gl && pix.gl.colors) + ' colours)');
     check(!pix.hud || pix.hud.colors >= 8, 'the title menu is drawn on the HUD (' + (pix.hud && pix.hud.colors) + ' colours)');
 
-    const shot = await client.send('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync(path.join(OUT, 'smoke-title.png'), Buffer.from(shot.data, 'base64'));
-    console.log('  screenshot: ' + path.join(OUT, 'smoke-title.png'));
+    await screenshot(client, 'smoke-title.png');
 
     // 6. the mods loader ran our test mod after the game scripts
     const mods = await evaluate('({ loaded: (window.GTP_MODS && GTP_MODS.loaded) || [], errors: (window.GTP_MODS && GTP_MODS.errors) || [], flag: window.__gtpSmokeMod || null })');
     check(mods.loaded.includes('zz-smoke-mod.js') && mods.flag === 'with-gtp' && mods.errors.length === 0, 'the mods folder loads scripts after the game (' + JSON.stringify(mods) + ')');
 
-    // 5. no errors anywhere
+    // 8. a new game up to its first objective
+    if (NEW_GAME) await playNewGame(client);
+
+    // 5. no errors anywhere (title and new game)
     const gtpErrors = await evaluate('(window.GTP && GTP.errors || []).map((e) => (e.where || "") + ": " + (e.message || e))');
     check(gtpErrors.length === 0, 'GTP.errors is empty' + (gtpErrors.length ? ': ' + gtpErrors.join(' | ') : ''));
     check(pageErrors.length === 0, 'no page exceptions or console errors' + (pageErrors.length ? ': ' + pageErrors.join(' | ') : ''));

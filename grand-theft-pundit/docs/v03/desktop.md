@@ -14,8 +14,12 @@ in `desktop/README.md`; this file is for integration.
   (unsigned macOS, detected with `codesign`; Windows portable; non-AppImage Linux) fetches the
   platform's `latest*.yml` from `releases/latest/download` and offers "Open Release Page". Menu
   item *Check for Updates...* everywhere. Logs to `logs/update.log`.
-- **Splash** (`desktop/splash/`) until `GTP.game.booted` is true (30 s cap); the game window is
-  created hidden with `backgroundThrottling: false` and shown after boot.
+- **Splash** (`desktop/splash/`): jokes while the scripts load, then the game's own loading
+  progress (`GTP.game.loading.fraction`/`label`, pushed by main.js into `window.gtpSplash`). The game
+  window is created hidden (`backgroundThrottling: false`; the chunk prebuild keeps running) and is
+  shown once `booted && !loading.active && frames >= 1`, i.e. the title has drawn (60 s cap).
+  Linux sets `GTK_THEME=Adwaita:dark` for GTK start-up only (removed from the environment at ready)
+  so the window's pre-paint background is dark, not Adwaita's light grey.
 - **Window state** (`desktop/lib/window-state.js`): size, position, maximized, full screen in
   `window-state.json`, off-screen positions ignored.
 - **Crash log** (`desktop/lib/crash-log.js`): `logs/crash.log` in the user-data folder (main
@@ -41,9 +45,12 @@ in `desktop/README.md`; this file is for integration.
 
 ## Interfaces consumed from the game
 
-Read-only, from the main process and the smoke test: `window.GTP.game.booted`, `GTP.game.state`
-(`'title'`), `GTP.game.loading.active`, `GTP.errors`, `GTP.game.render()`, the `#gl` and `#hud`
-canvases. If integration renames any of these, update `desktop/main.js` (`waitForBoot`) and
+Read-only, from the main process and the smoke test: `window.GTP.game.booted`, `GTP.game.state`,
+`GTP.game.loading` (`active`, `fraction`, `label`), `GTP.game.frames`, `GTP.errors`,
+`GTP.game.render()`, the `#gl` and `#hud` canvases; the smoke test's new-game step also reads
+`GTP.UI.state.title.items/sel`, `GTP.UI.state.dialogue/confirm/phone`, `GTP.Cutscenes.hud()` /
+`.active` and `GTP.Missions.hud()` (`active`, `title`, `phase`, `objective`), and presses Enter
+through CDP `Input.dispatchKeyEvent`. If integration renames any of these, update `desktop/main.js` (`waitForBoot`) and
 `desktop/test/smoke.js`.
 
 ## Exposed
@@ -70,10 +77,8 @@ workflow parsed with PyYAML and passes actionlint.
 
 ## Known issues
 
-- The workflow changes have not run on GitHub yet (this session cannot dispatch workflows); the
-  first push to `game/grand-theft-pundit` after integration is their first run. Windows and the
-  DMG could not be built here (no Wine, no macOS); check the `windows` job output for
-  `latest.yml` and `*-setup.exe.blockmap`, and the DMG window layout on a Mac.
+- The workflow ran green on GitHub at integration (run 39476942116, see below). The DMG window
+  layout itself has still not been looked at on a Mac; the new CI step checks the files are there.
 - 0.2.0 players have no updater; they download 0.3.0 once by hand.
 - Unsigned macOS builds cannot self-update (Squirrel.Mac requires a signature); they get the
   release-page notice. Adding the signing secrets switches them to in-place updates automatically.
@@ -81,3 +86,35 @@ workflow parsed with PyYAML and passes actionlint.
   finish; on a system without FUSE 2 that step fails (logged), but the file is already replaced.
 - Pressing Alt alone on Windows/Linux toggles the menu bar, which shrinks the game view by the bar's
   height until Alt is pressed again. The game does not use Alt.
+
+## Integration round 1 (game/grand-theft-pundit at 65dc2b7, merged into v03/desktop)
+
+**CI run 39476942116** (on 3ad04d0, the push with the desktop merge; every job green, release
+skipped as intended), read from the job logs:
+- Windows: `Grand-Theft-Pundit-0.3.0-win-x64-setup.exe`, `...-portable.exe`,
+  `...-setup.exe.blockmap` and `latest.yml` (lists the setup exe; the portable exe is not an update
+  target, by design). No warnings beyond "signing skipped".
+- macOS: both DMGs, both zips, both zip blockmaps, `latest-mac.yml` listing both zips. The build log
+  does not say which DMG background was used, so the workflow now mounts each DMG and fails without
+  `.background/*` and `.DS_Store` (new step "Check the DMG window artwork"; first runs on the next push).
+- Smoke: all 16 checks passed in 27 s.
+
+**Merged v0.3 game in the packaged app** (local, `npm run pack`, xvfb, software GL): boots to the
+title in about 12 s (scripts ~6 s, loading ~1 s, first title frame ~4 s in SwiftShader); Enter on
+NEW GAME -> loading screen (11-15 s) -> opening cutscene "Table Stakes" (skipped with held Enter)
+-> first objective "Get to Dorm 4B" (m00_intro) in 41-53 s; no page errors, `GTP.errors` empty,
+crash log clean. The smoke test now does all of this on every build (step 8).
+
+**Splash handover.** Before: the window appeared at `booted`, while the game's own loading screen
+was at 89 %, so players saw two loading UIs in a row. Now the splash carries the game's progress and
+stays until the title has drawn. X-level screenshots every 0.25 s across the boot then showed a
+~2 s light-grey (Adwaita, mean 245/255) full-window frame at the reveal: X shows the GTK theme
+background until Chromium paints, and the renderer was busy in the first title frame. With
+`GTK_THEME=Adwaita:dark` the brightest frame across the whole boot is the title itself (mean 53).
+That pre-paint gap still exists but is dark; it lasts one frame on a real GPU (about 2 s with
+SwiftShader). macOS and Windows use `backgroundColor` natively and never showed it.
+
+**Known since round 1**
+- GitHub warns that `actions/*@v4` run on Node 24 instead of the deprecated Node 20; harmless now,
+  bump to the next major of each action when convenient.
+- The title footer still says `v0.2.0` (in `js/`, not desktop-owned); the app is 0.3.0.

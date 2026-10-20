@@ -146,6 +146,21 @@ jobs:
           test -s dist/latest-mac.yml || { echo "::error::electron-builder did not write dist/latest-mac.yml (auto-update metadata)"; exit 1; }
           cat dist/latest-mac.yml
 
+      - name: Check the DMG window artwork
+        # mount each disk image and make sure the background (build/background.png, @2x merged into
+        # a .tiff by electron-builder) and the Finder layout (.DS_Store) made it in
+        run: |
+          for dmg in dist/*.dmg; do
+            mnt="$(mktemp -d)"
+            hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$dmg" > /dev/null
+            echo "$dmg:"; ls -la "$mnt" "$mnt/.background" || true
+            ok=true
+            ls "$mnt/.background" 2>/dev/null | grep -Eq '\.(tiff|png)$' || { echo "::error::$dmg has no background image"; ok=false; }
+            test -f "$mnt/.DS_Store" || { echo "::error::$dmg has no Finder layout (.DS_Store)"; ok=false; }
+            hdiutil detach "$mnt" > /dev/null || hdiutil detach -force "$mnt" > /dev/null
+            $ok || exit 1
+          done
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -305,7 +320,7 @@ jobs:
           ./*.AppImage --appimage-extract > /dev/null
           ls squashfs-root
 
-      - name: Launch the game and check the title screen
+      - name: Launch the game, check the title screen and play into a new game
         run: >-
           xvfb-run -a -s "-screen 0 1280x800x24"
           node grand-theft-pundit/desktop/test/smoke.js linux-build/squashfs-root/grand-theft-pundit
@@ -316,6 +331,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke
+          # smoke-title.png, smoke-cutscene.png, smoke-objective.png, smoke-crash.log
           path: smoke-out/
           if-no-files-found: ignore
 

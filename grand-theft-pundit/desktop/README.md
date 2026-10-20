@@ -65,8 +65,13 @@ the running window instead of opening another one.
 
 What the desktop shell does around the game:
 
-- **Splash.** A small window with the logo shows while the game window loads; the game window
-  appears once the game has booted (`GTP.game.booted`), at most 30 seconds later.
+- **Splash.** A small window with the logo shows while the game's scripts load, then takes over the
+  game's own loading screen: its bar and caption follow `GTP.game.loading` (fraction and stage
+  label). The game window appears only once that loading is done and the title has drawn its first
+  frame, so there is one loading UI and the player never sees a half-built loading screen (60 s
+  cap). On Linux the app starts GTK with `Adwaita:dark` (unless you set `GTK_THEME` yourself) so the
+  moment between showing the window and its first paint is dark rather than a white flash; programs
+  the game launches keep your own theme.
 - **Window memory.** Size, position, maximized and full screen state are saved to
   `window-state.json` in the data folder and restored next time. A position on a monitor that is no
   longer connected is ignored, so the window never opens off-screen.
@@ -187,8 +192,9 @@ git commit -m "Ship 0.2.0 [release]"     # or:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-The macOS job runs on `macos-14` and produces the arm64 and x64 dmg/zip, the Windows job the
-installer and portable exe, and the Linux job the AppImage, each with its update metadata. The last job creates (or updates, if it
+The macOS job runs on `macos-14` and produces the arm64 and x64 dmg/zip (and mounts each DMG to
+check the background art and Finder layout are in it), the Windows job the installer and portable
+exe, and the Linux job the AppImage, each with its update metadata. The last job creates (or updates, if it
 exists) the release for that tag with every file attached and auto-generated notes. "Run workflow"
 from the Actions tab builds the same files as workflow artifacts without a tag; fill in
 `release_tag` with an existing tag to publish a release from a manual run.
@@ -203,12 +209,16 @@ cache (through `setup-node`) and the Electron/electron-builder binary caches are
 `test/smoke.js` launches a packaged app with `--remote-debugging-port`, talks to it over the Chrome
 DevTools Protocol with Node 22's built-in `fetch` and `WebSocket` (no dependencies) and fails unless:
 the game page loads and boots, reaches the title screen with the loading screen finished, the
-splash has closed and the window is visible, the 3D canvas and the HUD show a real picture, a test
-mod in the mods folder ran, there were no page exceptions, console errors or `GTP.errors`, and the
-crash log holds nothing but its start line. It then restarts the app with a saved window size and
+splash has closed and the window is visible, the 3D canvas and the HUD show a real picture, and a
+test mod in the mods folder ran. Then it plays into a new game with real key presses: Enter on
+NEW GAME, the loading screen, the opening cutscene (held Enter skips it, as its pill says),
+dialogue, until the first mission objective is on the HUD. Throughout, there must be no page
+exceptions, console errors or `GTP.errors`, and the crash log must hold nothing but its start line
+(`--no-new-game` stops after the title). It then restarts the app with a saved window size and
 checks both the restore and the save on quit. It uses a throw-away data folder
-(`GTP_USER_DATA_DIR`) with updates off, and writes `smoke-title.png` and `smoke-crash.log` to
-`test/out/` (CI uploads them as the `smoke` artifact).
+(`GTP_USER_DATA_DIR`) with updates off, and writes `smoke-title.png`, `smoke-cutscene.png`,
+`smoke-objective.png` and `smoke-crash.log` to `test/out/` (CI uploads them as the `smoke`
+artifact). About 90 s under xvfb with software GL.
 
 ```sh
 npm run pack                                   # dist/linux-unpacked
