@@ -51,15 +51,15 @@ H.run('systems', async (t) => {
       sections: (S.stats().sections || []).length,
       marks: S.debug.marks().length, minimap: S.markers().filter((m) => m.kind === 'system').length, untouched: GTP.Missions.allMarkers().every((m) => m.kind !== 'system'),
       holeLens: S.golf.holes().map((h) => h.length), hazards: S.golf.holes().map((h) => h.hazards.map((z) => z.kind[0]).join('')).join(' '),
-      tee1: S.golf.holes()[0].tee, door: GTP.World.landmark('goldplate_links').door, pend: Pa.pendingLandmarks.filter((id) => !GTP.World.landmark(id))
+      tee1: S.golf.holes()[0].tee, worldTee: (GTP.World.landmark('goldplate_links').points || {}).tee1 || null, owns: [S.owns('safe_dorm'), S.owns('safe_penthouse')].join(), door: GTP.World.landmark('goldplate_links').door, pend: Pa.pendingLandmarks.filter((id) => !GTP.World.landmark(id))
     };
   });
   console.log('  surface: ' + JSON.stringify(r));
   t.assert(r.parity && r.tickers === r.parityTickers && r.tickers === 8 && r.holes === 9 && r.ach === r.parityAch && r.cheats === r.parityCheats, 'tables come from parity: ' + JSON.stringify(r));
   t.assert(r.jobs === 'damage_control:rescue,hot_take_brigade:douse' && r.safes >= 5 && r.props >= 10, 'jobs and properties');
-  t.assert(r.wrapped && r.reg === 8 && r.ui && r.sections === 6, 'wrappers, save entries and the UI-facing names');
+  t.assert(r.wrapped && r.reg === 8 && r.ui && r.sections === 6 && r.owns === 'true,false', 'wrappers, save entries and the UI-facing names');
   t.assert(r.marks >= 5 && r.minimap >= r.marks && r.untouched, 'world markers exist and reach Systems.markers(): ' + r.marks + ' / ' + r.minimap);
-  t.assert(r.holeLens.every((l) => l >= 15 && l <= 200) && Math.abs(r.tee1.x - (r.door.x - 6)) < 0.01 && Math.abs(r.tee1.z - (r.door.z - 84)) < 0.01, 'hole points are metres from the course door: ' + JSON.stringify(r.tee1));
+  t.assert(r.holeLens.every((l) => l >= 15 && l <= 200) && (r.worldTee ? Math.abs(r.tee1.x - r.worldTee.x) < 0.01 && Math.abs(r.tee1.z - r.worldTee.z) < 0.01 : Math.abs(r.tee1.x - (r.door.x - 6)) < 0.01 && Math.abs(r.tee1.z - (r.door.z - 84)) < 0.01), 'hole points: the world track\'s tee1 when it exists, else metres from the course door: ' + JSON.stringify(r.tee1));
 
   // ---- 2. properties ----
   r = await page.evaluate(() => {

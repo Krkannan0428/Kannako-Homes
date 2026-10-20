@@ -162,6 +162,7 @@
     get: function (id) { var L = props.list(); for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; },
     point: function (id) { var d = typeof id === 'string' ? props.def(id) : id; return d ? landmarkPoint(d) : null; },
     owned: function (id) { return !!S.properties.owned[id]; },
+    owns: function (id) { return !!S.properties.owned[id]; },
     lockReason: function (d) {
       if (d.unlock && d.unlock.mission && !missionDone(d.unlock.mission)) return 'mission';
       if (d.unlock && d.unlock.flag && !flags()[d.unlock.flag]) return 'flag';
@@ -1463,6 +1464,7 @@
     props.list().forEach(function (d) {
       if (d.x == null || d.locked || d.id === 'safe_dorm') return;   // the pod van is Game's own home point
       if (d.owned && (d.kind !== 'safehouse' || interiorFor(d))) return;
+      if (d.kind === 'safehouse' && lmById(d.landmark) && (W().doors || []).length) return;   // the world track's door ring sells it (property:open)
       marks.push({ id: 'property:' + d.id, ref: d.id, type: d.owned ? 'save' : 'property', icon: d.owned ? 'home' : 'property', title: d.owned ? d.name : d.name + ' ' + money(d.price),
         x: d.x, z: d.z, y: groundY(d.x, d.z), r: 1.9, color: d.owned ? 0xffffff : 0x9dff3c });
     });
@@ -1689,8 +1691,8 @@
     var iEnter = IN.enter;
     IN.enter = function (id, opts) {
       try {
-        var o = opts || {}, lm = o.landmark, lmId = lm && typeof lm === 'object' ? lm.id : lm, key = typeof id === 'string' && /^safe_/.test(id) ? id : (lmId || o.store || null);
-        var kindSafe = id === 'safehouse' || (typeof id === 'string' && /^safe_/.test(id)) || (lm && typeof lm === 'object' && lm.kind === 'safehouse');
+        var o = opts || {}, lm = o.landmark, lmId = lm && typeof lm === 'object' ? lm.id : lm, key = o.property || (typeof id === 'string' && /^safe_/.test(id) ? id : (lmId || o.store || null));
+        var kindSafe = id === 'safehouse' || o.kind === 'safehouse' || (typeof id === 'string' && /^safe_/.test(id)) || (lm && typeof lm === 'object' && lm.kind === 'safehouse');
         var d = kindSafe && key ? props.byLandmark(key) : null;
         if (d && d.kind === 'safehouse' && !props.owned(d.id) && !o.force) {
           var g = game(), t = g && g.time ? g.time.t : 0;
@@ -1723,7 +1725,8 @@
   Systems.buyClothing = function (id) { return wardrobe.item(id) ? wardrobe.buy(id) : wardrobe.buyOutfit(id); };
   Systems.buyOutfit = wardrobe.buyOutfit;
   Systems.buyHaircut = wardrobe.haircut;
-  Systems.owns = wardrobe.owns;
+  // one answer for the world's doors (property ids: safehouses, garages) and the UI's wardrobe (item ids)
+  Systems.owns = function (id) { return props.def(id) ? props.owned(id) : wardrobe.owns(id); };
   Systems.buyProperty = props.buy;
   Systems.ownsProperty = props.owned;
   Systems.buy = function (kind, id, opts) {
