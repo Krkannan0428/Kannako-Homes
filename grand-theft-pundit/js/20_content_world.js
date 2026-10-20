@@ -271,7 +271,8 @@
     // centre plus an offset ({landmark, dx, dz}), or an offset from a landmark building's corner
     // ({landmark, anchor:'building', ex, dz}: x = building east face + ex). heading: n/s/e/w.
     stuntRamps: [
-      { id: 'sj_01', name: 'The Quad Hop', at: { landmark: 'campus_quad', dx: 0, dz: 2 }, heading: 'n', landing: { landmark: 'campus_quad', dx: 0, dz: -14 }, minAir: 1.0 },
+      // v0.3: between the folding tables' columns (x -8.5 / 0 / +8.5 from the centre), not through the middle table
+      { id: 'sj_01', name: 'The Quad Hop', at: { landmark: 'campus_quad', dx: -4.25, dz: 2 }, heading: 'n', landing: { landmark: 'campus_quad', dx: -4.25, dz: -14 }, minAir: 1.0 },
       { id: 'sj_02', name: 'Lower Third Leap', at: { x: 456, z: 200 }, heading: 's', landing: { x: 456, z: 230 }, minAir: 1.0 },
       // v0.3 (QA-STR-03): the deck is 16 m wide, a straight run across it gives ~1.17 s of air; 1.0 s is the bar now
       { id: 'sj_03', name: 'Assembly Required', at: { x: 352, z: 134, y: 7 }, heading: 'n', landing: { landmark: 'protest_plaza', dx: 0, dz: 0 }, minAir: 1.0 },

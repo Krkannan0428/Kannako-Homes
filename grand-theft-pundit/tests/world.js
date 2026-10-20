@@ -376,6 +376,45 @@ H.run('world', async (t) => {
   t.assert(v3.deterministic, 'the v0.3 layer is deterministic');
   t.assert(v3.seed11.places === 10 && v3.seed11.pads === 5 && v3.seed11.doors === 16 && v3.seed11.holes === 9 && v3.seed11.slips >= 6, 'seed 11 places everything too: ' + JSON.stringify(v3.seed11));
 
+  // ---- QA-STR-03: drive every stunt jump (a sports car 40 m back, full throttle, held on the line until it launches) ----
+  const jumps = await page.evaluate(() => {
+    const W = GTP.World, U = GTP.util, E = GTP.Entities, g = GTP.game, p = g.player, St = GTP.Strands;
+    if (!St || !St.stunts) return null;
+    const out = {};
+    let last = null; const on = (e) => { last = e; }; GTP.Events.on('stunt:land', on);
+    for (const r of W.stuntRamps) {
+      // 40 m of run-up; the deck jump (sj_03) runs across the 16 m deck from its south edge
+      const back = r.y > 3 ? 7.5 : 40, f = U.yawToDir(r.yaw), sx = r.x - f.x * back, sz = r.z - f.z * back;
+      if (p.inVehicle) p.exitVehicle();
+      E.list.forEach((e) => { if (!e.removed && e !== p && (e.kind === 'vehicle' || e.kind === 'ped') && !e.persistent && Math.hypot(e.x - r.x, e.z - r.z) < 90) e.destroy(); });
+      const v = new GTP.Vehicle({ x: sx, z: sz, type: 'sports' }); v.y = W.heightAt(sx, sz, r.y); v.yaw = r.yaw; v.snap(); E.add(v);
+      const sd = W.solidAt(sx - f.z * 2.5, sz + f.x * 2.5, v.y + 0.5) ? -1 : 1;   // the clear side of the car (the yard's lanes are narrow)
+      g.debug.teleport(sx + 3, sz); p.x = sx - f.z * 2.5 * sd; p.z = sz + f.x * 2.5 * sd; p.y = v.y; p.snap(); p.enterVehicle(v, 0);
+      for (let k = 0; k < 60 && p.inVehicle !== v; k++) { g.advance(0.1); if (k % 10 === 9 && !p.entering && p.inVehicle !== v) { p.x = sx - f.z * 2.5 * sd; p.z = sz + f.x * 2.5 * sd; p.y = v.y; p.snap(); p.enterVehicle(v, 0); } }   // the walk to the door and the climb in
+      v.x = sx; v.z = sz; v.y = W.heightAt(sx, sz, r.y); v.yaw = r.yaw; v.vx = v.vz = 0; v.snap();
+      last = null; GTP.Input.set('forward', true);
+      let launched = false, top = 0;
+      for (let i = 0; i < 12 * 30 && !last; i++) {
+        if (!launched && v.onGround) {
+          // hold the car on the ramp's centre line until it leaves the wedge
+          const dx = v.x - r.x, dz = v.z - r.z, along = dx * f.x + dz * f.z;
+          if (along < -2) { v.x = r.x + f.x * along; v.z = r.z + f.z * along; v.yaw = r.yaw; const sp = Math.hypot(v.vx, v.vz); v.vx = f.x * sp; v.vz = f.z * sp; }
+        }
+        if (!v.onGround && Math.hypot(v.x - r.x, v.z - r.z) < 12) launched = true;
+        top = Math.max(top, Math.hypot(v.vx, v.vz));
+        g.advance(1 / 30);
+      }
+      GTP.Input.set('forward', false);
+      out[r.id] = last ? { ok: last.ok, air: last.airT, reason: last.reason, speed: last.speed, inZone: last.inZone } : { ok: false, reason: 'no landing', launched, top: Math.round(top), at: [Math.round(v.x), Math.round(v.z)], state: g.state, seated: p.inVehicle === v, ts: g.timeScale };
+      if (p.inVehicle) p.exitVehicle(); g.advance(1.2); v.destroy(); g.advance(0.2);
+    }
+    GTP.Events.off('stunt:land', on);
+    g.timeScale = 1;
+    return out;
+  });
+  console.log('  stunt jumps: ' + JSON.stringify(jumps));
+  if (jumps) t.assert(Object.keys(jumps).length === 10 && Object.values(jumps).every((j) => j.ok), 'all ten stunt jumps can be landed (QA-STR-03): ' + JSON.stringify(jumps));
+
   // ---- screenshots of the new places (look at them) ----
   const views = await page.evaluate(() => {
     const W = GTP.World, U = GTP.util, out = [];

@@ -123,7 +123,9 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
   cutout jet collides only up to 1 m (a car in the air clears it); sj_10 moved to Vetted Vista's westbound lane with a
   60 m road run-up over the junction into Old Money Common, and the bandstand moved north out of its line; sj_03
   minAir 1.6 -> 1.0, sj_05 1.2 -> 0.9. The designed obstacles (the maze hedges, the yard container, the cutout jet) carry
-  `jumpOver: <ramp id>`. tests/world.js asserts the lines are clear.
+  `jumpOver: <ramp id>`. sj_01 runs between the Quad's folding-table columns (it hit the middle table and came up
+  short). tests/world.js asserts the lines are clear and **drives all ten jumps** (a sports car 40 m back at full throttle,
+  held on the line until it launches; the deck jump from the deck's edge): all ten land `ok` with 1.03-1.15 s of air.
 - **QA-STR-04** (lr_03 racers into the tower): `GTP.Strands.drivers.take` is **wrapped from 07_ai** (installed on the
   first `AI.update`, flag `take._worldRoute`): a `'route'` leg whose straight segment hits a building gets the car A*
   corners as pass-through points (`via: true`); the wrapped `onCheckpoint` only reports real checkpoints, by their own
