@@ -273,14 +273,93 @@
     stuntRamps: [
       { id: 'sj_01', name: 'The Quad Hop', at: { landmark: 'campus_quad', dx: 0, dz: 2 }, heading: 'n', landing: { landmark: 'campus_quad', dx: 0, dz: -14 }, minAir: 1.0 },
       { id: 'sj_02', name: 'Lower Third Leap', at: { x: 456, z: 200 }, heading: 's', landing: { x: 456, z: 230 }, minAir: 1.0 },
-      { id: 'sj_03', name: 'Assembly Required', at: { x: 352, z: 134, y: 7 }, heading: 'n', landing: { landmark: 'protest_plaza', dx: 0, dz: 0 }, minAir: 1.6 },
+      // v0.3 (QA-STR-03): the deck is 16 m wide, a straight run across it gives ~1.17 s of air; 1.0 s is the bar now
+      { id: 'sj_03', name: 'Assembly Required', at: { x: 352, z: 134, y: 7 }, heading: 'n', landing: { landmark: 'protest_plaza', dx: 0, dz: 0 }, minAir: 1.0 },
       { id: 'sj_04', name: 'Par Ten', at: { x: 536, z: 190 }, heading: 's', landing: { x: 536, z: 214 }, minAir: 1.0 },
-      { id: 'sj_05', name: 'Hedge Fund', at: { landmark: 'vaultwright_manor', anchor: 'building', ex: 8.8, dz: -3 }, heading: 's', landing: { landmark: 'vaultwright_manor', anchor: 'building', ex: 8.8, dz: 26 }, minAir: 1.2 },
-      { id: 'sj_06', name: 'Span Skip', at: { x: 336.4, z: 586 }, heading: 's', landing: { x: 330, z: 612 }, minAir: 1.0 },
+      { id: 'sj_05', name: 'Hedge Fund', at: { landmark: 'vaultwright_manor', anchor: 'building', ex: 8.8, dz: -3 }, heading: 's', landing: { landmark: 'vaultwright_manor', anchor: 'building', ex: 8.8, dz: 26 }, minAir: 0.9 },   // v0.3: the lawn run-up tops out near 1 s of air
+      // v0.3: on the southbound lanes (x 320..328) between the gantry legs (x 318.8 / 337.2), not on the walkway in front of a leg
+      { id: 'sj_06', name: 'Span Skip', at: { x: 325, z: 586 }, heading: 's', landing: { x: 325, z: 612 }, minAir: 1.0 },
       { id: 'sj_07', name: 'Runway 10/10', at: { landmark: 'airport_runway', point: 'west' }, heading: 'w', landing: { x: 46, z: 826 }, minAir: 1.0 },
       { id: 'sj_08', name: 'Hangar Hop', at: { x: 68, z: 710 }, heading: 'e', landing: { x: 104, z: 710 }, minAir: 1.0 },
       { id: 'sj_09', name: 'Container Clear', at: { x: 556, z: 714 }, heading: 'n', landing: { x: 556, z: 684 }, minAir: 1.0 },
-      { id: 'sj_10', name: 'Well, Actually', at: { x: 752, z: 382 }, heading: 's', landing: { x: 752, z: 408 }, minAir: 1.2 }
+      // v0.3: on Vetted Vista's westbound lane east of Heirloom Row (a 60 m road run-up), over the junction into Old Money
+      // Common; the bandstand moved north out of the flight line. (It sat on the kerb at the end of a 4 m alley before.)
+      { id: 'sj_10', name: 'Well, Actually', at: { x: 788, z: 422 }, heading: 'w', landing: { x: 754, z: 422 }, minAir: 1.0 }
+    ],
+
+    // ------------------------------------------------------- v0.3 places --
+    // PLAN_V03 "world": shops and safehouses moved into existing city blocks. World.generate claims ("adopts") the filler
+    // building nearest `near` (tiles) in `district` after the blocks are packed, so the city's layout and RNG stream stay
+    // exactly as they were; the door goes on the face with the nearest kerb. `tall` prefers the tallest building within 10
+    // tiles (the penthouse), `minW` / `minD` a footprint at least that size. Each kind gets a door marker (World.doors):
+    // shops and safehouses on foot (GTP.Interiors.enter), the mod shops and safehouse garages by car.
+    places: [
+      { id: 'spin_doctor_strip', name: 'Spin Doctor Customs', kind: 'modshop', district: 'strip', near: { tx: 101, tz: 102 }, sign: 'SPIN DOCTOR CUSTOMS', neon: true, store: 'spin_strip', gag: 'We don\'t fix cars. We reframe them.' },
+      { id: 'spin_doctor_port', name: 'Spin Doctor Customs (Harbor)', kind: 'modshop', district: 'port', near: { tx: 112, tz: 162 }, sign: 'SPIN DOCTOR CUSTOMS', neon: true, store: 'spin_port', gag: 'Harbor branch: every paint job comes with a narrative.' },
+      { id: 'lanyard_downtown', name: 'Lanyard & Co.', kind: 'clothing', district: 'downtown', near: { tx: 87, tz: 50 }, sign: 'LANYARD & CO.', neon: true, store: 'lanyard_downtown', gag: 'Business casual for people who are always on camera.' },
+      { id: 'lanyard_uptown', name: 'Lanyard & Co. (Heights)', kind: 'clothing', district: 'uptown', near: { tx: 186, tz: 27 }, sign: 'LANYARD & CO.', neon: false, store: 'lanyard_uptown', gag: 'The same blazer, now with elbow patches you can hear.' },
+      { id: 'clip_joint', name: 'The Clip Joint', kind: 'barber', district: 'campus', near: { tx: 28, tz: 75 }, sign: 'THE CLIP JOINT', neon: true, store: 'clip_joint', gag: 'Every cut is a highlight reel.' },
+      { id: 'safe_brownstone', name: 'Brownstone Walk-Up', kind: 'safehouse', district: 'uptown', near: { tx: 199, tz: 28 }, sign: 'NO SOLICITING (OPINIONS)', property: 'safe_brownstone', gag: 'Three flights up, two opinions per floor.' },
+      { id: 'safe_marina_loft', name: 'Marina Loft', kind: 'safehouse', district: 'marina', near: { tx: 61, tz: 118 }, sign: 'LOFT 2B', property: 'safe_marina_loft', gag: 'Exposed brick, exposed takes.' },
+      { id: 'safe_suburb', name: 'Culdesac Split-Level', kind: 'safehouse', district: 'suburbs', near: { tx: 28, tz: 52 }, sign: 'THE TAKESWORTHS (PENDING)', property: 'safe_suburb', gag: 'The HOA has already written you up.' },
+      { id: 'safe_penthouse', name: 'Chyron Center Penthouse', kind: 'safehouse', district: 'downtown', near: { tx: 73, tz: 65 }, tall: true, sign: 'THE PENTHOUSE', neon: true, property: 'safe_penthouse', gag: 'The view is mostly other penthouses.' },
+      // the second hangar on the airport's south row, across Final Boarding Boulevard from the apron where the plane and jet wait
+      { id: 'hangar_two', name: 'Hangar 2 of 1', kind: 'hangar2', district: 'airport', near: { tx: 76, tz: 191 }, sign: 'HANGAR 2 OF 1', gag: 'Built to house the jet. The jet lives outside.' }
+    ],
+    // podcast-van safehouse (the dorm) is v0.2's save point; the four new ones are bought through GTP.Systems
+    safehouses: ['safe_dorm', 'safe_brownstone', 'safe_marina_loft', 'safe_suburb', 'safe_penthouse'],
+
+    // Ground-level helipads (PLAN_V03: no roof access). World finds a clear 3 x 3 tile patch of plaza / parking / lawn
+    // nearest `near` (tiles), clears its small props and keeps parked cars off it.
+    helipads: [
+      { id: 'heli_airport', name: 'Goldplate International Helipad', near: { tx: 82, tz: 176 }, district: 'airport' },
+      { id: 'heli_tower', name: 'Goldplate Tower Helipad', near: { tx: 88, tz: 66 }, district: 'downtown' },
+      { id: 'heli_hospital', name: 'Goldplate Memorial Helipad', near: { tx: 100, tz: 48 }, district: 'downtown' },
+      { id: 'heli_port', name: 'Manifest Harbor Helipad', near: { tx: 160, tz: 205 }, district: 'port' },
+      { id: 'heli_uptown', name: 'Heirloom Heights Helipad', near: { tx: 188, tz: 100 }, district: 'uptown' }
+    ],
+    // where the vehicles track spawns its aircraft: the apron north of the runway strip (tiles; yaw faces east down the apron)
+    aircraft: [
+      { id: 'plane_apron', type: 'plane', at: { tx: 74, tz: 200 }, heading: 'e', landmark: 'hangar_two' },
+      { id: 'jet_apron', type: 'jet', at: { tx: 84, tz: 200 }, heading: 'e', landmark: 'hangar_two' }
+    ],
+    // boat slips: World puts up to `n` slips on open water beside each landmark's piers (or its waterfront)
+    boatSlips: [
+      { landmark: 'velvetine_pier', n: 3 }, { landmark: 'afterparty_yacht', n: 1 }, { landmark: 'fish_shack', n: 1 },
+      { landmark: 'ferry_terminal', n: 2 }, { landmark: 'manifest_quay', n: 2 }
+    ],
+
+    // Goldplate Links, nine holes (tiles). Clubhouse Drive (rows 45-46) splits the course; holes 1-4 north, 5-9 south.
+    // Tee and pin points are clear of trees; the pins fly gold flags. Par is the content track's (GTP.Content.parity.golf)
+    // when it lists one, these otherwise.
+    golf: {
+      landmark: 'goldplate_links',
+      holes: [
+        { n: 1, par: 3, tee: { tx: 130, tz: 24 }, pin: { tx: 136, tz: 30 } },
+        { n: 2, par: 3, tee: { tx: 137, tz: 32 }, pin: { tx: 131, tz: 36 } },
+        { n: 3, par: 3, tee: { tx: 130, tz: 38 }, pin: { tx: 136, tz: 41 } },
+        { n: 4, par: 3, tee: { tx: 137, tz: 43 }, pin: { tx: 131, tz: 26 } },
+        { n: 5, par: 3, tee: { tx: 130, tz: 49 }, pin: { tx: 136, tz: 53 } },
+        { n: 6, par: 3, tee: { tx: 137, tz: 55 }, pin: { tx: 131, tz: 58 } },
+        { n: 7, par: 3, tee: { tx: 130, tz: 60 }, pin: { tx: 136, tz: 63 } },
+        { n: 8, par: 4, tee: { tx: 137, tz: 66 }, pin: { tx: 131, tz: 51 } },
+        { n: 9, par: 4, tee: { tx: 133, tz: 66 }, pin: { tx: 136, tz: 48 } }
+      ]
+    },
+
+    // ------------------------------------------------------- street events --
+    // Eight random street events (PLAN_V03 "world"; GTP.AI.events runs them). GTP.Content.parity.events (the content
+    // track) wins field by field for any id it lists ({id, name, blurb, lines:[], reward, ...}); these are the defaults.
+    // reward: cash on success; heat: stars added when the player takes the illegal option.
+    streetEvents: [
+      { id: 'ev_rival_table', name: 'Rival Table', blurb: 'A rival pundit set up a folding table. Change their mind.', reward: 150, lines: ['Change my mind. No, not like that.', 'I have a sign, therefore I am right.', 'Respectfully, I will be speaking now.'] },
+      { id: 'ev_tote_snatch', name: 'Tote Snatcher', blurb: 'Someone grabbed a donor\'s tote bag. Knock the snatcher down.', reward: 120, lines: ['MY TOTE! It has my other tote in it!', 'Free merch!', 'Stop him, he has my lanyard!'] },
+      { id: 'ev_getaway', name: 'Getaway Sedan', blurb: 'Two cruisers chase a getaway sedan through the district.', reward: 200, lines: ['Pull over! Or don\'t, we love a chase.', 'You\'ll never take me! Wait, which way is the Loop?'] },
+      { id: 'ev_fender_bender', name: 'Fender Bender', blurb: 'Two drivers argue about who rear-ended whom, live.', reward: 60, lines: ['You hit ME. I have it on my dashcam podcast.', 'I was stationary in spirit!', 'We\'re live right now, by the way.'] },
+      { id: 'ev_influencer', name: 'Influencer Shoot', blurb: 'An influencer is filming a reaction video. Walk into frame.', reward: 80, lines: ['Okay chat, reacting to my own reaction.', 'Who is this? Get out of my golden hour!', 'Smash that like, smash it respectfully.'] },
+      { id: 'ev_flash_mob', name: 'Flash Mob', blurb: 'A flash mob chants about whatever this is.', reward: 0, lines: ['WHAT DO WE WANT? ENGAGEMENT!', 'WHEN DO WE WANT IT? BEFORE THE ALGORITHM CHANGES!', 'Two, four, six, eight, this is content, please donate!'] },
+      { id: 'ev_hitchhiker', name: 'Stranded Commentator', blurb: 'A commentator needs a ride to a taping. Drive them there.', reward: 180, lines: ['I\'m due on air in ten minutes. Drive like you have a take.', 'Faster. My opinion is getting cold.', 'Thanks! I\'ll mention you, critically.'] },
+      { id: 'ev_donor_van', name: 'Donor Van', blurb: 'An armored donor van rolls by, leaking envelopes. Stop it for the cash.', reward: 400, heat: 2, lines: ['Nothing to see! Just routine dark money!', 'Those envelopes are for a think tank!'] }
     ],
 
     // optional overrides of GTP.C.DISTRICT_STYLES keyed by style name
@@ -387,19 +466,20 @@
         }
       },
       vehicles: {
+        // 'moto' is the vehicles track's motorcycle (C.VEHICLES.moto); the spawner rides a 'bike' in its place until it exists
         byDistrict: {
-          downtown: ['sedan', 'taxi', 'sedan', 'sports', 'bus', 'cop', 'suv'],
-          strip: ['sports', 'sedan', 'taxi', 'suv', 'van'],
-          campus: ['sedan', 'bike', 'van', 'sedan'],
+          downtown: ['sedan', 'taxi', 'sedan', 'sports', 'bus', 'cop', 'suv', 'moto'],
+          strip: ['sports', 'sedan', 'taxi', 'suv', 'van', 'moto', 'moto'],
+          campus: ['sedan', 'bike', 'van', 'sedan', 'moto'],
           capitol: ['suv', 'sedan', 'cop', 'cop', 'suv'],
           suburbs: ['sedan', 'suv', 'van', 'sedan'],
-          industrial: ['truck', 'van', 'truck', 'sedan', 'van'],
+          industrial: ['truck', 'van', 'truck', 'sedan', 'van', 'moto'],
           hills: ['sports', 'suv', 'suv', 'sedan'],
-          marina: ['sedan', 'van', 'bike', 'taxi', 'sports'],
+          marina: ['sedan', 'van', 'bike', 'taxi', 'sports', 'moto'],
           // expansion (GDD_EXPANSION §1.6)
-          uptown: ['sedan', 'sports', 'suv', 'taxi', 'sedan'],
+          uptown: ['sedan', 'sports', 'suv', 'taxi', 'sedan', 'moto'],
           airport: ['taxi', 'taxi', 'bus', 'sedan', 'van', 'suv'],
-          port: ['truck', 'truck', 'van', 'sedan', 'suv']
+          port: ['truck', 'truck', 'van', 'sedan', 'suv', 'moto']
         },
         parked: {
           byDistrict: {
@@ -438,4 +518,66 @@
       ]
     }
   };
+
+  // ------------------------------------------------- v0.3 prop meshes --
+  // The props World places for the v0.3 places (05_assets belongs to the environment track, so the meshes live here and
+  // a wrapper on GTP.Assets.prop serves them; the environment track's own builder wins when it has one for the kind).
+  // Mesh-local like 05's: yaw 0 faces -z, ground at y 0, built with GTP.GeoBuilder vertex colours.
+  function hex(h) { var n = parseInt(h.slice(1), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
+  var WORLD_PROPS = {
+    // a 12 m concrete pad with a yellow ring and a white H (flush with the ground: y is the surface)
+    helipad: function (g, G) {
+      var conc = hex('#8d9096'), yel = hex('#f2c230'), wht = [0.95, 0.95, 0.95];
+      g.cylinder(0, 0, 0, 6, 6, 0.06, 28, conc);
+      for (var i = 0; i < 28; i++) { var a = i / 28 * Math.PI * 2, b = (i + 0.6) / 28 * Math.PI * 2; g.quad([Math.cos(a) * 5.1, 0.075, Math.sin(a) * 5.1], [Math.cos(b) * 5.1, 0.075, Math.sin(b) * 5.1], [Math.cos(b) * 5.5, 0.075, Math.sin(b) * 5.5], [Math.cos(a) * 5.5, 0.075, Math.sin(a) * 5.5], G.UV0, yel); }
+      g.box(-2, 0.06, -2.6, 0.8, 0.02, 5.2, G.UV0, wht); g.box(1.2, 0.06, -2.6, 0.8, 0.02, 5.2, G.UV0, wht); g.box(-1.2, 0.06, -0.4, 2.4, 0.02, 0.8, G.UV0, wht);
+      for (var k = 0; k < 4; k++) { var q = k / 4 * Math.PI * 2 + Math.PI / 4; g.box(Math.cos(q) * 5.9 - 0.15, 0, Math.sin(q) * 5.9 - 0.15, 0.3, 0.3, 0.3, G.UV0, yel); }
+    },
+    // a tee box: two gold tee markers on a mown square
+    teebox: function (g, G) {
+      g.box(-1.6, 0, -1.6, 3.2, 0.03, 3.2, G.UV0, hex('#4f9a3c'));
+      g.box(-1.2, 0, -0.2, 0.35, 0.3, 0.35, G.UV0, hex('#e8b53a')); g.box(0.85, 0, -0.2, 0.35, 0.3, 0.35, G.UV0, hex('#e8b53a'));
+    },
+    // the barber's pole: a striped cylinder on a bracket (instance scale 1, 2.4 m tall)
+    barberpole: function (g, G) {
+      var red = hex('#d33a3a'), wht = [0.95, 0.95, 0.95], blu = hex('#2f56b0');
+      g.cylinder(0, 0, 0, 0.12, 0.12, 0.9, 8, hex('#3a3d44'));
+      for (var i = 0; i < 8; i++) g.cylinder(0, 0.9 + i * 0.15, 0, 0.16, 0.16, 0.15, 10, i % 3 === 0 ? red : i % 3 === 1 ? wht : blu);
+      g.sphere(0, 2.15, 0, 0.18, 8, 5, hex('#e8b53a'));
+    },
+    // a shop-window mannequin in a blazer
+    mannequin: function (g, G) {
+      g.box(-0.3, 0, -0.3, 0.6, 0.06, 0.6, G.UV0, hex('#2a2a2e'));
+      g.cylinder(0, 0.06, 0, 0.03, 0.03, 0.8, 5, hex('#2a2a2e'));
+      g.box(-0.22, 0.86, -0.13, 0.44, 0.62, 0.26, G.UV0, hex('#2c3e7a'));
+      g.box(-0.05, 1.3, -0.14, 0.1, 0.18, 0.02, G.UV0, hex('#e8b53a'));   // the lanyard tag
+      g.sphere(0, 1.65, 0, 0.13, 8, 5, hex('#e6e1d8'));
+    },
+    // a floating pontoon slip: planks on drums with two cleats (sits at the water line)
+    pontoon: function (g, G) {
+      var wood = hex('#8a6a44');
+      for (var i = 0; i < 8; i++) g.box(-0.9, 0.3, -4 + i * 1.0, 1.8, 0.12, 0.9, G.UV0, i % 2 ? wood : hex('#7a5c3a'));
+      for (var k = 0; k < 4; k++) g.cylinder(k % 2 ? 0.55 : -0.55, 0, -3 + (k >> 1) * 6, 0.3, 0.3, 0.3, 8, hex('#d8d8d8'));
+      g.box(0.6, 0.42, -3.6, 0.2, 0.15, 0.4, G.UV0, hex('#3a3d44')); g.box(0.6, 0.42, 3.2, 0.2, 0.15, 0.4, G.UV0, hex('#3a3d44'));
+    },
+    // a stack of tyres outside the mod shop
+    tirestack: function (g, G) {
+      for (var i = 0; i < 4; i++) { g.cylinder(0, i * 0.24, 0, 0.42, 0.42, 0.24, 12, hex('#1d1d20')); g.cylinder(0, i * 0.24 + 0.005, 0, 0.2, 0.2, 0.235, 10, hex('#4a4a50')); }
+    }
+  };
+  GTP.Content.world.propKinds = Object.keys(WORLD_PROPS);
+  var A = GTP.Assets;
+  if (A && typeof A.prop === 'function' && !A.prop._worldProps) {
+    var baseProp = A.prop;
+    A.prop = function (kind) {
+      var fn = WORLD_PROPS[kind];
+      if (!fn || (A._props && A._props[kind])) return baseProp.apply(this, arguments);
+      var G = GTP.GeoBuilder, g = new G({ color: true });
+      fn(g, G);
+      var rec = { geometry: g.build(), material: A.propMaterial(), castShadow: kind !== 'helipad' && kind !== 'teebox' };
+      if (A._props) A._props[kind] = rec;
+      return rec;
+    };
+    A.prop._worldProps = true;
+  }
 })();

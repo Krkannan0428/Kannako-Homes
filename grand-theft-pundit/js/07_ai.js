@@ -344,7 +344,7 @@
       var N = Wd.w * Wd.h, i;
       for (i = 0; i < N; i++) {
         var tz = (i / Wd.w) | 0;
-        if (Wd.tiles[i] === T.PARKING && !(Wd.meta[i] & M.YARD) && (tz & 1)) spawner.parkTiles.push(i);
+        if (Wd.tiles[i] === T.PARKING && !(Wd.meta[i] & M.YARD) && (tz & 1) && !(Wd._noPark && Wd._noPark[i])) spawner.parkTiles.push(i);   // never on a helipad, the apron, the links or a stunt line
         if (Wd.deck[i] && !((Wd.dmeta[i] & M.H) && (Wd.dmeta[i] & M.V))) spawner.deckTiles.push(i);
       }
       // landmark lots with a fixed parked fleet (the balloon depot's beige vans, the podcast van)
@@ -355,7 +355,7 @@
         for (var zz = lm.lot.z; zz < lm.lot.z + lm.lot.d && n < cap; zz++) for (var xx = lm.lot.x; xx < lm.lot.x + lm.lot.w && n < cap; xx++) {
           if (!Wd.inBounds(xx, zz)) continue;
           var ti = tileI(xx, zz);
-          if (Wd.tiles[ti] !== T.PARKING) continue;
+          if (Wd.tiles[ti] !== T.PARKING || (Wd._noPark && Wd._noPark[ti])) continue;
           // keep clear of the door approach and the building's own skirt
           if (lm.building && U.pointInRect((xx + 0.5) * TILE, (zz + 0.5) * TILE, lm.building.x - 2.5, lm.building.z - 2.5, lm.building.w + 5, lm.building.d + 5)) continue;
           spawner.lotOf.set(ti, { type: tbl[id].type || 'sedan', color: tbl[id].color || null, wrap: tbl[id].wrap || null, landmark: id });

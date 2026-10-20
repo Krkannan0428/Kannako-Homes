@@ -224,7 +224,7 @@ H.run('world', async (t) => {
   t.assert(r.size.w === 224 && r.size.h === 224 && r.size.cw === 224 && r.size.ch === 224, 'map is 224 x 224 tiles: ' + JSON.stringify(r.size));
   t.assert(r.districts.length === 0, 'districts: ' + r.districts.join(', '));
   t.assert(r.missing.length === 0, 'missing landmarks: ' + r.missing.join(', '));
-  t.assert(r.landmarkCount === 50, '34 GDD + 16 expansion landmarks, got ' + r.landmarkCount);
+  t.assert(r.landmarkCount === 60, '34 GDD + 16 expansion + 10 v0.3 places, got ' + r.landmarkCount);
   t.assert(r.wrongDistrict.length === 0, 'wrong district: ' + r.wrongDistrict.join(', '));
   t.assert(r.wrongKind.length === 0, 'wrong kind: ' + r.wrongKind.join(', '));
   t.assert(r.doorBad.length === 0, 'doors: ' + r.doorBad.join('; '));
