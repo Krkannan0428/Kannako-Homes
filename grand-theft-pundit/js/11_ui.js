@@ -530,6 +530,7 @@
       case 'rampage': ctx.beginPath(); ctx.ellipse(0, -1, 9, 6.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.moveTo(-3, 4); ctx.lineTo(-6, 9); ctx.lineTo(2, 5); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-5, -2, 2, 2); ctx.fillRect(-1, -2, 2, 2); ctx.fillRect(3, -2, 2, 2); break;
       case 'ramp': ctx.beginPath(); ctx.moveTo(-9, 7); ctx.lineTo(9, 7); ctx.lineTo(9, -6); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(-2, 2, 2, 5); ctx.fillRect(3, -1, 2, 8); break;
       case 'violation': ctx.beginPath(); for (var j = 0; j < 10; j++) { var a2 = -Math.PI / 2 + j * Math.PI / 5, rd = j % 2 ? 3.6 : 8.5; ctx.lineTo(Math.cos(a2) * rd, Math.sin(a2) * rd); } ctx.closePath(); ctx.fill(); break;
+      case 'stranger': ctx.font = 'bold 17px ' + FONT_DISPLAY; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', 0, 1); break;
       case 'waypoint': ctx.beginPath(); ctx.moveTo(0, 9); ctx.lineTo(-6, -1); ctx.arc(0, -3, 6, Math.PI * 0.85, Math.PI * 2.15); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.beginPath(); ctx.arc(0, -3, 2.4, 0, Math.PI * 2); ctx.fill(); break;
       default: ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
     }
@@ -592,6 +593,8 @@
   function allMarkers() {
     var Ms = GTP.Missions, out = [];
     try { out = Ms && Ms.allMarkers ? Ms.allMarkers() : (Ms && Ms.markers ? Ms.markers() : []); } catch (e) { out = []; }
+    var Sg = GTP.Strangers;   // v0.3 strangers side missions: Strangers.markers() -> [{id, x, z, y, title, giver}]
+    if (Sg && typeof Sg.markers === 'function') { try { var sm = Sg.markers() || []; for (var si = 0; si < sm.length; si++) if (sm[si] && typeof sm[si].x === 'number') out.push(Object.assign({}, sm[si], { id: 'stranger:' + sm[si].id, kind: 'stranger', icon: 'stranger', strangerId: sm[si].id })); } catch (e) { /* optional */ } }
     var CB = GTP.Combat, g = game();
     if (CB && CB.shop && CB.shop.stores) {
       var inCut = g && g.state === 'cutscene';
@@ -606,6 +609,7 @@
     if (mk.icon === 'home') return COL.white;
     if (mk.icon === 'race') return COL.white;
     if (mk.icon === 'violation') return COL.cream;
+    if (mk.kind === 'stranger') return '#c084fc';
     if (mk.icon === 'target') return COL.amber;
     if (typeof mk.color === 'number') return '#' + ('000000' + mk.color.toString(16)).slice(-6);
     return mk.color || COL.pink;
@@ -676,7 +680,7 @@
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i], l = toLocal(mk.x, mk.z), col = markerColor(mk);
       if (l.far) {
-        if (mk.kind === 'shop' || mk.icon === 'home' || mk.icon === 'race' || mk.icon === 'rampage') continue;   // only the objective-grade markers point from the rim
+        if (mk.kind === 'shop' || mk.kind === 'stranger' || mk.icon === 'home' || mk.icon === 'race' || mk.icon === 'rampage') continue;   // only the objective-grade markers point from the rim
         var e = clampEdge(l); ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.ang); ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(px(7), 0); ctx.lineTo(-px(4), -px(5)); ctx.lineTo(-px(4), px(5)); ctx.closePath(); ctx.fill(); ctx.restore(); continue;
       }
       var pulse = mk.kind === 'objective' || mk.kind === 'mission' ? 1 + 0.15 * Math.sin(t * 4 + i) : 1;
@@ -1109,11 +1113,37 @@
       var idx = st.napAd != null ? st.napAd : 0;
       return { text: ads[idx] || ads[0], tag: 'SPONSOR', color: '#5aa8ff', nap: true };
     }
+    // v0.3 radio: what is on air (Audio.radio.nowPlaying() or station.nowPlaying: a string or {kind, title, artist,
+    // caller, text}), the top-of-hour news bulletin (station.bulletins / station.news), call-in lines (station.callers)
+    var np = null, A = GTP.Audio;
+    try { np = A && A.radio && typeof A.radio.nowPlaying === 'function' ? A.radio.nowPlaying() : null; } catch (e) { np = null; }
+    if (!np && st.nowPlaying) np = typeof st.nowPlaying === 'function' ? st.nowPlaying() : st.nowPlaying;
+    if (np) {
+      var npo = typeof np === 'string' ? { text: np } : np, key = sidKey(st) + '|' + (npo.id || npo.title || npo.text || '');
+      if (key !== tk.lastNp) { tk.lastNp = key; return radioLine(npo, st); }
+    }
+    var bul = st.bulletins || st.newsBulletins || (Array.isArray(st.news) ? st.news : null);
+    if (bul && bul.length && minute < 3 && tk.lastBulletin !== hour + (g ? g.time.day * 100 : 0)) {
+      tk.lastBulletin = hour + (g ? g.time.day * 100 : 0);
+      var b0 = bul[(hour + (g ? g.time.day : 0)) % bul.length];
+      return { text: typeof b0 === 'string' ? b0 : (b0.text || b0.headline || ''), tag: 'NEWS ' + (hour < 10 ? '0' : '') + hour + ':00', color: COL.red };
+    }
+    var callers = st.callers || st.calls || st.callIns;
+    if (callers && callers.length && n % 7 === 3) { var c0 = callers[Math.floor(n / 7) % callers.length]; return radioLine(typeof c0 === 'string' ? { kind: 'caller', text: c0 } : Object.assign({ kind: 'caller' }, c0), st); }
     var slot = n % 7;
     if ((slot === 2 || slot === 5) && dj.length) return { text: dj[Math.floor(n / 7 + slot) % dj.length], tag: 'DJ', color: stationColor(st) };
     if (slot === 6 && news.length) return { text: news[Math.floor(n / 7) % news.length], tag: 'NEWS', color: COL.red };
     if (ads.length) return { text: ads[(Math.floor(n / 7) * 3 + slot) % ads.length], tag: 'AD', color: COL.amber };
     return null;
+  }
+  function sidKey(st) { return st ? String(st.id || st.name || '') : ''; }
+  function radioLine(o, st) {
+    var kind = String(o.kind || o.type || '').toLowerCase(), text = o.text || o.line || '';
+    if (kind === 'song' || kind === 'music' || (!text && o.title)) return { text: (o.title || '') + (o.artist ? '  ·  ' + o.artist : ''), tag: 'NOW PLAYING', color: stationColor(st) };
+    if (kind === 'news' || kind === 'bulletin') return { text: text || o.headline || o.title, tag: 'NEWS', color: COL.red };
+    if (kind === 'caller' || kind === 'call') return { text: (o.caller || o.name ? (o.caller || o.name) + ' on the line: ' : 'Caller: ') + text, tag: 'CALLER', color: COL.lime };
+    if (kind === 'show' || kind === 'host') return { text: (o.title ? o.title + '  ·  ' : '') + text, tag: 'ON AIR', color: stationColor(st) };
+    return { text: text || o.title || '', tag: 'ON AIR', color: stationColor(st) };
   }
   function updateTicker(dt) {
     var tk = ui.ticker, p = player(), st = currentStation();
@@ -1952,7 +1982,7 @@
     txt(ctx, help, W / 2, y + ph - px(9), { font: F(10), color: COL.muted, align: 'center', outline: false, maxW: pw - px(20) });
   }
   // --------------------------------------------------------- the big map ----
-  var MAP_LEGEND = [['mission', 'Mission', '#4aa8ff'], ['objective', 'Objective', COL.amber], ['gunshop', 'Both Sides Arms', COL.green], ['rampage', 'Ratio Rampage', COL.pink], ['race', 'Loop Race', COL.white], ['ramp', 'Stunt ramp', COL.pink], ['violation', 'HOA target', COL.cream], ['home', 'Home', COL.white], ['waypoint', 'Waypoint', COL.white], ['dot', 'GPS route', COL.gold]];
+  var MAP_LEGEND = [['mission', 'Mission', '#4aa8ff'], ['objective', 'Objective', COL.amber], ['gunshop', 'Both Sides Arms', COL.green], ['rampage', 'Ratio Rampage', COL.pink], ['race', 'Loop Race', COL.white], ['ramp', 'Stunt ramp', COL.pink], ['violation', 'HOA target', COL.cream], ['home', 'Home', COL.white], ['stranger', 'Stranger', '#c084fc'], ['waypoint', 'Waypoint', COL.white], ['dot', 'GPS route', COL.gold]];
   function mapCenterOnPlayer() { var p = player(); if (p) { ui.map.cx = p.x; ui.map.cz = p.z; } }
   function mapScale(w, h) { var bake = ensureMap(); if (!bake) return 1; return Math.min(w / bake.width, h / bake.height) * ui.map.zoom; }
   function mapClampCenter(w, h) {
@@ -2077,20 +2107,25 @@
     if (canRetry && lf) rows.push({ kind: 'retry', title: lf.m.title, sub: (lf.text || 'Context stamped') + '  ·  RETRY from the checkpoint', id: lf.id });
     var av = Ms && Ms.available ? Ms.available() : [];
     for (i = 0; i < av.length; i++) { var lm = GTP.World.landmark(av[i].marker); rows.push({ kind: 'avail', title: av[i].title, sub: castName(av[i].giver) + '  ·  ' + (lm ? landmarkLabel(lm) : av[i].marker) + '  ·  ' + U.fmtMoney(av[i].reward || 0) }); }
+    // v0.3 strangers: Strangers.list() -> [{id, title, giver, status, line, x, z}] (else their markers)
+    var Sg = GTP.Strangers, sl = null;
+    try { sl = Sg && typeof Sg.list === 'function' ? Sg.list() : null; } catch (e) { sl = null; }
+    if (!sl) sl = allMarkers().filter(function (m2) { return m2.kind === 'stranger'; }).map(function (m2) { return { id: m2.strangerId, title: m2.title, giver: m2.giver, x: m2.x, z: m2.z, status: 'available' }; });
+    for (i = 0; i < (sl || []).length; i++) { var sx = sl[i]; if (!sx || sx.status === 'done' || sx.status === 'locked') continue; rows.push({ kind: 'stranger', title: '? ' + (sx.title || sx.name || sx.id), sub: (sx.giver ? castName(sx.giver) + '  ·  ' : '') + (sx.line || (sx.status === 'active' ? 'In progress' : 'Somebody wants a word')), x: sx.x, z: sx.z, id: sx.id }); }
     for (i = 0; i < all.length; i++) if (st && st.completed && st.completed.has(all[i].id)) { var bt = Ms.bestTime ? Ms.bestTime(all[i].id) : null; rows.push({ kind: 'done', title: all[i].title, sub: 'Completed  ·  ' + U.fmtMoney(all[i].reward || 0) + (bt != null ? '  ·  best ' + U.fmtTime(bt) : ''), id: all[i].id }); }
     var done = st && st.completed ? st.completed.size : 0;
     txt(ctx, 'MISSIONS  ' + done + ' / ' + all.length, x, y + px(14), { font: F(12, 'bold'), color: COL.cyan, outline: false });
     var ry = y + px(26) - ui.pause.scroll, rh = px(44);
     if (!rows.length) txt(ctx, 'Nothing booked. Find a blue light.', x, ry + px(20), { font: F(13, '', FONT_TEXT), color: COL.muted, outline: false });
     for (i = 0; i < rows.length; i++) {
-      var r = rows[i], col = r.kind === 'active' ? COL.amber : r.kind === 'retry' ? COL.red : r.kind === 'avail' ? '#4aa8ff' : COL.lime, sel = ui.pause.row === i;
+      var r = rows[i], col = r.kind === 'active' ? COL.amber : r.kind === 'retry' ? COL.red : r.kind === 'avail' ? '#4aa8ff' : r.kind === 'stranger' ? '#c084fc' : COL.lime, sel = ui.pause.row === i;
       if (ry + rh > y && ry < y + h) {
         if (hovering(x, ry, w, rh - px(6))) { ui.pause.row = i; sel = true; }
         panel(ctx, x, ry, w, rh - px(6), px(8), sel ? hexA(col, 0.14) : 'rgba(255,255,255,0.05)', sel ? col : hexA(col, 0.5), sel ? 1.5 : 1);
         ctx.fillStyle = col; rr(ctx, x, ry, px(5), rh - px(6), px(2)); ctx.fill();
         txt(ctx, (r.kind === 'done' ? '✓  ' : r.kind === 'active' ? '▶  ' : r.kind === 'retry' ? '↻  ' : '') + r.title, x + px(14), ry + px(17), { font: F(13, 'bold'), color: COL.ink, outline: false, maxW: w - px(120) });
         txt(ctx, r.sub, x + px(14), ry + px(32), { font: F(10), color: COL.muted, outline: false, maxW: w - px(120) });
-        var bl = r.kind === 'active' ? 'ABORT' : r.kind === 'retry' ? 'RETRY' : r.kind === 'done' ? 'REPLAY' : null;
+        var bl = r.kind === 'active' ? 'ABORT' : r.kind === 'retry' ? 'RETRY' : r.kind === 'done' ? 'REPLAY' : r.kind === 'stranger' && r.x != null ? 'GPS' : null;
         if (bl) {
           var bw = px(78), bx = x + w - bw - px(8), by = ry + px(8), bcol = r.kind === 'active' ? COL.red : r.kind === 'retry' ? COL.lime : COL.pink;
           panel(ctx, bx, by, bw, px(22), px(6), hovering(bx, by, bw, px(22)) || sel ? hexA(bcol, 0.35) : hexA(bcol, 0.15), bcol, 1.2);
@@ -2107,6 +2142,7 @@
     sfx('ui', 0.4);
     if (r.kind === 'active') { abortMission(); return; }
     if (r.kind === 'gps') { setStoryGps(r.card); return; }
+    if (r.kind === 'stranger') { if (r.x != null) { GTP.Events.emit('gps:set', { x: r.x, z: r.z, label: r.title.replace(/^\? /, ''), kind: 'stranger' }); toast('GPS set: ' + r.title.replace(/^\? /, '')); } return; }
     if (r.kind === 'stock') { stockTrade(r.stock, 10); return; }
     if (r.kind === 'retry') { closePause(); if (retryOffer()) Ms.retry(); return; }
     // REPLAY starts from 'playing' so Missions.start plays the intro cutscene (QA-C1-09); a refusal reopens the phone
@@ -3364,7 +3400,7 @@
   // gps:set {x, z, label, kind} / gps:clear. The route comes from GTP.World.route (v0.3 world track), else
   // World.findPath (car mode), else a straight line; it is trimmed as the player drives it and rebuilt every 3 s or when
   // the player strays 35 m off it. The minimap and the big map draw it in the kind's colour, the HUD shows a turn chip.
-  function gpsColor(kind) { return kind === 'story' ? COL.gold : kind === 'job' ? COL.cyan : kind === 'shop' ? COL.green : kind === 'property' ? COL.white : '#c084fc'; }
+  function gpsColor(kind) { return kind === 'story' ? COL.gold : kind === 'stranger' ? '#c084fc' : kind === 'job' ? COL.cyan : kind === 'shop' ? COL.green : kind === 'property' ? COL.white : '#c084fc'; }
   function gpsSet(e) {
     if (!e || typeof e.x !== 'number' || typeof e.z !== 'number') return;
     ui.gps = { x: e.x, z: e.z, label: String(e.label || ''), kind: e.kind || 'story', route: null, routeT: 0, dist: 0, len: 0, turn: null, t: 0 };
@@ -3495,7 +3531,7 @@
     var p = player(), out = [], marks = allMarkers(), nx = storyNext(), G = ui.gps, i;
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i]; if (typeof mk.x !== 'number') continue;
-      var isMission = mk.kind === 'mission', isShop = mk.kind === 'shop' || mk.kind === 'door' || mk.kind === 'interior';
+      var isMission = mk.kind === 'mission' || mk.kind === 'stranger', isShop = mk.kind === 'shop' || mk.kind === 'door' || mk.kind === 'interior';
       if (!isMission && !isShop) continue;
       var d = U.dist2d(p.x, p.z, mk.x, mk.z);
       if (d < 7 || d > (isMission ? LABEL_MAX : 160)) continue;

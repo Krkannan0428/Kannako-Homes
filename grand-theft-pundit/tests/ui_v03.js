@@ -361,6 +361,38 @@ H.run('ui_v03', async (t) => {
   console.log('  stocks: ' + JSON.stringify(stocks));
   t.assert(stocks.rows === 6 && stocks.trades.length === 1 && stocks.trades[0][0] === 'buy' && stocks.trades[0][1] === 'TAKE' && stocks.trades[0][2] === 10, 'STOCKS lists six tickers and Enter buys 10 of the selected one: ' + JSON.stringify(stocks.trades));
 
+  // the radio ticker (now playing, a call-in caller, the hourly bulletin) and stranger side missions on the map and phone
+  const radio = await page.evaluate(() => {
+    const g = GTP.game, p = g.player, tk = T_.ui.ticker, st = GTP.UI.currentStation();
+    st.callers = [{ caller: 'Deb from Cul-de-sac Heights', text: 'Long-time listener, first-time grievance.' }];
+    st.bulletins = ['The Capitol dome was repainted gold overnight. Officials call it "a texture".'];
+    const R = GTP.Audio.radio = GTP.Audio.radio || {}, np0 = R.nowPlaying; R.nowPlaying = () => ({ kind: 'show', title: 'Call Me Maybe Wrong', text: 'Lines are open.' });
+    p.inVehicle = VH; tk.cur = null; tk.n = 0; g.debug.setClock(14.02);
+    const lines = [];
+    for (let i = 0; i < 5; i++) { tk.cur = null; GTP.UI.update(1 / 60); if (tk.cur) lines.push(tk.cur.tag + ': ' + tk.cur.text); }
+    g.render();
+    R.nowPlaying = np0; p.inVehicle = null; tk.cur = null; delete st.callers; delete st.bulletins;
+    return lines;
+  });
+  console.log('  radio: ' + JSON.stringify(radio));
+  t.assert(radio.some((l) => /^ON AIR: Call Me Maybe Wrong/.test(l)) && radio.some((l) => /^NEWS 14:00/.test(l)) && radio.some((l) => /^CALLER: Deb/.test(l)), 'the ticker shows the show on air, the hourly bulletin and a caller: ' + JSON.stringify(radio));
+  const strangers = await page.evaluate(() => {
+    const p = GTP.game.player;
+    GTP.Strangers = { markers: () => [{ id: 's01_birdwatch', x: p.x + 60, z: p.z - 20, title: 'Birds Aren\'t Real Estate', giver: 'moonsworth' }], list: () => [{ id: 's01_birdwatch', title: 'Birds Aren\'t Real Estate', giver: 'moonsworth', status: 'available', line: 'He has a theory about pigeons and zoning.', x: p.x + 60, z: p.z - 20 }] };
+    T_.lookAt(p.x + 60, p.z - 20); T_.adv(0.1); GTP.game.render();
+    const a = { labels: T_.ui.labelsDrawn };
+    GTP.UI.openMap(); T_.ui.pause.tab = GTP.UI.phoneTabs.indexOf('MISSIONS'); T_.adv(0.05); GTP.game.render();
+    const rows = T_.ui.pause.rows || [], k = rows.findIndex((r) => r.kind === 'stranger'); a.row = k >= 0;
+    if (k >= 0) { T_.ui.pause.row = k; GTP.game.render(); }
+    return a;
+  });
+  await shot('strangers_phone');
+  const strangers2 = await page.evaluate(() => { const rows = T_.ui.pause.rows || [], r = rows.find((x) => x.kind === 'stranger'); GTP.UI._v3.missionRowActivate(r); const G = T_.ui.gps; GTP.UI.closePause(); T_.adv(0.1); GTP.game.render(); return { gps: G && G.kind }; });
+  await shot('strangers_map');
+  await page.evaluate(() => { delete GTP.Strangers; GTP.Events.emit('gps:clear'); });
+  console.log('  strangers: ' + JSON.stringify([strangers, strangers2]));
+  t.assert(strangers.labels >= 1 && strangers.row && strangers2.gps === 'stranger', 'stranger missions get a label, a phone row and a GPS route: ' + JSON.stringify([strangers, strangers2]));
+
   // night readability: the GPS chip, labels, specials and the call card over a night street
   await page.evaluate(() => { const g = GTP.game; g.debug.setClock(23.2); GTP.Events.emit('phone:call', { from: 'gus', lines: ['The van makes a new noise. I think it is a podcast.'] }); T_.adv(2); g.render(); });
   await shot('night_hud');

@@ -33,6 +33,9 @@ built-in sample data where content is missing, and is tested by emitting the eve
 | STATS | `GTP.Systems.stats()`, achievements | The v0.2 rows plus career sections from systems and the achievements grid (secret ones hidden until unlocked). |
 | Interior fades | `interior:fade {phase}`, `interior:enter`, `interior:exit` | 0.35 s fade to / from black (a lone `out` clears after 3 s), the place name card, a browse hint in the armory / clothing / barber / safehouse. |
 
+| Radio ticker (v0.3 radio track) | `GTP.Audio.radio.nowPlaying()` or `station.nowPlaying` (a string or `{kind:'song'|'show'|'news'|'caller', title, artist, caller, text}`), `station.bulletins` / `station.newsBulletins` / `station.news` (array of strings or `{text|headline}`), `station.callers` / `calls` / `callIns` (strings or `{caller, text}`) | The station chip as before; a new now-playing item shows once when it changes (NOW PLAYING / ON AIR / NEWS / CALLER tags), one bulletin per game hour in the first 3 minutes (tag `NEWS 14:00`), a caller every seventh line. |
+| Stranger side missions (v0.3 strangers track) | `GTP.Strangers.markers() -> [{id, x, z, y, title, giver}]`, `GTP.Strangers.list() -> [{id, title, giver, status:'available'|'active'|'done'|'locked', line, x, z}]` | A purple `?` blip on the minimap and the map (legend entry), a long-range label, a row in the phone's MISSIONS tab with GPS (emits `gps:set` kind `stranger`). Without `list()` the rows come from the markers. If the strangers register as Missions or Strands instead, the existing mission / strand paths show them. |
+
 Phone tabs are now `MAP, STORY, MISSIONS, STOCKS, STATS, STRANDS, REPLAY` (`GTP.UI.phoneTabs`), the pause menu has
 STORY after RESUME. Every screen works at 400 px wide (side panels become bottom sheets, lists shrink, the heist board
 scales its polaroids, touch buttons add COVER / SPCL and switch labels in vehicles and aircraft).
@@ -145,7 +148,7 @@ armory_card, armory_attach, armory_tints, armory_ammo, armory_locked, range_hud,
 wardrobe, barber, property, property_owned, heist, golf, golf_end, prompts_cover, cross_aim, cross_gallery, cook_fuse,
 parachute_open, parachute_freefall, veh_moto, veh_heli, veh_jet, veh_speedboat, boss_specials, boss_down, achievement,
 stocks, stats, touch_foot, phone_armory, phone_modshop, phone_heist, phone_wardrobe, phone_story, phone_golf,
-phone_call, night_hud).
+phone_call, night_hud, strangers_phone, strangers_map).
 
 ## Known issues / for integration
 
