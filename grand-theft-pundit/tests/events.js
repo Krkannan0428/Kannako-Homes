@@ -181,6 +181,20 @@ H.run('events', async (t) => {
   [rt.museum, rt.airport].forEach((r) => t.assert(r.n >= 3 && r.off === 0 && r.start < 0.01 && r.end < 0.01 && r.len < r.straight * 2.2 && r.len >= r.straight, 'GPS route on the roads: ' + JSON.stringify(r)));
   t.assert(rt.cached <= rt.ms, 'route cache');
 
+  // a screenshot of a civilian cowering at an aimed pistol (the camera swung to the side once the aim is let go)
+  await page.evaluate(() => {
+    const g = GTP.game, p = g.player, U = GTP.util, W = GTP.World, d = W.landmark('nap_depot').door;
+    g.debug.teleport(d.x, d.z); g.advance(0.5); p.weapons.pistol = 60; p.weapon = 'pistol';
+    const civ = g.debug.spawnPed(p.x + 5, p.z, null, 'civ'); civ.persistent = true; g.advance(0.1);
+    for (let i = 0; i < 18; i++) { GTP.Input.set('aim', true); GTP.Render.rig.yaw = U.dirToYaw(civ.x - p.x, civ.z - p.z); g.advance(1 / 12); }
+    GTP.Input.set('aim', false); g.advance(1 / 12);
+    const R = GTP.Render.rig; R.yaw = U.dirToYaw(civ.x - p.x, civ.z - p.z) + 0.6; R.pitch = 0.1; R.snap(); g.advance(1 / 30);
+    window._cower = { mode: civ.ai.mode, cowering: !!civ.cowering };
+  });
+  await t.shot(page, 'events_cower');
+  const cw = await page.evaluate(() => window._cower);
+  t.assert(cw.mode === 'cower' && cw.cowering, 'the pictured civilian cowers: ' + JSON.stringify(cw));
+
   // a screenshot of a street event
   await page.evaluate(() => { const AI = GTP.AI, p = GTP.game.player; const c = AI.events.start('ev_flash_mob'); if (c) { const W = GTP.World; p.x = c.x + 9; p.z = c.z + 2; p.y = W.heightAt(p.x, p.z, 0); p.yaw = GTP.util.dirToYaw(c.x - p.x, c.z - p.z); p.snap(); if (GTP.Render.rig) { GTP.Render.rig.yaw = p.yaw; GTP.Render.rig.snap(); } GTP.game.advance(1.5); } });
   const shot = await t.shot(page, 'events_flash_mob');

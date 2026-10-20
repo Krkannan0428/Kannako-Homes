@@ -104,7 +104,9 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 - **Cowering** (shots fired near a cowering civilian break it into a run): a civilian (any non-cop ped on the AI's brain) within 28 m in the line of a gun the player aims (aim
   held, a weapon that is not melee) stops, faces the player and cowers (`ped.cowering = true`, `ai.mode = 'cower'`,
   emits `ped:cower {ped}`, a "Don't shoot!" bark); 1.4 s after the aim leaves them they run. `AI.isAimedAt(ped)`.
-  The models / shooting tracks can map `ped.cowering` to a hands-up crouch pose.
+  For v0.2's figures a wrapper on `GTP.Ped.prototype.syncMesh` (from 07_ai at load) raises the hands and drops the head;
+  the animation track's `syncMesh` (06c, loaded later) replaces it and should read `ped.cowering` for its own hands-up
+  crouch. Screenshot: tests/out/events_cower.png.
 - **Flanking**: `GTP.AI.coverAlert(x, z)` (also on the event `cover:enter` with `{x, z}` or the player's position while
   wanted; `cover:exit` ends it). The nearest chasing cop pins the player; the others alternate left and right to a point
   ~70 degrees round the cover, 8-13 m out, on walkable ground with a clear line to the player, and shoot from there.
@@ -152,6 +154,7 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 
 - `GTP.Assets.prop` (05_assets, environment): serves the six new prop kinds, from 20_content_world at load time.
 - `GTP.Strands.drivers.take` (09_missions, story): the race route fix, from 07_ai on the first AI update.
+- `GTP.Ped.prototype.syncMesh` (06_entities, shooting): the cowering pose, from 07_ai at load (superseded by 06c).
 
 ## Interfaces consumed (feature-detected)
 

@@ -871,6 +871,23 @@
     if (shot || ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, shot || pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
   }
 
+  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load;
+  // the animation track's syncMesh (06c, loaded after this file) replaces it and reads ped.cowering itself.
+  (function () {
+    var P = GTP.Ped && GTP.Ped.prototype; if (!P || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
+    var base = P.syncMesh;
+    P.syncMesh = function (alpha) {
+      base.call(this, alpha);
+      if (!this.cowering || !this.alive || this.inVehicle || this.knockedDown) return;
+      var parts = this._parts, m = this.mesh; if (!parts || !parts.armL || !parts.armR || !m || !m.visible) return;
+      parts.armL.rotation.x = Math.PI - 0.3; parts.armR.rotation.x = Math.PI - 0.3; parts.armL.rotation.z = 0.4; parts.armR.rotation.z = -0.4;
+      if (parts.head) parts.head.rotation.x = 0.3;
+      if (parts.legL && parts.legR) { parts.legL.rotation.x = 0.25; parts.legR.rotation.x = -0.1; }
+      m.position.y -= 0.1;
+    };
+    P.syncMesh._cower = true;
+  })();
+
   function pedTick(p, dt) {
     var ai = p.ai;
     if (!p.alive || p.inVehicle) { p.cowering = false; if (p._bark) p._bark.visible = false; return; }
