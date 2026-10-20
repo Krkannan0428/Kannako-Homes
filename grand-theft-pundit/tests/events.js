@@ -150,9 +150,9 @@ H.run('events', async (t) => {
   const pause = await page.evaluate(() => {
     const AI = GTP.AI, g = GTP.game, E = GTP.Entities, out = {};
     const I0 = GTP.Interiors;
+    GTP.Interiors = { active: true, enter: function () {} };   // inside first, then clear the street
     E.list.forEach((e) => { if (e.kind === 'ped' && e.ai && e.ai.ambient && !e.inVehicle) e.destroy(); });
     g.advance(0.1);
-    GTP.Interiors = { active: true, enter: function () {} };
     AI.events.setNext(0.2);
     const t0 = AI.spawner.t; g.advance(3);
     out.spawnT = [t0, AI.spawner.t]; out.peds = AI.spawner.counts().peds; out.event = AI.events.current() ? AI.events.current().id : null; out.why = AI.events.eligible();
