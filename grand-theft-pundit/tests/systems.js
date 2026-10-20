@@ -39,9 +39,9 @@ H.run('systems', async (t) => {
     return {
       tickers: S.stocks.list().length, holes: S.golf.holes().length, ach: S.achievements.defs().length, cheats: S.cheats.defs().length, jobs: S.jobs.defs().length,
       props: S.properties.defs().length, safes: S.properties.defs().filter((d) => d.kind === 'safehouse').length,
-      wrapped: !!(GTP.Missions.update._sys && GTP.Missions.init._sys && GTP.Missions.allMarkers._sys && GTP.Player.prototype.control._sys),
+      wrapped: !!(GTP.Missions.update._sys && GTP.Missions.init._sys && GTP.Player.prototype.control._sys),
       reg: Object.keys(GTP.SaveRegistry || {}).filter((k) => /^sys_/.test(k)).length, hook: GTP.SaveHooks.some((h) => h.name === 'systems'),
-      marks: S.debug.marks().length, minimap: GTP.Missions.allMarkers().filter((m) => m.kind === 'system').length,
+      marks: S.debug.marks().length, minimap: GTP.Systems.markers().filter((m) => m.kind === 'system').length, untouched: GTP.Missions.allMarkers().every((m) => m.kind !== 'system'),
       holeLens: S.golf.holes().map((h) => h.length), course: S.golf.course()
     };
   });
@@ -49,7 +49,7 @@ H.run('systems', async (t) => {
   t.assert(r.tickers === 8 && r.holes === 9 && r.ach === 25 && r.cheats === 6 && r.jobs === 2, 'tables: ' + JSON.stringify(r));
   t.assert(r.safes >= 5 && r.props >= 10, 'five safehouses and businesses');
   t.assert(r.wrapped && r.reg === 8 && r.hook, 'wrappers and save entries installed');
-  t.assert(r.marks >= 7 && r.minimap === r.marks, 'world markers exist and reach the minimap: ' + r.marks + ' / ' + r.minimap);
+  t.assert(r.marks >= 7 && r.minimap === r.marks && r.untouched, 'world markers exist and reach the minimap: ' + r.marks + ' / ' + r.minimap);
   t.assert(r.holeLens.every((l) => l >= 25 && l <= 200), 'hole lengths are playable: ' + r.holeLens);
 
   // ---- 2. properties ----

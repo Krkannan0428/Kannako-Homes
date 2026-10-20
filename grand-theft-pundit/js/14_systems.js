@@ -15,7 +15,7 @@
  * Data: GTP.Content.parity.{properties, stocks, golf, achievements, cheats, jobs, clothing, barber} when present (the content
  * track writes it; 25_content_parity.js loads after this file, so every table is read lazily), else the fallback tables
  * below. Wrappers installed at load (see docs/v03/systems.md): Missions.update (Systems.update after it), Missions.init
- * (Systems.reset after it), Missions.allMarkers (systems markers appended), Player.prototype.control (frozen during golf).
+ * (Systems.reset after it), Player.prototype.control (frozen during golf). Minimap entries: Systems.markers().
  * Randomness: GTP.rng.fork(0x5157) per new game, never Math.random.
  */
 (function () {
@@ -79,10 +79,32 @@
       var off = (i === 0 ? def.offset : def.nearOffset) || (i === 0 ? null : { x: 7, z: 0 }) || { x: 0, z: 0 };
       if (!off) off = { x: 0, z: 0 };
       var x = base.x + (off.x || 0), z = base.z + (off.z || 0);
+      // an offset that lands in a building or on a road snaps to the nearest sidewalk (on-foot markers)
+      if ((off.x || off.z) && blockedFoot(x, z) && Wd.nearestSidewalkPoint) { var sp = Wd.nearestSidewalkPoint(x, z); if (sp) { x = sp.x; z = sp.z; } }
       var y = 0; try { y = Wd.heightAt ? Wd.heightAt(x, z, base.y || 0) : 0; } catch (e) { y = 0; }
       return { x: x, z: z, y: y > -1 ? y : (base.y || 0) };
     }
     return def.at ? { x: def.at.x, z: def.at.z, y: def.at.y || 0 } : null;
+  }
+
+  function blockedFoot(x, z) {
+    var Wd = W(), T = Wd && Wd.T; if (!T || !Wd.tileAt) return false;
+    var t = Wd.tileAt(x, z);
+    return t === T.BUILDING || t === T.WATER || t === T.VOID || t === T.ROAD || t === T.HIGHWAY || (Wd.solidAt && Wd.solidAt(x, z, 0.5));
+  }
+  // a drive-in spot for a landmark: a road point 7..18 m from its door (clear of the mission light on the sidewalk)
+  function roadSpot(id) {
+    var Wd = W(), lm = null; try { lm = Wd && Wd.landmark ? Wd.landmark(id) : null; } catch (e) { lm = null; }
+    if (!lm || !Wd.nearestRoadPoint) return null;
+    var d = lm.door || lm, T = Wd.T || {}, best = null, bd = Infinity;
+    [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12], [16, 8], [-16, -8]].forEach(function (o) {
+      var rp = Wd.nearestRoadPoint(d.x + o[0], d.z + o[1]); if (!rp) return;
+      var dd = dist(rp.x, rp.z, d.x, d.z), tt = Wd.tileAt ? Wd.tileAt(rp.x, rp.z) : T.ROAD;
+      if (dd < 7 || dd > 18 || tt === T.HIGHWAY || tt === T.RAMP || tt === T.BRIDGE) return;
+      var score = Math.abs(dd - 10); if (score < bd) { bd = score; best = rp; }
+    });
+    if (!best) { best = Wd.nearestRoadPoint(d.x, d.z); }
+    return best ? { x: best.x, z: best.z, y: best.y || 0 } : null;
   }
 
   // ============================================================ fallback data ==
@@ -94,7 +116,7 @@
       flavor: 'Sleeps one. Records two. Smells like a hot mic.' },
     { id: 'safe_brownstone', name: 'Footnote Row Brownstone', kind: 'safehouse', landmark: 'safe_brownstone', near: 'char_charter', price: 14000, income: 0, garage: 2,
       flavor: 'Three floors, two think-tank fellows next door, one opinion through the wall.' },
-    { id: 'safe_marina_loft', name: 'Marina Loft "Low Tide"', kind: 'safehouse', landmark: 'safe_marina_loft', near: 'fish_shack', price: 26000, income: 0, garage: 2, unlock: { mission: 'm07_listen' },
+    { id: 'safe_marina_loft', name: 'Marina Loft "Low Tide"', kind: 'safehouse', landmark: 'safe_marina_loft', near: 'velvetine_pier', price: 26000, income: 0, garage: 2, unlock: { mission: 'm07_listen' },
       flavor: 'Floor-to-ceiling windows so the yacht people can see you being relatable.' },
     { id: 'safe_suburb', name: 'Culdesac Split-Level', kind: 'safehouse', landmark: 'safe_suburb', near: 'culdesac_gas', price: 19000, income: 0, garage: 3, unlock: { mission: 'm05_peer' },
       flavor: 'Comes with an HOA binder thicker than the mortgage.' },
@@ -388,7 +410,7 @@
     var own = props.owned(id), payload = { id: id, name: d.name, kind: d.kind, owned: own, price: d.price | 0, income: d.income | 0, handled: false, locked: !!props.lockReason(d) };
     emit('property:open', payload);
     if (payload.handled) return;
-    if (own && d.kind === 'safehouse') props.save(id);
+    if (own && d.kind === 'safehouse') { var r = props.save(id); if (!r.ok) toast(d.name + ': ' + (r.reason === 'wanted' ? 'lose the heat before you save.' : r.reason === 'mission' ? 'finish the mission first.' : 'could not save.')); }
     else if (!own) toast(d.name + ': for sale, ' + money(d.price) + (payload.locked ? ' (not yet available)' : ' (Systems.properties.buy)'));
     else toast(d.name + ': yours. ' + money(d.income) + ' a day.');
   }
@@ -1042,7 +1064,7 @@
     defs: function () { return table('jobs', FB.jobs).map(function (d) { var fb = d.id === 'hot_take_brigade' || d.kind === 'douse' ? FB.jobs[1] : FB.jobs[0]; return Object.assign({}, fb, d, { lines: Object.assign({}, fb.lines, d.lines || {}), perk: d.perk || fb.perk }); }); },
     def: function (id) { var L = jobs.defs(); for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; },
     get active() { return job ? job.id : null; },
-    list: function () { return jobs.defs().map(function (d) { var pt = landmarkPoint({ landmark: d.start, offset: { x: 6, z: 3 } }); return { id: d.id, name: d.name, kind: d.kind, best: S.jobs.best[d.id] || 0, done: !!S.jobs.done[d.id], levels: d.levels, x: pt ? pt.x : null, z: pt ? pt.z : null }; }); },
+    list: function () { return jobs.defs().map(function (d) { var pt = d.startAt ? { x: d.startAt.x, z: d.startAt.z } : roadSpot(d.start); return { id: d.id, name: d.name, kind: d.kind, best: S.jobs.best[d.id] || 0, done: !!S.jobs.done[d.id], levels: d.levels, x: pt ? pt.x : null, z: pt ? pt.z : null }; }); },
     canStart: function (id) {
       var p = player(), d = jobs.def(id);
       if (!d) return 'unknown';
@@ -1391,7 +1413,7 @@
       else if (m.type === 'job') { var rj = jobs.start(m.ref); if (!rj.ok && rj.reason === 'vehicle') toast('Bring a vehicle.'); }
     }
   }
-  // minimap entries (Missions.allMarkers appends these)
+  // minimap entries for the UI's allMarkers()
   function markerList() {
     var out = [], g = game();
     if (g && g.state === 'cutscene') return out;
@@ -1532,11 +1554,8 @@
     Ms.init = function () { var r = mInit.apply(this, arguments); try { Systems.reset(); } catch (e) { report(e, 'systems.reset'); } return r; };
     Ms.init._sys = true;
   }
-  if (Ms && typeof Ms.allMarkers === 'function' && !Ms.allMarkers._sys) {
-    var mAll = Ms.allMarkers;
-    Ms.allMarkers = function () { var out = mAll.apply(this, arguments) || []; try { out = out.concat(markerList()); } catch (e) { report(e, 'systems.markers'); } return out; };
-    Ms.allMarkers._sys = true;
-  }
+  // minimap entries are not appended to Missions.allMarkers (tests/strands.js counts that list exactly): the UI appends
+  // GTP.Systems.markers() itself, as it does for the gun shops
   // golf freezes the player's own controls (the swing reads the same keys)
   if (GTP.Player && GTP.Player.prototype && typeof GTP.Player.prototype.control === 'function' && !GTP.Player.prototype.control._sys) {
     var pControl = GTP.Player.prototype.control;
