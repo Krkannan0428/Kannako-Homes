@@ -21,20 +21,31 @@
  * pops up in the middle of a chase. "Check for Updates..." in the menu always answers, even with
  * "you are up to date".
  *
- * Environment overrides (testing and CI): GTP_UPDATES=off|notify|install forces a mode (off is
- * also the default for unpackaged dev runs).
+ * Both modes read the same metadata electron-builder writes and the release workflow attaches to
+ * every release: latest.yml (Windows), latest-mac.yml, latest-linux.yml. Notify mode fetches the
+ * one for this platform from releases/latest/download, so a release only counts as "available"
+ * once its build for this platform is attached. Everything the updater does is written to
+ * logs/update.log in the user-data folder; failures also go to the crash log.
+ *
+ * Environment overrides (testing and CI):
+ *   GTP_UPDATES=off|notify|install   force a mode (off is also the default for unpackaged dev runs)
+ *   GTP_UPDATE_FEED_URL=<url>        read the metadata from <url>/latest*.yml (an electron-updater
+ *                                    "generic" feed, e.g. a local `python3 -m http.server` serving a
+ *                                    dist/ folder) instead of GitHub Releases
  */
 'use strict';
 const { app, dialog, shell, Notification, BrowserWindow, net } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { execFile } = require('child_process');
 const crashLog = require('./crash-log');
 
 const FIRST_CHECK_DELAY_MS = 8 * 1000;
 const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
 const PRODUCT = 'Grand Theft Pundit';
+const LOG_MAX_BYTES = 256 * 1024;
 
-let feed = null;           // { owner, repo }
+let feed = null;           // { owner, repo } or { url } (GTP_UPDATE_FEED_URL)
 let mode = 'off';
 let autoUpdater = null;    // electron-updater, loaded only in install mode
 let checking = false;
@@ -44,12 +55,34 @@ let readyVersion = null;   // downloaded and waiting for a restart
 let announced = new Set(); // versions already announced this session (notify mode and notifications)
 let timer = null;
 
+function log(message) {
+  try {
+    const file = path.join(crashLog.logDir(), 'update.log');
+    try { if (fs.statSync(file).size > LOG_MAX_BYTES) fs.renameSync(file, file.replace(/\.log$/, '.old.log')); } catch (_e) { /* new file */ }
+    fs.appendFileSync(file, new Date().toISOString() + ' ' + String(message).replace(/\r?\n/g, '\n    ') + '\n');
+  } catch (_err) { /* logging must never break the game */ }
+}
+
+function fail(message) {
+  log('ERROR ' + message);
+  crashLog.write('update', message);
+}
+
 function releasesPage(version) {
+  if (feed.url) return feed.url;
   const base = 'https://github.com/' + feed.owner + '/' + feed.repo + '/releases';
   return version ? base + '/tag/v' + String(version).replace(/^v/, '') : base + '/latest';
 }
 
+/* where this platform's latest*.yml lives */
+function metadataUrl() {
+  const name = process.platform === 'win32' ? 'latest.yml' : process.platform === 'darwin' ? 'latest-mac.yml' : 'latest-linux.yml';
+  const base = feed.url ? feed.url.replace(/\/+$/, '') : 'https://github.com/' + feed.owner + '/' + feed.repo + '/releases/latest/download';
+  return base + '/' + name;
+}
+
 function readFeed() {
+  if (process.env.GTP_UPDATE_FEED_URL) return { url: String(process.env.GTP_UPDATE_FEED_URL) };
   try {
     const pkg = require(path.join(__dirname, '..', 'package.json'));
     const f = pkg.gtpUpdates;
@@ -121,12 +154,14 @@ function announce(version, asDialog, openDialog) {
 // ------------------------------------------------------------------------------- notify mode
 
 async function latestRelease() {
-  const url = 'https://api.github.com/repos/' + feed.owner + '/' + feed.repo + '/releases/latest';
-  const res = await net.fetch(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': PRODUCT + '/' + app.getVersion() } });
-  if (res.status === 404) return null; // no release yet
-  if (!res.ok) throw new Error('GitHub answered ' + res.status + ' for ' + url);
-  const json = await res.json();
-  return { version: String(json.tag_name || '').replace(/^v/, ''), url: json.html_url || releasesPage() };
+  const url = metadataUrl();
+  const res = await net.fetch(url, { headers: { 'User-Agent': PRODUCT + '/' + app.getVersion() }, cache: 'no-store' });
+  // 404: no release yet, or the latest one has no build for this platform (releases before 0.3)
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('the update server answered ' + res.status + ' for ' + url);
+  const m = /^version:\s*['"]?([0-9][^'"\s]*)/m.exec(await res.text());
+  if (!m) throw new Error('no version in ' + url);
+  return { version: m[1], url: releasesPage(m[1]) };
 }
 
 function offerDownload(version, url) {
@@ -147,6 +182,7 @@ function offerDownload(version, url) {
 
 async function checkNotify() {
   const rel = await latestRelease();
+  log('notify: latest is ' + (rel ? rel.version : 'none') + ', running ' + app.getVersion());
   if (!rel || !rel.version || !newer(rel.version, app.getVersion())) {
     if (manualCheck) upToDate();
     return;
@@ -180,12 +216,12 @@ function setProgress(fraction) {
 function initInstallMode() {
   ({ autoUpdater } = require('electron-updater'));
   autoUpdater.logger = {
-    info: () => {},
+    info: (m) => log(String(m)),
     debug: () => {},
-    warn: (m) => crashLog.write('update', String(m)),
-    error: (m) => crashLog.write('update', String(m))
+    warn: (m) => log('WARN ' + m),
+    error: (m) => log('ERROR ' + m)
   };
-  autoUpdater.setFeedURL({ provider: 'github', owner: feed.owner, repo: feed.repo });
+  autoUpdater.setFeedURL(feed.url ? { provider: 'generic', url: feed.url } : { provider: 'github', owner: feed.owner, repo: feed.repo });
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
@@ -209,7 +245,7 @@ function initInstallMode() {
   });
   autoUpdater.on('error', (err) => {
     setProgress(-1);
-    crashLog.write('update', 'install-mode update failed: ' + (err && err.stack || err));
+    fail('install-mode update failed: ' + (err && err.stack || err));
   });
 }
 
@@ -242,7 +278,7 @@ async function check(manual) {
     if (mode === 'install') await checkInstall();
     else await checkNotify();
   } catch (err) {
-    crashLog.write('update', 'update check failed: ' + (err && err.message || err));
+    fail('update check failed: ' + (err && err.message || err));
     if (manualCheck) {
       const { response } = await showBox({
         type: 'warning',
@@ -265,16 +301,17 @@ async function check(manual) {
 async function start() {
   feed = readFeed();
   if (!feed) {
-    crashLog.write('update', 'no gtpUpdates owner/repo in package.json; updates are off');
+    fail('no gtpUpdates owner/repo in package.json; updates are off');
     return;
   }
   mode = await pickMode();
+  log('version ' + app.getVersion() + ' on ' + process.platform + ', update mode ' + mode + ', feed ' + (feed.url || feed.owner + '/' + feed.repo));
   if (mode === 'off') return;
   if (mode === 'install') {
     try {
       initInstallMode();
     } catch (err) {
-      crashLog.write('update', 'electron-updater failed to load, falling back to notify mode: ' + (err && err.stack || err));
+      fail('electron-updater failed to load, falling back to notify mode: ' + (err && err.stack || err));
       mode = 'notify';
     }
   }

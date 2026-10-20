@@ -12,6 +12,12 @@
 #   CSC_LINK, CSC_KEY_PASSWORD                     Developer ID Application certificate (.p12 as base64) + its password
 #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   notarization (needs all three, plus CSC_LINK)
 #   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD             optional Windows Authenticode certificate
+#
+# Every build also writes the electron-updater metadata (latest.yml, latest-mac.yml, latest-linux.yml
+# and the *.blockmap files) and attaches it to the release; installed games read it to update
+# themselves (desktop/lib/updater.js). The `smoke` job launches the packaged Linux app under xvfb and
+# checks the title screen renders with no errors; the release job waits for it, so a build that does
+# not boot never ships.
 # See grand-theft-pundit/desktop/README.md.
 
 name: Desktop release
@@ -47,6 +53,14 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+  # --publish never keeps electron-builder from uploading anything (the release job does that); the
+  # github publish config only makes it write latest*.yml and blockmaps. electron-builder.yml keeps
+  # publish: null so local builds with a stray GH_TOKEN never try to publish.
+  UPDATE_METADATA: >-
+    --publish never
+    -c.publish.provider=github
+    -c.publish.owner=${{ github.repository_owner }}
+    -c.publish.repo=${{ github.event.repository.name }}
 
 jobs:
   mac:
@@ -60,10 +74,12 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: Set up Node (with the npm download cache)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: grand-theft-pundit/desktop/package-lock.json
 
       - name: Cache Electron and electron-builder downloads
         uses: actions/cache@v4
@@ -71,13 +87,14 @@ jobs:
           path: |
             ~/Library/Caches/electron
             ~/Library/Caches/electron-builder
-          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package.json') }}
+          # the lockfile pins electron and electron-builder (and so the binaries they download)
+          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
 
       - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Copy the game into desktop/app
         run: node sync-game.js
@@ -110,7 +127,7 @@ jobs:
         env:
           # never pick up a stray identity from the runner keychain
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never
+        run: npx electron-builder --mac dmg zip --arm64 --x64 $UPDATE_METADATA
 
       - name: Build (signed, notarized when Apple ID secrets exist)
         if: steps.signing.outputs.sign == 'true'
@@ -121,10 +138,13 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_TEAM_ID || '' }}
         # notarization requires the hardened runtime; electron-builder.yml keeps it off for unsigned builds
-        run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never -c.mac.hardenedRuntime=true
+        run: npx electron-builder --mac dmg zip --arm64 --x64 $UPDATE_METADATA -c.mac.hardenedRuntime=true
 
-      - name: List outputs
-        run: ls -la dist
+      - name: List outputs and check the update metadata
+        run: |
+          ls -la dist
+          test -s dist/latest-mac.yml || { echo "::error::electron-builder did not write dist/latest-mac.yml (auto-update metadata)"; exit 1; }
+          cat dist/latest-mac.yml
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -133,6 +153,8 @@ jobs:
           path: |
             grand-theft-pundit/desktop/dist/*.dmg
             grand-theft-pundit/desktop/dist/*.zip
+            grand-theft-pundit/desktop/dist/*.blockmap
+            grand-theft-pundit/desktop/dist/latest-mac.yml
           if-no-files-found: error
 
   windows:
@@ -146,10 +168,12 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: Set up Node (with the npm download cache)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: grand-theft-pundit/desktop/package-lock.json
 
       - name: Cache Electron and electron-builder downloads
         uses: actions/cache@v4
@@ -157,13 +181,14 @@ jobs:
           path: |
             ~/AppData/Local/electron/Cache
             ~/AppData/Local/electron-builder/Cache
-          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package.json') }}
+          # the lockfile pins electron and electron-builder (and so the binaries they download)
+          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
 
       - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Copy the game into desktop/app
         run: node sync-game.js
@@ -172,16 +197,22 @@ jobs:
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: npx electron-builder --win nsis portable --x64 --publish never
+        run: npx electron-builder --win nsis portable --x64 $UPDATE_METADATA
 
-      - name: List outputs
-        run: ls -la dist
+      - name: List outputs and check the update metadata
+        run: |
+          ls -la dist
+          test -s dist/latest.yml || { echo "::error::electron-builder did not write dist/latest.yml (auto-update metadata)"; exit 1; }
+          cat dist/latest.yml
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: grand-theft-pundit/desktop/dist/*.exe
+          path: |
+            grand-theft-pundit/desktop/dist/*.exe
+            grand-theft-pundit/desktop/dist/*.blockmap
+            grand-theft-pundit/desktop/dist/latest.yml
           if-no-files-found: error
 
   linux:
@@ -195,10 +226,12 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: Set up Node (with the npm download cache)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: grand-theft-pundit/desktop/package-lock.json
 
       - name: Cache Electron and electron-builder downloads
         uses: actions/cache@v4
@@ -206,33 +239,89 @@ jobs:
           path: |
             ~/.cache/electron
             ~/.cache/electron-builder
-          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package.json') }}
+          # the lockfile pins electron and electron-builder (and so the binaries they download)
+          key: ${{ runner.os }}-electron-${{ hashFiles('grand-theft-pundit/desktop/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
 
       - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Copy the game into desktop/app
         run: node sync-game.js
 
       - name: Build
-        run: npx electron-builder --linux AppImage --x64 --publish never
+        run: npx electron-builder --linux AppImage --x64 $UPDATE_METADATA
 
-      - name: List outputs
-        run: ls -la dist
+      - name: List outputs and check the update metadata
+        run: |
+          ls -la dist
+          test -s dist/latest-linux.yml || { echo "::error::electron-builder did not write dist/latest-linux.yml (auto-update metadata)"; exit 1; }
+          cat dist/latest-linux.yml
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: grand-theft-pundit/desktop/dist/*.AppImage
+          path: |
+            grand-theft-pundit/desktop/dist/*.AppImage
+            grand-theft-pundit/desktop/dist/latest-linux.yml
           if-no-files-found: error
+
+  smoke:
+    name: Smoke test (packaged Linux app under xvfb)
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out (the smoke script only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: grand-theft-pundit/desktop/test
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node (22+ for the built-in WebSocket)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb > /dev/null
+
+      - name: Download the Linux build
+        uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: linux-build
+
+      - name: Extract the AppImage
+        # extracting avoids needing FUSE 2 on the runner; the binary inside is exactly what users run
+        working-directory: linux-build
+        run: |
+          chmod +x ./*.AppImage
+          ./*.AppImage --appimage-extract > /dev/null
+          ls squashfs-root
+
+      - name: Launch the game and check the title screen
+        run: >-
+          xvfb-run -a -s "-screen 0 1280x800x24"
+          node grand-theft-pundit/desktop/test/smoke.js linux-build/squashfs-root/grand-theft-pundit
+          --out smoke-out --timeout 240
+
+      - name: Upload the smoke screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke
+          path: smoke-out/
+          if-no-files-found: ignore
 
   release:
     name: GitHub Release
-    needs: [mac, windows, linux]
+    needs: [mac, windows, linux, smoke]
     if: >-
       github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') ||
@@ -263,10 +352,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          # mac, windows and linux; not the smoke screenshots
+          pattern: "{mac,windows,linux}"
           merge-multiple: true
 
       - name: List release assets
-        run: ls -la release-assets
+        run: |
+          ls -la release-assets
+          for f in latest.yml latest-mac.yml latest-linux.yml; do
+            test -s "release-assets/$f" || { echo "::error::release-assets/$f is missing; installed games could not update"; exit 1; }
+          done
 
       - name: Create or update the release
         uses: softprops/action-gh-release@v2
@@ -287,6 +382,11 @@ jobs:
             - **macOS, Intel:** `Grand-Theft-Pundit-*-mac-x64.dmg` (the `.zip` files hold the same apps without the installer window)
             - **Windows 10/11:** `Grand-Theft-Pundit-*-win-x64-setup.exe` (installer) or `Grand-Theft-Pundit-*-win-x64-portable.exe` (no install)
             - **Linux:** `Grand-Theft-Pundit-*-linux-x86_64.AppImage` (`chmod +x` it, then run it)
+
+            Already have 0.3 or later? The game checks this page by itself: the Windows installer and the
+            Linux AppImage download the update in the background and offer **Restart to Update**; unsigned
+            macOS builds and the portable exe say a new version is out and open this page. (`latest*.yml`
+            and `*.blockmap` are the update metadata the game reads; you never need to download them.)
 
             Unless this release was built with a signing certificate, macOS and Windows will warn that the
             developer is unknown. On macOS 14 and earlier: Control-click the app, choose **Open**, then **Open**
