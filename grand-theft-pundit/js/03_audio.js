@@ -496,8 +496,9 @@
   SFX.shot_suppressed = function (out, t) {
     hiss(out, t, { dur: 0.05, g: 0.45, bp: 2600, q: 1.2, a: 0.001 });
     blip(out, t, { type: 'sine', f: 160, f1: 60, dur: 0.06, g: 0.3, a: 0.001 });
-    hiss(out, t + 0.03, { dur: 0.02, g: 0.15, bp: 3800, q: 4, a: 0.001 });           // the slide
-    return 0.15;
+    hiss(out, t + 0.13, { dur: 0.05, g: 0.4, bp: 3800, q: 3, a: 0.001 });            // the slide cycling, a beat later
+    blip(out, t + 0.13, { type: 'square', f: 900, f1: 700, dur: 0.04, g: 0.08, a: 0.001, lp: 3000 });
+    return 0.25;
   };
   SFX.dryFire = function (out, t) { hiss(out, t, { dur: 0.015, g: 0.5, bp: 3200, q: 4, a: 0.001 }); blip(out, t, { type: 'square', f: 900, dur: 0.02, g: 0.06, a: 0.001 }); return 0.08; };
   SFX.reloadShell = function (out, t) {   // a shell pushed into the tube, then the pump
