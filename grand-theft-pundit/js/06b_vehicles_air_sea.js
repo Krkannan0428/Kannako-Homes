@@ -22,7 +22,9 @@
  *   deferred (DOMContentLoaded, before the game boots, or on first use): Render.buildEntityMesh, Render.syncVehicle,
  *             Render.rig.update (the flight / boat camera), Render.rebuildEntityMesh (fallback only when missing),
  *             GTP.SaveRegistry.vehicles + a GTP.SaveHooks entry, Missions objective types fly_to / land / skydive
- * Randomness: a private GTP.makeRng stream, so the city's GTP.rng sequence is unchanged by this file.
+ * Randomness: a private GTP.makeRng stream reseeded from the game seed (fleet colours); this file never draws on GTP.rng.
+ * Parked fleet vehicles do change where the AI spawner may place traffic once the player is near them, and with it how
+ * much of GTP.rng traffic uses; nothing parks within 170 m of the spawn, so a fresh boot's city is unchanged.
  */
 (function () {
   'use strict';
@@ -176,9 +178,11 @@
   function throwRider(v, why) {
     var d = v.driver; if (!d) return;
     var vx = v.vx, vz = v.vz, sp = Math.sqrt(vx * vx + vz * vz);
+    var already = Math.max(0, (sp - C.PHYS.bailSpeed) * 0.6);   // the shared exit already knocked them down with this much
     base.exit.call(v, d);
     d.y = Math.max(d.y, v.y + 0.6);
-    d.knockDown(vx * 0.8, vz * 0.8, Math.min(40, 6 + sp * 0.9), null, 'crash');
+    d.knockDown(vx * 0.8, vz * 0.8, Math.max(0, Math.min(40, 6 + sp * 0.9) - already), null, 'crash');
+    v.passengers.slice().forEach(function (o) { base.exit.call(v, o); o.knockDown(vx * 0.7, vz * 0.7, 0, null, 'crash'); });
     d.vy = 3 + sp * 0.12;
     if (d.kind === 'player') { d.stats.thrown = (d.stats.thrown || 0) + 1; shake(0.6); toast('Thrown off. The bike kept its opinion.'); }
     sfx('crash', v.x, v.z, 0.8);
@@ -339,7 +343,7 @@
         if (W().inBounds(Math.floor(px / C.TILE), Math.floor(pz / C.TILE)) && W().solidAt(px, pz, ry)) { crash(v, 'rotor'); postStep(v, dt); return; }
       }
     }
-    var c0 = v.lastCollision;
+    var c0 = v.lastCollision; v.lastImpact = 0;
     if (!outside(v, 3)) v._collideWorld(dt);
     if (v.lastCollision !== c0 && v.lastImpact > 8 && !onG) { crash(v, 'wall'); postStep(v, dt); return; }
     contacts(v);
@@ -391,7 +395,7 @@
       var gy = surfaceAt(v.x, v.z, v.y + 0.4);
       if (gy < v.y - 0.8) v.onGround = false;   // rolled off an edge
       else v.y = U.damp(v.y, gy, 30, dt);
-      if (s > S.vRotate && v.pitch > 0.07) {
+      if (s > S.vRotate && v.pitch > 0.07 && rotating && pull > 0) {
         v.onGround = false; v.vy = s * Math.sin(v.pitch);
         emit('aircraft:takeoff', { vehicle: v });
         if (v.hasPlayer()) { var pl = player(); pl.stats.takeoffs = (pl.stats.takeoffs || 0) + 1; }
@@ -414,7 +418,8 @@
       } else v.stall = false;
       f = U.yawToDir(v.yaw);
       var cp = Math.cos(v.pitch);
-      v.vx = f.x * cp * s; v.vz = f.z * cp * s; v.vy = Math.sin(v.pitch) * s - sink;
+      var vyT = Math.sin(v.pitch) * s - sink;
+      v.vx = f.x * cp * s; v.vz = f.z * cp * s; v.vy = vyT < v.vy ? Math.max(vyT, v.vy - G_AIR * 1.2 * dt) : vyT;   // a sink builds up under gravity
       v.x += v.vx * dt; v.y += v.vy * dt; v.z += v.vz * dt;
       edgeGuard(v);
       if (v.y > 900) { v.y = 900; v.pitch = Math.min(v.pitch, 0); }
@@ -424,7 +429,7 @@
         var hard = v.vy < -7 || Math.abs(v.roll) > 0.42 || v.pitch < -0.14 || v.burning || (S.gearFixed ? false : v.gear !== 'down');
         if (wet) { v.y = WATER_Y; if (hard || s > 22) { crash(v, 'water'); postStep(v, dt); return; } v.applyDamage(30, null, 'water'); v.startSinking(); v._syncOccupants(); return; }
         if (hard) { v.y = g2; crash(v, 'ground'); postStep(v, dt); return; }
-        v.y = g2; v.onGround = true; v.vy = 0; v.pitch = Math.max(0, v.pitch * 0.5);
+        v.y = g2; v.onGround = true; v.vy = 0; v.pitch = 0;
         sfx('land', v.x, v.z, 0.7); fx({ type: 'puff', x: v.x, y: g2 + 0.2, z: v.z, size: 2, life: 0.6, color: 0xd0ccc4 });
         emit('aircraft:land', { vehicle: v });
         if (v.hasPlayer()) { var pl2 = player(); pl2.stats.landings = (pl2.stats.landings || 0) + 1; }
@@ -437,7 +442,7 @@
       if (gear !== v.gear) { if (v.gear && v.hasPlayer()) sfx('gearUp', v.x, v.z, 0.5); v.gear = gear; }
     } else v.gear = 'down';
     if (waterAt(v.x, v.z) && v.y <= WATER_Y + 0.3 && v.onGround) { v.startSinking(); v._syncOccupants(); return; }
-    var c0 = v.lastCollision;
+    var c0 = v.lastCollision; v.lastImpact = 0;
     if (!outside(v, 8)) v._collideWorld(dt);
     if (v.lastCollision !== c0 && (v.lastImpact > 6 || !v.onGround)) { crash(v, 'wall'); postStep(v, dt); return; }
     if (v.lastCollision !== c0) { v.air *= 0.4; }
@@ -524,7 +529,7 @@
       if (v.collapseT > 2.6) v.destroy();
       return;
     }
-    if (!d) { v.chute = 'landed'; v.collapseT = 0; return; }
+    if (!d) { v.chute = 'landed'; v.collapseT = 0; v.locked = true; return; }
     var f = U.yawToDir(v.yaw), rx = -f.z, rz = f.x;
     if (v.chute !== 'open') {
       // freefall: W dives (faster forward), A / D turn; Space / E opens
@@ -551,7 +556,7 @@
     v.onGround = false;
     edgeGuard(v);
     if (!outside(v, 2)) { var res = W().resolveCapsule(v.x, v.z, v.y + 1, 0.6); if (res.x !== v.x || res.z !== v.z) { v.x = res.x; v.z = res.z; v.vx *= 0.5; v.vz *= 0.5; } }
-    var g = surfaceAt(v.x, v.z, v.y + 0.5);
+    var g = W().heightAt(v.x, v.z, v.y + 0.5);   // the ground, not a roof: a ped cannot stand on a roof (resolveCapsule slides the canopy off it)
     var wet = waterAt(v.x, v.z) && g <= WATER_Y + 0.05;
     if (v.y <= g + (wet ? 0.2 : 0)) {
       var impact = -v.vy, open = v.chute === 'open';
@@ -560,7 +565,7 @@
       if (wet) { ped.y = WATER_Y + 0.25; ped.swimming = true; ped.onGround = false; }
       else if (!open && impact > 16) ped.knockDown(v.vx * 0.4, v.vz * 0.4, 60 + (impact - 16) * 6, null, 'fall');
       else if (impact > 6.5 || v.speed2d() > 10) ped.knockDown(v.vx * 0.4, v.vz * 0.4, open ? 0 : 15, null, 'fall');
-      v.chute = 'landed'; v.collapseT = 0;
+      v.chute = 'landed'; v.collapseT = 0; v.locked = true;
       if (ped.kind === 'player') { ped.stats.skydives = (ped.stats.skydives || 0) + 1; }
       emit('parachute:land', { vehicle: v, ped: ped, x: v.x, z: v.z, open: open, hard: !open && impact > 16, water: wet });
     }
@@ -613,11 +618,16 @@
     if (f === 'chute') {
       // cutting away: the rider drops from where the canopy is
       detach(this, ped, this.x, this.y, this.z, true);
-      this.chute = 'landed'; this.collapseT = 0;
+      this.chute = 'landed'; this.collapseT = 0; this.locked = true;
       return true;
     }
     if (isAir(this)) {
       var g = surfaceAt(this.x, this.z, this.y + 0.5), agl = this.y - g, sp = this.speed2d();
+      // over (or on) a roof below bail height: peds cannot stand on roofs, so the door stays shut
+      if (ped.kind === 'player' && ped.alive && this._bailReq && agl < 30 && g > W().heightAt(this.x, this.z, this.y) + 1.5) {
+        if (!this._roofT || this.age - this._roofT > 3) { this._roofT = this.age; toast('Not on a roof: set her down on the street, or climb past 30 m and bail.'); }
+        return false;
+      }
       if (agl > 2.5 || (!this.onGround && sp > 4)) {
         var side = this.localToWorld(-(this.hw + 1.0), 0);
         var y = this.y + 0.4;
@@ -679,7 +689,7 @@
     }
     var In = GTP.Input, A = GTP.Audio;
     this.intent.x = 0; this.intent.z = 0; this.intent.run = false; this.aiming = false;
-    if (!this.alive || !this.controlEnabled || this.knockedDown) { v.ctl = null; if (A && A.engine) A.engine(0, v.type); return; }
+    if (!this.alive || !this.controlEnabled || this.knockedDown) { v.ctl = null; v.throttle = 0; v.steer = 0; v.handbrake = false; if (A && A.engine) A.engine(0, v.type); return; }
     if (v.driver === this) v.ctl = readAxes();
     if (f === 'boat') { v.throttle = v.ctl ? v.ctl.throttle : 0; v.steer = v.ctl ? v.ctl.steer : 0; }
     if (f !== 'chute' && In.pressed('radio') && A && A.radio && A.radio.next) { var st = A.radio.next(); if (st) toast('Radio: ' + (st.name || st)); }
@@ -1428,7 +1438,9 @@
     var rec = list[slot], at = garagePoint(propertyId), p = player();
     if (!at && p) at = { x: p.x + 3, z: p.z };
     if (!at) return null;
-    var spot = findClear(at.x, at.z, SPECS[rec.type] && fam({ cls: SPECS[rec.type] }) === 'boat' ? 'water' : 'land', 3, 40) || { x: at.x, z: at.z };
+    var boat = SPECS[rec.type] && fam({ cls: SPECS[rec.type] }) === 'boat';
+    var spot = findClear(at.x, at.z, boat ? 'water' : 'land', 3, boat ? 120 : 40) || (boat ? null : { x: at.x, z: at.z });
+    if (!spot) return null;   // a boat in a garage with no water nearby stays stored
     var v = spawn(rec.type, spot.x, spot.z, { color: rec.color, wrap: rec.wrap });
     if (!v) return null;
     list.splice(slot, 1);
@@ -1521,7 +1533,7 @@
   }
   function fleetTick(dt) {
     var Wd = W(); if (!Wd || !Wd.landmarks) return;
-    if (fleet.lmRef !== Wd.landmarks) { fleet.lmRef = Wd.landmarks; fleet.slots = Vehicles.fleet.enabled ? buildSlots() : []; fleet.t = 0; fleet.first = true; }
+    if (fleet.lmRef !== Wd.landmarks) { fleet.lmRef = Wd.landmarks; if (GTP.makeRng) vrng = GTP.makeRng(((GTP.game && GTP.game.seed) ^ 0x7EB1C) >>> 0); fleet.slots = Vehicles.fleet.enabled ? buildSlots() : []; fleet.t = 0; fleet.first = true; }
     fleet.t -= dt; if (fleet.t > 0) return; fleet.t = 0.5;
     var p = player(); if (!p) return;
     var block = GTP.Interiors && GTP.Interiors.active;
@@ -1662,6 +1674,7 @@
     } else {
       var D = dist * Math.cos(r.pitch), H = dist * Math.sin(r.pitch) + (cd[1] - lookH);
       desired = { x: fx0 - d.x * D, y: fy0 + H, z: fz0 - d.z * D };
+      r.pulled = false;
       if (r._pullIn) desired = r._pullIn(fx0, fy0, fz0, desired, 1.5);
       var floor = Math.max(surfaceAt(desired.x, desired.z, desired.y), waterAt(desired.x, desired.z) ? WATER_Y : -1e9) + 0.6;
       if (desired.y < floor) desired.y = floor;
@@ -1675,10 +1688,15 @@
       r.focus.x = U.damp(r.focus.x, fx0, k * 1.6, dt); r.focus.y = U.damp(r.focus.y, fy0, k * 1.6, dt); r.focus.z = U.damp(r.focus.z, fz0, k * 1.6, dt);
       r.fov = U.damp(r.fov, targetFov, CAM.fovDamp || 2, dt);
     }
+    // the guard: the smoothed camera never sits inside a building
+    if (mode !== 'first' && W().raycastBuildings) {
+      var gx = r.pos.x - fx0, gy = r.pos.y - fy0, gz = r.pos.z - fz0, gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1, pad = CAM.collisionPad || 0.3;
+      var hit = W().raycastBuildings(fx0, fy0, fz0, gx / gl, gy / gl, gz / gl, gl + pad);
+      if (hit) { var gt = Math.max(0.5, hit.t - pad); r.pos.x = fx0 + gx / gl * gt; r.pos.y = fy0 + gy / gl * gt; r.pos.z = fz0 + gz / gl * gt; r.pulled = true; }
+    }
     var rollT = mode === 'first' ? -v.roll : (f === 'plane' ? -v.roll * 0.35 : f === 'heli' ? -v.roll * 0.15 : 0);
     r.roll = U.damp(r.roll, U.clamp(rollT, -1.2, 1.2), 4, dt);
     if (r.shakeAmt > 0) { r._shakeT += dt * 40; r.shakeAmt = Math.max(0, r.shakeAmt - dt * (CAM.shakeDecay || 3) * r.shakeAmt - dt * 0.2); }
-    r.pulled = false;
   }
 
   // ---- saves: GTP.SaveRegistry.vehicles (the v4 format) and a SaveHooks entry for the v3 saves ----
@@ -1702,7 +1720,12 @@
     if (!saveHooked) {
       saveHooked = true;
       // the v3 slot saves: data.vehicles (skipped when a v4 registry block already carries the same entry)
-      GTP.SaveHooks.push({ name: 'vehicles', save: function (data) { data.vehicles = saveState(); }, load: function (data) { if (data && data.vehicles) loadState(data.vehicles); } });
+      GTP.SaveHooks.push({ name: 'vehicles', save: function (data) {
+        data.vehicles = saveState();
+        // a vehicle in the air (or the parachute) cannot be restored mid-flight: the player loads on foot below it
+        var p = player(), v = p && p.inVehicle;
+        if (v && data.vehicle && (fam(v) === 'chute' || (isAir(v) && !v.onGround))) data.vehicle = null;
+      }, load: function (data) { loadState((data && data.vehicles) || {}); } });
       // NEW GAME empties the garages (a load restores them through the hook above)
       if (GTP.Events) GTP.Events.on('load:begin', function (e) { if (e && e.reason === 'new') { garages = {}; Vehicles._garages = garages; pendingMods = null; } });
       if (GTP.Events) GTP.Events.on('vehicle:enter', function (e) {
