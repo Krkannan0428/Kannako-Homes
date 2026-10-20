@@ -35,17 +35,17 @@
       shadows: true, shadowMap: 1024, softShadows: false, anisotropy: 4,
       post: true, ssao: false, ssaoSamples: 12, bloom: true, fxaa: true, grain: false,
       pointLights: 0, headlights: 1, weatherFx: true, rainCount: 900, puddles: 24,
-      normalMaps: true, envMap: true, clearcoat: false, lodDistance: 120, clouds: true, interiors: true, grass: 6, grassRadius: 38, cascades: 2, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3
+      normalMaps: true, envMap: true, clearcoat: false, lodDistance: 120, clouds: true, interiors: true, grass: 6, grassRadius: 38, cascades: 2, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3, taa: false, ssr: false, dof: true, motionBlur: false, maxDpr: 1
     },
     // Presets (GTP.Render.quality.set(name) applies one; 'auto' starts at medium and steps down when the measured
     // frame time stays above QUALITY_AUTO.slowMs for QUALITY_AUTO.slowSeconds). Headless boots default to low unless
     // ?quality= says otherwise. low: no post, no shadows, emissive-only night. medium: shadows 1024, FXAA, bloom.
     // high: SSAO, soft shadows 2048, real lamp / headlight lights, weather fx. ultra: shadows 4096, more lights, full SSAO.
     QUALITY_PRESETS: {
-      low:    { shadows: false, shadowMap: 1024, softShadows: false, anisotropy: 2,  post: false, ssao: false, ssaoSamples: 8,  bloom: false, fxaa: false, grain: false, pointLights: 0,  headlights: 0, weatherFx: false, rainCount: 400,  puddles: 0,  normalMaps: false, envMap: true, clearcoat: false, lodDistance: 90,  clouds: true, interiors: true, grass: 0, grassRadius: 0, cascades: 0, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3 },
-      medium: { shadows: true,  shadowMap: 1024, softShadows: false, anisotropy: 4,  post: true,  ssao: false, ssaoSamples: 8,  bloom: true,  fxaa: true,  grain: false, pointLights: 0,  headlights: 1, weatherFx: true,  rainCount: 900,  puddles: 24, normalMaps: true,  envMap: true, clearcoat: false, lodDistance: 120, clouds: true, interiors: true, grass: 6, grassRadius: 38, cascades: 2, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3 },
-      high:   { shadows: true,  shadowMap: 2048, softShadows: true,  anisotropy: 8,  post: true,  ssao: true,  ssaoSamples: 12, bloom: true,  fxaa: true,  grain: true,  pointLights: 8,  headlights: 4, weatherFx: true,  rainCount: 1600, puddles: 40, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 150, clouds: true, interiors: true, grass: 10, grassRadius: 46, cascades: 2, shadowNear: 44, shadowFar: 250, shadowMapFar: 2048, farEvery: 2 },
-      ultra:  { shadows: true,  shadowMap: 4096, softShadows: true,  anisotropy: 16, post: true,  ssao: true,  ssaoSamples: 16, bloom: true,  fxaa: true,  grain: true,  pointLights: 12, headlights: 6, weatherFx: true,  rainCount: 2400, puddles: 60, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 200, clouds: true, interiors: true, grass: 14, grassRadius: 56, cascades: 2, shadowNear: 40, shadowFar: 300, shadowMapFar: 2048, farEvery: 1 }
+      low:    { shadows: false, shadowMap: 1024, softShadows: false, anisotropy: 2,  post: false, ssao: false, ssaoSamples: 8,  bloom: false, fxaa: false, grain: false, pointLights: 0,  headlights: 0, weatherFx: false, rainCount: 400,  puddles: 0,  normalMaps: false, envMap: true, clearcoat: false, lodDistance: 90,  clouds: true, interiors: true, grass: 0, grassRadius: 0, cascades: 0, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3, taa: false, ssr: false, dof: false, motionBlur: false, maxDpr: 1 },
+      medium: { shadows: true,  shadowMap: 1024, softShadows: false, anisotropy: 4,  post: true,  ssao: false, ssaoSamples: 8,  bloom: true,  fxaa: true,  grain: false, pointLights: 4,  headlights: 1, weatherFx: true,  rainCount: 900,  puddles: 24, normalMaps: true,  envMap: true, clearcoat: false, lodDistance: 120, clouds: true, interiors: true, grass: 6, grassRadius: 38, cascades: 2, shadowNear: 44, shadowFar: 220, shadowMapFar: 1024, farEvery: 3, taa: false, ssr: false, dof: true, motionBlur: false, maxDpr: 1 },
+      high:   { shadows: true,  shadowMap: 2048, softShadows: true,  anisotropy: 8,  post: true,  ssao: true,  ssaoSamples: 12, bloom: true,  fxaa: true,  grain: true,  pointLights: 8,  headlights: 4, weatherFx: true,  rainCount: 1600, puddles: 40, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 150, clouds: true, interiors: true, grass: 10, grassRadius: 46, cascades: 2, shadowNear: 44, shadowFar: 250, shadowMapFar: 2048, farEvery: 2, taa: true, ssr: true, dof: true, motionBlur: true, maxDpr: 1.5 },
+      ultra:  { shadows: true,  shadowMap: 4096, softShadows: true,  anisotropy: 16, post: true,  ssao: true,  ssaoSamples: 16, bloom: true,  fxaa: true,  grain: true,  pointLights: 12, headlights: 6, weatherFx: true,  rainCount: 2400, puddles: 60, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 200, clouds: true, interiors: true, grass: 14, grassRadius: 56, cascades: 2, shadowNear: 40, shadowFar: 300, shadowMapFar: 2048, farEvery: 1, taa: true, ssr: true, dof: true, motionBlur: true, maxDpr: 2 }
     },
     QUALITY_AUTO: { start: 'medium', slowMs: 22, slowSeconds: 5, cooldown: 12 },
 
@@ -60,7 +60,7 @@
       wetRoughness: 0.32,        // ground roughness multiplier when soaked (dry 1.0)
       rainFall: 15,              // m/s
       rainBox: 18,               // half-size of the streak volume around the camera
-      fogStartWet: 0.62          // fog near as a fraction of the dry value in rain
+      fogStartWet: 0.8          // fog near as a fraction of the dry value in rain
     },
 
     // --- camera (the GTA feel lives here) ---------------------------------
@@ -162,7 +162,7 @@
       crosswalk: '#e6e3d8',
       sidewalk: '#9b9ca3', sidewalkLine: '#84858c', sidewalkDark: '#8b8c93',
       curb: '#6c6e75', curbLight: '#b6b8bf',
-      grass: '#4a8a3c', grassDark: '#3b7330', grassLight: '#5c9e48',
+      grass: '#4f7f3a', grassDark: '#3e6a2f', grassLight: '#67904a',
       sand: '#d9c58c', sandDark: '#c6b079',
       water: '#1e6a8c', waterDeep: '#174f6b', waterLight: '#2f8fb5', foam: '#bfe8f4',
       concrete: '#8d8f94', concreteDark: '#5f6166', concreteLight: '#b3b5ba',

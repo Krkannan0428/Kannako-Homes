@@ -401,7 +401,7 @@
       var M = Assets._mats;
       if (!M.water) {
         if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
-        M.water = new THREE.MeshStandardMaterial({ map: Assets.water, color: 0xffffff, roughness: 0.06, metalness: 0.0, envMapIntensity: 1.0 });
+        M.water = new THREE.MeshStandardMaterial({ map: Assets.water, color: 0xffffff, roughness: 0.06, metalness: 0.0, envMapIntensity: 0.8 });
         M.water.name = 'water';
         Assets._oceanShader(M.water);
       }
@@ -1423,7 +1423,7 @@
     },
     curbface: function (ctx, S, R) { ctx.fillStyle = PAL.curbLight; ctx.fillRect(0, 0, S, S); speckle(ctx, S, S, 0.03, 'rgba(255,255,255,0.1)', 'rgba(0,0,0,0.15)', R); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(0, S - 60, S, 60); },
     grass: function (ctx, S, R) { grassBase(ctx, S, R, PAL.grass, PAL.grassLight, PAL.grassDark); },
-    grass2: function (ctx, S, R) { grassBase(ctx, S, R, PAL.grassDark, PAL.grass, '#2f5f28'); },
+    grass2: function (ctx, S, R) { grassBase(ctx, S, R, '#4a7838', PAL.grassLight, PAL.grassDark); },
     lawn: function (ctx, S, R) {
       grassBase(ctx, S, R, PAL.grass, PAL.grassLight, PAL.grassDark);
       for (var i = 0; i < 4; i += 2) alphaFill(ctx, '#ffffff', 0.09, i * 60, 0, 60, S);
@@ -1659,11 +1659,11 @@
   var OCEAN_MAP = [
     'float gShore = texture2D( tGtpShore, vGtpW.xz / uGtpMap ).r;',
     'vec3 gSw = gtpSwell( vGtpW.xz, uGtpTime );',
-    'vec3 gDeep = vec3( 0.018, 0.085, 0.12 ), gShallow = vec3( 0.04, 0.22, 0.24 );',
+    'vec3 gDeep = vec3( 0.012, 0.05, 0.075 ), gShallow = vec3( 0.03, 0.13, 0.15 );',
     'vec3 gCol = mix( gShallow, gDeep, smoothstep( 0.05, 0.7, gShore ) );',
     'gCol *= 0.9 + 0.35 * clamp( gSw.z * 4.0, -0.3, 0.6 );',   // the crests catch more light through the water
     'float gFn = texture2D( tGtpNoise, vGtpW.xz / 7.0 + vec2( uGtpTime * 0.013, -uGtpTime * 0.009 ) ).r;',
-    'float gBand = 1.0 - smoothstep( 0.0, 0.2, gShore );',
+    'float gBand = 1.0 - smoothstep( 0.0, 0.13, gShore );',
     'float gPulse = 0.5 + 0.5 * sin( gShore * 38.0 - uGtpTime * 1.4 + gFn * 4.0 );',
     'float gtpFoam = clamp( gBand * ( gFn * 1.25 + gPulse * 0.55 ) - 0.42, 0.0, 1.0 ) * 1.6;',
     'gtpFoam = max( gtpFoam, smoothstep( 0.2, 0.32, gSw.z ) * smoothstep( 0.6, 0.85, gFn ) * uGtpChop );',   // whitecaps in a chop
@@ -2128,15 +2128,15 @@
       fbTube(fb, [0, 2.4, 0], [0.9, 3.9, 0.3], 0.11, 0.05, 6, barkTop, barkTop);
       fbTube(fb, [0, 2.6, 0], [-0.8, 4.0, -0.4], 0.1, 0.05, 6, barkTop, barkTop);
       fbTube(fb, [0, 2.8, 0], [0.1, 4.3, -0.9], 0.09, 0.04, 6, barkTop, barkTop);
-      var C0 = [0, 4.35, 0], RX = 2.25, RY = 1.85, inner = c('#1e4a1c'), innerTop = c('#2c6226');
-      fbBlob(fb, 0, 4.2, 0, 1.55, 0.85, inner, innerTop);
-      fbBlob(fb, 0.8, 4.5, 0.4, 1.1, 0.85, inner, innerTop);
-      fbBlob(fb, -0.7, 4.6, -0.4, 1.1, 0.85, inner, innerTop);
+      var C0 = [0, 4.35, 0], RX = 2.25, RY = 1.85, inner = c('#13300f'), innerTop = c('#1d4418');
+      fbBlob(fb, 0, 4.25, 0, 1.15, 0.85, inner, innerTop);
+      fbBlob(fb, 0.6, 4.6, 0.3, 0.8, 0.85, inner, innerTop);
+      fbBlob(fb, -0.55, 4.7, -0.3, 0.8, 0.85, inner, innerTop);
       var greens = [c('#3c7a30'), c('#4a8a36'), c('#35702e'), c('#5b8f34')];
-      for (i = 0; i < 64; i++) {
+      for (i = 0; i < 84; i++) {
         var th = R.random() * TAU, y = R.random() * 2 - 1;
         y = y < 0 ? -Math.pow(-y, 1.6) : Math.pow(y, 0.8);   // more cards on the upper half
-        var rr = Math.sqrt(Math.max(0, 1 - y * y)), d = [Math.cos(th) * rr, y, Math.sin(th) * rr], k = 0.72 + R.random() * 0.3;
+        var rr = Math.sqrt(Math.max(0, 1 - y * y)), d = [Math.cos(th) * rr, y, Math.sin(th) * rr], k = 0.55 + R.random() * 0.45;
         var p = [C0[0] + d[0] * RX * k, C0[1] + d[1] * RY * k, C0[2] + d[2] * RX * k];
         var n = vnorm([d[0] + (R.random() - 0.5) * 1.2, d[1] + (R.random() - 0.5) * 1.2 + 0.3, d[2] + (R.random() - 0.5) * 1.2]);
         var g0 = greens[Math.floor(R.random() * greens.length)], lift = (y + 1) * 0.5;
@@ -2282,29 +2282,35 @@
       g.box(-6, 4.3, -3.5, 12, 0.12, 7, GB.UV0, c('#c94040'));
       for (var i = 0; i < 4; i++) g.cylinder(i % 2 ? 4.5 : -4.5, 0, i < 2 ? -2.5 : 2.5, 0.2, 0.2, 4.4, 6, CONC, null, false);
     },
+    // a runabout: a lofted V hull (stern transom to a raked bow), a dark boot stripe at the waterline, a teak deck, a
+    // console with a windscreen and a chrome rail (the instance colour tints the hull)
     boat: function (g) {
-      var hull = WHITE;
-      g.box(-1.1, 0, -2.4, 2.2, 0.9, 4.8, GB.UV0, hull);
-      g.quad([-1.1, 0.9, 2.4], [1.1, 0.9, 2.4], [0, 0.95, 3.6], [0, 0.95, 3.6], GB.UV0, hull);
-      g.quad([0, 0.0, 3.6], [1.1, 0, 2.4], [1.1, 0.9, 2.4], [0, 0.95, 3.6], GB.UV0, hull);
-      g.quad([-1.1, 0, 2.4], [0, 0.0, 3.6], [0, 0.95, 3.6], [-1.1, 0.9, 2.4], GB.UV0, hull);
-      g.box(-0.9, 0.9, -1.8, 1.8, 0.08, 3.6, GB.UV0, c('#8a6a44'));
-      g.box(-0.8, 0.98, -0.4, 1.6, 0.9, 1.6, GB.UV0, hull);
-      g.box(-0.7, 1.3, -0.45, 1.4, 0.4, 0.05, GB.UV0, [0.2, 0.3, 0.4]);
+      hullLoft(g, [-2.4, -1.2, 0, 1.2, 2.3, 3.1, 3.6], [1.0, 1.1, 1.1, 1.04, 0.84, 0.46, 0.04], 0.95, 0.25, WHITE, c('#2a2c30'));
+      g.box(-0.85, 0.95, -2.2, 1.7, 0.06, 3.9, GB.UV0, c('#9a7048'));
+      g.box(-0.55, 1.0, -0.3, 1.1, 0.75, 0.9, GB.UV0, WHITE);
+      g.quad([-0.6, 1.75, 0.6], [0.6, 1.75, 0.6], [0.55, 2.15, 0.25], [-0.55, 2.15, 0.25], GB.UV0, [0.12, 0.17, 0.22]);
+      g.quad([0.6, 1.75, 0.6], [-0.6, 1.75, 0.6], [-0.55, 2.15, 0.25], [0.55, 2.15, 0.25], GB.UV0, [0.12, 0.17, 0.22]);
+      g.box(-0.5, 1.0, -1.9, 1.0, 0.45, 0.6, GB.UV0, c('#e8e2c8'));
+      for (var sd = -1; sd <= 1; sd += 2) { g.box(sd * 0.98 - 0.02, 1.2, -2.0, 0.04, 0.04, 4.6, GB.UV0, LAMP); for (var k = 0; k < 4; k++) g.box(sd * 0.98 - 0.02, 0.95, -1.8 + k * 1.3, 0.04, 0.27, 0.04, GB.UV0, LAMP); }
+      g.box(-0.08, 0.25, -2.6, 0.16, 0.7, 0.25, GB.UV0, c('#1c1d21'));
     },
+    // the yacht: a long lofted hull, a teak deck, three stepped decks of white superstructure with dark glass bands and
+    // a raked front, a radar arch and mast, the pink stern light
     yacht: function (g) {
-      var hull = WHITE, deck = c('#e8e2c8');
-      g.box(-4, 0, -11, 8, 3, 22, GB.UV0, hull);
-      g.quad([-4, 3, 11], [4, 3, 11], [0, 3.1, 16], [0, 3.1, 16], GB.UV0, hull);
-      g.quad([0, 0, 16], [4, 0, 11], [4, 3, 11], [0, 3.1, 16], GB.UV0, hull);
-      g.quad([-4, 0, 11], [0, 0, 16], [0, 3.1, 16], [-4, 3, 11], GB.UV0, hull);
-      g.box(-3.8, 3, -10.8, 7.6, 0.1, 21.6, GB.UV0, deck);
-      g.box(-3, 3.1, -6, 6, 2.6, 12, GB.UV0, hull);
-      g.box(-3.05, 4.2, -5.5, 6.1, 0.8, 11, GB.UV0, [0.15, 0.2, 0.3]);
-      g.box(-2.2, 5.7, -2, 4.4, 2.2, 6, GB.UV0, hull);
-      g.box(-2.25, 6.5, -1.5, 4.5, 0.7, 5, GB.UV0, [0.15, 0.2, 0.3]);
-      g.cylinder(0, 7.9, 0, 0.1, 0.1, 2.5, 5, METAL, null, false);
-      g.box(-0.1, 0.5, -11.1, 0.2, 2.2, 0.1, GB.UV0, c('#ff3fa4'));
+      var hull = WHITE, deck = c('#c9a77a'), glass = [0.12, 0.17, 0.24];
+      hullLoft(g, [-11, -7, -2, 3, 8, 11.5, 14.5, 16.2], [3.6, 4.0, 4.0, 3.95, 3.6, 2.9, 1.6, 0.05], 3.0, 1.0, hull, c('#1c2a4a'));
+      g.box(-3.7, 3.0, -10.8, 7.4, 0.12, 21.6, GB.UV0, deck);
+      g.box(-3.0, 3.1, -7.5, 6, 2.6, 12.5, GB.UV0, hull);
+      g.box(-3.04, 3.9, -7.0, 6.08, 1.2, 11.5, GB.UV0, glass);
+      g.quad([-3, 5.7, 5], [3, 5.7, 5], [2.6, 3.1, 7.6], [-2.6, 3.1, 7.6], GB.UV0, glass);
+      g.box(-2.4, 5.7, -5.5, 4.8, 2.1, 9, GB.UV0, hull);
+      g.box(-2.45, 6.3, -5, 4.9, 0.9, 8, GB.UV0, glass);
+      g.box(-1.8, 7.8, -3.5, 3.6, 1.4, 5, GB.UV0, hull);
+      g.box(-1.85, 8.2, -3.2, 3.7, 0.6, 4.2, GB.UV0, glass);
+      g.box(-1.6, 9.2, -1.2, 0.15, 1.8, 0.15, GB.UV0, hull); g.box(1.45, 9.2, -1.2, 0.15, 1.8, 0.15, GB.UV0, hull); g.box(-1.6, 10.9, -1.3, 3.2, 0.25, 0.4, GB.UV0, hull);
+      g.cylinder(0, 11.1, -1.1, 0.08, 0.06, 2.2, 5, METAL, null, false);
+      for (var sd = -1; sd <= 1; sd += 2) g.box(sd * 3.65 - 0.03, 3.9, -10.5, 0.06, 0.06, 18, GB.UV0, LAMP);
+      glowing(g, 1.4, function () { g.box(-0.1, 1.2, -11.15, 0.2, 1.6, 0.1, GB.UV0, c('#ff3fa4')); });
     },
     hedge: function (g) { g.box(-0.5, 0, -0.5, 1, 1, 1, GB.UV0, c('#2f6b2c')); },
     antenna: function (g) { g.cylinder(0, 0, 0, 0.05, 0.03, 1, 4, METAL, null, false); g.box(-0.3, 0.6, -0.02, 0.6, 0.04, 0.04, GB.UV0, METAL); g.box(-0.02, 0.98, -0.02, 0.04, 0.06, 0.04, GB.UV0, [1, 0.2, 0.2]); },
@@ -2554,6 +2560,29 @@
   };
   function CONCL() { return c(PAL.concreteLight); }
   // a tapered tube along x from x0 to x1 (radius r0 at x0, r1 at x1), open ended
+  // a lofted boat hull along z: half-widths w[i] at stations zs[i]; gunwale at `gun` (rising toward the bow), keel
+  // `keel` below 0 (the waterline), a chine at 85% of the beam; a dark boot stripe and a flat transom at the stern
+  function hullLoft(g, zs, w, gun, keel, col, stripe) {
+    var n = zs.length, i, sec = [];
+    for (i = 0; i < n; i++) {
+      var t = i / (n - 1), gy = gun + Math.max(0, t - 0.6) * gun * 0.35, ky = -keel * (1 - Math.max(0, t - 0.7) * 2.5);
+      sec.push([[-w[i], gy], [-w[i] * 0.86, 0.12], [-w[i] * 0.3, ky * 0.75], [0, ky], [w[i] * 0.3, ky * 0.75], [w[i] * 0.86, 0.12], [w[i], gy]]);
+    }
+    for (i = 0; i < n - 1; i++) {
+      var A = sec[i], B = sec[i + 1], za = zs[i], zb = zs[i + 1];
+      for (var k = 0; k < 6; k++) {
+        var cc = (k === 0 || k === 5) ? col : (k === 1 || k === 4) ? stripe : col;
+        var a0 = A[k], a1 = A[k + 1], b0 = B[k], b1 = B[k + 1];
+        g.quad([a0[0], a0[1], za], [a1[0], a1[1], za], [b1[0], b1[1], zb], [b0[0], b0[1], zb], GB.UV0, cc);
+      }
+    }
+    for (i = 0; i < n - 1; i++) {   // the deck: closes the hull between the gunwales
+      var gA = sec[i], gB = sec[i + 1];
+      g.quad([gA[6][0], gA[6][1], zs[i]], [gA[0][0], gA[0][1], zs[i]], [gB[0][0], gB[0][1], zs[i + 1]], [gB[6][0], gB[6][1], zs[i + 1]], GB.UV0, col);
+    }
+    var S = sec[0], z0 = zs[0];
+    for (var k2 = 0; k2 < 3; k2++) g.quad([S[6 - k2][0], S[6 - k2][1], z0], [S[5 - k2][0], S[5 - k2][1], z0], [S[k2 + 1][0], S[k2 + 1][1], z0], [S[k2][0], S[k2][1], z0], GB.UV0, col);
+  }
   function tubeX(g, x0, x1, y, z, r0, r1, segs, col) {
     for (var i = 0; i < segs; i++) {
       var a0 = i / segs * TAU, a1 = (i + 1) / segs * TAU;

@@ -200,7 +200,8 @@
       var stage = Render.canvas.parentElement;
       var w = Math.max(320, (stage && stage.clientWidth) || window.innerWidth || 1280);
       var h = Math.max(240, (stage && stage.clientHeight) || window.innerHeight || 720);
-      var dpr = Render.headless ? 1 : Math.min(C.MAX_DPR, window.devicePixelRatio || 1);
+      // the preset caps the pixel ratio (medium renders at CSS pixels: a retina laptop's iGPU would otherwise shade 4x)
+      var dpr = Render.headless ? 1 : Math.min(C.MAX_DPR, C.QUALITY.maxDpr || C.MAX_DPR, window.devicePixelRatio || 1);
       Render.width = w; Render.height = h; Render.dpr = dpr;
       Render.renderer.setPixelRatio(dpr);
       Render.renderer.setSize(w, h, false);
@@ -271,6 +272,7 @@
         if (Render.weather) Render.weather.applyQuality();
         if (Render.sky && Render.sky.clouds) Render.sky.clouds.visible = !!Q.clouds;
         Render._envKey = null;   // the environment map follows the preset's needs
+        if (!first && Render.canvas) Render.resize();   // the preset's pixel-ratio cap
         Render._envClock = null;   // and the lights (the night fill depends on the preset's lamp lights)
         Render.quality._lastT = 0;
       },
@@ -585,7 +587,7 @@
         var pos = new Float32Array(MAX_RAIN * 3), R = GTP.makeRng(0x8A1);
         for (var i = 0; i < MAX_RAIN; i++) { pos[i * 3] = (R.random() - 0.5) * 2; pos[i * 3 + 1] = R.random(); pos[i * 3 + 2] = (R.random() - 0.5) * 2; }
         var rg = new THREE.BufferGeometry(); rg.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-        var rm = new THREE.PointsMaterial({ map: A.rain, color: 0xdce8f4, size: 0.42, sizeAttenuation: true, transparent: true, opacity: 0.0, depthWrite: false, fog: true });
+        var rm = new THREE.PointsMaterial({ map: A.rain, color: 0xdce8f4, size: 0.34, sizeAttenuation: true, transparent: true, opacity: 0.0, depthWrite: false, fog: true });
         var rainPts = new THREE.Points(rg, rm); rainPts.frustumCulled = false; rainPts.visible = false; rainPts.renderOrder = 7; rainPts.name = 'rain';
         s.add(rainPts); Wx._rain = rainPts; Wx._rainUnit = pos.slice(0);
         // puddles: flat discs on the road with a mirror-like material (the environment map and the lights reflect in them)
@@ -653,7 +655,7 @@
           if (rainOn) {
             var n = Math.min(MAX_RAIN, Q.rainCount | 0), used = Math.max(1, Math.floor(n * (0.3 + 0.7 * Wx.rain)));
             Wx._rain.geometry.setDrawRange(0, used);
-            Wx._rain.material.opacity = 0.42 * U.clamp(Wx.rain * 1.5, 0, 1);
+            Wx._rain.material.opacity = 0.3 * U.clamp(Wx.rain * 1.5, 0, 1);
             var pos = Wx._rain.geometry.attributes.position, arr = pos.array, box = WC.rainBox;
             var cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
             Wx._t += dt;
@@ -671,7 +673,7 @@
       },
       _placePuddles: function (cam) {
         var Wx = Render.weather, W = Render._World, Q = C.QUALITY, im = Wx._puddles;
-        var fx = Render.rig.focus, px = fx.x, pz = fx.z;
+        var fx = Render.focusPoint(), px = fx.x, pz = fx.z;
         var seed = Math.round(px / 24) + ',' + Math.round(pz / 24) + ',' + (Q.puddles | 0);
         if (seed === Wx._pudSeed || !W.tiles) return;
         Wx._pudSeed = seed;
@@ -703,10 +705,10 @@
       MAX: 9000, mesh: null, _seed: null,
       init: function () {
         var G = Render.grass, R = GTP.makeRng(0x6A55), pos = [], nor = [], col = [], idx = [], n = 0;
-        for (var b = 0; b < 12; b++) {
-          var a = R.random() * Math.PI * 2, r = Math.sqrt(R.random()) * 0.45, x = Math.cos(a) * r, z = Math.sin(a) * r, h = 0.22 + R.random() * 0.34, w = 0.035 + R.random() * 0.03;
+        for (var b = 0; b < 18; b++) {
+          var a = R.random() * Math.PI * 2, r = Math.sqrt(R.random()) * 0.5, x = Math.cos(a) * r, z = Math.sin(a) * r, h = 0.14 + R.random() * 0.28, w = 0.022 + R.random() * 0.018;
           var ya = R.random() * Math.PI * 2, ux = Math.cos(ya) * w, uz = Math.sin(ya) * w, lean = (R.random() - 0.5) * 0.18, lx = Math.cos(a) * lean, lz = Math.sin(a) * lean;
-          var base = [0.16, 0.3, 0.1], tip = [0.42 + R.random() * 0.12, 0.6 + R.random() * 0.1, 0.22];
+          var base = [0.05, 0.14, 0.03], tip = [0.15 + R.random() * 0.06, 0.29 + R.random() * 0.07, 0.06];
           pos.push(x - ux, 0, z - uz, x + ux, 0, z + uz, x + lx + ux * 0.2, h, z + lz + uz * 0.2, x + lx - ux * 0.2, h, z + lz - uz * 0.2);
           for (var k = 0; k < 4; k++) nor.push(lx * 2, 1, lz * 2);
           col.push(base[0], base[1], base[2], base[0], base[1], base[2], tip[0], tip[1], tip[2], tip[0], tip[1], tip[2]);
@@ -722,6 +724,9 @@
           sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uGtpTime, uGtpWind;')
             .replace('#include <begin_vertex>', '#include <begin_vertex>\nvec3 gIp = vec3( instanceMatrix[3][0], 0.0, instanceMatrix[3][2] );\nfloat gB = transformed.y * transformed.y * 2.2 * uGtpWind;\ntransformed.x += sin( uGtpTime * 2.1 + gIp.x * 0.45 + gIp.z * 0.2 ) * gB * 0.35;\ntransformed.z += cos( uGtpTime * 1.7 + gIp.z * 0.5 ) * gB * 0.25;');
         };
+        // both faces of a blade light like its front (a flipped back-face normal would turn half the meadow black)
+        var nb = m.onBeforeCompile;
+        m.onBeforeCompile = function (sh) { nb(sh); sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', 'float faceDirection = gl_FrontFacing ? 1.0 : - 1.0;\nvec3 normal = normalize( vNormal );\nvec3 geometryNormal = normal;'); };
         m.customProgramCacheKey = function () { return 'gtp-grass'; };
         var im = new THREE.InstancedMesh(geo, m, G.MAX);
         im.count = 0; im.frustumCulled = false; im.castShadow = false; im.receiveShadow = true; im.name = 'grass'; im.visible = false;
@@ -733,7 +738,7 @@
         if (!G.mesh) return;
         G.mesh.visible = per > 0 && !!W.tiles;
         if (!G.mesh.visible) return;
-        var fx = Render.rig.focus, key = Math.round(fx.x / 6) + ',' + Math.round(fx.z / 6) + ',' + per + ',' + W._seed;
+        var fx = Render.focusPoint(), key = Math.round(fx.x / 6) + ',' + Math.round(fx.z / 6) + ',' + per + ',' + W._seed;
         if (key === G._seed) return;
         G._seed = key;
         var T = W.T, rad = Q.grassRadius || 40, tr = Math.ceil(rad / TILE), ctx = Math.floor(fx.x / TILE), ctz = Math.floor(fx.z / TILE), n = 0, im = G.mesh;
@@ -755,11 +760,32 @@
       }
     },
 
+    // where the world-following systems centre (the shadow box, light pools, grass, puddles, the district light): the
+    // rig's focus, or with the free camera (cutscenes, tests) a point 10 m ahead of it on the ground
+    _fp: { x: 0, y: 0, z: 0 },
+    focusPoint: function () {
+      if (!Render.free) return Render.rig.focus;
+      var cam = Render.camera, f = Render._fp; cam.getWorldDirection(_v2);
+      var l = Math.sqrt(_v2.x * _v2.x + _v2.z * _v2.z) || 1;
+      f.x = cam.position.x + _v2.x / l * 10; f.z = cam.position.z + _v2.z / l * 10; f.y = cam.position.y;
+      return f;
+    },
+    // what the post pass needs from the game: depth of field while a cutscene runs (focused on what its camera looks
+    // at), motion blur by the speed of the player's vehicle
+    dofActive: false, dofFocus: 0, dofAperture: 1.6, motionBlur: 0,
+    _postInputs: function (cam) {
+      var CS = GTP.Cutscenes, p = GTP.game && GTP.game.player;
+      Render.dofActive = !!(CS && CS.active);
+      var look = Render.dofActive && CS.current && CS.current.look;
+      Render.dofFocus = look ? Math.sqrt(Math.pow(look.x - cam.position.x, 2) + Math.pow(look.y - cam.position.y, 2) + Math.pow(look.z - cam.position.z, 2)) : 0;
+      var v = p && (p.inVehicle || p.vehicle), sp = v ? Math.sqrt((v.vx || 0) * (v.vx || 0) + (v.vz || 0) * (v.vz || 0)) : 0;
+      Render.motionBlur = Render.free ? 0 : U.clamp((sp - 16) / 26, 0, 1) * 0.7;
+    },
     // the district light: the hemisphere and the night fill lean toward C.DISTRICT_LIGHT of the district under the focus
     _dTint: null,
     _applyDistrictTint: function (dt) {
       var L = Render.lights, W = Render._World, DL = C.DISTRICT_LIGHT; if (!L || !L._skyBase || !DL) return;
-      var fx = Render.rig.focus, d = W.districtAt ? W.districtAt(fx.x, fx.z) : null, want = (d && DL[d.id]) || null;
+      var fx = Render.focusPoint(), d = W.districtAt ? W.districtAt(fx.x, fx.z) : null, want = (d && DL[d.id]) || null;
       var T = Render._dTint || (Render._dTint = { sky: [1, 1, 1], ground: [1, 1, 1], night: [1, 1, 1] });
       var k = dt > 0 ? 1 - Math.exp(-1.4 * dt) : 1;
       ['sky', 'ground', 'night'].forEach(function (key) { for (var i = 0; i < 3; i++) T[key][i] += ((want ? want[key][i] : 1) - T[key][i]) * k; });
@@ -777,7 +803,7 @@
         if (!L._lamps || L._lamps.world !== W._seed) { L._lamps = { world: W._seed, list: (W.props || []).filter(function (p) { return p.kind === 'lamp'; }) }; L._lampT = 0; }
         if (L._lampT <= 0 || !L._near) {
           L._lampT = 0.3;
-          var fx = Render.rig.focus, list = L._lamps.list, near = [];
+          var fx = Render.focusPoint(), list = L._lamps.list, near = [];
           for (i = 0; i < list.length; i++) {
             var p = list[i]; if (p.fallen) continue;
             var dx = p.x - fx.x, dz = p.z - fx.z, d2 = dx * dx + dz * dz;
@@ -800,7 +826,7 @@
         }
       }
       if (nS > 0 && GTP.Entities) {
-        var cars = GTP.Entities.list, cand = [], night = Render.night || 0, fx2 = Render.rig.focus;
+        var cars = GTP.Entities.list, cand = [], night = Render.night || 0, fx2 = Render.focusPoint();
         if (night > 0.25) for (i = 0; i < cars.length; i++) {
           var v = cars[i];
           if (v.kind !== 'vehicle' || v.removed || v.wreck || v.sinking || !(v.driver || v.lights) || v.hasPlayer()) continue;
@@ -843,7 +869,7 @@
       sk.stars.position.copy(sk.dome.position);
       sk.clouds.position.set(cam.position.x, cam.position.y + 240, cam.position.z);
       sk.cloudMat.uniforms.offset.value.set(t * 0.0022 * Render.weather.wind, t * 0.0009);
-      var fx = Render.rig.focus, Qf = C.QUALITY;
+      var fx = Render.focusPoint(), Qf = C.QUALITY;
       cam.getWorldDirection(_v2); var fl = Math.sqrt(_v2.x * _v2.x + _v2.z * _v2.z) || 1, fdx = _v2.x / fl, fdz = _v2.z / fl;
       if (Qf.shadows && (Qf.cascades | 0) >= 2) {
         var nh = (Qf.shadowNear || 44) / 2;
@@ -868,6 +894,7 @@
       if (Render._beaconM) Render._beaconM.opacity = (Math.floor(t * 2) % 2 === 0) ? 0.95 : 0.15;
       Render.fx.sync();
       Render._shadowFrame = true;   // the next scene render (the frame's own) draws the cascades
+      Render._postInputs(cam);
       if (GTP.PostFX && GTP.PostFX.render) GTP.PostFX.render(Render.renderer, Render.scene, cam);
       else Render.renderer.render(Render.scene, cam);
       // HUD overlay
