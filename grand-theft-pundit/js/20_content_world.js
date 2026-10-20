@@ -523,7 +523,8 @@
 
   // ------------------------------------------------- v0.3 prop meshes --
   // The props World places for the v0.3 places (05_assets belongs to the environment track, so the meshes live here and
-  // a wrapper on GTP.Assets.prop serves them; the environment track's own builder wins when it has one for the kind).
+  // a wrapper on GTP.Assets.prop serves them; the environment track's own builder wins when it has one for the kind: the
+  // wrapper asks 05 first and keeps 05's mesh unless it is the crate 05 falls back to for kinds it does not know).
   // Mesh-local like 05's: yaw 0 faces -z, ground at y 0, built with GTP.GeoBuilder vertex colours.
   function hex(h) { var n = parseInt(h.slice(1), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
   var WORLD_PROPS = {
@@ -573,10 +574,16 @@
     var baseProp = A.prop;
     A.prop = function (kind) {
       var fn = WORLD_PROPS[kind];
-      if (!fn || (A._props && A._props[kind])) return baseProp.apply(this, arguments);
+      if (!fn || (A._props && A._props[kind])) return baseProp.apply(this, arguments);   // cached: ours or 05's
+      // 05_assets builds an unknown kind as its crate: when its mesh for this kind is anything else, it has its own builder
+      // (the environment track's version wins); otherwise ours replaces the crate in the cache
+      var theirs = baseProp.apply(this, arguments), crate = baseProp.call(this, 'crate');
+      var tg = theirs && theirs.geometry, cg = crate && crate.geometry;
+      if (tg && cg && tg !== cg && tg.attributes.position.count !== cg.attributes.position.count) return theirs;
       var G = GTP.GeoBuilder, g = new G({ color: true });
       fn(g, G);
-      var rec = { geometry: g.build(), material: A.propMaterial(), castShadow: kind !== 'helipad' && kind !== 'teebox' };
+      var rec = { geometry: g.build(), material: A.propMaterial(), castShadow: kind !== 'helipad' && kind !== 'teebox', _world: true };
+      if (tg && tg !== cg && tg.dispose) tg.dispose();
       if (A._props) A._props[kind] = rec;
       return rec;
     };

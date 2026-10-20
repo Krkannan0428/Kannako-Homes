@@ -333,6 +333,14 @@ H.run('ai', async (t) => {
     GTP.Input.set('aim', false); g.advance(2.5);
     out.cower.after = civ.ai.mode; out.cower.afterCowering = !!civ.cowering;
     civ.destroy(); side.destroy();
+    // shots fired: a cowering civilian runs instead of freezing in the line of fire
+    const civ3 = g.debug.spawnPed(p.x + f.x * 9, p.z + f.z * 9, null, 'civ');
+    const keep3 = () => { GTP.Input.set('aim', true); GTP.Render.rig.yaw = U.dirToYaw(civ3.x - p.x, civ3.z - p.z); };
+    for (let i = 0; i < 12; i++) { keep3(); g.advance(1 / 12); }
+    out.cower.before = civ3.ai.mode;
+    AI.alarm(p.x, p.z, 26, p);
+    for (let i = 0; i < 12; i++) { keep3(); g.advance(1 / 12); }
+    out.cower.shot = civ3.ai.mode; GTP.Input.set('aim', false); civ3.destroy();
     // fists never frighten anyone
     p.weapon = 'fist'; const civ2 = g.debug.spawnPed(p.x + f.x * 6, p.z + f.z * 6, null, 'civ'); GTP.Input.set('aim', true); GTP.Render.rig.yaw = U.dirToYaw(civ2.x - p.x, civ2.z - p.z); g.advance(1);
     out.fistCower = civ2.ai.mode === 'cower'; GTP.Input.set('aim', false); civ2.destroy();
@@ -376,7 +384,8 @@ H.run('ai', async (t) => {
       const hit = [];
       const route = cps.slice(1).map((c) => ({ x: c.x, z: c.z, r: 12, direct: true }));
       D.take(rv, 'route', { role: 'civ', speedMul: 0.6, route, loop: false, track: false, onCheckpoint: (ci) => hit.push(ci) });
-      for (let i = 0; i < 60 && hit.length < 2; i++) g.advance(0.5);
+      // the pathing is under test, not the traffic: clear the ambient cars round the racer as it goes
+      for (let i = 0; i < 60 && hit.length < 2; i++) { E.list.forEach((e) => { if (!e.removed && e.kind === 'vehicle' && e !== rv && !e.persistent && Math.hypot(e.x - rv.x, e.z - rv.z) < 50) e.destroy(); }); g.advance(0.5); }
       out.race.hit = hit; out.race.at = [Math.round(rv.x), Math.round(rv.z)];
       D.release(rv); rv.destroy();
     }
@@ -393,6 +402,7 @@ H.run('ai', async (t) => {
   t.assert(v3.cower.mode === 'cower' && v3.cower.cowering && v3.cower.speed < 0.5 && v3.cower.side !== 'cower' && v3.cower.held === 'cower', 'a civilian in the line of an aimed gun cowers, one beside it does not: ' + JSON.stringify(v3.cower));
   t.assert(v3.cower.after === 'flee' && !v3.cower.afterCowering, 'the aim leaves: they run: ' + JSON.stringify(v3.cower));
   t.assert(!v3.fistCower, 'fists frighten no one');
+  t.assert(v3.cower.before === 'cower' && v3.cower.shot === 'flee', 'a shot breaks the cower into a run: ' + JSON.stringify(v3.cower));
   t.assert(v3.flank.n >= 2 && v3.flank.ev && v3.flank.sides === 2 && v3.flank.pts.every((q) => q.los), 'cops flank both sides with a line on the player: ' + JSON.stringify(v3.flank));
   t.assert(v3.flank.swung.filter((a) => a > 0.35).length >= 2 && v3.flank.offAfterExit, 'flankers swing round the cover: ' + JSON.stringify(v3.flank.swung));
   t.assert(v3.heli.shots >= 10 && v3.heli.hits >= 2, 'the helicopter gunner shoots and hits: ' + JSON.stringify(v3.heli));

@@ -1637,11 +1637,17 @@
       barber: { kind: 'barber', interior: 'barber', mode: 'foot', color: '#3fd2d2' },
       safehouse: { kind: 'safehouse', interior: 'safehouse', mode: 'foot', color: '#f4f4f4' }
     },
+    // the yaw a door faces: out of the building toward the street (the way a player faces stepping out), axis-snapped
+    _doorYaw: function (lmk, x, z) {
+      var b = lmk.building, cx = b ? b.cx : lmk.x, cz = b ? b.cz : lmk.z, dx = x - cx, dz = z - cz;
+      if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? HEADING_YAW.e : HEADING_YAW.w;
+      return dz > 0 ? HEADING_YAW.s : HEADING_YAW.n;
+    },
     _buildDoors: function () {
       World.landmarks.forEach(function (lmk) {
         var dk = World.DOOR_KINDS[lmk.kind]; if (!dk || !lmk.door) return;
         var def = lmk.def || {}, d = lmk.door;
-        World.doors.push({ id: lmk.id, landmark: lmk.id, kind: dk.kind, x: d.x, y: d.y, z: d.z, r: dk.mode === 'drive' ? 3.2 : 1.4, mode: dk.mode, interior: dk.interior,
+        World.doors.push({ id: lmk.id, landmark: lmk.id, kind: dk.kind, x: d.x, y: d.y, z: d.z, yaw: World._doorYaw(lmk, d.x, d.z), r: dk.mode === 'drive' ? 3.2 : 1.4, mode: dk.mode, interior: dk.interior,
           store: def.store || lmk.id, property: def.property || null, label: lmk.name, color: dk.color });
         if (lmk.kind === 'safehouse') {
           // the garage: another kerb tile 2-4 tiles from the door along the street (the door tile itself as a last resort)
@@ -1653,7 +1659,7 @@
           }
           g = g || { x: d.x, y: d.y, z: d.z, tx: d.tx, tz: d.tz };
           lmk.points.garage = g; lmk.garageDoor = g;
-          World.doors.push({ id: lmk.id + ':garage', landmark: lmk.id, kind: 'garage', x: g.x, y: g.y, z: g.z, r: 3.2, mode: 'drive', interior: null, store: def.store || lmk.id, property: def.property || lmk.id, label: lmk.name + ' garage', color: '#f4f4f4' });
+          World.doors.push({ id: lmk.id + ':garage', landmark: lmk.id, kind: 'garage', x: g.x, y: g.y, z: g.z, yaw: World._doorYaw(lmk, g.x, g.z), r: 3.2, mode: 'drive', interior: null, store: def.store || lmk.id, property: def.property || lmk.id, label: lmk.name + ' garage', color: '#f4f4f4', foot: lmk.id });
         }
       });
     },

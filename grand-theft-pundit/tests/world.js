@@ -311,6 +311,8 @@ H.run('world', async (t) => {
       if (W.solidAt(d.x, d.z, 0.5)) out.doorBad.push(d.id + ': solid');
     });
     out.doorKinds = {}; W.doors.forEach((d) => { out.doorKinds[d.kind] = (out.doorKinds[d.kind] || 0) + 1; });
+    // each door faces out of its building (the way the player faces stepping out of an interior)
+    out.doorYawBad = W.doors.filter((d) => { const l = W.landmark(d.landmark), b = l.building, f = U.yawToDir(d.yaw); if (!b || typeof d.yaw !== 'number') return typeof d.yaw !== 'number'; const c = { x: b.x + b.w / 2, z: b.z + b.d / 2 }; return Math.hypot(d.x + f.x * 2 - c.x, d.z + f.z * 2 - c.z) <= Math.hypot(d.x - c.x, d.z - c.z); }).map((d) => d.id);
     out.shopDoors = ['both_sides_strip', 'both_sides_port', 'both_sides_uptown', 'spin_doctor_strip', 'spin_doctor_port', 'lanyard_downtown', 'lanyard_uptown', 'clip_joint', 'safe_brownstone', 'safe_marina_loft', 'safe_suburb', 'safe_penthouse'].filter((id) => !W.doors.some((d) => d.id === id));
     // a new place never sits on a landmark of v0.2, and claims a building of its own
     const owners = {}; W.buildings.forEach((b) => { if (b.landmark) owners[b.landmark] = (owners[b.landmark] || 0) + 1; });
@@ -361,6 +363,7 @@ H.run('world', async (t) => {
   t.assert(v3.places.find((pl) => pl.id === 'safe_penthouse').h >= 50, 'the penthouse tops a tower: ' + JSON.stringify(v3.places.find((pl) => pl.id === 'safe_penthouse')));
   t.assert(v3.multiOwned.length === 0, 'one building per landmark: ' + v3.multiOwned.join(','));
   t.assert(v3.doorBad.length === 0, 'every door marker on a kerb by a reachable road: ' + v3.doorBad.join('; '));
+  t.assert(v3.doorYawBad.length === 0, 'doors face the street: ' + v3.doorYawBad.join(', '));
   t.assert(v3.shopDoors.length === 0, 'shop and safehouse door markers: missing ' + v3.shopDoors.join(','));
   t.assert(v3.doorKinds.armory === 3 && v3.doorKinds.modshop === 2 && v3.doorKinds.clothing === 2 && v3.doorKinds.barber === 1 && v3.doorKinds.safehouse === 4 && v3.doorKinds.garage === 4, 'door kinds: ' + JSON.stringify(v3.doorKinds));
   t.assert(v3.pads.length === 5 && v3.padIds.indexOf('heli_airport') >= 0 && v3.padIds.indexOf('heli_tower') >= 0 && v3.pads.every((h) => h.flat && h.solid.length === 0 && h.park === 0 && h.prop), 'ground-level helipads, clear: ' + JSON.stringify(v3.pads));

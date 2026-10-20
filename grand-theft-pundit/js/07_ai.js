@@ -515,7 +515,7 @@
       for (var i = 0; i < n && cnt.cars + made < C.CARS_TARGET; i++) {
         var s = spawner.carSpot(min, max); if (!s) continue;
         var type = R().pick(tbl[s.district] || ['sedan', 'taxi', 'van']);
-        if (s.deck && (type === 'bus' || type === 'bike')) type = 'sedan';
+        if (s.deck && (type === 'bus' || type === 'bike' || type === 'moto')) type = 'sedan';   // no scooters or motorbikes on the Loop
         if (type === 'bus' && !(W().metaAt(s.tx, s.tz) & M.AVENUE)) type = R().pick(['sedan', 'van', 'taxi']);   // buses keep to the avenues
         if (type === 'cop' && wanted.level > 0) type = 'sedan';   // responders come from the precinct while the player is hot
         type = spawner.vehicleType(type);
@@ -605,7 +605,7 @@
         if (hoaN < K.hoaPatrols) {
           var s = spawner.carSpot(spawner.warm ? 20 : 50, 170);
           // tagged 'hoapatrol', not 'hoa': the HOA Patrol strand's parked SUV owns that tag (QA-STR-11)
-          if (s && s.district === 'suburbs' && !s.deck) spawner.placeTraffic(s, 'suv', { hoa: true, color: '#f4ead8', tag: 'hoapatrol', kind: 'hoa' });
+          if (s && s.district === 'suburbs' && !s.deck) { var hv = spawner.placeTraffic(s, 'suv', { hoa: true, color: '#f4ead8', tag: 'hoapatrol', kind: 'hoa' }); hv.hoaPatrol = true; }
         }
       }
       // Perpetual Assembly Plaza: marchers mill about the kiosk (they come back after a despawn)
@@ -847,10 +847,15 @@
     return lat < K.cower.width + along * 0.04;
   }
   var COWER_LINES = ['Don\'t shoot! I\'m just here for the discourse!', 'I yield my time!', 'Okay, okay, you win the debate!', 'I\'m unsubscribing, I\'m unsubscribing!', 'Please, I have a podcast!'];
+  // shots fired (or a blast) near the ped in the last moment: a cowering ped runs instead of freezing in the line of fire
+  function gunfireNear(p) {
+    for (var i = 0; i < alarms.length; i++) { var a = alarms[i]; if (!a.mild && a.src !== p && U.dist2d(a.x, a.z, p.x, p.z) < a.r) return a; }
+    return null;
+  }
   function cowerCheck(p, ai) {
     if (ai.mode === 'cower') return;
     if (ai.mode === 'flee' && ai.fleeT > 3) return;
-    if (!aimedAt(p)) return;
+    if (!aimedAt(p) || gunfireNear(p)) return;
     var pl = player(); if (!losClear(pl.x, pl.y + 1.4, pl.z, p.x, p.y + 1.2, p.z)) return;
     ai.mode = 'cower'; ai.cowerT = K.cower.hold; ai.chat = null; ai.tgt = null; ai.escape = null;
     p.stop(); p.cowering = true;
@@ -862,7 +867,8 @@
     p.stop(); p.cowering = true;
     if (pl) p.yaw = U.angleDamp(p.yaw, U.dirToYaw(pl.x - p.x, pl.z - p.z), 6, dt);
     if (aimedAt(p)) ai.cowerT = K.cower.hold; else ai.cowerT -= dt;
-    if (ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
+    var shot = gunfireNear(p);
+    if (shot || ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, shot || pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
   }
 
   function pedTick(p, dt) {
@@ -1312,7 +1318,8 @@
     var CB = GTP.Combat;
     if (CB && CB.fire && CB.WEAPONS && CB.WEAPONS[p.weapon]) {
       var pl = player(); p.aiming = true; p.aimYaw = U.dirToYaw(pl.x - p.x, pl.z - p.z);
-      if (R().random() < copMissBonus()) p.aimYaw += R().sign() * R().range(0.16, 0.3);   // subscriber tier 4: cops miss 15% more (QA-STR-15)
+      var mb = copMissBonus();
+      if (mb > 0 && R().random() < mb) p.aimYaw += R().sign() * R().range(0.16, 0.3);   // subscriber tier 4: cops miss 15% more (QA-STR-15); no draw below it
       try { CB.fire(p, p.weapon); } catch (e) { U.reportError(e, 'cop.fire'); }
     }
   }
@@ -1879,7 +1886,7 @@
   // not own (GTP.Systems.owns(id) === false) emits property:open {id}. Driving into a mod shop emits modshop:open {vehicle,
   // shop}; into a safehouse garage, garage:enter {id, vehicle} and GTP.Vehicles.store(id, vehicle) when that exists.
   // A door fires once, then waits until the player has stepped away (and after interior:exit the door they came out of).
-  var doors = { t: 0, meshes: {}, latch: null, seed: null, last: null, log: [] };
+  var doors = { t: 0, meshes: {}, latched: {}, seed: null, last: null, log: [], wasInside: false };
   function systemsOwns(id) {
     var S = GTP.Systems; if (!S || !id) return null;
     try {
@@ -1893,9 +1900,18 @@
     if (d.mode === 'drive') { var v = pl.inVehicle; return !!v && v.driver === pl && Math.abs(v.speed) < 7 && Math.abs(pl.y - d.y) < 3; }
     return !pl.inVehicle && Math.abs(pl.y - d.y) < 2;
   }
+  // a mission or a strand (a race, a rampage, a cab shift) runs: only the armory door stays open (m01c walks the player in)
+  function storyBusy() {
+    var Ms = GTP.Missions, St = GTP.Strands;
+    if (Ms && Ms.state && Ms.state.active) return true;
+    try { if (St && St.debug && St.debug.cur && St.debug.cur()) return true; if (St && St.races && St.races.cur) return true; } catch (e) { /* optional */ }
+    return false;
+  }
   function doorTrigger(d, pl) {
     var Ev = GTP.Events, I = GTP.Interiors, v = pl.inVehicle, rec = { id: d.id, kind: d.kind, t: simT() };
-    doors.latch = d.id; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
+    doors.latched[d.id] = true; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
+    if (d.foot) doors.latched[d.foot] = true;   // a garage sharing the kerb with its front door: stepping out of the car does not walk in
+    if (d.kind !== 'armory' && storyBusy()) { rec.result = 'busy'; return; }
     if (wanted.level > 0 && d.kind !== 'armory') { toast('Lose the heat first.'); rec.result = 'wanted'; return; }
     Ev.emit('door:enter', { door: d, landmark: d.landmark, kind: d.kind, vehicle: v || null });
     var owned = d.property ? systemsOwns(d.property) : null;
@@ -1921,13 +1937,13 @@
   }
   function doorsTick(dt) {
     var Wd = W(), pl = player(), g = GTP.game, list = Wd.doors || [];
-    if (doors.seed !== Wd._seed) { doorsClear(); doors.seed = Wd._seed; doors.latch = null; }
+    if (doors.seed !== Wd._seed) { doorsClear(); doors.seed = Wd._seed; doors.latched = {}; }
     doors.t -= dt; if (doors.t > 0) return;
     doors.t = K.doorTick;
     var hide = !pl || inInterior() || (g && g.state === 'cutscene');
     // back out of an interior: the door the player stands at stays quiet until they step away from it
     if (inInterior()) doors.wasInside = true;
-    else if (doors.wasInside && pl) { doors.wasInside = false; var bd = 6; doors.latch = null; for (var j = 0; j < list.length; j++) { var dj = U.dist2d(pl.x, pl.z, list[j].x, list[j].z); if (dj < bd) { bd = dj; doors.latch = list[j].id; } } }
+    else if (doors.wasInside && pl) { doors.wasInside = false; for (var j = 0; j < list.length; j++) if (U.dist2d(pl.x, pl.z, list[j].x, list[j].z) < 6) doors.latched[list[j].id] = true; }
     var Rd = GTP.Render, pulse = 0.5 + 0.5 * Math.sin(simT() * 3);
     for (var i = 0; i < list.length; i++) {
       var d = list[i], dist = pl ? U.dist2d(pl.x, pl.z, d.x, d.z) : 1e9, m = doors.meshes[d.id];
@@ -1935,10 +1951,10 @@
         if (!m && Rd && Rd.markerMesh && Rd.addMarker) {
           try { m = Rd.markerMesh(new THREE.Color(d.color).getHex(), { radius: d.mode === 'drive' ? 2.4 : 0.9, height: d.mode === 'drive' ? 2.2 : 2.6 }); m.position.set(d.x, d.y + 0.02, d.z); m.name = 'door:' + d.id; Rd.addMarker(m); doors.meshes[d.id] = m; } catch (e) { m = null; }
         }
-        if (m) { m.visible = doors.latch !== d.id; if (m.userData.pulse) m.userData.pulse(pulse); }
+        if (m) { m.visible = !doors.latched[d.id]; if (m.userData.pulse) m.userData.pulse(pulse); }
       } else if (m && (hide || dist > K.doorShow + 30)) { if (hide) m.visible = false; else { Rd.removeMarker(m); delete doors.meshes[d.id]; } }
       if (hide || !pl.alive || !g || g.state !== 'playing') continue;
-      if (doors.latch === d.id) { if (dist > d.r + 1.5) doors.latch = null; continue; }
+      if (doors.latched[d.id]) { if (dist > d.r + 1.5) delete doors.latched[d.id]; continue; }
       if (dist <= d.r && doorReady(d, pl)) doorTrigger(d, pl);
     }
   }
@@ -2206,13 +2222,14 @@
   function eventsTick(dt) {
     var c = events.cur, pl = player();
     if (c) {
-      if (inInterior()) return;
+      var gs = GTP.game && GTP.game.state;
+      if (inInterior() || gs !== 'playing' || (GTP.Cutscenes && GTP.Cutscenes.active)) return;   // the clock stops in a cutscene, a card, a menu
       c.t += dt;
       var res = null;
       try { res = EV[c.id].tick(c, dt, pl); } catch (e) { U.reportError(e, 'ai.event.' + c.id); res = { ok: false, reason: 'error' }; }
       for (var i = 0; i < c.ents.length; i++) { var e = c.ents[i]; if (e && e.kind === 'ped' && e.ai && e.ai.mission === 'event' && !e.removed) syncBark(e); }
       if (!res && pl && !c.forced && U.dist2d(pl.x, pl.z, c.x, c.z) > EVK.leave) res = { ok: false, reason: 'left' };
-      if (!res && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active && !c.forced) res = { ok: false, reason: 'mission' };
+      if (!res && !c.forced && storyBusy()) res = { ok: false, reason: 'story' };   // a mission or a strand took over
       if (res) eventEnd(res.ok, res.reason, res);
       return;
     }
@@ -2311,7 +2328,7 @@
       list: function () { return (W().doors || []).slice(); },
       markers: function () { return (W().doors || []).filter(function (d) { return d.kind !== 'garage'; }).map(function (d) { return { id: d.id, kind: 'door', icon: d.kind, x: d.x, z: d.z, y: d.y, color: d.color, label: d.label }; }); },
       last: function () { return doors.last; }, log: doors.log,
-      release: function () { doors.latch = null; },
+      release: function () { doors.latched = {}; },
       tick: function () { doors.t = 0; doorsTick(0); }
     },
     // v0.3 street events: list() the eight defs, start(id) / stop() force one, current(), eligible() -> null or why not,
@@ -2383,7 +2400,8 @@
       spawner.reset(); police.reset();
       if (events.cur) eventCleanup(events.cur, true);
       events.cur = null; events.t = 0; events.next = 0; events.lastId = null; events.ended.length = 0;
-      cover.active = false; doors.latch = null; doorsClear(); doors.seed = null;
+      cover.active = false; cover.t = -1e9; cover.assignT = -1e9; missCache.t = -1e9; missCache.v = 0;
+      doors.latched = {}; doors.wasInside = false; doors.last = null; doorsClear(); doors.seed = null;
       residents.slots.forEach(function (s) { s.ped = null; s.away = true; }); residents.seed = null; residents.t = 0;
     },
     // the landmark residents (the doorman, Merle at each gunshop): list() for tests, near(castOrRole, x, z, r) -> the live

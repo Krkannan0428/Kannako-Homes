@@ -99,7 +99,7 @@ H.run('events', async (t) => {
   const dr = await page.evaluate(() => {
     const AI = GTP.AI, W = GTP.World, g = GTP.game, p = g.player, E = GTP.Entities, out = {};
     const I0 = GTP.Interiors, S0 = GTP.Systems, calls = [], evs = [];
-    GTP.Interiors = { active: false, enter: function (id, o) { calls.push({ id: id, store: o.store, landmark: o.landmark, door: !!o.door }); } };
+    GTP.Interiors = { active: false, enter: function (id, o) { calls.push({ id: id, store: o.store, landmark: o.landmark, door: !!o.door, yaw: o.door && o.door.yaw }); } };
     GTP.Systems = Object.assign(Object.create(S0 || {}), { owns: (id) => id === 'safe_suburb' });
     ['property:open', 'modshop:open', 'door:enter'].forEach((n) => GTP.Events.on(n, (e) => evs.push([n, e.id || e.shop || e.kind, !!e.vehicle])));
     function to(x, z) { if (p.inVehicle) p.exitVehicle(); p.x = x; p.z = z; p.y = W.heightAt(x, z, 0); p.vx = p.vz = 0; p.snap(); }
@@ -117,6 +117,14 @@ H.run('events', async (t) => {
     out.unowned = evs.filter((e) => e[0] === 'property:open').map((e) => e[1]);
     const own = W.doors.find((d) => d.id === 'safe_suburb'); to(own.x + 8, own.z); g.advance(0.3); to(own.x, own.z); g.advance(0.5);
     out.owned = calls[calls.length - 1];
+    // a mission runs: the clothing door stays shut, the armory still lets the player in (m01c walks them there)
+    const Ms = GTP.Missions, savedActive = Ms.state.active; Ms.state.active = 'test_mission';
+    const nCalls = calls.length; to(clo.x + 8, clo.z); g.advance(0.3); to(clo.x, clo.z); g.advance(0.5);
+    out.clothingInMission = calls.length - nCalls;
+    to(arm.x + 8, arm.z); g.advance(0.3); to(arm.x, arm.z); g.advance(0.5);
+    out.armoryInMission = calls.length - nCalls;
+    Ms.state.active = savedActive;
+    out.doorYaw = calls.length ? calls[calls.length - 1] : null;
     const ms = W.doors.find((d) => d.kind === 'modshop'); to(ms.x + 9, ms.z);
     const v = new GTP.Vehicle({ x: ms.x + 9, z: ms.z, type: 'sedan' }); v.y = W.heightAt(v.x, v.z, 0); v.snap(); E.add(v); p.enterVehicle(v, 0); g.advance(1);
     v.x = ms.x; v.z = ms.z; v.vx = v.vz = 0; v.speed = 0; v.snap(); g.advance(0.5);
@@ -135,6 +143,7 @@ H.run('events', async (t) => {
   t.assert(dr.unowned.indexOf('safe_brownstone') >= 0, 'an unowned safehouse opens the property card: ' + JSON.stringify(dr.unowned));
   t.assert(dr.owned && dr.owned.id === 'safehouse' && dr.owned.landmark === 'safe_suburb', 'an owned safehouse goes in: ' + JSON.stringify(dr.owned));
   t.assert(dr.modshop.length === 1 && dr.modshop[0][2], 'driving into the mod shop: ' + JSON.stringify(dr.modshop));
+  t.assert(dr.clothingInMission === 0 && dr.armoryInMission === 1, 'during a mission only the armory door opens: ' + JSON.stringify([dr.clothingInMission, dr.armoryInMission]));
   t.assert(dr.errors.length === 0, 'no game errors: ' + dr.errors.join('; '));
 
   // ---- 4. interiors pause the city ----
