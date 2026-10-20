@@ -183,12 +183,15 @@ function installDriver() {
       const v = p.inVehicle, f = U.yawToDir(ramp.yaw), runs = [];
       const L = (ev) => { runs.push('launch ' + (+(ev.speed || 0).toFixed(1))); }, D = (ev) => { runs.push('land ' + ev.airT + 's ' + (ev.ok ? 'ok' : ev.reason) + (ev.inZone ? '' : ' out')); };
       GTP.Events.on('stunt:launch', L); GTP.Events.on('stunt:land', D);
+      // a player's run-up: stopped on the ramp's heading `back` metres out, throttle held to the wedge and through the landing
       let tries = 0;
-      const plans = [[30, 22], [35, 26], [40, 30], [28, 18], [45, 32], [25, 15]];
+      const plans = [45, 40, 50, 35, 55, 30];
+      GTP.game.debug.godMode(true);
       while (tries < plans.length && ST.def() === def) {
-        const pl = plans[tries++], back = pl[0], speed = pl[1];
+        const back = plans[tries++];
         if (v.wreck || v.sinking) break;
-        ST.tp(ramp.x - f.x * back, ramp.z - f.z * back, ramp.y); v.yaw = ramp.yaw; v.vx = f.x * speed; v.vz = f.z * speed; v.vy = 0; v.speed = speed; v.snap();
+        ST.tp(ramp.x - f.x * back, ramp.z - f.z * back, ramp.y); v.yaw = ramp.yaw; v.vx = v.vz = v.vy = 0; v.speed = 0; v.snap(); ST.adv(0.2);
+        v.x = ramp.x - f.x * back; v.z = ramp.z - f.z * back; v.yaw = ramp.yaw; v.vx = v.vz = 0; v.speed = 0; v.snap();
         ST.hold('forward', true);
         const n0 = runs.length;
         ST.until(() => ST.def() !== def || runs.slice(n0).some((r) => /^land/.test(r)), 10, 0.1);
@@ -197,6 +200,7 @@ function installDriver() {
         ST.adv(0.5);
       }
       GTP.Events.off('stunt:launch', L); GTP.Events.off('stunt:land', D);
+      GTP.game.debug.godMode(false);
       return ramp.id + ' after ' + tries + ' run(s): ' + runs.join(', ') + (v.wreck ? ' WRECKED' : '');
     },
     race() {
@@ -339,6 +343,20 @@ function installDriver() {
       }
       const st = G.state; ST.adv(0.2);
       return game + ' vs ' + st.opp.name + (st.opp.fallback ? ' (FALLBACK OPPONENT)' : '') + ': ' + (st.win ? 'won' : 'LOST') + ' ' + st.summary + ' (' + n + ' inputs)';
+    },
+    // the home marker from the road side: the player 9 m out from the door, the camera over the shoulder on the light and the giver
+    homeShot(id) {
+      const mk = M.markers().find((m) => m.id === id && m.kind === 'mission'); if (!mk) return null;
+      const p = ST.p(); if (p.inVehicle) { p.exitVehicle(); ST.adv(0.3); }
+      const lm = GTP.World.landmark(mk.landmark);
+      let ox = mk.x - lm.x, oz = mk.z - lm.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
+      let spot = null;
+      for (const d of [9, 7, 5]) for (const s of [0, 3, -3]) { const x = mk.x + ox * d - oz * s, z = mk.z + oz * d + ox * s; if (!spot && ST.walkable(x, z)) spot = { x, z }; }
+      spot = spot || { x: mk.x + ox * 6, z: mk.z + oz * 6 };
+      ST.tp(spot.x, spot.z); ST.adv(4.0);
+      ST.face(mk.x, mk.z); GTP.Render.rig.pitch = 0.12; GTP.Render.rig.snap(); ST.adv(0.3); ST.face(mk.x, mk.z); GTP.Render.updateCamera(0);
+      const giver = GTP.Entities.list.find((e) => e.kind === 'ped' && !e.removed && e.ai && e.ai.mission === 'giver' && e.ai.marker && e.ai.marker.id === id);
+      return { giver: giver ? giver.castId : null, at: spot };
     },
     // ---- a whole mission: walk into the light, the intro, the objectives through the real checks, the outro ----
     startByMarker(id) {
@@ -579,6 +597,9 @@ H.run('strangers', async (t) => {
       return { status: GTP.Strangers.status(s.id).state, marker: !!mk, atHome: mk ? +Math.hypot(mk.x - lm.door.x, mk.z - lm.door.z).toFixed(1) : null, flag: M.state.flags[GTP.Strangers.strand(s.id).unlock.flag] === true };
     }, st);
     if (!unlocked.marker || unlocked.atHome > 6 || unlocked.status !== 'available' || !unlocked.flag) problems.push(st.id + ': unlock ' + JSON.stringify(unlocked));
+    const hs = await page.evaluate((id) => ST.homeShot(id), st.missions[0]);
+    await t.shot(page, 'strangers_home_' + st.id);
+    if (!hs || hs.giver !== st.giver) problems.push(st.id + ': the home shot found no ' + st.giver + ' at the light: ' + JSON.stringify(hs));
     for (let k = 0; k < st.missions.length; k++) {
       const id = st.missions[k];
       let r = await page.evaluate((a) => ST.runMission(a.id, { shotAt: a.k === 0 ? 1 : null }), { id, k });
@@ -594,6 +615,7 @@ H.run('strangers', async (t) => {
       if (!r.start.ok || r.start.how === 'direct') problems.push(id + ': not started by walking into the marker (' + r.start.how + ')');
       if (!r.start.giverAt || r.start.giverAt.castId !== st.giver || r.start.giverAt.d > 6) problems.push(id + ': the giver ' + st.giver + ' did not stand at the marker: ' + JSON.stringify(r.start.giverAt));
       if (r.start.firstLine == null) problems.push(id + ': no intro line on start');
+      if (r.retries) problems.push(id + ': needed ' + r.retries + ' RETRY: ' + r.steps.filter((s) => /FAILED/.test(s)).join(' | '));
       if (r.ok && r.money < r.reward * 0.5) problems.push(id + ': reward not paid ($' + r.money + ' of $' + r.reward + ')');
       if (r.steps.some((s) => /STUCK|FALLBACK OPPONENT|LOST|threw|no driver|FAILED to|no target/.test(s))) problems.push(id + ': ' + r.steps.filter((s) => /STUCK|FALLBACK OPPONENT|LOST|threw|no driver|FAILED to|no target/.test(s)).join(' | '));
     }
@@ -601,14 +623,6 @@ H.run('strangers', async (t) => {
     console.log('  strand ' + st.id + ': ' + done.status.state + ' ' + done.status.done + '/' + done.status.total + ', epilogue "' + done.epilogue + '"');
     if (done.status.state !== 'done' || !done.epilogue || !done.flag || done.events !== 1) problems.push(st.id + ': not finished cleanly ' + JSON.stringify(done));
   }
-  // the first home marker, for the record: a fresh look at one strand home with its eccentric (screenshot)
-  await page.evaluate(() => {
-    const p = GTP.game.player; if (p.inVehicle) p.exitVehicle();
-    const lm = GTP.World.landmark('fish_shack'); GTP.game.debug.teleport(lm.door.x + 6, lm.door.z + 6); GTP.game.advance(0.5);
-    GTP.Render.rig.yaw = GTP.util.dirToYaw(lm.door.x - p.x, lm.door.z - p.z); GTP.Render.rig.pitch = 0.18; GTP.Render.rig.snap(); GTP.game.advance(0.3);
-  });
-  await t.shot(page, 'strangers_after');
-
   // ---- 4. replay, the phone list, the save, errors ----
   const after = await page.evaluate((onlyIds) => {
     const M = GTP.Missions, S = GTP.Content.strangers, g = GTP.game;

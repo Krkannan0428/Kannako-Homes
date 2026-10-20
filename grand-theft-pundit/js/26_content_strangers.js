@@ -398,14 +398,14 @@
 
     { id: 'st_gasp_2', title: 'Jump Scare', strand: 'reaction_face', giver: 'gasp', marker: 'strip_gas', requires: ['st_gasp_1'], reward: 1000, act: 1,
       intro: [
-        L('gasp', 'Air! Something with air under it. The Sponsor Span has a ramp over the toll gantry.'),
-        L('player', 'You want me to jump a car over a toll booth.'),
-        L('gasp', 'I want to watch you do it from here and feel something. NO WAY. ...Not yet. Go.')
+        L('gasp', 'Air! Something with air under it. The downtown promenade has a ramp. They call it the Lower Third Leap.'),
+        L('player', 'You want me to jump a car over a news ticker.'),
+        L('gasp', 'I want to watch the footage and feel something. Flat out from the end of the block. NO WAY. ...Not yet. Go.')
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'jumpcar', at: { landmark: 'strip_gas' }, color: '#ff7ac2' }, text: 'Get in the stunt car' },
-        { type: 'stunt', ramp: 'sj_06', vehicle: 'spawned:jumpcar', minAir: 1.0, minSpeed: 14, text: 'Jump the Sponsor Span toll gantry. Hit the ramp at the south end flat out' },
-        { type: 'escape_wanted', setWanted: 2, text: 'The toll booth rated your landing a two. Lose the cops' }
+        { type: 'stunt', ramp: 'sj_02', vehicle: 'spawned:jumpcar', minAir: 0.9, text: 'Take the Lower Third Leap on the downtown promenade. Flat out from the end of the block' },
+        { type: 'escape_wanted', setWanted: 2, text: 'The promenade rated your landing a two. Lose the cops' }
       ],
       outro: [
         L('gasp', 'I watched it twelve times. My eyebrow moved on the fourth.'),
@@ -738,14 +738,14 @@
 
     { id: 'st_standby_2', title: 'Final Boarding', strand: 'standby', giver: 'rutherford', marker: 'airport_terminal', requires: ['st_standby_1'], reward: 1700, act: 2,
       intro: [
-        L('rutherford', 'Airborne. Just once. Hangar Row has a ramp over the jet. The jet is a cutout. It still counts.'),
+        L('rutherford', 'Airborne. Just once. There\'s a ramp in the container yard. Over a row of MERCH. It still counts.'),
         L('player', 'In a taxi?'),
-        L('rutherford', 'A taxi with wings is a plane with a meter. Jump it, then take me to Gate Ferry. Final boarding. I can feel it. Now boarding!')
+        L('rutherford', 'A taxi with air under it is a plane with a meter. Jump it, then take me to Gate Ferry. Final boarding. I can feel it. Now boarding!')
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'taxi', tag: 'flighttaxi', at: { landmark: 'hangar_row' } }, text: 'Get in the taxi at Hangar Row' },
-        { type: 'stunt', ramp: 'sj_08', vehicle: 'spawned:flighttaxi', minAir: 0.8, text: 'Take off over the cutout jet at Hangar Row. Airborne counts as a flight' },
-        { type: 'deliver_passenger', spawn: { ped: 'rutherford', at: { landmark: 'airport_terminal' }, line: 'Was I in the air? I was in the air. Stamp it.' }, to: { landmark: 'ferry_terminal' }, vehicle: 'spawned:flighttaxi', text: 'Pick up Rutherford at the terminal and take him to Gate Ferry at the Ferry to Elsewhere' }
+        { type: 'enter_vehicle', spawn: { type: 'taxi', tag: 'flighttaxi', at: { landmark: 'container_yard' } }, text: 'Get in the taxi at the container yard gate' },
+        { type: 'stunt', ramp: 'sj_09', vehicle: 'spawned:flighttaxi', minAir: 0.8, text: 'Take off over the containers. Flat out down the lane: airborne counts as a flight' },
+        { type: 'deliver_passenger', spawn: { ped: 'rutherford', at: { landmark: 'airport_terminal' }, line: 'Was I in the air? You were in the air. Stamp it anyway.' }, to: { landmark: 'ferry_terminal' }, vehicle: 'spawned:flighttaxi', text: 'Pick up Rutherford at the terminal and take him to Gate Ferry at the Ferry to Elsewhere' }
       ],
       outro: [
         L('rutherford', 'Boarded. The ferry hasn\'t left. Neither did the flight. I\'m consistent.'),
