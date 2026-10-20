@@ -1865,7 +1865,7 @@
   }
   function partsOf(e, m) {
     if (e._cparts && e._cparts.root === m) return e._cparts;
-    return (e._cparts = { root: m, armR: m.getObjectByName('armR'), armL: m.getObjectByName('armL'), torso: m.getObjectByName('torso'), handR: m.getObjectByName('handR'), handL: m.getObjectByName('handL') });
+    return (e._cparts = { root: m, armR: m.getObjectByName('armR'), armL: m.getObjectByName('armL'), torso: m.getObjectByName('torso'), handR: m.getObjectByName('handR'), handL: m.getObjectByName('handL'), legL: m.getObjectByName('legL'), legR: m.getObjectByName('legR') });
   }
   // place obj (a child of root) at a world transform: position P, basis X, Y, Z (arrays), world scale s
   function placeWorld(obj, root, gx, gy, gz, X, Y, Z, s) {
@@ -1929,6 +1929,16 @@
     if (!m.visible) { if (e._hands) e._hands.valid = false; return; }
     var heldId = ensureHeld(e);
     var parts = partsOf(e, m), anim = !!GTP.Anim;
+    // the fallback rig's crouch behind low cover (the models track animates pose.crouch itself): sink, knees forward, lean in
+    if (!anim && e.cover && !e.cover.high && !e._vault) {
+      var ck = 1 - (e.cover.peekK || 0);
+      if (ck > 0.01) {
+        m.position.y -= 0.42 * ck;
+        if (parts.legL) parts.legL.rotation.x = 1.25 * ck;
+        if (parts.legR) parts.legR.rotation.x = 1.05 * ck;
+        if (parts.torso) parts.torso.rotation.x = -0.28 * ck;
+      }
+    }
     m.updateMatrixWorld(true);
     var hands = e._hands || (e._hands = { valid: false, right: { x: 0, y: 0, z: 0 }, left: { x: 0, y: 0, z: 0 }, leftOn: false, raised: false });
     hands.valid = false; hands.leftOn = false;
@@ -2061,7 +2071,7 @@
   // ---------------------------------------------------------------- cover --
   // p.cover = {kind:'wall'|'prop'|'vehicle', ref, high, nx, nz (the cover's normal, toward the player), bx, bz (the spot against it),
   // side:'left'|'right', edge:null|'left'|'right' (at an end of the cover), peek, peekK (0..1 the lean out), blindT, t}
-  var COVER = { probe: 2.4, step: 0.15, hiH: 1.35, speed: 2.1, lowSpeed: 1.6, peekOut: 0.55, peekUp: 0.45, alertEvery: 4, runMax: 12 };
+  var COVER = { probe: 2.4, step: 0.15, hiH: 1.55, minR: 0.35, speed: 2.1, lowSpeed: 1.6, peekOut: 0.55, peekUp: 0.45, alertEvery: 4, runMax: 12 };
   var _cpt = { x: 0, z: 0, px: 0, pz: 0, nx: 0, nz: 0, kind: null, ref: null, h: 0 };
   // the first obstacle a 0.25 m probe meets walking from (x, z) along (dx, dz) up to maxD: buildings and solid props through
   // World.resolveCapsule (interiors wrap it, so room walls count), vehicles through their own push-out
@@ -2076,6 +2086,7 @@
         for (var i = 0; i < list.length; i++) { var v = list[i]; if (v.kind !== 'vehicle' || v.removed || v.sinking || Math.abs(v.y - y) > 2) continue; var pc = v.pushCircle(qx, qz, r); if (pc) { veh = v; vp = pc; break; } }
       }
       if (!pushed && !veh) continue;
+      if (!veh && res.prop && (res.prop.r || 0) < COVER.minR) return null;   // a lamp post, a hydrant, a bollard: in the way, but no cover
       out.kind = veh ? 'vehicle' : res.prop ? 'prop' : 'wall'; out.ref = veh || res.prop || null;
       var nx, nz;
       if (veh) { nx = vp.nx; nz = vp.nz; out.h = veh.cls.height; }
@@ -2227,7 +2238,7 @@
   function startVault(p) {
     var c = p.cover; if (!c || c.high) return false;
     var Wd = W();
-    for (var d = 0.7; d <= 2.8; d += 0.2) {
+    for (var d = 0.7; d <= 3.6; d += 0.15) {
       var x = c.bx - c.nx * d, z = c.bz - c.nz * d;
       var res = Wd.resolveCapsule(x, z, p.y + 0.4, p.radius);
       if (Math.abs(res.x - x) + Math.abs(res.z - z) > 0.02) continue;
