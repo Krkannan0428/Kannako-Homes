@@ -216,7 +216,7 @@
 
     {
       id: 'm07_listen', title: 'Listening Session',
-      giver: 'velvetine', marker: 'listening_room', requires: ['m06_rally'], reward: 1200,
+      giver: 'velvetine', marker: 'listening_room', requires: ['b01_goldplate'], reward: 1200,
       intro: [
         { who: 'velvetine', text: 'To the van! To the crates! To whatever this is!' },
         { who: 'player', text: 'What\'s in the crates?' },
@@ -245,7 +245,7 @@
 
     {
       id: 'm08_scooters', title: 'Defense Scooters',
-      giver: 'warbanner', marker: 'bravadia_embassy', requires: ['m07b_ferry'], reward: 1500,
+      giver: 'warbanner', marker: 'bravadia_embassy', requires: ['b02_velvetine'], reward: 1500,
       intro: [
         { who: 'warbanner', text: 'Mr. Takesworth. Bravadia welcomes you. Volume is policy, and that\'s why we need the jets.' },
         { who: 'player', text: 'I thought this was a tourism ad.' },
@@ -273,7 +273,7 @@
 
     {
       id: 'm09_balloon', title: 'Weather Balloon Repair',
-      giver: 'redacted', marker: 'ova_hq', requires: ['m08b_jets'], reward: 2000,
+      giver: 'redacted', marker: 'ova_hq', requires: ['b03_warbanner'], reward: 2000,
       intro: [
         { who: 'redacted', text: 'You\'re an asset now. Don\'t write that down. Meet the courier at the [REDACTED].' },
         { who: 'player', text: 'Which [REDACTED]?' },
@@ -297,7 +297,7 @@
 
     {
       id: 'm10_pellets', title: 'Your Doctor Won\'t Tell You',
-      giver: 'saffron', marker: 'clarity_barn', requires: ['m09b_hotmic'], reward: 1800,
+      giver: 'saffron', marker: 'clarity_barn', requires: ['b04_redacted'], reward: 1800,
       intro: [
         { who: 'saffron', text: 'Bryce. Your aura is loud. Clarity Pellets fix that, and your doctor won\'t tell you that.' },
         { who: 'player', text: 'What\'s in them?' },
@@ -378,7 +378,7 @@
 
     {
       id: 'm13_thursday', title: 'Everybody\'s Thursday',
-      giver: 'kip', marker: 'dorm_studio', requires: ['m12b_scope'], reward: 4000,
+      giver: 'kip', marker: 'dorm_studio', requires: ['h03_job'], reward: 4000,
       intro: [
         { who: 'kip', text: 'I wrote it. The scraper. During the unpaid week. Nobody else reads email, so I formatted the comments into a memo and everyone subscribed.' },
         { who: 'player', text: 'You\'ve been running the city.' },
@@ -404,7 +404,7 @@
 
     {
       id: 'm14_grift', title: 'Same Grift, Different Lanyard',
-      giver: 'sloane', marker: 'tyn_tower', requires: ['m13b_ratio'], reward: 3000,
+      giver: 'sloane', marker: 'tyn_tower', requires: ['b06_panel'], reward: 3000,
       intro: [
         { who: 'chyron', text: 'BREAKING. Panel. Five guests. One kid. Tonight. WE\'LL HAVE TO LEAVE IT THERE, but not yet.' },
         { who: 'goldplate', text: 'Mattress. Jets. Pellets. I rate it a ten.' },
