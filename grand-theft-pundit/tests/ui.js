@@ -123,7 +123,8 @@ H.run('ui', async (t) => {
     return out;
   });
   console.log('  nap ads: ' + JSON.stringify(nap));
-  t.assert(nap.length === 4 && nap.every(Boolean), 'the mattress ad runs at minute 20 on every station');
+  const nStations = await page.evaluate(() => GTP.Content.radio.stations.length);
+  t.assert(nap.length === nStations && nStations >= 4 && nap.every(Boolean), 'the mattress ad runs at minute 20 on every station (' + nStations + ')');
 
   // ---- 3. dialogue with a cast portrait ----
   const dlg = await page.evaluate(() => {

@@ -48,7 +48,7 @@
   var COL = {
     ink: '#eef1fb', muted: '#8f97b3', pink: '#ff3fa4', cyan: '#2ee6ff', amber: '#ffbe3c', lime: '#9dff3c', red: '#ff3b30', gold: '#e8b53a',
     blue: '#4a7cff', green: '#3fd27f', cream: '#f4ead8', white: '#ffffff',
-    panel: 'rgba(13,16,32,0.86)', panelSoft: 'rgba(13,16,32,0.62)', line: 'rgba(46,230,255,0.25)', dark: 'rgba(6,7,13,0.8)', outline: 'rgba(4,6,14,0.82)'
+    panel: 'rgba(13,16,32,0.86)', panelSoft: 'rgba(13,16,32,0.8)', line: 'rgba(46,230,255,0.25)', dark: 'rgba(6,7,13,0.8)', outline: 'rgba(4,6,14,0.82)'
   };
   var MINIMAP_PX = 220, LOGICAL_W = 1280, LOGICAL_H = 720;
   var SETTINGS_KEY = 'gtp.settings.v1';
@@ -96,6 +96,7 @@
     gamepadGlyphs: false,
     debugLine: '',
     sessionStarted: false,
+    mouseActive: false, lastMouse: { x: 0, y: 0, seen: false },
     // v0.3
     gps: null, gpsChipRect: null,     // {x, z, label, kind, route, dist, len, turn}
     call: null, callQueue: [], callLog: [], callRect: null,
@@ -136,6 +137,7 @@
     if (o.maxW) ctx.fillText(s, x, y, o.maxW); else ctx.fillText(s, x, y);
     if (a !== 1) ctx.globalAlpha = ga;
   }
+  function ellipsize(ctx, s, font, maxW) { s = String(s || ''); if (measure(ctx, s, font) <= maxW) return s; while (s.length > 1 && measure(ctx, s + '…', font) > maxW) s = s.slice(0, -1); return s.replace(/[\s,;·]+$/, '') + '…'; }
   function measure(ctx, s, font) { ctx.font = font; return ctx.measureText(String(s)).width; }
   function wrap(ctx, s, font, maxW) {
     ctx.font = font;
@@ -151,7 +153,15 @@
   function ease(t) { t = clamp01(t); return t * t * (3 - 2 * t); }
   function hexA(hex, a) { var c = U.hexToRgb(hex); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
   function hit(x, y, w, h, fn, id) { ui.hit.push({ x: x, y: y, w: w, h: h, fn: fn, id: id || null }); }
-  function hovering(x, y, w, h) { var m = GTP.Input && GTP.Input.mouse; return !!m && !ui.touch.visible && m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h; }
+  // hover selects only while the mouse is the active pointer (it moved since the last key / pad navigation): a resting
+  // cursor never steals the keyboard or pad selection (QA-B-FE-02)
+  function hovering(x, y, w, h) { var m = GTP.Input && GTP.Input.mouse; return !!m && ui.mouseActive && !ui.touch.visible && m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h; }
+  function trackPointer() {
+    var In = GTP.Input; if (!In || !In.mouse) return;
+    var m = In.mouse, lm = ui.lastMouse;
+    if (lm.x !== m.x || lm.y !== m.y) { if (lm.seen) ui.mouseActive = true; lm.x = m.x; lm.y = m.y; lm.seen = true; }
+    if (In.pressed('forward') || In.pressed('back') || In.pressed('left') || In.pressed('right') || In.pressed('confirm') || In.pressed('tabNext') || In.pressed('weaponNext') || In.pressed('weaponPrev') || In.lastDevice === 'gamepad') ui.mouseActive = false;
+  }
   function sfx(name, gain) { var p = player(); if (GTP.Audio && GTP.Audio.play) { try { GTP.Audio.play(name, { x: p ? p.x : 0, z: p ? p.z : 0, gain: gain == null ? 0.5 : gain }); } catch (e) { /* audio optional */ } } }
   function cast(id) { var Cc = GTP.Content && GTP.Content.cast; return Cc ? (Cc[id] || null) : null; }
   function castName(id) { var c = cast(id); return c ? c.name : String(id || ''); }
@@ -168,12 +178,15 @@
   }
   function stationColor(st) {
     var m = { wail_101: COL.red, pennant_fm: COL.gold, velvetine_888: '#b56bff', quiet_signal: '#9fb3c8' };
+    if (st && typeof st.color === 'string') return st.color;   // v0.3 stations carry their colour
+    if (st && typeof st.color === 'number') return '#' + ('000000' + st.color.toString(16)).slice(-6);
     return (st && m[st.id]) || COL.cyan;
   }
   function failText(kind, dflt) { var R = GTP.Content && GTP.Content.radio; return (R && R.failTexts && R.failTexts[kind]) || dflt; }
   var ROLE_LABEL = { civ: 'CIVILIAN', cop: 'COP', swat: 'BALLOON UNIT', thug: 'GOON', protester: 'MARCHER', hoa: 'HOA PATROL', npc: 'SOMEBODY', raccoon: 'RACCOON', courier: 'COURIER', doorman: 'DOORMAN', clerk: 'CLERK' };
   function roleLabel(role) { return ROLE_LABEL[role] || String(role || 'ped').toUpperCase(); }
   function fmtSubs(n) { n = n | 0; return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'K' : String(n); }
+  function nMissions(n) { n = n | 0; return n + (n === 1 ? ' mission' : ' missions'); }
   function fmtPlay(sec) { sec = Math.max(0, sec | 0); var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + ':' + (m < 10 ? '0' : '') + m; }
   function fmtDate(ms) { if (!ms) return ''; try { var d = new Date(ms); return d.toLocaleDateString() + ' ' + d.toTimeString().slice(0, 5); } catch (e) { return ''; } }
   function menuDown(In) { return In.pressed('back') && !In.pressed('cancel'); }
@@ -189,6 +202,8 @@
     if (lm.id === 'hospital') return acts >= 3 ? 'Goldplate Goldplate Memorial, formerly St. Somebody\'s' : (acts === 2 ? 'Goldplate Goldplate Memorial' : 'Goldplate Memorial');
     if (/^Goldplate/.test(base)) return acts >= 2 && !/^Goldplate Goldplate/.test(base) ? 'Goldplate ' + base : base;
     if (lm.kind === 'hospital' || lm.kind === 'police' || lm.kind === 'park' || lm.kind === 'dock') return base;
+    if (lm.district === 'uptown' || /heirloom/i.test(lm.id || '')) return base;   // old money refuses the name (QA-B-TXT-07)
+    base = base.replace(/^The /, '');
     return (acts >= 2 ? 'Goldplate Goldplate ' : 'Goldplate ') + base;
   }
   // Roz's sign: the thing the player did most recently (player.stats), else an idle cause.
@@ -227,7 +242,7 @@
   function minimapRect() {
     var size = Math.round(px(MINIMAP_PX) * (portrait ? 0.68 : 1));
     if (ui.touch.visible && portrait) return { x: safe.l, y: ui.objBottom + px(6), s: size, top: true, left: true };
-    if (ui.touch.visible) return { x: W - safe.r - size, y: ui.hudTop + px(140), s: size, top: true, left: false };
+    if (ui.touch.visible) return { x: W - safe.r - size, y: ui.hudTop + px(156), s: size, top: true, left: false };   // under the weapon panel (QA-B-HUD-09)
     return { x: W - safe.r - size, y: H - safe.b - size, s: size, top: false, left: false };
   }
   function letterboxBar() {
@@ -243,7 +258,7 @@
   var DRAW_DIST = { near: 160, normal: 260, far: 360 };
   var SETTING_ROWS = [
     { id: 'master', label: 'MASTER VOLUME', type: 'slider' },
-    { id: 'music', label: 'MUSIC', type: 'slider', note: 'the radio and the title theme' },
+    { id: 'music', label: 'MUSIC', type: 'slider', note: 'the radio stations' },
     { id: 'sfx', label: 'SFX', type: 'slider', note: 'everything else' },
     { id: 'quality', label: 'QUALITY', type: 'choice', values: ['low', 'medium', 'high', 'ultra', 'auto'], note: 'shadows, post-processing, light pools' },
     { id: 'drawDistance', label: 'DRAW DISTANCE', type: 'choice', values: ['near', 'normal', 'far'], note: '160 / 260 / 360 m' },
@@ -268,7 +283,8 @@
     } catch (e) { return false; }
   }
   function saveSettings() {
-    var s = ui.settings, out = { master: s.master, music: s.music, sfx: s.sfx, quality: s.quality, drawDistance: s.drawDistance, weather: s.weather, gamepad: s.gamepad, hints: s.hints, subtitles: s.subtitles };
+    // a one-off ?quality= / ?low= boot never overwrites the stored preset (QA-B-FE-14)
+    var s = ui.settings, out = { master: s.master, music: s.music, sfx: s.sfx, quality: ui.qualityFromUrl ? (ui.storedQuality || 'auto') : s.quality, drawDistance: ui.lowFromUrl ? (ui.storedDraw || s.drawDistance) : s.drawDistance, weather: s.weather, gamepad: s.gamepad, hints: s.hints, subtitles: s.subtitles };
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(out)); return true; } catch (e) { return false; }
   }
   // Volumes: GTP.Audio.setVolumes({master, music, sfx}) scales the master, radio and effects buses (Audio.volumes carries
@@ -296,7 +312,11 @@
         break;
       case 'drawDistance': {
         var d = DRAW_DIST[s.drawDistance] || 260;
+        if (!ui.baseDraw) ui.baseDraw = { dd: C.QUALITY.drawDistance || 260, ped: C.QUALITY.pedDraw, veh: C.QUALITY.vehicleDraw };
         C.QUALITY.drawDistance = d; C.QUALITY.fogStart = Math.round(d * 0.46);
+        // the entity draw ranges follow the fog, so the FAR setting does not make peds pop out in clear air (QA-A-CAM-08)
+        if (ui.baseDraw.ped) C.QUALITY.pedDraw = Math.round(ui.baseDraw.ped * d / ui.baseDraw.dd);
+        if (ui.baseDraw.veh) C.QUALITY.vehicleDraw = Math.round(ui.baseDraw.veh * d / ui.baseDraw.dd);
         if (Rd && Rd.scene && Rd.scene.fog) { Rd.scene.fog.far = d; Rd.scene.fog.near = C.QUALITY.fogStart; }
         break;
       }
@@ -308,7 +328,7 @@
       default: break;
     }
   }
-  function applyAllSettings(opts) { ['master', 'quality', 'drawDistance', 'weather', 'gamepad', 'hints'].forEach(function (k) { applySetting(k, opts); }); }
+  function applyAllSettings(opts) { ['master', 'quality', 'drawDistance', 'weather', 'gamepad', 'hints'].forEach(function (k) { if (k === 'drawDistance' && opts && opts.skipDraw) return; applySetting(k, opts); }); }
   function settingValueLabel(row) {
     var s = ui.settings, Rd = GTP.Render;
     switch (row.type) {
@@ -323,6 +343,8 @@
   }
   function settingStep(row, dir) {
     var s = ui.settings, v;
+    if (row.id === 'quality') ui.qualityFromUrl = false;
+    if (row.id === 'drawDistance') ui.lowFromUrl = false;
     switch (row.type) {
       case 'slider': s[row.id] = U.clamp((s[row.id] | 0) + dir * 10, 0, 100); break;
       case 'toggle': s[row.id] = !s[row.id]; break;
@@ -340,7 +362,10 @@
     touch: { forward: 'STICK', back: 'STICK', left: 'STICK', right: 'STICK', run: 'STICK (full)', jump: 'JUMP', action: 'ENTER', shoot: 'FIRE', aim: 'AIM', enter: 'ENTER', weaponNext: 'WPN', weaponPrev: 'WPN', horn: 'HORN', radio: 'RADIO', map: 'MAP', pause: 'PAUSE', confirm: 'TAP', cancel: 'BACK', cameraMode: 'CAM', lockOn: 'AIM', reload: 'RLD', wheel: 'WPN (hold)', zoomIn: 'PINCH', zoomOut: 'PINCH', secondary: 'TAP', tabNext: 'TAB', cover: 'COVER', special: 'SPCL', throttleUp: 'THR+', throttleDown: 'THR-', yawLeft: 'YAW L', yawRight: 'YAW R', pitchUp: 'STICK', pitchDown: 'STICK', rollLeft: 'STICK', rollRight: 'STICK' }
   };
   function device() { var In = GTP.Input; if (ui.touch.visible && (!In || In.lastDevice !== 'gamepad')) return 'touch'; return In && In.lastDevice === 'gamepad' && In.gamepadEnabled ? 'gamepad' : 'keyboard'; }
-  function glyph(action) { var d = device(); return (GLYPH[d] && GLYPH[d][action]) || (GLYPH.keyboard[action] || action.toUpperCase()); }
+  function glyph(action) {
+    var d = device(), p = player();
+    if (action === 'action' && p && p.inVehicle) { if (d === 'gamepad') return 'D-PAD ↑'; if (d === 'touch') return 'JOB'; }   // the in-car 'action' (QA-B-HUD-01)
+    return (GLYPH[d] && GLYPH[d][action]) || (GLYPH.keyboard[action] || action.toUpperCase()); }
   function keyPill(ctx, label, x, y, h, opts) {
     opts = opts || {};
     var font = F(opts.size || 10, 'bold'), w = measure(ctx, label, font) + px(12);
@@ -602,6 +627,11 @@
     }
     return out;
   }
+  // mission and objective blips on top of the home / strand icons that can share their spot (QA-B-NP-02)
+  function markersByLayer() {
+    var all = allMarkers(), rank = function (m) { return m.kind === 'objective' ? 3 : m.kind === 'mission' ? 2 : m.kind === 'stranger' ? 1 : 0; };
+    return all.map(function (m, i) { return { m: m, i: i }; }).sort(function (a, b) { return rank(a.m) - rank(b.m) || a.i - b.i; }).map(function (o) { return o.m; });
+  }
   function markerColor(mk) {
     if (mk.kind === 'objective') return COL.amber;
     if (mk.kind === 'mission') return '#4aa8ff';
@@ -631,8 +661,11 @@
     ui.map.routeT -= dt;
     if (ui.map.routeT > 0) return;
     ui.map.routeT = 2;
-    var path = null;
-    try { if (Wd && Wd.findPath) path = Wd.findPath(p.x, p.z, wp.x, wp.z, { mode: 'car', fromY: p.y, maxExpansions: 20000 }); } catch (e) { path = null; }
+    // a search only when the player moved 12 m or the waypoint changed; a failed search backs off 10 s / 30 m (QAC-25)
+    var key = wp.x + ',' + wp.z, rc = ui.map.routeCache;
+    if (rc && rc.key === key && U.dist2d(p.x, p.z, rc.x, rc.z) < (rc.failed ? 30 : 12) && (!rc.failed || ui.t - rc.t < 10) && ui.map.route) return;
+    var path = computeRoute(p.x, p.z, wp.x, wp.z, { fromY: p.y }), failed = !path || path.failed;
+    ui.map.routeCache = { key: key, x: p.x, z: p.z, t: ui.t, failed: failed };
     ui.map.route = path && path.length > 1 ? path : [{ x: p.x, z: p.z }, { x: wp.x, z: wp.z }];
   }
   function drawMarkerIcon(ctx, mk, x, y, s, lbl) {
@@ -676,7 +709,11 @@
       var lw = toLocal(wp.x, wp.z); ctx.lineTo(lw.x, lw.y); ctx.stroke(); ctx.restore();
     }
     drawGpsMinimap(ctx, toLocal, clampEdge);
-    var marks = allMarkers(), t = ui.t, i;
+    // the north badge sits under the rim arrows (a target due north keeps its arrow, QA-B-HUD-10)
+    var nx = cx + Math.sin(yaw) * (r - px(11)), ny = cy - Math.cos(yaw) * (r - px(11));
+    ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(nx, ny, px(7), 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0b1020'; ctx.font = F(9, 'bold'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('N', nx, ny + 0.5);
+    var marks = markersByLayer(), t = ui.t, i;
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i], l = toLocal(mk.x, mk.z), col = markerColor(mk);
       if (l.far) {
@@ -700,10 +737,6 @@
         ctx.fillStyle = (Math.floor(t * 4) % 2) ? '#4a7cff' : '#ff3b30'; ctx.beginPath(); ctx.arc(lb.x, lb.y, px(bl.kind === 'car' ? 4.5 : 3.2), 0, Math.PI * 2); ctx.fill();
       }
     }
-    // north tick
-    var nx = cx + Math.sin(yaw) * (r - px(11)), ny = cy - Math.cos(yaw) * (r - px(11));
-    ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(nx, ny, px(7), 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#0b1020'; ctx.font = F(9, 'bold'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('N', nx, ny + 0.5);
     // player arrow (fixed, pointing up)
     ctx.save(); ctx.translate(cx, cy);
     ctx.fillStyle = COL.ink; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 2;
@@ -783,7 +816,7 @@
     txt(ctx, str, rx, y, { font: F(26, 'bold'), color: COL.lime, align: 'right', lw: px(4) });
     if (m.deltaT > 0 && m.delta) {
       var a = Math.min(1, m.deltaT / 0.6), ds = (m.delta > 0 ? '+' : '') + U.fmtMoney(m.delta);
-      txt(ctx, ds, rx - px(96), y, { font: F(13, 'bold'), color: m.delta > 0 ? COL.amber : COL.red, align: 'right', alpha: a });
+      txt(ctx, ds, rx - measure(ctx, str, F(26, 'bold')) - px(10), y, { font: F(13, 'bold'), color: m.delta > 0 ? COL.amber : COL.red, align: 'right', alpha: a });
     }
     // SUBS 12.4K under the money, the gains floating up
     var s = ui.subs, X = expansion(), label = (X.subscriberSources && X.subscriberSources.hudLabel) || 'SUBS';
@@ -839,7 +872,7 @@
       ctx.fillStyle = 'rgba(255,255,255,0.12)'; rr(ctx, x + px(48), y + px(30), px(60), px(5), px(2)); ctx.fill();
       ctx.fillStyle = COL.amber; rr(ctx, x + px(48), y + px(30), px(60) * clamp01(w.reloading.k), px(5), px(2)); ctx.fill();
       txt(ctx, 'RELOADING', x + px(48), y + px(26), { font: F(8, 'bold'), color: COL.amber, outline: false });
-    } else if (ui.wanted.last === 0 && w.id === 'fist') txt(ctx, glyph('wheel') + ' wheel · [ ] cycle', x + px(48), y + px(36), { font: F(9), color: 'rgba(143,151,179,0.8)', outline: false, maxW: bw - px(56) });
+    } else if (ui.wanted.last === 0 && w.id === 'fist') txt(ctx, glyph('wheel') + ' wheel' + (device() === 'touch' ? '' : ' · ' + glyph('weaponPrev') + ' ' + glyph('weaponNext') + ' cycle'), x + px(48), y + px(36), { font: F(9, 'bold'), color: '#b8bfd6', outline: false, maxW: bw - px(62) - measure(ctx, '∞', F(22, 'bold')) });
     else if (!w.infinite && w.magSize && w.mag === 0 && w.reserve > 0) txt(ctx, glyph('reload') + ' reload', x + px(48), y + px(36), { font: F(9, 'bold'), color: COL.red, outline: false });
   }
   function drawClock(ctx, rx, y) {
@@ -858,7 +891,7 @@
     var maxW = Math.min(px(620), W - safe.l - safe.r - (portrait ? 0 : px(20)));
     var objFont = F(15, 'bold', FONT_TEXT);
     var lines = wrap(ctx, text, objFont, maxW - px(28));
-    var hasTimer = !!timer, hasProg = !!(prog && prog.total);
+    var hasTimer = !!timer, hasProg = !!(prog && prog.total) && !(prog.n != null && String(text).indexOf(prog.n + '/' + prog.total) >= 0);   // no second count (QA-B-NP-05)
     // the timer row keeps clear of the hint line, and of the progress count at the top right when a single line has no hint
     var timerGap = hasTimer ? (hint ? px(8) : (hasProg && lines.length < 2 ? px(10) : 0)) : 0;
     var ph = px(14) + lines.length * px(19) + (hasTimer ? px(24) + timerGap : 0) + (hint ? px(16) : 0) + (title ? px(14) : 0);
@@ -886,7 +919,8 @@
       ctx.fillStyle = 'rgba(255,255,255,0.12)'; rr(ctx, x + px(16), by, bw, px(6), px(3)); ctx.fill();
       ctx.fillStyle = urgent ? (Math.floor(ui.t * 6) % 2 ? COL.red : '#ff8a80') : COL.cyan; rr(ctx, x + px(16), by, bw * k, px(6), px(3)); ctx.fill();
       txt(ctx, U.fmtTime(Math.ceil(rem)), x + pw - px(12), by - px(6), { font: F(16, 'bold'), color: urgent ? COL.red : COL.ink, align: 'right', outline: false });
-      txt(ctx, mission ? 'CODE EXPIRES IN' : 'TIME', x + px(16), by - px(6), { font: F(9, 'bold'), color: COL.muted, outline: false });
+      var tlabel = timer.label ? String(timer.label).toUpperCase() : mission && Ms.state && Ms.state.active === 'm02_read' ? 'CODE EXPIRES IN' : 'TIME LEFT';   // QA-B-NP-01
+      txt(ctx, tlabel, x + px(16), by - px(6), { font: F(9, 'bold'), color: COL.muted, outline: false });
     }
     return y + ph + px(8);
   }
@@ -904,15 +938,22 @@
   // tutorial hints (GTP.Hints): a line and the active device's key glyphs under the objective panel
   function hintGlyphs(id, keys) {
     var X = expansion(), list = X.hints || [], d = device();
+    if ((id === 'h_taxi' || id === 'h_patrol') && d !== 'keyboard') return [glyph('action')];   // the content names Y / Enter, which exit the car
     for (var i = 0; i < list.length; i++) if (list[i].id === id && list[i].glyphs) { var g = list[i].glyphs[d] || list[i].glyphs.keyboard; if (g) return g; }
     return keys || [];
+  }
+  // hint sentences name keyboard keys; on a pad or touch the key words become that device's glyphs (QA-B-HUD-02)
+  var KEYWORD_ACTION = { 'E': 'action', 'F': 'enter', 'R': 'reload', 'Q': 'cover', 'M': 'map', 'N': 'radio', 'H': 'horn', 'V': 'cameraMode', 'Tab': 'lockOn', 'Space': 'jump', 'Shift': 'run', 'Enter': 'confirm', 'Esc': 'pause', 'Ctrl': 'shoot', 'right mouse button': 'aim', 'left mouse button': 'shoot' };
+  function deviceText(t) {
+    if (device() === 'keyboard') return t;
+    return t.replace(/\b(Press|press|Hold|hold|Tap|tap|with|With)( the)? (right mouse button|left mouse button|E|F|R|Q|M|N|H|V|Tab|Space|Shift|Enter|Esc|Ctrl)\b/g, function (all, verb, the, key) { return verb + ' ' + glyph(KEYWORD_ACTION[key]); });
   }
   function drawHint(ctx, y) {
     var Hs = GTP.Hints, h = Hs && Hs.hud ? Hs.hud() : null, g = game();
     if (!h || !g || g.state !== 'playing') return y;
     var k = h.k || 0, a = k < 0.06 ? k / 0.06 : k > 0.92 ? (1 - k) / 0.08 : 1;
     var font = F(12, '', FONT_TEXT), maxW = Math.min(px(560), W - safe.l - safe.r - px(20));
-    var htext = String(h.text || '').replace(/\s*\(or Q\)/g, '');   // v0.3: Q is cover now, aim is the right mouse button / LT
+    var htext = deviceText(String(h.text || '').replace(/\s*\(or Q\)/g, ''));   // v0.3: Q is cover now, aim is the right mouse button / LT
     var lines = wrap(ctx, htext, font, maxW - px(60)), keys = hintGlyphs(h.id, h.keys).filter(function (k) { return !(h.id === 'h_aim' && k === 'Q'); });
     var kw = 0; for (var i = 0; i < keys.length; i++) kw += measure(ctx, keys[i], F(10, 'bold')) + px(18);
     var pw = Math.max(px(220), Math.min(maxW, Math.max(kw + px(60), measure(ctx, lines[0] || '', font) + px(60)))), ph = px(16) + lines.length * px(16) + (keys.length ? px(22) : 0);
@@ -1005,6 +1046,8 @@
     var ang = Math.atan2(ly, lx), cx = W / 2, cy = H / 2;
     var ex = cx + Math.cos(ang) * (W / 2 - px(42)), ey = cy + Math.sin(ang) * (H / 2 - px(42));
     ex = U.clamp(ex, px(42), W - px(42)); ey = U.clamp(ey, px(110), H - px(70));
+    var mm = minimapRect(), top = mm.top ? mm.y : mm.y - px(100), bot = mm.top ? (ui.chipBottom || mm.y + mm.s) + px(56) : H;   // keep clear of the minimap, its chip and the GPS chip (QA-B-HUD-03)
+    if (ex > mm.x - px(36) && ex < mm.x + mm.s + px(36) && ey > top - px(30) && ey < bot) { if (mm.top) ey = bot + px(10); else { ex = Math.min(ex, mm.x - px(40)); ey = Math.min(ey, H - px(70)); } }
     ctx.save(); ctx.translate(ex, ey); ctx.rotate(ang);
     ctx.fillStyle = col; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(px(16), 0); ctx.lineTo(-px(8), -px(11)); ctx.lineTo(-px(3), 0); ctx.lineTo(-px(8), px(11)); ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -1057,9 +1100,15 @@
     for (var i = 0; i < T.length; i++) {
       var o = T[i], k = o.t / (o.life || 1.2), s = Rd.worldToScreen(o.x, o.y + k * 1.1, o.z);
       if (!s.visible || s.depth > 1) continue;
+      s = { sx: s.sx, sy: Math.max(s.sy, safe.t + px(84)) };   // never cut off at the top edge (QA-B-HUD-12)
       var a = k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1, size = o.size || 16;
       txt(ctx, o.text, s.sx, s.sy, { font: F(size * (1 + Math.min(k, 0.15)), 'bold', FONT_DISPLAY), color: o.color || COL.pink, align: 'center', alpha: a, lw: px(4) });
     }
+  }
+  function occluded(from, x, y, z) {
+    var Wd = GTP.World; if (!Wd || !Wd.raycastBuildings) return false;
+    var dx = x - from.x, dy = y - from.y, dz = z - from.z, len = Math.sqrt(dx * dx + dy * dy + dz * dz); if (len < 1) return false;
+    try { var h = Wd.raycastBuildings(from.x, from.y, from.z, dx / len, dy / len, dz / len, len - 0.5); return !!(h && h.t != null && h.t < len - 0.6); } catch (e) { return false; }
   }
   function drawBarks(ctx) {
     var E = GTP.Entities, Rd = GTP.Render, cam = Rd && Rd.camera; if (!E || !cam) return;
@@ -1076,6 +1125,7 @@
     for (i = 0; i < n; i++) {
       var p = cands[i].e, sc = (p.look && p.look.scale) || 1, s = Rd.worldToScreen(p.x, p.y + (p.height || 1.8) * sc + 0.45, p.z);
       if (!s.visible || s.depth > 1 || s.sx < px(20) || s.sx > W - px(20) || s.sy < bar + px(40) || s.sy > H - bar - px(20)) continue;   // off-screen peds keep their lines to themselves
+      if (p.kind !== 'player' && occluded(cam.position, p.x, p.y + (p.height || 1.8) * sc, p.z)) continue;   // nobody talks through a facade (QA-A-ENT-06)
       var fade = p.lineTime < 0.4 ? p.lineTime / 0.4 : 1, scale = U.clamp(1.25 - cands[i].d / 60, 0.7, 1);
       var tw = Math.min(measure(ctx, p.line, font) * scale, px(300)), bw = tw + px(16), bh = px(22) * scale;
       var bx = U.clamp(s.sx - bw / 2, px(4), W - bw - px(4)), by = s.sy - bh - px(8);
@@ -1118,6 +1168,7 @@
     var np = null, A = GTP.Audio;
     try { np = A && A.radio && typeof A.radio.nowPlaying === 'function' ? A.radio.nowPlaying() : null; } catch (e) { np = null; }
     if (!np && st.nowPlaying) np = typeof st.nowPlaying === 'function' ? st.nowPlaying() : st.nowPlaying;
+    if (!np && R && typeof R.nowPlaying === 'function' && st.songs && st.songs.length) { try { np = R.nowPlaying(st.id); } catch (e) { np = null; } if (np) np = { kind: 'song', id: np.song, title: np.title, artist: np.artist }; }   // the radio track: Content.radio.nowPlaying(id)
     if (np) {
       var npo = typeof np === 'string' ? { text: np } : np, key = sidKey(st) + '|' + (npo.id || npo.title || npo.text || '');
       if (key !== tk.lastNp) { tk.lastNp = key; return radioLine(npo, st); }
@@ -1216,6 +1267,11 @@
     var line = d.line, who = line.who || 'everyone', cm = cast(who), color = line.color || (cm && cm.color) || COL.ink, name = line.name || castName(who);
     var sub = ui.settings.subtitles === 'large' ? 1.25 : 1;
     var ps = px((portrait ? 76 : 96) * sub), bw = Math.min(px(780 * sub), W - safe.l - safe.r), bh = ps + px(24);
+    var mm = minimapRect(), st0 = game().state;
+    if (!mm.top && st0 === 'playing') bw = Math.min(bw, 2 * (mm.x - px(12) - W / 2));   // clear of the bottom-right minimap (QA-B-FE-13)
+    // the box grows to the whole line: no wrapped line is scrolled away (QA-B-TXT-01)
+    var fontD = F((portrait ? 14 : 17) * sub, '', FONT_TEXT), lineHD = px((portrait ? 18 : 22) * sub), nAll = wrap(ctx, String(line.text || ''), fontD, bw - ps - px(44)).length;
+    bh = Math.max(bh, px(58 * sub) + nAll * lineHD + px(8));
     var bar = letterboxBar();
     var bx = (W - bw) / 2, by = H - safe.b - bh - px(ui.touch.visible && game().state === 'playing' ? 150 : 16) - (bar ? bar - px(4) : 0);
     var a = Math.min(1, d.t / 0.18);
@@ -1310,7 +1366,7 @@
     var k = c.t / c.dur, failed = c.kind === 'failed', offer = failed && retryOffer();
     var a = k < 0.1 ? k / 0.1 : (!offer && k > 0.85) ? (1 - k) / 0.15 : 1, pop = 1 + (1 - ease(Math.min(1, c.t / 0.35))) * 0.25;
     var col = failed ? COL.red : COL.gold;
-    var cy = H * 0.4, bh = offer ? px(170) : px(120);
+    var cy = H * 0.4, bh = offer ? px(190) : px(120);   // the help line sits inside the band (QA-B-HUD-11)
     ctx.save(); ctx.globalAlpha = a;
     ctx.fillStyle = 'rgba(6,7,13,0.55)'; ctx.fillRect(0, cy - px(58), W, bh);
     ctx.fillStyle = col; ctx.fillRect(0, cy - px(58), W, px(3)); ctx.fillRect(0, cy - px(58) + bh - px(3), W, px(3));
@@ -1357,7 +1413,7 @@
     ctx.save(); ctx.translate(W / 2, cy); ctx.scale(scale, scale);
     txt(ctx, text, 0, px(16), { font: F(portrait ? 40 : 64, '900', FONT_DISPLAY), color: busted ? '#8fb6ff' : COL.pink, align: 'center', lw: px(8), outline: 'rgba(0,0,0,0.9)', maxW: W - px(30) });
     ctx.restore();
-    var fine = C.ECONOMY.bustedFine, sub = busted ? 'Rate your arrest, one to ten. Fine: ' + U.fmtMoney(fine) + '.' : 'Discharged with a bandage that has a coupon code. Cash -' + Math.round(C.ECONOMY.deathCashLoss * 100) + '%.';
+    var fine = d.fine != null ? d.fine : GTP.AI && GTP.AI.bustFine ? GTP.AI.bustFine(d.level != null ? d.level : (ui.wanted.last || 1), (player() || {}).money | 0) : C.ECONOMY.bustedFine, sub = busted ? 'Rate your arrest, one to ten. Fine: ' + U.fmtMoney(fine) + '.' : 'Discharged with a bandage that has a coupon code. Cash -' + Math.round(C.ECONOMY.deathCashLoss * 100) + '%.';
     var lines = wrap(ctx, sub, F(15, 'bold', FONT_TEXT), W - px(60));
     for (var i = 0; i < lines.length; i++) txt(ctx, lines[i], W / 2, cy + px(44) + i * px(20), { font: F(15, 'bold', FONT_TEXT), color: COL.ink, align: 'center', alpha: k });
     var Ms = GTP.Missions, lf = Ms && Ms.lastFail ? Ms.lastFail() : null;
@@ -1435,8 +1491,19 @@
   }
   // the three slot cards (LOAD GAME, NEW GAME's picker, the pause menu's LOAD / SAVE): slot number, progress, play time, money,
   // location, stars, timestamp; [LOAD] [DELETE] or [START HERE] / [SAVE HERE] / [OVERWRITE]
+  // the slot list, parsed once per frame / until a save, load or delete (QA-D SAVE-18: three full decodes per frame)
+  function slotsOf(g) {
+    if (!g || !g.slots) return [];
+    var c = ui.slotCache;
+    if (c && c.frame === g.frames && c.steps === g.steps && !c.dirty) return c.list;
+    var list = []; try { list = g.slots() || []; } catch (e) { list = []; }
+    ui.slotCache = { frame: g.frames, steps: g.steps, list: list, dirty: false };
+    return list;
+  }
+  function slotsDirty() { if (ui.slotCache) ui.slotCache.dirty = true; }
+  function slotUsed(s) { return !!(s && (!s.empty || s.corrupt)); }   // an unreadable slot is not free space (QA-D SAVE-05)
   function slotCards(ctx, mode, selRef, x, y, w, h, activate) {
-    var g = game(), slots = g && g.slots ? g.slots() : [], n = 3;
+    var g = game(), slots = slotsOf(g), n = 3;
     var stack = w < px(620), cw = stack ? w : (w - px(16)) / 3, ch = stack ? Math.min(px(118), (h - px(20)) / 3) : Math.min(h, px(260));
     var Ms = GTP.Missions;
     for (var i = 0; i < n; i++) {
@@ -1465,8 +1532,8 @@
       }
       // the buttons
       var bb = [], by = cy + ch - px(38), bh = px(28);
-      if (mode === 'load') { if (!s.empty) { bb.push({ id: 'load', label: 'LOAD', col: COL.lime }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); }
-      else if (mode === 'new') bb.push(s.empty ? { id: 'new', label: 'START HERE', col: COL.lime } : { id: 'new', label: 'OVERWRITE', col: COL.red });
+      if (mode === 'load') { if (s.corrupt) { bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else if (!s.empty) { bb.push({ id: 'load', label: 'LOAD', col: COL.lime }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); }
+      else if (mode === 'new') bb.push(!slotUsed(s) ? { id: 'new', label: 'START HERE', col: COL.lime } : { id: 'new', label: 'OVERWRITE', col: COL.red });
       else if (mode === 'save') bb.push(s.empty ? { id: 'save', label: 'SAVE HERE', col: COL.lime } : { id: 'save', label: 'OVERWRITE', col: COL.amber });
       var bx = cx + px(14), tot = 0;
       for (k = 0; k < bb.length; k++) tot += measure(ctx, bb[k].label, F(11, 'bold')) + px(24) + px(8);
@@ -1483,7 +1550,7 @@
     return { cw: cw, ch: ch, stack: stack, slots: slots, bottom: stack ? y + n * (ch + px(8)) : y + ch };
   }
   // the in-page confirmation screen (never window.confirm): OVERWRITE SLOT 2? / DELETE SLOT 3? / abandon the mission / lose progress
-  function askConfirm(o) { ui.confirm = Object.assign({ sel: 1, yes: 'YES', no: 'BACK', lines: [], danger: false, t: 0 }, o || {}); }
+  function askConfirm(o) { ui.confirm = Object.assign({ sel: 1, yes: 'YES', no: 'BACK', lines: [], danger: false, t: 0, openWall: Date.now() }, o || {}); }
   function confirmActivate(yes) {
     var c = ui.confirm; if (!c) return;
     ui.confirm = null; sfx('ui', 0.35);
@@ -1500,13 +1567,15 @@
     txt(ctx, c.title, x + pw / 2, y + px(36), { font: F(20, '900', FONT_DISPLAY), color: c.danger ? COL.red : COL.gold, align: 'center', outline: false, maxW: pw - px(32) });
     for (i = 0; i < lines.length; i++) txt(ctx, lines[i], x + pw / 2, y + px(62) + i * px(20), { font: font, color: COL.ink, align: 'center', outline: false });
     var bw = px(150), by = y + ph - px(44), bh = px(32), bx0 = x + pw / 2 - bw - px(8), bx1 = x + pw / 2 + px(8);
-    var btns = [{ x: bx0, label: c.yes, yes: true, col: c.danger ? COL.red : COL.lime }, { x: bx1, label: c.no, yes: false, col: COL.muted }];
+    // BACK on the left, the destructive YES on the right, away from the slot button that opened the box, and a click on
+    // YES within 0.4 s of opening is ignored, so a double-click never confirms (QA-B-FE-01)
+    var btns = [{ x: bx1, label: c.yes, yes: true, col: c.danger ? COL.red : COL.lime }, { x: bx0, label: c.no, yes: false, col: COL.muted }];
     for (i = 0; i < 2; i++) {
       var b = btns[i], sel = c.sel === i;
       if (hovering(b.x, by, bw, bh)) { c.sel = i; sel = true; }
       panel(ctx, b.x, by, bw, bh, px(8), sel ? hexA(b.col === COL.muted ? COL.pink : b.col, 0.28) : 'rgba(255,255,255,0.05)', sel ? (b.col === COL.muted ? COL.pink : b.col) : 'rgba(255,255,255,0.2)', sel ? 2 : 1);
       txt(ctx, b.label, b.x + bw / 2, by + px(21), { font: F(13, 'bold'), color: COL.ink, align: 'center', outline: false });
-      hit(b.x, by, bw, bh, confirmActivate.bind(null, b.yes), 'confirm-' + i);
+      hit(b.x, by, bw, bh, (function (yes) { return function () { if (yes && Date.now() - (c.openWall || 0) < 400) return; confirmActivate(yes); }; })(b.yes), 'confirm-' + i);
     }
   }
   function confirmInput(In) {
@@ -1514,7 +1583,6 @@
     if (In.pressed('left') || In.pressed('right') || In.pressed('forward') || menuDown(In)) { c.sel = 1 - c.sel; sfx('ui', 0.2); }
     if (In.pressed('confirm')) confirmActivate(c.sel === 0);
     else if (menuBack(In)) confirmActivate(false);
-    else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
     return true;
   }
   // the settings page (title and pause share it)
@@ -1546,7 +1614,7 @@
         panel(ctx, x + pw - px(20) - vw - px(6), ry + rh / 2 - px(11), vw, px(22), px(5), sel ? 'rgba(255,63,164,0.22)' : 'rgba(255,255,255,0.08)', null);
         txt(ctx, val, x + pw - px(20) - px(6) - vw / 2, ry + rh * 0.64, { font: F(12, 'bold'), color: COL.ink, align: 'center', outline: false });
         txt(ctx, '▶', x + pw - px(14), ry + rh * 0.64, { font: F(11, 'bold'), color: sel ? COL.pink : COL.muted, align: 'right', outline: false });
-        if (r.note && !portrait) txt(ctx, r.note, split, ry + rh * 0.64, { font: F(10), color: 'rgba(143,151,179,0.8)', outline: false, maxW: pw * 0.36 - vw });
+        if (r.note && !portrait) { var nmax = pw * 0.36 - vw; if (nmax > px(40)) txt(ctx, ellipsize(ctx, r.note, F(10), nmax), split, ry + rh * 0.64, { font: F(10), color: 'rgba(143,151,179,0.8)', outline: false }); }   // cut, never squeezed (QA-B-FE-17)
         hit(x + pw - px(20) - vw - px(30), ry, px(24), rh, (function (row) { return function () { settingStep(row, -1); }; })(r), 'set-' + r.id + '-l');
         hit(x + pw - px(20) - vw - px(6), ry, vw + px(30), rh, (function (row) { return function () { settingStep(row, 1); }; })(r), 'set-' + r.id + '-r');
       } else if (r.type === 'page') hit(x + px(8), ry, pw - px(16), rh, function () { ui.settings.from = 'settings'; settingsOpenControls(); }, 'set-controls');
@@ -1568,7 +1636,7 @@
       if (r.type === 'back') onBack();
       else if (r.type === 'page') { ui.settings.from = 'settings'; settingsOpenControls(); }
       else settingStep(r, 1);
-    } else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
+    }
     return true;
   }
 
@@ -1583,9 +1651,12 @@
   var PAD_ROWS = [['Left stick', 'Move / steer  ·  menus: navigate'], ['Right stick', 'Look  ·  map: zoom'], ['A', 'Jump / handbrake  ·  confirm'], ['B', 'Sprint (hold) · cover (tap) / horn  ·  back'], ['X', 'Reload / radio  ·  delete'], ['Y', 'Enter / exit vehicle  ·  tab'], ['LB / RB', 'Previous / next weapon  ·  pages'], ['LT / RT', 'Aim / shoot  ·  map zoom'], ['Back / Start', 'Map / pause'], ['L3 / R3', 'Special / lock-on (hold: wheel)'], ['D-pad', 'Quick slots: pistol, rifle, thrown, melee'], ['Aircraft', 'LS pitch + roll · LB RB yaw · RT LT throttle']];
   function titleItems() {
     var g = game(), items = [{ id: 'play', label: 'NEW GAME', desc: 'A fresh Grievance City. Pick a slot, pick a seed, pick a side. Both are wrong.' }];
-    var hasSave = !!(g && g.hasSave && g.hasSave()), latest = hasSave && g.latestSlot ? g.latestSlot() : 0;
-    var meta = null;
-    if (latest && g.slots) { var sl = g.slots(); for (var i = 0; i < sl.length; i++) if (sl[i].slot === latest) meta = sl[i].meta; }
+    var anySlot = slotsOf(g).some(slotUsed);
+    if (!anySlot) items[0].desc = 'Straight into Grievance City, slot 1. (Seeds and slots live under LOAD GAME.) Pick a side. Both are wrong.';   // QA-B-FE-18
+    var sl = slotsOf(g), latest = 0, latestT = -1, meta = null;
+    for (var i = 0; i < sl.length; i++) if (!sl[i].empty && sl[i].meta && (sl[i].meta.savedAt || 0) > latestT) { latestT = sl[i].meta.savedAt || 0; latest = sl[i].slot; meta = sl[i].meta; }
+    var hasSave = !!latest;
+    if (!sl.length && g && g.hasSave) { hasSave = !!g.hasSave(); latest = hasSave && g.latestSlot ? g.latestSlot() : 0; }
     if (hasSave) items.unshift({ id: 'continue', label: 'CONTINUE', desc: meta ? 'Slot ' + latest + ': ' + (meta.missions | 0) + ' / ' + (meta.missionsTotal || 25) + ' missions, ' + fmtPlay(meta.playTime) + ', ' + U.fmtMoney(meta.money || 0) + (meta.district ? ', ' + meta.district : '') : 'The most recent save.' });
     items.push({ id: 'load', label: 'LOAD GAME', desc: 'Three slots. Load, delete, or start a new game in an empty one.' });
     items.push({ id: 'settings', label: 'SETTINGS', desc: 'Volumes, quality, draw distance, weather, gamepad, hints, subtitles.' });
@@ -1657,7 +1728,7 @@
     ctx.restore();
   }
   function drawTitle(ctx) {
-    var tt = ui.title; tt.t += 1 / 60;
+    var tt = ui.title; tt.t = ui.t;   // the real clock, not per drawn frame (QA-C QAC-44)
     // cinematic vignette
     var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, 'rgba(6,7,13,0.75)'); g.addColorStop(0.35, 'rgba(6,7,13,0.15)'); g.addColorStop(0.7, 'rgba(6,7,13,0.25)'); g.addColorStop(1, 'rgba(6,7,13,0.85)');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -1692,10 +1763,11 @@
     txt(ctx, 'Grievance City: two time zones, one opinion.  v' + (GTP.VERSION || '') + (GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected() ? '  ·  gamepad connected' : ''), W / 2, H - safe.b - px(14), { font: F(10), color: COL.muted, align: 'center' });
   }
   // NEW GAME's slot picker / LOAD GAME's cards on the title (ui.title.slotMode = 'new' | 'load'), the seed field under them
+  function slotHint() { var d = device(); return d === 'gamepad' ? 'LS picks · A chooses · B back' : d === 'touch' ? 'tap a button' : '← → pick  ·  Enter choose  ·  Esc back'; }
   function drawTitleSlots(ctx) {
     var tt = ui.title, mode = tt.slotMode, pw = Math.min(px(900), W - safe.l - safe.r), x = (W - pw) / 2, y = Math.max(px(110), H * 0.2);
     txt(ctx, mode === 'new' ? 'NEW GAME: PICK A SLOT' : 'LOAD GAME', x, y - px(12), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false });
-    txt(ctx, (glyph('left') === 'LS' ? 'LS picks · A chooses · B back' : '← → pick  ·  Enter choose  ·  Esc back'), x + pw, y - px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
+    txt(ctx, slotHint(), pw < px(560) ? x : x + pw, pw < px(560) ? y - px(36) : y - px(14), { font: F(10, 'bold'), color: COL.muted, align: pw < px(560) ? 'left' : 'right', outline: false, maxW: pw });   // on its own line when narrow (QA-B-FE-15)
     var ref = tt.slotRef || (tt.slotRef = {}); ref.sel = tt.slotSel; ref.btn = tt.slotBtn || 0;
     var r = slotCards(ctx, mode, ref, x, y, pw, Math.min(px(260), H - y - px(130)), titleSlotActivate);
     tt.slotSel = ref.sel;   // hover may have moved the selection
@@ -1707,7 +1779,9 @@
     panel(ctx, sx + px(50), sy, fw, fh, px(6), focus ? 'rgba(46,230,255,0.12)' : 'rgba(10,12,24,0.9)', focus ? COL.cyan : 'rgba(255,255,255,0.2)', focus ? 2 : 1);
     var shown = tt.seed || '', caret = focus && Math.floor(tt.t * 2) % 2 === 0 ? '|' : '';
     txt(ctx, (shown || (focus ? '' : String(game() ? game().seed : 7))) + caret, sx + px(60), sy + px(21), { font: F(14, 'bold'), color: shown || focus ? COL.ink : COL.muted, outline: false, maxW: fw - px(20) });
-    txt(ctx, 'Same seed, same city as a friend. Digits only.', sx + px(50) + fw + px(12), sy + px(21), { font: F(10), color: COL.muted, outline: false, maxW: pw - fw - px(70) });
+    var noteRoom = pw - fw - px(70) - px(132);
+    if (noteRoom > measure(ctx, 'Same seed, same city as a friend. Digits only.', F(10)) * 0.9) txt(ctx, 'Same seed, same city as a friend. Digits only.', sx + px(50) + fw + px(12), sy + px(21), { font: F(10), color: COL.muted, outline: false, maxW: noteRoom });
+    else txt(ctx, 'Same seed, same city as a friend. Digits only.', sx, sy + fh + px(16), { font: F(10), color: COL.muted, outline: false, maxW: pw });   // under the field when narrow (QA-B-FE-15)
     hit(sx + px(50), sy, fw, fh, function () { tt.seedFocus = true; GTP.Input.text.capture = true; GTP.Input.text.queue.length = 0; }, 'seed');
     var bw = px(120), bx = x + pw - bw, by = sy;
     panel(ctx, bx, by, bw, fh, px(8), hovering(bx, by, bw, fh) ? 'rgba(255,63,164,0.25)' : 'rgba(10,12,24,0.9)', 'rgba(255,255,255,0.2)');
@@ -1732,35 +1806,44 @@
   }
   function titleSlotActivate(action, slot) {
     var g = game(), tt = ui.title; if (!g) return;
-    var slots = g.slots ? g.slots() : [], s = slots[slot - 1];
+    var slots = slotsOf(g), s = slots[slot - 1];
     sfx('ui', 0.4);
     if (action === 'load') { if (g.loadSlot && g.loadSlot(slot)) { ui.sessionStarted = true; ui.money.shown = null; ui.wanted.last = 0; ui.subs.shown = null; } return; }
-    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.', 'There is no undo. There is no liaison.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); toast('Slot ' + slot + ' deleted'); } }); return; }
+    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.', 'There is no undo. There is no liaison.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); slotsDirty(); toast('Slot ' + slot + ' deleted'); } }); return; }
     if (action === 'new') {
-      if (s && !s.empty) { askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: ['It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { beginNewGame(slot, chosenSeed(), true); } }); return; }
+      if (slotUsed(s)) { askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: [s.corrupt ? 'It holds a save this build cannot read (' + (s.version != null ? 'another version' : 'damaged') + ').' : 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { beginNewGame(slot, chosenSeed(), true); } }); return; }
       beginNewGame(slot, chosenSeed(), true);
     }
     void tt;
   }
-  function slotButtons(mode, s) { return mode === 'load' && s && !s.empty ? 2 : 1; }
+  function slotButtons(mode, s) { return mode === 'load' && slotUsed(s) ? 2 : 1; }
   function titleBack() { var tt = ui.title; tt.page = 'menu'; tt.seedFocus = false; if (GTP.Input) GTP.Input.text.capture = false; }
+  // CONTROLS: keyboard on the left, the gamepad (always) and touch on the right; one column on narrow screens with the
+  // device in use first; rows shrink to fit above the title footer (QA-B-FE-10 / FE-11)
+  var CONTROLS_EXTRA = [['+ / -', 'Zoom the map / the scope'], ['Esc or Backspace', 'Back out of a menu'], ['Delete', 'Delete a save slot (LOAD GAME)']];
   function drawControlsPanel(ctx, title, onClose) {
-    var padOn = GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected(), rows = padOn ? CONTROLS.concat([['', '']], PAD_ROWS) : CONTROLS;
-    var pw = Math.min(px(640), W - safe.l - safe.r), rh = px(portrait ? 20 : 22), ph = px(70) + rows.length * rh;
-    if (ph > H - px(24)) { rh = Math.max(px(14), Math.floor((H - px(94)) / rows.length)); ph = px(70) + rows.length * rh; }
-    var x = (W - pw) / 2, y = Math.max(px(12), Math.min(H * 0.18, H - ph - px(20)));
+    var padOn = GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected(), keys = CONTROLS.concat(CONTROLS_EXTRA);
+    var touchRows = [['Left half', 'The stick moves (push to the rim: run)'], ['Right half', 'Drag to look'], ['Buttons', 'FIRE, AIM, JUMP, ENTER, RLD, WPN (hold: wheel), COVER, SPCL'], ['Pills', 'MAP and PAUSE at the top'], ['In a car', 'HORN, BRAKE, EXIT, CAM, BOOST'], ['In the air', 'THR+ / THR-, YAW L / YAW R, the stick pitches and rolls']];
+    var two = W >= px(900) && !portrait, pw = Math.min(two ? px(1080) : px(640), W - safe.l - safe.r);
+    var right = [['', 'GAMEPAD (standard layout)' + (padOn ? '  ·  CONNECTED' : '')]].concat(PAD_ROWS, [['', 'TOUCH']], touchRows);
+    var cols = two ? [keys, right] : [device() === 'gamepad' ? right.slice(0, PAD_ROWS.length + 1).concat([['', 'KEYBOARD']], keys) : device() === 'touch' ? right.slice(PAD_ROWS.length + 1).concat([['', 'KEYBOARD']], keys) : keys.concat([['', 'GAMEPAD (standard layout)']], PAD_ROWS)];
+    var nRows = Math.max.apply(null, cols.map(function (c) { return c.length; })), avail = H - px(130);
+    var rh = Math.max(px(13), Math.min(px(portrait ? 20 : 22), Math.floor((avail - px(70)) / nRows))), ph = px(70) + nRows * rh;
+    var x = (W - pw) / 2, y = Math.max(px(12), Math.min(H * 0.12, H - ph - px(70)));
     panel(ctx, x, y, pw, ph, px(12), 'rgba(10,12,24,0.97)', COL.line, 1.5);
-    txt(ctx, title + (padOn ? '  ·  GAMEPAD CONNECTED' : ''), x + px(20), y + px(32), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false, maxW: pw - px(140) });
-    txt(ctx, (glyph('cancel') === 'B' ? 'B: back' : 'Enter / Esc: back'), x + pw - px(20), y + px(30), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
-    var ty = y + px(58), split = x + pw * (portrait ? 0.46 : 0.4);
-    for (var i = 0; i < rows.length; i++) {
-      if (!rows[i][0]) { txt(ctx, 'GAMEPAD (standard layout)', x + px(20), ty, { font: F(10, 'bold'), color: COL.cyan, outline: false }); ty += rh; continue; }
-      ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0)'; ctx.fillRect(x + px(8), ty - rh + px(6), pw - px(16), rh);
-      txt(ctx, rows[i][0], split - px(10), ty, { font: F(portrait ? 10 : 12, 'bold'), color: COL.cyan, align: 'right', outline: false, maxW: split - x - px(20) });
-      txt(ctx, rows[i][1], split + px(6), ty, { font: F(portrait ? 10 : 12, '', FONT_TEXT), color: COL.ink, outline: false, maxW: x + pw - split - px(20) });
-      ty += rh;
+    txt(ctx, title, x + px(20), y + px(32), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false, maxW: pw - px(160) });
+    txt(ctx, device() === 'gamepad' ? 'B: back' : device() === 'touch' ? 'tap: back' : 'Enter / Esc: back', x + pw - px(20), y + px(30), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
+    var colW = (pw - px(16)) / cols.length, fs = rh < px(18) ? 10 : 12;
+    for (var c = 0; c < cols.length; c++) {
+      var rows = cols[c], cx0 = x + px(8) + c * colW, ty = y + px(58), split = cx0 + colW * (portrait ? 0.46 : 0.4);
+      for (var i = 0; i < rows.length; i++) {
+        if (!rows[i][0]) { txt(ctx, rows[i][1], cx0 + px(12), ty, { font: F(10, 'bold'), color: COL.cyan, outline: false, maxW: colW - px(20) }); ty += rh; continue; }
+        ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0)'; ctx.fillRect(cx0, ty - rh + px(5), colW - px(8), rh);
+        txt(ctx, rows[i][0], split - px(10), ty, { font: F(portrait ? 10 : fs, 'bold'), color: COL.cyan, align: 'right', outline: false, maxW: split - cx0 - px(16) });
+        txt(ctx, rows[i][1], split + px(6), ty, { font: F(portrait ? 10 : fs, '', FONT_TEXT), color: COL.ink, outline: false, maxW: cx0 + colW - split - px(16) });
+        ty += rh;
+      }
     }
-    if (ui.touch.visible) txt(ctx, 'Touch: left stick moves, right side looks, buttons fire / aim / enter / jump / reload / weapon (hold: wheel) / map / pause.', x + px(20), y + ph - px(12), { font: F(9), color: COL.muted, outline: false, maxW: pw - px(40) });
     hit(x, y, pw, ph, onClose, 'controls-close');
   }
   function titleActivate(id) {
@@ -1776,8 +1859,8 @@
     }
     // NEW GAME: with no save anywhere the game starts at once in slot 1 (nothing to choose, nothing to overwrite);
     // otherwise the slot picker (choose an empty slot or overwrite, and the seed field)
-    var any = false, sl = g.slots ? g.slots() : [];
-    for (var i = 0; i < sl.length; i++) if (!sl[i].empty) any = true;
+    var any = false, sl = slotsOf(g);
+    for (var i = 0; i < sl.length; i++) if (slotUsed(sl[i])) any = true;
     if (!any) { beginNewGame(1, g.seed, FAST_START_OPENING); return; }
     tt.page = 'slots'; tt.slotMode = 'new'; tt.slotSel = 0; tt.slotBtn = 0;
     for (i = 0; i < sl.length; i++) if (sl[i].empty) { tt.slotSel = i; break; }
@@ -1792,23 +1875,22 @@
         else if (/^[0-9]$/.test(k) && tt.seed.length < 9) tt.seed += k;
       }
       if (In.pressed('confirm') || menuBack(In)) { tt.seedFocus = false; In.text.capture = false; }
-      else if (In.pressed('shoot') && In.mouse && In.mouse.down) { tt.seedFocus = false; In.text.capture = false; pointerTap(In.mouse.x, In.mouse.y); }
       return true;
     }
     q.length = 0;
     if (menuBack(In)) { titleBack(); return true; }
-    var slots = g && g.slots ? g.slots() : [], cur = slots[tt.slotSel], nb = slotButtons(tt.slotMode, cur);
+    var slots = slotsOf(g), cur = slots[tt.slotSel], nb = slotButtons(tt.slotMode, cur);
     if (In.pressed('left')) { if (tt.slotBtn > 0) tt.slotBtn--; else { tt.slotSel = (tt.slotSel + 2) % 3; tt.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('right')) { if (tt.slotBtn < nb - 1) tt.slotBtn++; else { tt.slotSel = (tt.slotSel + 1) % 3; tt.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('forward')) { tt.slotSel = (tt.slotSel + 2) % 3; tt.slotBtn = 0; }
     if (menuDown(In)) { tt.slotSel = (tt.slotSel + 1) % 3; tt.slotBtn = 0; }
-    if (In.pressed('secondary') && tt.slotMode === 'load' && cur && !cur.empty) titleSlotActivate('delete', cur.slot);
+    if (In.pressed('secondary') && tt.slotMode === 'load' && slotUsed(cur)) titleSlotActivate('delete', cur.slot);
     if (In.pressed('tabNext')) { tt.seedFocus = true; In.text.capture = true; q.length = 0; }
     if (In.pressed('confirm')) {
       if (!cur) return true;
-      if (tt.slotMode === 'load') { if (cur.empty) titleSlotActivate('new', cur.slot); else titleSlotActivate(tt.slotBtn === 1 ? 'delete' : 'load', cur.slot); }
+      if (tt.slotMode === 'load') { if (cur.corrupt) titleSlotActivate(tt.slotBtn === 1 ? 'delete' : 'new', cur.slot); else if (cur.empty) titleSlotActivate('new', cur.slot); else titleSlotActivate(tt.slotBtn === 1 ? 'delete' : 'load', cur.slot); }
       else titleSlotActivate('new', cur.slot);
-    } else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
+    }
     return true;
   }
 
@@ -1822,8 +1904,8 @@
   function openPause(page) {
     var g = game(); if (!g) return;
     if (g.state === 'paused') { ui.pause.page = page; return; }
-    if (g.state !== 'playing' && g.state !== 'cutscene') return;
-    ui.pause.from = g.state; ui.pause.page = page; ui.pause.sel = 0; ui.pause.scroll = 0; ui.pause.row = 0;
+    if (g.state !== 'playing' && g.state !== 'cutscene' && !(g.state === 'minigame' && ui.minigame)) return;
+    ui.pause.from = g.state; ui.pause.page = page; ui.pause.sel = 0; ui.pause.scroll = 0; ui.pause.row = 0; ui.pause.phoneFrom = null;
     if (page === 'phone' && (ui.pause.tab < 0 || ui.pause.tab >= PHONE_TABS.length)) ui.pause.tab = 0;
     g.setState('paused');
     if (GTP.Input.releasePointerLock) GTP.Input.releasePointerLock();
@@ -1832,7 +1914,7 @@
     var g = game(); if (!g || g.state !== 'paused') return;
     ui.confirm = null;
     if (ui.pause.page === 'shop' && GTP.Combat && GTP.Combat.shop && GTP.Combat.shop.state.open) { try { GTP.Combat.shop.close(); } catch (e) { /* optional */ } }
-    var to = ui.pause.from === 'cutscene' && GTP.Cutscenes && GTP.Cutscenes.active ? 'cutscene' : 'playing';
+    var to = ui.pause.from === 'cutscene' && GTP.Cutscenes && GTP.Cutscenes.active ? 'cutscene' : ui.pause.from === 'minigame' && ui.minigame ? 'minigame' : 'playing';
     g.setState(to);
   }
   function busyText() {
@@ -1841,13 +1923,26 @@
     if (St && St.active && St.active()) return 'the strand';
     return null;
   }
+  // SAVE refuses what a load would undo for free: a cutscene (it would be marked watched), stars, a burning car, the
+  // minigame, death (QA-B-FE-07, QA-D SAVE-06 / SAVE-08)
+  function saveBlocker() {
+    var g = game(), p = player(), Cs = GTP.Cutscenes, wl = (GTP.AI && GTP.AI.wanted) ? GTP.AI.wanted.level : (p ? p.wanted | 0 : 0);
+    if ((Cs && Cs.active) || ui.pause.from === 'cutscene') return 'Not during a cutscene. Let it finish.';
+    if (ui.pause.from === 'minigame' || ui.minigame) return 'Finish the argument first.';
+    if (p && !p.alive) return 'You are being ratio\'d. Save later.';
+    if (wl > 0) return 'Lose the stars first. The precinct does not do saves.';
+    var v = p && p.inVehicle; if (v && (v.burning || v.onFire || (v.hp != null && v.hp <= 0))) return 'Not in a burning car.';
+    void g; return null;
+  }
   function doSave(slot) {
     var g = game(); if (!g) return;
+    var block = saveBlocker(); if (block) { toast(block); sfx('fail', 0.25); return; }
     var busy = busyText();
     var write = function () {
       var Ms = GTP.Missions, St = GTP.Strands;
       if (Ms && Ms.state && Ms.state.active && Ms.abort) Ms.abort();
       if (St && St.active && St.active() && St.end) St.end('save');
+      slotsDirty();
       if (g.saveSlot(slot || g.activeSlot || 1, { quiet: true, reason: 'manual' })) { toast('Saved to slot ' + (slot || g.activeSlot || 1)); ui.saved.t = 1.2; ui.saved.slot = slot || g.activeSlot; }
     };
     if (busy) askConfirm({ title: 'SAVE NOW?', lines: ['Saving now will abandon ' + busy + '.'], yes: 'SAVE', no: 'BACK', danger: true, onYes: write });
@@ -1865,10 +1960,10 @@
     sfx('ui', 0.4);
     switch (id) {
       case 'resume': closePause(); break;
-      case 'story': ui.pause.page = 'phone'; ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; break;
+      case 'story': ui.pause.page = 'phone'; ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; ui.pause.phoneFrom = 'pause'; break;
       case 'save': ui.pause.page = 'slots'; ui.pause.slotMode = 'save'; ui.pause.slotSel = Math.max(0, (g.activeSlot || 1) - 1); ui.pause.slotBtn = 0; break;
       case 'load': ui.pause.page = 'slots'; ui.pause.slotMode = 'load'; ui.pause.slotSel = Math.max(0, (g.latestSlot ? g.latestSlot() || 1 : 1) - 1); ui.pause.slotBtn = 0; break;
-      case 'map': ui.pause.page = 'phone'; ui.pause.tab = 0; mapCenterOnPlayer(); break;
+      case 'map': ui.pause.page = 'phone'; ui.pause.tab = 0; ui.pause.phoneFrom = 'pause'; mapCenterOnPlayer(); break;
       case 'settings': ui.pause.page = 'settings'; ui.settings.sel = 0; break;
       case 'controls': ui.settings.from = 'pause'; ui.pause.page = 'controls'; break;
       case 'mute': setMuted(!ui.muted); break;
@@ -1879,15 +1974,15 @@
   }
   function pauseSlotActivate(action, slot) {
     var g = game(), pg = ui.pause; if (!g) return;
-    var slots = g.slots ? g.slots() : [], s = slots[slot - 1];
+    var slots = slotsOf(g), s = slots[slot - 1];
     sfx('ui', 0.4);
     if (action === 'save') {
-      if (s && !s.empty && slot !== g.activeSlot) askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: ['It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { doSave(slot); } });
+      if (s && !s.empty && slot !== g.activeSlot) askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: ['It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { doSave(slot); } });
       else doSave(slot);
       return;
     }
     if (action === 'load') { doLoad(slot); return; }
-    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); toast('Slot ' + slot + ' deleted'); } }); return; }
+    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); slotsDirty(); toast('Slot ' + slot + ' deleted'); } }); return; }
     if (action === 'new') { askConfirm({ title: 'NEW GAME IN SLOT ' + slot + '?', lines: ['Lose unsaved progress?'], yes: 'NEW GAME', no: 'BACK', danger: true, onYes: function () { beginNewGame(slot, g.seed, true); } }); return; }
     void pg;
   }
@@ -1922,7 +2017,7 @@
   function drawPauseSlots(ctx) {
     var pg = ui.pause, pw = Math.min(px(900), W - safe.l - safe.r), x = (W - pw) / 2, y = Math.max(px(60), H * 0.18);
     txt(ctx, pg.slotMode === 'save' ? 'SAVE GAME' : 'LOAD GAME', x, y - px(12), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false });
-    txt(ctx, (glyph('left') === 'LS' ? 'LS picks · A chooses · B back' : '← → pick  ·  Enter choose  ·  Esc back'), x + pw, y - px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
+    txt(ctx, slotHint(), pw < px(560) ? x : x + pw, pw < px(560) ? y - px(36) : y - px(14), { font: F(10, 'bold'), color: COL.muted, align: pw < px(560) ? 'left' : 'right', outline: false, maxW: pw });   // on its own line when narrow (QA-B-FE-15)
     var ref = pg.slotRef || (pg.slotRef = {}); ref.sel = pg.slotSel; ref.btn = pg.slotBtn || 0;
     var r = slotCards(ctx, pg.slotMode, ref, x, y, pw, Math.min(px(260), H - y - px(90)), pauseSlotActivate);
     pg.slotSel = ref.sel;
@@ -1935,18 +2030,19 @@
   function pauseSlotsInput(In) {
     var pg = ui.pause, g = game();
     if (menuBack(In)) { pg.page = 'pause'; return true; }
-    var slots = g && g.slots ? g.slots() : [], cur = slots[pg.slotSel], nb = slotButtons(pg.slotMode, cur);
+    var slots = slotsOf(g), cur = slots[pg.slotSel], nb = slotButtons(pg.slotMode, cur);
     if (In.pressed('left')) { if (pg.slotBtn > 0) pg.slotBtn--; else { pg.slotSel = (pg.slotSel + 2) % 3; pg.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('right')) { if (pg.slotBtn < nb - 1) pg.slotBtn++; else { pg.slotSel = (pg.slotSel + 1) % 3; pg.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('forward')) { pg.slotSel = (pg.slotSel + 2) % 3; pg.slotBtn = 0; }
     if (menuDown(In)) { pg.slotSel = (pg.slotSel + 1) % 3; pg.slotBtn = 0; }
-    if (In.pressed('secondary') && pg.slotMode === 'load' && cur && !cur.empty) pauseSlotActivate('delete', cur.slot);
+    if (In.pressed('secondary') && pg.slotMode === 'load' && slotUsed(cur)) pauseSlotActivate('delete', cur.slot);
     if (In.pressed('confirm')) {
       if (!cur) return true;
       if (pg.slotMode === 'save') pauseSlotActivate('save', cur.slot);
+      else if (cur.corrupt) pauseSlotActivate(pg.slotBtn === 1 ? 'delete' : 'new', cur.slot);
       else if (cur.empty) pauseSlotActivate('new', cur.slot);
       else pauseSlotActivate(pg.slotBtn === 1 ? 'delete' : 'load', cur.slot);
-    } else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
+    }
     return true;
   }
   // the phone / map page: tabs along the top, the full-screen map in the first
@@ -1965,7 +2061,12 @@
       txt(ctx, PHONE_TABS[i], tx + tabW / 2, ty + px(19), { font: F(portrait || tabW < px(80) ? 9 : 11, 'bold'), color: sel ? COL.ink : COL.muted, align: 'center', outline: false, maxW: tabW - px(8) });
       hit(tx, ty, tabW, px(28), (function (k) { return function () { pg.tab = k; pg.sel = 0; pg.scroll = 0; pg.row = 0; if (k === 0) mapCenterOnPlayer(); }; })(i), 'tab-' + i);
     }
-    var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(74);
+    // a close control on every tab, for touch above all (QA-B-TCH-01)
+    var clw = px(30), clx = x + pw - clw - px(8), cly = y + px(6);
+    panel(ctx, clx, cly, clw, px(22), px(6), hovering(clx, cly, clw, px(22)) ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)');
+    txt(ctx, '✕', clx + clw / 2, cly + px(16), { font: F(12, 'bold'), color: COL.ink, align: 'center', outline: false });
+    hit(clx - px(6), cly - px(4), clw + px(12), px(30), phoneClose, 'phone-close');
+    var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(92);   // the list stops above the help line (QA-B-TCH-09)
     ctx.save(); ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
     var tid = tabId();
     if (tid === 'MAP') drawBigMap(ctx, cx, cy, cw, ch);
@@ -1976,7 +2077,7 @@
     else if (tid === 'STRANDS') { ui.pause.rows = []; drawPhoneStrands(ctx, cx, cy, cw, ch); }
     else drawPhoneReplay(ctx, cx, cy, cw, ch);
     ctx.restore();
-    var help = full ? (device() === 'gamepad' ? 'LS pans · RS / LT RT zoom · A waypoint · Y tabs · B close' : ui.touch.visible ? 'drag pans · pinch zooms · tap sets a waypoint' : 'drag / WASD pan · wheel / + - zoom · click sets a waypoint · Tab cycles tabs · M / Esc close') : '← → tabs   ·   ' + glyph('map') + ' / ' + glyph('cancel') + ' close';
+    var help = full ? (device() === 'gamepad' ? 'LS pans · RS / LT RT zoom · A waypoint · Y tabs · B close' : ui.touch.visible ? 'drag pans · pinch zooms · tap sets a waypoint' : 'drag / WASD pan · wheel / + - zoom · click sets a waypoint · Tab cycles tabs · M / Esc close') : device() === 'touch' ? 'swipe scrolls  ·  tap a tab  ·  ✕ closes' : device() === 'gamepad' ? 'LB RB tabs  ·  LS pick  ·  A choose  ·  B close' : '← → tabs   ·   ' + glyph('map') + ' / ' + glyph('cancel') + ' close';
     var hw = measure(ctx, help, F(10)) + px(24);
     if (full) panel(ctx, W / 2 - hw / 2, y + ph - px(22), hw, px(18), px(6), 'rgba(10,12,24,0.85)', null);
     txt(ctx, help, W / 2, y + ph - px(9), { font: F(10), color: COL.muted, align: 'center', outline: false, maxW: pw - px(20) });
@@ -2025,16 +2126,21 @@
       var d = ds[i], a = toS(d.px, d.pz);
       ctx.fillStyle = tint[d.style] || tint[d.id] || 'rgba(255,255,255,0.05)'; ctx.fillRect(a.x, a.y, d.pw * k, d.ph * k);
     }
-    for (i = 0; i < ds.length; i++) { s = toS(ds[i].cx, ds[i].cz); txt(ctx, String(ds[i].name || ds[i].id).toUpperCase(), s.x, s.y, { font: F(M.zoom >= 2 ? 13 : 10, '900', FONT_DISPLAY), color: COL.gold, align: 'center', lw: px(3) }); }
+    // labels are placed with a collision test: districts first, then missions, landmarks and markers (QA-B-HUD-06)
+    var placed = [], distLabels = [];
+    var place = function (text, cx0, cy0, font) { ctx.font = font; var tw0 = ctx.measureText(text).width + px(6), th0 = px(12), r0 = { x: cx0 - tw0 / 2, y: cy0 - th0, w: tw0, h: th0 + px(2) }; for (var q = 0; q < placed.length; q++) { var o = placed[q]; if (r0.x < o.x + o.w && r0.x + r0.w > o.x && r0.y < o.y + o.h && r0.y + r0.h > o.y) return false; } placed.push(r0); return true; };
+    for (i = 0; i < ds.length; i++) { s = toS(ds[i].cx, ds[i].cz); var dn = String(ds[i].name || ds[i].id).toUpperCase(), df = F(M.zoom >= 2 ? 13 : 10, '900', FONT_DISPLAY); if (place(dn, s.x, s.y, df)) distLabels.push([dn, s.x, s.y, df]); }
+    var shopMarks = allMarkers().filter(function (mk0) { return mk0.kind === 'shop'; });
     // landmark icons by kind, labels from 2x (3x on a narrow map, where they would pile up)
     var lms = (Wd && Wd.landmarks) || [], labelZoom = w < px(600) ? 3 : 2;
     for (i = 0; i < lms.length; i++) {
       var lm = lms[i]; s = toS(lm.x, lm.z);
       if (s.x < x - px(20) || s.x > x + w + px(20) || s.y < y - px(20) || s.y > y + h + px(20)) continue;
+      if (lm.kind === 'gunshop' && shopMarks.some(function (mk0) { return U.dist2d(mk0.x, mk0.z, lm.x, lm.z) < 40; })) continue;   // the shop marker draws it once
       var size = px(M.zoom >= 2 ? 11 : 8);
       ctx.fillStyle = 'rgba(8,10,20,0.7)'; ctx.beginPath(); ctx.arc(s.x, s.y, size * 0.75, 0, Math.PI * 2); ctx.fill();
       drawKindIcon(ctx, lm.kind, s.x, s.y, size, lm.kind === 'gunshop' ? COL.green : 'rgba(238,241,251,0.9)');
-      if (M.zoom >= labelZoom) txt(ctx, landmarkLabel(lm), s.x, s.y + size + px(10), { font: F(9, 'bold'), color: COL.ink, align: 'center', lw: 2, maxW: px(140) });
+      if (M.zoom >= labelZoom) { var ll = landmarkLabel(lm); if (place(ll, s.x, s.y + size + px(10), F(9, 'bold'))) txt(ctx, ll, s.x, s.y + size + px(10), { font: F(9, 'bold'), color: COL.ink, align: 'center', lw: 2, maxW: px(140) }); }
     }
     // the route and the waypoint
     var wp = waypoint();
@@ -2045,15 +2151,18 @@
       s = toS(wp.x, wp.z); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.restore();
     }
     drawGpsBigMap(ctx, toS);
-    // markers
-    var marks = allMarkers();
+    // markers (missions and objectives last, on top)
+    var marks = markersByLayer();
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i]; s = toS(mk.x, mk.z);
       if (s.x < x || s.x > x + w || s.y < y || s.y > y + h) continue;
       drawMarkerIcon(ctx, mk, s.x, s.y, px(mk.kind === 'objective' || mk.kind === 'mission' ? 12 : 11));
-      if (mk.title && (mk.kind === 'mission' || mk.kind === 'objective' || M.zoom >= labelZoom)) txt(ctx, mk.title, s.x, s.y - px(11), { font: F(9, 'bold'), color: mk.kind === 'objective' ? COL.amber : '#bfe3ff', align: 'center', lw: 2, maxW: px(160) });
+      if (mk.title && (mk.kind === 'mission' || mk.kind === 'objective' || M.zoom >= labelZoom) && (mk.kind === 'objective' || place(mk.title, s.x, s.y - px(11), F(9, 'bold')))) txt(ctx, mk.title, s.x, s.y - px(11), { font: F(9, 'bold'), color: mk.kind === 'objective' ? COL.amber : '#bfe3ff', align: 'center', lw: 2, maxW: px(160) });
     }
     if (wp) { s = toS(wp.x, wp.z); drawKindIcon(ctx, 'waypoint', s.x, s.y - px(6), px(20), COL.white); txt(ctx, Math.round(U.dist2d(p.x, p.z, wp.x, wp.z)) + ' m', s.x, s.y - px(20), { font: F(9, 'bold'), color: COL.white, align: 'center', lw: 2 }); }
+    for (i = 0; i < distLabels.length; i++) txt(ctx, distLabels[i][0], distLabels[i][1], distLabels[i][2], { font: distLabels[i][3], color: COL.gold, align: 'center', lw: px(3) });
+    // the pad's map cursor (QA-B-HUD-08)
+    if (device() === 'gamepad' && M.cursor) { var cxp = x + M.cursor.x * w, cyp = y + M.cursor.y * h; ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = px(2); ctx.beginPath(); ctx.arc(cxp, cyp, px(9), 0, Math.PI * 2); ctx.moveTo(cxp - px(15), cyp); ctx.lineTo(cxp - px(5), cyp); ctx.moveTo(cxp + px(5), cyp); ctx.lineTo(cxp + px(15), cyp); ctx.moveTo(cxp, cyp - px(15)); ctx.lineTo(cxp, cyp - px(5)); ctx.moveTo(cxp, cyp + px(5)); ctx.lineTo(cxp, cyp + px(15)); ctx.stroke(); ctx.restore(); }
     // the player arrow
     s = toS(p.x, p.z);
     ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(-(p.yaw || 0));
@@ -2088,11 +2197,26 @@
     if (In.down('left')) M.cx -= pan; if (In.down('right')) M.cx += pan;
     if (In.down('forward')) M.cz -= pan; if (In.down('back') && !In.pressed('cancel')) M.cz += pan;
     var pad = In.gamepad;
-    if (pad && pad.index >= 0 && In.gamepadEnabled) { M.cx += pad.lx * pan * 1.5; M.cz += pad.ly * pan * 1.5; if (pad.ry) mapZoomAt(1 - pad.ry * 0.04, r.x + r.w / 2, r.y + r.h / 2); }
+    // keys and pad zoom around the player (or the pad cursor), not the city centre (QA-B-HUD-07)
+    var p0 = player(), focus = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    if (p0) { var k0 = mapScale(r.w, r.h), fx0 = r.x + r.w / 2 + (p0.x - M.cx) * k0, fy0 = r.y + r.h / 2 + (p0.z - M.cz) * k0; if (fx0 > r.x && fx0 < r.x + r.w && fy0 > r.y && fy0 < r.y + r.h) focus = { x: fx0, y: fy0 }; }
+    var pad = In.gamepad;
+    if (pad && pad.index >= 0 && In.gamepadEnabled) {
+      // the pad moves a cursor; the map pans when the cursor pushes an edge (QA-B-HUD-08)
+      if (!M.cursor) M.cursor = { x: 0.5, y: 0.5 };
+      M.cursor.x += pad.lx * dt * 0.6; M.cursor.y += pad.ly * dt * 0.6 * (r.w / r.h);
+      if (M.cursor.x < 0.05) { M.cx -= pan * 1.5; M.cursor.x = 0.05; } if (M.cursor.x > 0.95) { M.cx += pan * 1.5; M.cursor.x = 0.95; }
+      if (M.cursor.y < 0.05) { M.cz -= pan * 1.5; M.cursor.y = 0.05; } if (M.cursor.y > 0.95) { M.cz += pan * 1.5; M.cursor.y = 0.95; }
+      focus = { x: r.x + M.cursor.x * r.w, y: r.y + M.cursor.y * r.h };
+      if (pad.ry) mapZoomAt(1 - pad.ry * 0.04, focus.x, focus.y);
+    }
     if (In.wheelDelta) mapZoomAt(In.wheelDelta < 0 ? 1.15 : 1 / 1.15, In.mouse.x, In.mouse.y);
-    if (In.pressed('zoomIn')) mapZoomAt(1.5, r.x + r.w / 2, r.y + r.h / 2);
-    if (In.pressed('zoomOut')) mapZoomAt(1 / 1.5, r.x + r.w / 2, r.y + r.h / 2);
-    if (In.pressed('waypoint') || (In.pressed('confirm') && device() === 'gamepad')) setWaypoint(M.cx, M.cz);
+    if (In.pressed('zoomIn')) mapZoomAt(1.5, focus.x, focus.y);
+    if (In.pressed('zoomOut')) mapZoomAt(1 / 1.5, focus.x, focus.y);
+    if (In.pressed('waypoint') || (In.pressed('confirm') && device() === 'gamepad')) {
+      var wpt = M.cursor && device() === 'gamepad' ? mapToWorld(r.x + M.cursor.x * r.w, r.y + M.cursor.y * r.h) : { x: M.cx, z: M.cz };
+      if (wpt) setWaypoint(wpt.x, wpt.z);
+    }
     // mouse: a press starts a drag, a release without much movement is a tap
     var m = In.mouse;
     if (m.down && !M.drag) M.drag = { x: m.x, y: m.y, sx: m.x, sy: m.y, moved: 0 };
@@ -2156,8 +2280,10 @@
   }
   function abortMission() {
     var Ms = GTP.Missions; if (!Ms || !Ms.state || !Ms.state.active) return;
-    Ms.abort(); closePause();
+    // never without asking (QA-B-TCH-04: a stray confirm on another tab used to abandon the mission)
+    askConfirm({ title: 'ABANDON THE MISSION?', lines: ['Back to the marker. The checkpoint is gone.'], yes: 'ABANDON', no: 'BACK', danger: true, onYes: function () { if (Ms.state && Ms.state.active) Ms.abort(); closePause(); } });
   }
+  function phoneClose() { var pg = ui.pause; if (pg.phoneFrom === 'pause') { pg.page = 'pause'; pg.phoneFrom = null; } else closePause(); }
   function drawPhoneStats(ctx, x, y, w, h) {
     var p = player(), g = game(), st = (p && p.stats) || {}, Ms = GTP.Missions;
     var wl = (GTP.AI && GTP.AI.wanted) ? GTP.AI.wanted.level : 0, subs = Ms && Ms.subscribers ? Ms.subscribers() : null;
@@ -2286,6 +2412,8 @@
     else if (res && res.reason === 'funds') { sh.msg = { text: 'NOT ENOUGH CASH. Need ' + U.fmtMoney(res.need || 0) + ' more.', color: COL.red }; sh.bark = pick(barks.funds, 'That\'s the price.'); sfx('fail', 0.3); }
     else if (res && res.reason === 'locked') { sh.msg = { text: 'LOCKED. ' + ((X.shop && X.shop.lockFormat) || 'Unlocks after: {mission}').replace('{mission}', res.lockedBy || 'the story'), color: COL.amber }; sh.bark = pick(barks.locked, 'Not yet.'); sfx('ui', 0.2); }
     else if (res && res.reason === 'owned') { sh.msg = { text: 'Already on your back. Buy ammo instead.', color: COL.muted }; sfx('ui', 0.2); }
+    else if (res && res.reason === 'full') { sh.msg = { text: 'You are full up. Nothing to buy that for.', color: COL.muted }; sfx('ui', 0.2); }   // QA-B-TCH-13
+    else if (res && res.reason === 'notOwned') { sh.msg = { text: 'Buy the weapon first.', color: COL.amber }; sfx('ui', 0.2); }
     else if (res && res.reason === 'flagship') { sh.msg = { text: 'The range is at the flagship on the Strip.', color: COL.muted }; sfx('ui', 0.2); }
     else { sh.msg = { text: 'No sale.', color: COL.muted }; }
     sh.msgT = 3;
@@ -2303,17 +2431,17 @@
     var disc = CB && CB.shop && CB.shop.discount ? CB.shop.discount() : 0;
     if (disc > 0) txt(ctx, Math.round(disc * 100) + '% OFF (loyalty, allegedly)', x + pw - px(20), y + px(52), { font: F(10, 'bold'), color: COL.amber, align: 'right', outline: false });
     // tabs
-    var tabW = Math.min(px(120), (pw - px(40)) / tabs.length), ty = y + px(62), i;
+    var tabW = Math.min(px(120), (pw - px(40) - px(100)) / tabs.length), ty = y + px(62), i;   // the tabs stop short of EXIT (QA-B-TCH-10)
     for (i = 0; i < tabs.length; i++) {
       var tx = x + px(20) + i * tabW, sel = i === sh.tab;
       panel(ctx, tx + px(2), ty, tabW - px(4), px(26), px(6), sel ? 'rgba(63,210,127,0.22)' : 'rgba(255,255,255,0.05)', sel ? COL.green : 'rgba(255,255,255,0.1)');
       txt(ctx, tabs[i], tx + tabW / 2, ty + px(18), { font: F(11, 'bold'), color: sel ? COL.ink : COL.muted, align: 'center', outline: false });
-      hit(tx, ty, tabW, px(26), (function (k) { return function () { sh.tab = k; sh.sel = 0; }; })(i), 'shop-tab-' + i);
+      hit(tx, ty, tabW, px(26), (function (k) { return function () { sh.tab = k; sh.sel = 0; sh.msgT = 0; }; })(i), 'shop-tab-' + i);
     }
     // exit button
     var ew = px(90), ex = x + pw - px(20) - ew;
     panel(ctx, ex, ty, ew, px(26), px(6), hovering(ex, ty, ew, px(26)) ? 'rgba(255,59,48,0.3)' : 'rgba(255,255,255,0.05)', 'rgba(255,255,255,0.2)');
-    txt(ctx, 'EXIT  ' + glyph('cancel'), ex + ew / 2, ty + px(18), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+    txt(ctx, device() === 'touch' ? 'EXIT  ✕' : 'EXIT  ' + glyph('cancel'), ex + ew / 2, ty + px(18), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
     hit(ex, ty, ew, px(26), closeShop, 'shop-exit');
     // the list (left) and the card (right); stacked on a phone
     var ly = ty + px(36), lh = y + ph - ly - px(16), lw = narrow ? pw - px(40) : pw * 0.46, lx = x + px(20), rh = px(40);
@@ -2333,7 +2461,7 @@
       var priceS = U.fmtMoney(it.price), pc = it.locked ? COL.muted : (p && p.money >= it.price ? COL.lime : COL.red);
       txt(ctx, priceS, lx + lw - px(12), ry + px(24), { font: F(13, 'bold'), color: pc, align: 'right', outline: false });
       if (it.listPrice && it.listPrice !== it.price) txt(ctx, U.fmtMoney(it.listPrice), lx + lw - px(12) - measure(ctx, priceS, F(13, 'bold')) - px(8), ry + px(24), { font: F(9), color: COL.muted, align: 'right', outline: false });
-      hit(lx, ry, lw, rh - px(4), (function (k, id) { return function () { if (sh.sel === k) shopBuy(id); else sh.sel = k; }; })(i, it.id), 'shop-item-' + i);
+      if (ry + rh > ly && ry < ly + lh) hit(lx, Math.max(ly, ry), lw, Math.min(rh - px(4), ly + lh - Math.max(ly, ry)), (function (k, id) { return function () { if (sh.sel === k) shopBuy(id); else sh.sel = k; }; })(i, it.id), 'shop-item-' + i);   // only rows on screen take taps (QA-B-TCH-11)
       ry += rh;
     }
     if (!items.length) txt(ctx, 'Nothing on this wall.', lx + px(10), ly + px(30), { font: F(12, '', FONT_TEXT), color: COL.muted, outline: false });
@@ -2360,9 +2488,11 @@
       for (i = 0; i < Math.min(3, fl.length); i++) txt(ctx, fl[i], tx2, cy + px(76) + i * px(14), { font: F(10, 'italic', FONT_TEXT), color: COL.muted, outline: false });
       // five stat bars
       var by = cy + px(30) + icoS + px(10), bars = shopC.statBars || ['DAMAGE', 'RATE', 'RANGE', 'ACCURACY', 'VOLUME'], keys = ['damage', 'rate', 'range', 'accuracy', 'volume'];
+      var bbyTop = cy + chh - px(50);
       if (cur.stats) {
         for (i = 0; i < bars.length; i++) {
           var v = clamp01(cur.stats[keys[i]] || 0), bx = cx + px(90), bw = cw - px(110), yy = by + i * px(18);
+          if (yy + px(10) > bbyTop) break;   // a short (portrait) card shows the bars that fit (QA-B-TCH-10)
           txt(ctx, bars[i], cx + px(20), yy + px(8), { font: F(9, 'bold'), color: COL.muted, outline: false });
           panel(ctx, bx, yy, bw, px(8), px(4), 'rgba(255,255,255,0.1)', null);
           ctx.fillStyle = i === 0 ? COL.red : i === 1 ? COL.amber : i === 2 ? COL.cyan : i === 3 ? COL.lime : COL.pink; rr(ctx, bx, yy, bw * v, px(8), px(4)); ctx.fill();
@@ -2370,11 +2500,11 @@
         by += bars.length * px(18) + px(6);
       }
       // Merle's pitch with his portrait, and the message line
-      var ps = px(44), pyy = Math.min(by + px(6), cy + chh - ps - px(50));
-      castPortrait(ctx, shopC.clerk || 'merle', cx + px(20), pyy, ps);
+      var ps = px(44), pyy = Math.min(by + px(6), cy + chh - ps - px(50)), roomForMerle = pyy >= by - px(2);
+      if (roomForMerle) castPortrait(ctx, shopC.clerk || 'merle', cx + px(20), pyy, ps);
       var pitch = wrap(ctx, '“' + (sh.msgT > 0 && sh.bark ? sh.bark : (cur.pitch || sh.bark || '')) + '”', F(11, 'italic', FONT_TEXT), cw - ps - px(50));
-      for (i = 0; i < Math.min(3, pitch.length); i++) txt(ctx, pitch[i], cx + px(30) + ps, pyy + px(16) + i * px(14), { font: F(11, 'italic', FONT_TEXT), color: '#bfe3ff', outline: false });
-      txt(ctx, castName(shopC.clerk || 'merle'), cx + px(20), pyy + ps + px(12), { font: F(8, 'bold'), color: COL.green, outline: false, maxW: ps + px(20) });
+      for (i = 0; i < (roomForMerle ? Math.min(3, pitch.length) : 0); i++) txt(ctx, pitch[i], cx + px(30) + ps, pyy + px(16) + i * px(14), { font: F(11, 'italic', FONT_TEXT), color: '#bfe3ff', outline: false });
+      if (roomForMerle) txt(ctx, castName(shopC.clerk || 'merle'), cx + px(20), pyy + ps + px(12), { font: F(8, 'bold'), color: COL.green, outline: false, maxW: ps + px(20) });
       // the buy button
       var bbw = Math.min(px(220), cw - px(40)), bbx = cx + cw - bbw - px(20), bby = cy + chh - px(44), can = cur.canBuy;
       var label = cur.locked ? 'LOCKED' : cur.owned && cur.tab === 'weapons' ? 'OWNED' : can ? 'BUY  ' + glyph('confirm') : 'NOT ENOUGH CASH';
@@ -2386,7 +2516,7 @@
     if (tabs[sh.tab] === ((shopC.flagshipTab) || 'RANGE') && CB && CB.shop) {
       var rt = CB.shop.rangeT || 0, best = CB.shop.rangeBest;
       txt(ctx, (rt > 0 ? 'RANGE TIMER ' + U.fmtTime(Math.ceil(rt)) : 'Six cutouts out back. $50 resets them and starts a 60 s timer.') + (best != null ? '   BEST ' + U.fmtTime(best) : ''), x + px(20), y + ph - px(12), { font: F(10, 'bold'), color: COL.amber, outline: false, maxW: pw - px(40) });
-    } else txt(ctx, (device() === 'gamepad' ? 'LS picks · A buys · LB RB tabs · B leaves' : '↑ ↓ pick  ·  Enter buys  ·  ← → tabs  ·  Esc leaves') + '   ·   ' + (sh.store && sh.store.gag ? sh.store.gag : 'Loyalty points: one. Nobody has qualified.'), x + px(20), y + ph - px(12), { font: F(10), color: COL.muted, outline: false, maxW: pw - px(40) });
+    } else txt(ctx, (device() === 'touch' ? 'tap a row to pick, tap it again to buy' : device() === 'gamepad' ? 'LS picks · A buys · LB RB tabs · B leaves' : '↑ ↓ pick  ·  Enter buys  ·  ← → tabs  ·  Esc leaves') + '   ·   ' + (sh.store && sh.store.gag ? sh.store.gag : 'Loyalty points: one. Nobody has qualified.'), x + px(20), y + ph - px(12), { font: F(10), color: COL.muted, outline: false, maxW: pw - px(40) });
     drawConfirm(ctx);
   }
   function shopInput(In) {
@@ -2397,7 +2527,6 @@
     if (In.pressed('left') || In.pressed('weaponPrev')) { sh.tab = (sh.tab + tabs.length - 1) % tabs.length; sh.sel = 0; }
     if (In.pressed('right') || In.pressed('weaponNext') || In.pressed('tabNext')) { sh.tab = (sh.tab + 1) % tabs.length; sh.sel = 0; }
     if (In.pressed('confirm') && items[sh.sel]) shopBuy(items[sh.sel].id);
-    else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
     return true;
   }
 
@@ -2502,6 +2631,15 @@
   var COUNTER_KEYS = [{ id: 'SOURCE?', action: 'forward', glyph: '↑', key: 'W' }, { id: 'LOUDER', action: 'left', glyph: '←', key: 'A' }, { id: 'PIVOT', action: 'right', glyph: '→', key: 'D' }, { id: 'DEFINE TERMS', action: 'back', glyph: '↓', key: 'S' }];
   var CARD_COLOR = { FACT: '#4aa8ff', FEELING: '#ff3fa4', GOTCHA: '#ffbe3c', ANECDOTE: '#9dff3c' };
   var mgSerial = 0;
+  // SHOUT: Shift held, the pad's LT held (menu map), or the touch SHOUT toggle (QA-B-TCH-06)
+  function shoutDown() { var In = GTP.Input; return !!(In && (In.down('run') || In.down('zoomOut'))) || !!ui.mgShout; }
+  function mgKey(kind) {
+    var d = device();
+    if (kind === 'shout') return d === 'gamepad' ? 'LT' : d === 'touch' ? 'SHOUT' : 'Shift';
+    if (kind === 'post') return d === 'gamepad' ? 'A' : d === 'touch' ? 'tap' : 'E / Space';
+    if (kind === 'hottake') return d === 'gamepad' ? 'X' : d === 'touch' ? 'tap' : 'Ctrl / click';
+    return '';
+  }
   function mgRng() { return GTP.rng && GTP.rng.fork ? GTP.rng.fork(0x51D0 + (mgSerial++)) : (urng || { random: function () { return 0.5; }, pick: function (a) { return a[0]; }, chance: function () { return false; }, shuffle: function (a) { return a; } }); }
   function debateOpponent(id) {
     var D = GTP.Content && GTP.Content.debate, o = D && D.opponents ? D.opponents[id] : null;
@@ -2581,7 +2719,7 @@
             c.card = nt; c.text = pickd.text; c.who = pickd.who || c.who; c.flipped = true; st.captionOpp = c.text; st.flash = { text: 'FLIP!', t: 0.3, small: true }; sfx('ui', 0.4);
           }
           if (c.t >= st.timer) { st.result = { text: 'LATE  -20', color: COL.red, ok: false }; st.crowd = U.clamp(st.crowd - 20, 0, 100); st.captionMe = '...'; st.phase = 'reveal'; st.phaseT = 0; sfx('hit', 0.4); break; }
-          var shout = In.down('run');
+          var shout = shoutDown();
           for (var i = 0; i < COUNTER_KEYS.length; i++) if (In.pressed(COUNTER_KEYS[i].action)) { debate.answer(COUNTER_KEYS[i].id, shout); return; }
           if (In.pressed('action') || In.pressed('confirm')) debate.answer('WHATABOUT', false);
           break;
@@ -2697,13 +2835,19 @@
         var fill = pressed ? (okc === true ? 'rgba(157,255,60,0.3)' : okc === false ? 'rgba(255,59,48,0.3)' : 'rgba(255,255,255,0.2)') : it.grey ? 'rgba(255,255,255,0.03)' : hexA(col2, 0.12);
         panel(ctx, cxx, cyy, cwid, chgt, px(10), fill, it.grey ? 'rgba(255,255,255,0.18)' : col2, pressed ? 3 : 1.5);
         txt(ctx, it.glyph, cxx + cwid / 2, cyy + chgt * 0.4, { font: F(24 * ts, '900', FONT_DISPLAY), color: it.grey ? COL.muted : col2, align: 'center', outline: false });
-        txt(ctx, it.grey ? 'E / Space' : it.key + ' / arrow', cxx + cwid - px(6), cyy + px(13), { font: F(8 * ts, 'bold'), color: 'rgba(238,241,251,0.55)', align: 'right', outline: false });
+        txt(ctx, device() === 'touch' ? '' : device() === 'gamepad' ? (it.grey ? 'A' : 'D-pad ' + it.glyph) : it.grey ? 'E / Space' : it.key + ' / arrow', cxx + cwid - px(6), cyy + px(13), { font: F(8 * ts, 'bold'), color: 'rgba(238,241,251,0.55)', align: 'right', outline: false });
         txt(ctx, it.id, cxx + cwid / 2, cyy + chgt * 0.68, { font: F((it.id === 'DEFINE TERMS' ? 10 : 12) * ts, 'bold'), color: it.grey ? COL.muted : COL.ink, align: 'center', outline: false, maxW: cwid - px(8) });
         txt(ctx, it.grey ? 'never wins, never loses (-5)' : 'beats ' + COUNTERS[it.id], cxx + cwid / 2, cyy + chgt * 0.86, { font: F(8 * ts, ''), color: COL.muted, align: 'center', outline: false, maxW: cwid - px(6) });
-        hit(cxx, cyy, cwid, chgt, (function (id) { return function () { debate.answer(id, GTP.Input.down('run')); }; })(it.id), 'card-' + it.id);
+        hit(cxx, cyy, cwid, chgt, (function (id) { return function () { debate.answer(id, shoutDown()); ui.mgShout = false; }; })(it.id), 'card-' + it.id);
       }
-      var shoutOn = GTP.Input.down('run');
-      txt(ctx, shoutOn ? 'SHOUT ARMED (Shift): +40 on a hit, double loss on a miss' : 'hold Shift to SHOUT: +40 on a hit, double loss on a miss, heat on exit', bx + pad, cardsY + blockH + px(16), { font: F(10 * ts, 'bold'), color: shoutOn ? COL.pink : COL.muted, outline: false, maxW: bw - pad * 2 });
+      var shoutOn = shoutDown();
+      if (device() === 'touch') {   // a SHOUT toggle for touch
+        var sbw = px(96), sbx = bx + bw - pad - sbw, sby = cardsY + blockH + px(2);
+        panel(ctx, sbx, sby, sbw, px(22), px(6), shoutOn ? 'rgba(255,63,164,0.4)' : 'rgba(255,255,255,0.06)', COL.pink, 1.2);
+        txt(ctx, shoutOn ? 'SHOUT ON' : 'SHOUT', sbx + sbw / 2, sby + px(15), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+        hit(sbx, sby, sbw, px(22), function () { ui.mgShout = !ui.mgShout; }, 'shout');
+      }
+      txt(ctx, shoutOn ? 'SHOUT ARMED (' + mgKey('shout') + '): +40 on a hit, double loss on a miss' : (device() === 'touch' ? 'SHOUT' : 'hold ' + mgKey('shout')) + ' to SHOUT: +40 on a hit, double loss on a miss, heat on exit', bx + pad, cardsY + blockH + px(16), { font: F(10 * ts, 'bold'), color: shoutOn ? COL.pink : COL.muted, outline: false, maxW: bw - pad * 2 });
       // caption strip
       var capY = by + bh - capH - px(8);
       panel(ctx, bx + pad, capY, bw - pad * 2, capH, px(8), 'rgba(255,255,255,0.05)', 'rgba(255,255,255,0.1)');
@@ -2795,7 +2939,7 @@
           if (st.replyN % 3 === 0) { st.dogpile = 3; st.flash = { text: 'DOGPILE!', color: COL.red, t: 0 }; sfx('fail', 0.3); }
         }
         if (In.pressed('action') || In.pressed('confirm')) ratio.post();
-        if (In.pressed('shoot')) ratio.hottake();
+        if ((In.pressed('shoot') && !(In.mouse && In.mouse.down)) || In.pressed('secondary')) ratio.hottake();   // Ctrl / pad X; a mouse click goes through the HOTTAKE button only (QA-B-TCH-03)
       } else if (st.phase === 'summary') {
         if (st.phaseT > 3.2 || (st.phaseT > 0.6 && (In.pressed('confirm') || In.pressed('action')))) ratio._finish();
       }
@@ -2835,7 +2979,7 @@
       var colY = ppy + pph + px(12), meterH = px(86) * ts, colH = by + bh - colY - meterH - px(16);
       var rightW = narrow ? ppw : px(200) * ts, leftW = narrow ? ppw : ppw - rightW - px(12);
       var lx = bx + pad, rx = narrow ? bx + pad : lx + leftW + px(12);
-      if (narrow) { colH -= px(70); }
+      if (narrow) { colH -= px(150); }   // room for the counters, the HOTTAKE and the NOTES under the replies (QA-B-TCH-08)
       // reply column
       var cardH = px(40) * ts, maxCards = Math.max(1, Math.floor(colH / (cardH + px(6)))), cards = st.cards.slice(-maxCards);
       var cyy = colY + colH - cardH;
@@ -2866,12 +3010,12 @@
       var rr0 = st.theirs > 0 ? st.mine / st.theirs : st.mine, y3 = narrow ? y1 + px(44) : ry + px(126);
       txt(ctx, 'RATIO ' + rr0.toFixed(1) + (st.combo > 1 ? '   COMBO x' + st.combo : ''), narrow ? bx + pad + ppw / 2 : rx + rightW / 2, y3, { font: F(12 * ts, 'bold'), color: rr0 > 1 ? COL.lime : COL.ink, align: 'center', outline: false });
       // hottake icon + noted boxes
-      var hx = narrow ? bx + pad + ppw / 2 - px(60) : rx + px(14), hy = narrow ? y3 + px(10) : ry + px(142), hs = px(34) * ts;
+      var hx = narrow ? bx + pad : rx + px(14), hy = narrow ? y3 + px(10) : ry + px(142), hs = px(34) * ts;
       panel(ctx, hx, hy, hs, hs, px(8), st.hottake ? 'rgba(255,122,32,0.25)' : 'rgba(255,255,255,0.04)', st.hottake ? '#ff7a20' : 'rgba(255,255,255,0.15)', 1.5);
       drawWeaponIcon(ctx, 'hottake', hx + hs * 0.1, hy + hs * 0.1, hs * 0.8, st.hottake ? '#ffd0a0' : 'rgba(255,255,255,0.25)');
-      txt(ctx, st.hottake ? 'HOTTAKE (Ctrl / click)' : st.primed ? 'PRIMED' : 'USED', hx + hs + px(8), hy + hs * 0.62, { font: F(9 * ts, 'bold'), color: st.hottake ? '#ffd0a0' : COL.muted, outline: false, maxW: narrow ? px(90) : rightW - hs - px(26) });
+      txt(ctx, st.hottake ? 'HOTTAKE (' + mgKey('hottake') + ')' : st.primed ? 'PRIMED' : 'USED', hx + hs + px(8), hy + hs * 0.62, { font: F(9 * ts, 'bold'), color: st.hottake ? '#ffd0a0' : COL.muted, outline: false, maxW: narrow ? px(90) : rightW - hs - px(26) });
       hit(hx, hy, hs + px(90), hs, function () { ratio.hottake(); }, 'hottake');
-      var nby = hy + hs + px(12), nbx = narrow ? hx : rx + px(14);
+      var nby = narrow ? hy + px(10) : hy + hs + px(12), nbx = narrow ? bx + pad + ppw - 3 * (px(44) * ts + px(6)) : rx + px(14);
       txt(ctx, 'NOTES', nbx, nby - px(2), { font: F(9 * ts, 'bold'), color: COL.muted, outline: false });
       for (i = 0; i < 3; i++) {
         var filled = i < st.noted, nbw = px(44) * ts;
@@ -2898,7 +3042,7 @@
       ctx.fillRect(nx - 1.5, my, 3, mh);
       var pbw = Math.min(px(220), mw), pbx = mx0 + mw / 2 - pbw / 2, pby = my + mh + px(8), pbh = px(26) * ts;
       panel(ctx, pbx, pby, pbw, pbh, px(8), st.primed ? 'rgba(255,122,32,0.3)' : 'rgba(255,63,164,0.2)', st.primed ? '#ff7a20' : COL.pink, 1.5);
-      txt(ctx, st.primed ? 'POST (guaranteed DUNK)' : 'POST  (E / Space / tap)', pbx + pbw / 2, pby + pbh * 0.68, { font: F(11 * ts, 'bold'), color: COL.ink, align: 'center', outline: false, maxW: pbw - px(10) });
+      txt(ctx, st.primed ? 'POST (guaranteed DUNK)' : 'POST  (' + mgKey('post') + ')', pbx + pbw / 2, pby + pbh * 0.68, { font: F(11 * ts, 'bold'), color: COL.ink, align: 'center', outline: false, maxW: pbw - px(10) });
       hit(mx0, my - px(14), mw, mh + px(14) + pbh + px(10), function () { ratio.post(); }, 'post');
       if (st.flash) { var fk = st.flash.t / 0.9; txt(ctx, st.flash.text, W / 2, H * 0.42, { font: F(st.flash.big ? 44 : 30, '900', FONT_DISPLAY), color: st.flash.color, align: 'center', alpha: fk < 0.1 ? fk / 0.1 : 1 - Math.max(0, fk - 0.6) / 0.4, lw: px(6) }); }
       if (st.phase === 'summary') {
@@ -2924,14 +3068,15 @@
       { id: 'weapon', action: 'wheel', label: 'WPN', carLabel: 'CAM', carAction: 'cameraMode', x: right - big - px(10), y: bottom - big * 2 - r * 3 - px(56), r: px(24), color: COL.ink, hold: true },
       { id: 'reload', action: 'reload', label: 'RLD', carLabel: 'AIM', carAction: 'aim', airLabel: 'SPCL', airAction: 'special', x: right - big * 2 - r - px(30), y: bottom - r * 5 - px(84), r: px(22), color: COL.amber },
       { id: 'cover', action: 'cover', label: 'COVER', carLabel: 'BOOST', carAction: 'special', airLabel: 'YAW L', airAction: 'yawLeft', x: right - big * 3 - r * 2 - px(44), y: bottom - r - px(28), r: px(24), color: COL.cyan },
-      { id: 'special', action: 'special', label: 'SPCL', carLabel: null, carAction: null, airLabel: 'YAW R', airAction: 'yawRight', x: right - big * 3 - r * 2 - px(44), y: bottom - r * 3 - px(46), r: px(24), color: COL.pink },
+      { id: 'special', action: 'special', label: 'SPCL', carLabel: 'JOB', carAction: 'action', airLabel: 'YAW R', airAction: 'yawRight', x: right - big * 3 - r * 2 - px(44), y: bottom - r * 3 - px(46), r: px(24), color: COL.pink },
       { id: 'map', action: 'map', label: 'MAP', carLabel: 'MAP', carAction: 'map', x: W / 2 + px(portrait ? 32 : 44), y: safe.t + px(14), r: px(14), hw: px(portrait ? 28 : 40), color: COL.ink, pill: true },
       { id: 'pause', action: 'pause', label: 'PAUSE', carLabel: 'PAUSE', carAction: 'pause', x: W / 2 - px(portrait ? 32 : 44), y: safe.t + px(14), r: px(14), hw: px(portrait ? 28 : 40), color: COL.ink, pill: true }
     ];
   }
   function canvasPoint(t) {
-    var cv = GTP.Render && GTP.Render.hudCanvas, r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0 };
-    return { x: t.clientX - r.left, y: t.clientY - r.top };
+    var Rd = GTP.Render, cv = Rd && Rd.hudCanvas, r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+    var kx = r.width && Rd && Rd.width ? Rd.width / r.width : 1, ky = r.height && Rd && Rd.height ? Rd.height / r.height : 1;   // a stage smaller than the logical size (QAC-55)
+    return { x: (t.clientX - r.left) * kx, y: (t.clientY - r.top) * ky };
   }
   // the touch context: foot, car (boats too) or air (the aircraft labels and actions)
   function touchCtx() { var p = player(), In = GTP.Input; if (!p || !p.inVehicle) return 'foot'; return In && In.inAircraft && In.inAircraft() ? 'air' : 'car'; }
@@ -2962,6 +3107,9 @@
           T.ids[id] = { kind: 'map', x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, moved: 0 };
           continue;
         }
+        var gS = game() && game().state;
+        if (gS === 'paused' && ui.pause.page === 'phone' && !ui.confirm) { T.ids[id] = { kind: 'scroll', y: pt.y, sx: pt.x, sy: pt.y, moved: 0 }; continue; }   // drag scrolls, a still tap taps (QA-B-TCH-09)
+        if (gS === 'cutscene' && !ui.dialogue) { T.ids[id] = { kind: 'skip', t0: ui.t }; In.set('confirm', true); continue; }   // hold anywhere = HOLD TO SKIP, a tap = next shot (QA-B-TCH-02)
         if (menuState() || ui.dialogue) { pointerTap(pt.x, pt.y); T.ids[id] = { kind: 'tap' }; continue; }
         var hb = touchButtonAt(pt.x, pt.y);
         if (hb) {
@@ -2986,6 +3134,12 @@
           In.touch.look.dx += (p2.x - T.look.x) * 1.6; In.touch.look.dy += (p2.y - T.look.y) * 1.6;
           T.look.x = p2.x; T.look.y = p2.y;
           if (In._markLook) In._markLook();
+        } else if (rec.kind === 'scroll') {
+          var sdy = p2.y - rec.y; rec.moved += Math.abs(sdy); rec.y = p2.y;
+          ui.pause.scroll = Math.max(0, Math.min(ui.pause.contentH || 4000, ui.pause.scroll - sdy));
+        } else if (rec.kind === 'button' && rec.hold && GTP.Combat && GTP.Combat.wheel && GTP.Combat.wheel.open) {
+          // the finger holding WPN drags the wheel's selection (QA-B-TCH-12)
+          In.touch.look.dx += (p2.x - (rec.lx == null ? p2.x : rec.lx)) * 1.6; In.touch.look.dy += (p2.y - (rec.ly == null ? p2.y : rec.ly)) * 1.6; rec.lx = p2.x; rec.ly = p2.y;
         } else if (rec.kind === 'map') {
           var mdx = p2.x - rec.x, mdy = p2.y - rec.y; rec.moved += Math.abs(mdx) + Math.abs(mdy); rec.x = p2.x; rec.y = p2.y;
           if (T.pinch && (T.pinch.a == id || T.pinch.b == id)) {
@@ -3000,6 +3154,8 @@
         delete T.ids[id];
         if (rec.kind === 'stick') { T.stick = null; In.touch.stick.x = 0; In.touch.stick.y = 0; In.touch.stick.active = false; In.touch.buttons.run = false; }
         else if (rec.kind === 'look') T.look = null;
+        else if (rec.kind === 'scroll') { if (rec.moved < px(10)) pointerTap(rec.sx, rec.sy); }
+        else if (rec.kind === 'skip') { In.set('confirm', false); if (ui.t - rec.t0 < 0.25) In.press('back'); }
         else if (rec.kind === 'button') {
           In.set(rec.action, false); T.btnDown[rec.b.id] = false;
           if (rec.hold && ui.t - rec.t0 < 0.18) In.press('weaponNext');   // a short tap on WPN cycles; a hold opened the wheel and the release equipped
@@ -3053,7 +3209,7 @@
       if (tt.page === 'slots' && tt.seedFocus) { tt.seedFocus = false; GTP.Input.text.capture = false; }
       return false;
     }
-    if (g.state === 'cutscene' && ui.dialogue) { advanceDialogue(); return true; }
+    if ((g.state === 'cutscene' || g.state === 'playing') && ui.dialogue) { if (ui.dialogue.t > 0.12) { if (GTP.Input.latch) GTP.Input.latch(['shoot', 'action']); advanceDialogue(); } return true; }
     if (g.state === 'paused' && ui.pause.page === 'credits') { endCredits(); return true; }
     if (onMapPage()) return mapTap(x, y);
     return false;
@@ -3080,21 +3236,20 @@
   // called every step before Game's own global input; returns true when the frame's menu input is consumed
   function handleInput(state) {
     var In = GTP.Input, g = game(); if (!In || !g) return false;
-    var click = In.pressed('shoot') && In.mouse && In.mouse.down;
     var dt = C.STEP;
     switch (state) {
       case 'title': {
         var tt = ui.title;
         if (ui.confirm) return confirmInput(In);
-        if (tt.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
-        if (tt.page === 'controls') { if (menuBack(In) || In.pressed('confirm') || In.pressed('enter') || In.pressed('pause')) { if (click) pointerTap(In.mouse.x, In.mouse.y); else { tt.page = ui.settings.from === 'settings' ? 'settings' : 'menu'; ui.settings.from = null; } } else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
+        if (tt.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); return true; }
+        if (tt.page === 'controls') { if (menuBack(In) || In.pressed('confirm') || In.pressed('enter') || In.pressed('pause')) { { tt.page = ui.settings.from === 'settings' ? 'settings' : 'menu'; ui.settings.from = null; } } return true; }
         if (tt.page === 'settings') return settingsInput(In, function () { tt.page = 'menu'; saveSettings(); });
         if (tt.page === 'slots') return titleSlotsInput(In);
         var items = titleItems();
         if (In.pressed('forward')) { tt.sel = (tt.sel - 1 + items.length) % items.length; sfx('ui', 0.2); }
         if (menuDown(In)) { tt.sel = (tt.sel + 1) % items.length; sfx('ui', 0.2); }
         if (In.pressed('confirm') || In.pressed('enter')) titleActivate(items[tt.sel] ? items[tt.sel].id : 'play');
-        else if (click) pointerTap(In.mouse.x, In.mouse.y);
+       
         return true;
       }
       case 'playing':
@@ -3104,29 +3259,30 @@
         if (retryInput(In)) return true;
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         if (In.pressed('pause')) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action'))) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (ui.golf && golfInput(In)) return true;
         if (ui.interior && ui.interior.kind === 'armory' && In.pressed('lockOn')) { openArmory(ui.interior.store && (ui.interior.store.id || ui.interior.store), null); return true; }
-        if (click && ui.card && ui.card.kind === 'failed' && retryOffer()) pointerTap(In.mouse.x, In.mouse.y);
         quickSlots(In);
         return false;
       case 'cutscene': {
         // Escape skips the shot as the pill says (the cutscene reads back / cancel itself); P / Start still pause (QA-C1-08)
         var Cs = GTP.Cutscenes, chh = Cs && Cs.hud ? Cs.hud() : null, skippable = !!(chh && chh.active && chh.skippable !== false);
         if (In.pressed('pause') && !(skippable && In.pressed('cancel'))) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
+        if (skippable && In.pressed('cancel') && !In.pressed('back') && Cs.skipShot) { try { Cs.skipShot(); } catch (e) { U.reportError(e, 'ui.skipShot'); } return true; }   // Esc / Backspace / pad B skip the shot as the pill says
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action'))) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         return true;
       }
       case 'paused': {
         var pg = ui.pause;
         if (ui.confirm) return confirmInput(In);
-        if (pg.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
-        if (pg.page === 'controls') { if (menuBack(In) || In.pressed('pause') || In.pressed('confirm')) { pg.page = ui.settings.from === 'settings' ? 'settings' : 'pause'; ui.settings.from = null; } else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
+        if (pg.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); return true; }
+        if (pg.page === 'controls') { if (menuBack(In) || In.pressed('pause') || In.pressed('confirm')) { pg.page = ui.settings.from === 'settings' ? 'settings' : 'pause'; ui.settings.from = null; } return true; }
         if (pg.page === 'settings') return settingsInput(In, function () { pg.page = 'pause'; saveSettings(); });
         if (pg.page === 'slots') return pauseSlotsInput(In);
         if (pg.page === 'shop') return shopInput(In);
         if (pg.page === 'phone') {
+          if (menuBack(In) && pg.phoneFrom === 'pause') { pg.page = 'pause'; pg.phoneFrom = null; return true; }   // back to the pause menu it came from (QA-B-FE-09)
           if (In.pressed('map') || In.pressed('pause') || menuBack(In)) { closePause(); return true; }
           if (In.pressed('tabNext') || In.pressed('lockOn')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
           if (pg.tab === 0) {
@@ -3145,7 +3301,6 @@
           if (In.pressed('confirm') && rows[pg.row]) missionRowActivate(rows[pg.row]);
           if (In.pressed('secondary') && tabId() === 'MISSIONS' && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active) abortMission();
           if (tabId() === 'STOCKS' && rows[pg.row] && rows[pg.row].stock) { if (In.pressed('secondary')) stockTrade(rows[pg.row].stock, -10); }
-          if (click) pointerTap(In.mouse.x, In.mouse.y);
           return true;
         }
         if (In.pressed('pause') || menuBack(In)) { closePause(); return true; }
@@ -3153,11 +3308,11 @@
         if (In.pressed('forward')) { pg.sel = (pg.sel - 1 + PAUSE_ITEMS.length) % PAUSE_ITEMS.length; sfx('ui', 0.2); }
         if (menuDown(In)) { pg.sel = (pg.sel + 1) % PAUSE_ITEMS.length; sfx('ui', 0.2); }
         if (In.pressed('confirm')) pauseActivate(PAUSE_ITEMS[pg.sel].id);
-        else if (click) pointerTap(In.mouse.x, In.mouse.y);
+       
         return true;
       }
       case 'minigame':
-        if (click) pointerTap(In.mouse.x, In.mouse.y);
+        if (In.pressed('pause') || In.pressed('map')) { openPause(In.pressed('map') ? 'phone' : 'pause'); return true; }   // QA-D SAVE-14
         return true;
       case 'wasted': case 'busted': case 'gameover':
         return true;
@@ -3191,7 +3346,9 @@
     var Ev = GTP.Events; if (!Ev || ui._events) return;
     ui._events = true;
     Ev.on('memo', function (e) { if (e) ui.memoFloat = { n: e.n | 0, total: e.total | 0, t: 0 }; });
-    Ev.on('saved', function (e) { if (e && e.auto) { ui.saved.t = 1.2; ui.saved.slot = e.slot; } });
+    Ev.on('saved', function (e) { slotsDirty(); if (e && e.auto) { ui.saved.t = 1.2; ui.saved.slot = e.slot; } });
+    ['save:deleted', 'save:migrated', 'loaded', 'state'].forEach(function (n) { Ev.on(n, slotsDirty); });
+    try { window.addEventListener('storage', slotsDirty); } catch (e) { /* optional */ }
     Ev.on('shop:close', function () { leaveShopPage(true); });
     Ev.on('shop:open', function (e) { var CB = GTP.Combat; if (ui.shopOpen || !(CB && CB.shop && CB.shop.state && CB.shop.state.open)) return; openShop(e && e.store, e && e.landmark); });
     Ev.on('hint', function (e) { if (e) ui.hint = { id: e.id, text: e.text, keys: e.keys || [], t: 0 }; });
@@ -3247,8 +3404,8 @@
         var k = clamp01(ch.skip || 0), pw = px(170), ph = px(26), pxx = W - safe.r - pw, py = H - bar + (bar > ph + px(8) ? (bar - ph) / 2 : -ph - px(10));
         panel(ctx, pxx, py, pw, ph, px(13), 'rgba(10,12,24,0.85)', k > 0 ? COL.pink : 'rgba(255,255,255,0.25)');
         if (k > 0) { ctx.save(); rr(ctx, pxx, py, pw, ph, px(13)); ctx.clip(); ctx.fillStyle = 'rgba(255,63,164,0.45)'; ctx.fillRect(pxx, py, pw * k, ph); ctx.restore(); }
-        txt(ctx, 'HOLD ' + glyph('confirm') + ' TO SKIP', pxx + pw / 2, py + px(17), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
-        txt(ctx, glyph('cancel') + ' skips the shot', pxx + pw / 2, py - px(6), { font: F(8, 'bold'), color: COL.muted, align: 'center' });
+        txt(ctx, device() === 'touch' ? 'HOLD TO SKIP' : 'HOLD ' + glyph('confirm') + ' TO SKIP', pxx + pw / 2, py + px(17), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+        txt(ctx, device() === 'touch' ? 'a tap skips the shot' : glyph('cancel') + ' skips the shot', pxx + pw / 2, py - px(6), { font: F(8, 'bold'), color: COL.muted, align: 'center' });
       }
       return;
     }
@@ -3400,38 +3557,45 @@
   // gps:set {x, z, label, kind} / gps:clear. The route comes from GTP.World.route (v0.3 world track), else
   // World.findPath (car mode), else a straight line; it is trimmed as the player drives it and rebuilt every 3 s or when
   // the player strays 35 m off it. The minimap and the big map draw it in the kind's colour, the HUD shows a turn chip.
-  function gpsColor(kind) { return kind === 'story' ? COL.gold : kind === 'stranger' ? '#c084fc' : kind === 'job' ? COL.cyan : kind === 'shop' ? COL.green : kind === 'property' ? COL.white : '#c084fc'; }
+  function gpsColor(kind) { return kind === 'story' ? COL.gold : kind === 'objective' ? COL.amber : kind === 'stranger' ? '#c084fc' : kind === 'job' ? COL.cyan : kind === 'shop' ? COL.green : kind === 'property' ? COL.white : '#c084fc'; }
   function gpsSet(e) {
     if (!e || typeof e.x !== 'number' || typeof e.z !== 'number') return;
-    ui.gps = { x: e.x, z: e.z, label: String(e.label || ''), kind: e.kind || 'story', route: null, routeT: 0, dist: 0, len: 0, turn: null, t: 0 };
+    // story sends {x, z, label, kind:'story'|'objective', route, missionId}; a route in the payload is used as is
+    var rt = Array.isArray(e.route) && e.route.length > 1 ? e.route.slice() : null;
+    ui.gps = { x: e.x, z: e.z, label: String(e.label || ''), kind: e.kind || 'story', missionId: e.missionId || null, route: rt, routeT: rt ? 3 : 0, dist: 0, len: 0, turn: null, t: 0 };
   }
-  function computeRoute(ax, az, bx, bz) {
-    var Wd = GTP.World, path = null;
+  function computeRoute(ax, az, bx, bz, o) {
+    var Wd = GTP.World, path = null, failed = false;
     try { if (Wd && typeof Wd.route === 'function') path = Wd.route(ax, az, bx, bz); } catch (e) { path = null; }
-    if (!path || path.length < 2) { try { if (Wd && Wd.findPath) path = Wd.findPath(ax, az, bx, bz, { mode: 'car', maxExpansions: 20000 }); } catch (e) { path = null; } }
-    if (!path || !path.length) path = [{ x: ax, z: az }];
+    if (!path || path.length < 2) { try { if (Wd && Wd.findPath) path = Wd.findPath(ax, az, bx, bz, { mode: 'car', fromY: o && o.fromY, maxExpansions: 20000 }); } catch (e) { path = null; } }
+    if (!path || !path.length) { path = [{ x: ax, z: az }]; failed = true; }
     var last = path[path.length - 1];
     if (!last || U.dist2d(last.x, last.z, bx, bz) > 1) path = path.concat([{ x: bx, z: bz }]);
+    path.failed = failed;
     return path;
   }
   function updateGps(dt) {
     var G = ui.gps, p = player(); if (!G || !p) return;
     G.t += dt;
     G.dist = U.dist2d(p.x, p.z, G.x, G.z);
-    if (G.kind !== 'story' && G.dist < 12) { ui.gps = null; toast('Arrived: ' + (G.label || 'destination')); return; }
+    if (G.kind !== 'story' && G.kind !== 'objective' && G.kind !== 'stranger' && G.dist < 12) { ui.gps = null; toast('Arrived: ' + (G.label || 'destination')); return; }   // story-owned routes are moved on by the story
     G.routeT -= dt;
     if (G.route && G.route.length > 1) {
       var best = 0, bd = 1e9, n = Math.min(G.route.length - 1, 16);
       for (var i = 0; i <= n; i++) { var d = U.dist2d(p.x, p.z, G.route[i].x, G.route[i].z); if (d < bd) { bd = d; best = i; } }
-      if (bd > 35) G.routeT = 0;
-      else if (best > 0) G.route = G.route.slice(best);
+      if (bd > 35) { G.routeT = 0; G.offRoute = true; } else { G.offRoute = false; if (best > 0) G.route = G.route.slice(best); }
     }
-    if (G.routeT <= 0 || !G.route) { G.routeT = 3; G.route = computeRoute(p.x, p.z, G.x, G.z); }
+    if (G.routeT <= 0 || !G.route) {
+      var moved = G.lastFrom ? U.dist2d(p.x, p.z, G.lastFrom.x, G.lastFrom.z) : 1e9;
+      if (!G.route || moved > (G.failed ? 30 : 10) || bdNeeded(G)) { G.route = computeRoute(p.x, p.z, G.x, G.z, { fromY: p.y }); G.failed = !!G.route.failed; G.lastFrom = { x: p.x, z: p.z }; }
+      G.routeT = G.failed ? 10 : 3;
+    }
     var len = 0, px0 = p.x, pz0 = p.z;
     for (var j = 0; j < G.route.length; j++) { len += U.dist2d(px0, pz0, G.route[j].x, G.route[j].z); px0 = G.route[j].x; pz0 = G.route[j].z; }
     G.len = len;
     G.turn = gpsTurn(G.route, p);
   }
+  function bdNeeded(G) { return !!G.offRoute && !G.failed; }   // a failed (straight-line) route is not chased every frame
   // the next turn along the route: {dir: 'straight'|'left'|'right'|'around', dist}
   function gpsTurn(route, p) {
     if (!route || route.length < 2) return { dir: 'straight', dist: ui.gps ? ui.gps.dist : 0 };
@@ -3580,8 +3744,9 @@
   // a call that arrives in a cutscene or a menu waits for play. Lines are strings or {who, text}.
   function phoneCall(e) {
     if (!e) return;
-    var lines = (e.lines || []).map(function (l) { return typeof l === 'string' ? { who: e.from, text: l } : { who: l.who || l.from || e.from, text: String(l.text || l.line || '') }; }).filter(function (l) { return l.text; });
-    ui.callQueue.push({ from: e.from || 'everyone', lines: lines, missionId: e.missionId || null });
+    // story sends lines as {who, name, color, text}: the resolved name and colour win over the cast table
+    var lines = (e.lines || []).map(function (l) { return typeof l === 'string' ? { who: e.from, name: e.name || null, text: l } : { who: l.who || l.from || e.from, name: l.name || (l.who === e.from ? e.name : null) || null, color: l.color || null, text: String(l.text || l.line || '') }; }).filter(function (l) { return l.text; });
+    ui.callQueue.push({ from: e.from || 'everyone', name: e.name || null, lines: lines, missionId: e.missionId || null, title: e.title || null });
   }
   function lineSecs(l) { return 2.2 + String(l.text || '').length * 0.045; }
   function updateCalls(dt) {
@@ -3618,7 +3783,8 @@
     var slide = c.phase === 'ring' ? (1 - ease(Math.min(1, c.t / 0.3))) * px(40) : c.phase === 'end' ? ease(Math.min(1, (c.endT || 0) / 0.8)) * px(40) : 0;
     var a = c.phase === 'end' ? 1 - Math.min(1, (c.endT || 0) / 0.8) : 1;
     ctx.save(); ctx.globalAlpha = a; ctx.translate(slide, 0);
-    var who = l ? l.who : c.from, cm = cast(who), col = (cm && cm.color) || COL.cyan;
+    var who = l ? l.who : c.from, cm = cast(who), col = (l && l.color) || (cm && cm.color) || COL.cyan, whoName = (l && l.name) || (!l && c.name) || castName(who);
+    if (typeof col === 'number') col = '#' + ('000000' + col.toString(16)).slice(-6);
     glass(ctx, x, y, w, h, COL.lime, px(14));
     // the portrait in a ring that pulses while it rings
     var pcx = x + px(16) + ps / 2, pcy = y + px(12) + ps / 2;
@@ -3626,7 +3792,7 @@
     ctx.save(); ctx.beginPath(); ctx.arc(pcx, pcy, ps / 2, 0, Math.PI * 2); ctx.clip(); castPortrait(ctx, who, x + px(16), y + px(12), ps); ctx.restore();
     ctx.strokeStyle = col; ctx.lineWidth = px(2); ctx.beginPath(); ctx.arc(pcx, pcy, ps / 2, 0, Math.PI * 2); ctx.stroke();
     var tx = x + ps + px(28);
-    txt(ctx, castName(who).toUpperCase(), tx, y + px(24), { font: F(13, 'bold'), color: col, outline: false, maxW: w - ps - px(110) });
+    txt(ctx, String(whoName).toUpperCase(), tx, y + px(24), { font: F(13, 'bold'), color: col, outline: false, maxW: w - ps - px(110) });
     var status = c.phase === 'ring' ? (Math.floor(c.t * 3) % 2 ? 'INCOMING CALL' : 'INCOMING CALL ·') : U.fmtTime(Math.floor(c.t));
     txt(ctx, status, x + w - px(14), y + px(23), { font: F(10, 'bold'), color: c.phase === 'ring' ? COL.lime : COL.muted, align: 'right', outline: false });
     if (c.phase === 'ring') {
@@ -3645,7 +3811,9 @@
   // -------------------------------------------------------- chapter cards ----
   // chapter {act, title}: a full-width cinematic card for 5 s on top of everything (play or cutscene)
   var ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
-  function chapterCard(e) { if (!e) return; ui.chapter = { act: e.act, title: String(e.title || ''), t: 0, dur: 5.2 }; ui.chapterSeen = { act: e.act, title: e.title }; sfx('chapter', 0.6); }
+  // chapter {act, title, roman}: the parity titles already carry "Act I: ..."; the card prints the act once
+  function chapterTitle(t) { return String(t || '').replace(/^\s*(act|chapter)\s+[ivxlc0-9]+\s*[:.\-–]\s*/i, ''); }
+  function chapterCard(e) { if (!e) return; ui.chapter = { act: e.act, roman: e.roman || null, title: chapterTitle(e.title), t: 0, dur: 5.2 }; ui.chapterSeen = { act: e.act, title: chapterTitle(e.title) }; sfx('chapter', 0.6); }
   function drawChapter(ctx) {
     var c = ui.chapter; if (!c) return;
     var k = c.t / c.dur, a = k < 0.08 ? k / 0.08 : k > 0.86 ? (1 - k) / 0.14 : 1;
@@ -3654,7 +3822,7 @@
     ctx.fillStyle = vg; ctx.fillRect(0, H * 0.3, W, H * 0.4);
     var wipe = ease(Math.min(1, c.t / 0.9)), lw = Math.min(W * 0.5, px(520)) * wipe, cy = H * 0.5;
     ctx.fillStyle = COL.gold; ctx.fillRect(W / 2 - lw, cy - px(46), lw * 2, px(2)); ctx.fillRect(W / 2 - lw, cy + px(40), lw * 2, px(2));
-    var act = typeof c.act === 'number' ? 'ACT ' + (ROMAN[c.act] || c.act) : String(c.act || '').toUpperCase();
+    var act = c.roman ? 'ACT ' + c.roman : typeof c.act === 'number' ? 'ACT ' + (ROMAN[c.act] || c.act) : String(c.act || '').toUpperCase();
     txt(ctx, act, W / 2, cy - px(18), { font: F(14, 'bold'), color: COL.gold, align: 'center', outline: false });
     var rise = (1 - ease(Math.min(1, c.t / 0.7))) * px(12);
     txt(ctx, c.title.toUpperCase(), W / 2, cy + px(24) + rise, { font: F(portrait ? 26 : 40, '900', FONT_DISPLAY), color: COL.ink, align: 'center', lw: px(5), outline: 'rgba(0,0,0,0.6)', maxW: W - px(40) });
@@ -4675,7 +4843,27 @@
     { id: 'turbo', name: 'Turbo', values: [false, true], labels: ['None', 'Hot Take Turbo'], prices: [0, 2600] },
     { id: 'horn', name: 'Horn', values: ['stock', 'airhorn', 'debate_bell', 'kazoo', 'applause'], labels: ['Stock', 'Air Horn', 'Debate Bell', 'Kazoo', 'Canned Applause'], prices: [0, 200, 350, 120, 480] }
   ];
-  function modCats() {
+  // with the vehicles track: GTP.Vehicles.modCatalog(v) -> [{part, value, name, price, current, owned, stat}] gives the
+  // parts, names and prices (aircraft and boats get engine / armour only); colours ride on the 'paint' part
+  var PART_NAMES = { engine: 'Engine', brakes: 'Brakes', armor: 'Armor', turbo: 'Turbo', wheels: 'Wheels', spoiler: 'Spoiler', tint: 'Window tint', horn: 'Horn', paint: 'Finish', repair: 'Repair' };
+  function modCatsReal(v) {
+    var Vs = GTP.Vehicles, cat = call(Vs.modCatalog, Vs, [v], null); if (!cat || !cat.length) return null;
+    var base = modCats(null), out = [base[0], base[1]], by = {}, order = [];
+    var pp = typeof Vs.priceOf === 'function' ? call(Vs.priceOf, Vs, ['paint', { finish: (v.mods && v.mods.paint && v.mods.paint.finish) || 'gloss' }], null) : null;
+    if (pp != null) out = [Object.assign({}, base[0], { price: pp }), Object.assign({}, base[1], { price: pp })];   // a colour costs a respray
+    cat.forEach(function (it) { var k = it.part; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(it); });
+    order.forEach(function (k) {
+      var list = by[k], c = { id: k === 'paint' ? 'finish' : k, part: k, name: PART_NAMES[k] || k, real: true, values: [], labels: [], prices: [], stats: [] };
+      if (k === 'turbo') { c.values.push(false); c.labels.push('No Turbo'); c.prices.push(0); c.stats.push(null); }
+      list.forEach(function (it) { c.values.push(k === 'paint' ? it.value.finish : it.value); c.labels.push(it.name); c.prices.push(it.price | 0); c.stats.push(it.stat || null); });
+      if (k === 'repair' && !(list[0] && list[0].price > 0)) return;   // nothing to repair
+      out.push(c);
+    });
+    return out;
+  }
+  function modCats(v) {
+    var Vs = GTP.Vehicles;
+    if (v && Vs && typeof Vs.modCatalog === 'function') { var real = modCatsReal(v); if (real) return real; }
     var P = parity().modshop, out = MOD_CATS.map(function (c) { return Object.assign({}, c); });
     var over = P && (P.categories || P.cats);
     if (over) asList(over).forEach(function (o) { var c = findById(out, o.id); if (c) Object.assign(c, o); else out.push(Object.assign({}, o)); });
@@ -4713,15 +4901,33 @@
     var applied = defaultMods(v);
     return openModal('modshop', { vehicle: v, applied: applied, preview: applied, previewT: -1, cat: 0, opt: 0, focus: 0, cam: v ? { target: v, dist: 7.6, height: 2.3, lookY: 0.7, yaw: 0.6, spin: 0.22 } : null, onClose: function (m) { if (m.vehicle && m.onVehicle && m.onVehicle !== JSON.stringify(m.applied)) applyMods(m.vehicle, m.applied); } });
   }
-  function modPreview(m, cid, val) { m.preview = withMod(m.applied, cid, val); m.previewT = 0.15; }
+  function modPreview(m, cid, val) {
+    if (cid === 'repair') return; m.preview = withMod(m.applied, cid, val); m.previewT = 0.15; }
   function modPerf(mods) { return { accel: 0.35 + mods.engine * 0.1 + (mods.turbo ? 0.12 : 0), top: 0.45 + mods.engine * 0.08 + (mods.turbo ? 0.06 : 0), brakes: 0.4 + mods.brakes * 0.17, armor: 0.1 + mods.armor * 0.17 }; }
   function modBuy(m) {
-    var cats = modCats(), c = cats[m.cat], opts = modOptions(c), o = opts[m.opt]; if (!c || !o) return;
+    var cats = modCats(m.vehicle), c = cats[m.cat], opts = modOptions(c), o = opts[m.opt]; if (!c || !o) return;
     var cur = modValue(m.applied, c.id);
     if (cur === o.value || (cur == null && o.value == null)) { modalMsg(m, 'Already installed.', COL.muted); return; }
     var Vs = GTP.Vehicles, res = null;
-    if (Vs && typeof Vs.buyMod === 'function') res = call(Vs.buyMod, Vs, [m.vehicle, c.id, o.value, o.price], null);
-    if (res && res.ok === false) { modalMsg(m, res.reason === 'funds' ? 'NOT ENOUGH CASH.' : 'No sale.', COL.red); return; }
+    if (Vs && typeof Vs.buyMod === 'function' && c.id !== 'repair' && (c.id === 'primary' || c.id === 'secondary') && o.value == null) {
+      // back to the stock colour is free
+      m.applied = withMod(m.applied, c.id, null); applyMods(m.vehicle, m.applied); m.onVehicle = JSON.stringify(m.applied); m.preview = m.applied; m.previewT = -1;
+      modalMsg(m, 'Stock colour back on.', COL.lime); return;
+    }
+    if (Vs && typeof Vs.buyMod === 'function') {
+      // the vehicles track charges, applies and emits shop:buy {item: 'mod:<part>:<value>'}
+      var part = c.part || (c.id === 'primary' || c.id === 'secondary' || c.id === 'finish' ? 'paint' : c.id), val = o.value;
+      if (c.id === 'primary' || c.id === 'secondary') { val = { finish: (m.applied.paint && m.applied.paint.finish) || 'gloss' }; val[c.id] = o.value; }
+      else if (c.id === 'finish') val = { finish: o.value };
+      res = call(Vs.buyMod, Vs, [m.vehicle, part, val], null);
+      if (res && res.ok === false) { modalMsg(m, res.reason === 'money' || res.reason === 'funds' ? 'NOT ENOUGH CASH' + (res.price ? '. It is ' + U.fmtMoney(res.price) + '.' : '.') : res.reason === 'owned' ? 'Already installed.' : 'No sale (' + (res.reason || 'unknown') + ').', COL.red); sfx('fail', 0.3); return; }
+      if (res && res.ok) {
+        var nm = defaultMods(m.vehicle); if (c.id === 'primary' || c.id === 'secondary') nm.paint[c.id] = o.value;
+        m.applied = nm; m.preview = m.applied; m.previewT = -1; m.onVehicle = JSON.stringify(m.applied);
+        modalMsg(m, 'INSTALLED: ' + o.label + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1; sfx('cash', 0.6);
+        return;
+      }
+    }
     if (!res) {
       if (!payMoney(o.price)) { modalMsg(m, 'NOT ENOUGH CASH. Need ' + U.fmtMoney(o.price - ((player() || {}).money | 0)) + ' more.', COL.red); sfx('fail', 0.3); return; }
     }
@@ -4736,7 +4942,7 @@
     return { x: x, y: y, w: w, h: h };
   }
   function drawModShop(ctx) {
-    var m = ui.modal, cats = modCats(), c = cats[m.cat], opts = modOptions(c), R = sidePanelRect(), p = player();
+    var m = ui.modal, cats = modCats(m.vehicle), c = cats[m.cat], opts = modOptions(c), R = sidePanelRect(), p = player();
     var vg = ctx.createLinearGradient(R.x, 0, R.x + R.w + px(160), 0); vg.addColorStop(0, 'rgba(4,5,10,0.55)'); vg.addColorStop(1, 'rgba(4,5,10,0)');
     if (!portrait) { ctx.fillStyle = vg; ctx.fillRect(0, 0, R.x + R.w + px(160), H); }
     modalFrame(ctx, R.x, R.y, R.w, R.h, 'SPIN DOCTOR CUSTOMS', m.vehicle ? vehicleName(m.vehicle) : 'Bring a car. We bring the spin.', COL.pink);
@@ -4767,7 +4973,7 @@
     helpLine(ctx, navKeys() + '  ·  drag / right stick turns the car', R.x + px(18), R.y + R.h - px(10), R.w - px(36));
   }
   function modShopInput(In) {
-    var m = ui.modal, cats = modCats(), c = cats[m.cat], opts = modOptions(c);
+    var m = ui.modal, cats = modCats(m.vehicle), c = cats[m.cat], opts = modOptions(c);
     if (m.focus === 0) {
       if (menuBack(In)) { closeModal(); return true; }
       if (In.pressed('forward')) { m.cat = (m.cat - 1 + cats.length) % cats.length; m.opt = 0; sfx('ui', 0.15); }
@@ -5175,7 +5381,8 @@
   function drawPhoneStory(ctx, x, y, w, h) {
     var ch = chapterLabel(storyChapter()), card = nextStoryCard(), Ms = GTP.Missions, st = Ms && Ms.state, all = Ms && Ms.allMissions ? call(Ms.allMissions, Ms, [], []) : [];
     var ry = y - ui.pause.scroll, rows = [], p = player();
-    var done = st && st.completed ? st.completed.size : 0, total = all.length || 35;
+    var prog = GTP.Story && typeof GTP.Story.progress === 'function' ? call(GTP.Story.progress, GTP.Story, [], null) : null;   // the story chain only, not the side missions
+    var done = prog && prog.done != null ? prog.done : st && st.completed ? st.completed.size : 0, total = prog && prog.total ? prog.total : all.length || 35;
     // the chapter header with the story progress
     var hh = px(64);
     var hg = ctx.createLinearGradient(x, 0, x + w, 0); hg.addColorStop(0, 'rgba(232,181,58,0.24)'); hg.addColorStop(1, 'rgba(232,181,58,0.04)');
@@ -5378,7 +5585,8 @@
     Ev.on('range:end', rangeEnd);
     Ev.on('clothing:open', function () { openWardrobe('clothing'); });
     Ev.on('barber:open', function () { openWardrobe('barber'); });
-    Ev.on('modshop:open', openModShop);
+    Ev.on('modshop:open', function (e) { if (ui.modal && ui.modal.kind === 'modshop' && e && ui.modal.vehicle === e.vehicle) return; openModShop(e); });
+    Ev.on('modshop:close', function () { if (ui.modal && ui.modal.kind === 'modshop') closeModal(); });
     Ev.on('property:open', openProperty);
     Ev.on('heist:board', openHeistBoard);
     Ev.on('boss:phase', bossPhase);
@@ -5426,8 +5634,10 @@
       // saved settings apply at once; the quality preset only when the URL did not pick one (tests and ?quality= win)
       var had = loadSettings(), opts = (g && g.opts) || {};
       var urlQuality = !!(opts.quality || opts.low) || (g && g.headless);
-      if (had) applyAllSettings({ skipQuality: urlQuality }); else { if (GTP.Input) GTP.Input.gamepadEnabled = true; applyVolumes(); }
-      if (urlQuality && Rd && Rd.quality) ui.settings.quality = Rd.quality.auto ? 'auto' : Rd.quality.current;
+      if (had) applyAllSettings({ skipQuality: urlQuality, skipDraw: !!opts.low }); else { if (GTP.Input) GTP.Input.gamepadEnabled = true; applyVolumes(); }
+      ui.storedQuality = ui.settings.quality; ui.storedDraw = ui.settings.drawDistance;
+      if (urlQuality && Rd && Rd.quality) { ui.settings.quality = Rd.quality.auto ? 'auto' : Rd.quality.current; ui.qualityFromUrl = true; }
+      if (opts.low) ui.lowFromUrl = true;
       bindEvents();
       var cv = Rd && Rd.hudCanvas;
       if (cv && !ui._bound) {
@@ -5448,6 +5658,7 @@
       var g = game(); if (!g) return;
       ui.t += dt;
       try {
+        trackPointer();
         if (ui.inputStep !== g.steps) handleInput(g.state);
         ui.inputStep = -1;
         updateLoading(dt);
@@ -5463,7 +5674,15 @@
     },
     draw: draw,
     onState: onState,
-    handleInput: function (state) { ui.inputStep = GTP.game ? GTP.game.steps : 0; return handleInput(state); },
+    handleInput: function (state) {
+      var g = GTP.game, In = GTP.Input;
+      ui.inputStep = g ? g.steps : 0;
+      var r = handleInput(state);
+      // a key a menu or a dialogue used is used up: the Enter that resumes, loads or advances a line never also exits the
+      // car, jumps or fires in play on the same step (QA-B-FE-03, QA-D SAVE-03)
+      if (In && In.consume && g && g.state === 'playing' && (r || state !== 'playing')) In.consume(['confirm', 'enter', 'jump', 'action', 'shoot', 'cancel', 'pause', 'map']);
+      return r;
+    },
     // mission hooks
     banner: banner, card: card, showDialogue: showDialogue, hideDialogue: hideDialogue, advanceDialogue: advanceDialogue,
     ticker: function (text) { ui.ticker.queue.unshift({ text: String(text || ''), tag: 'BREAKING', color: COL.red }); ui.ticker.forceT = 14; if (ui.ticker.cur && !ui.ticker.cur.nap) ui.ticker.cur.done = true; },
@@ -5487,6 +5706,7 @@
     closeModal: closeModal, modal: function () { return ui.modal; },
     gps: { set: gpsSet, clear: function () { ui.gps = null; }, get: function () { return ui.gps; } },
     skipCall: skipCallLine,
+    wantsMenuPad: function () { var c = ui.card; return !!(c && c.kind === 'failed' && retryOffer() && c.t >= 0.8); },
     phoneTabs: PHONE_TABS, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
     state: ui,
     _v3: { crossState: crossState, drawCrosshair: drawCrosshair, gpsTurn: gpsTurn, armoryState: function () { return ui.modal && ui.modal.kind === 'armory' ? armoryState() : null; }, retryOffer: retryOffer, stockList: stockList, wardrobeCats: wardrobeCats, modCats: modCats, heistDef: heistDef, vehCat: vehCat, chuteState: chuteState, promptList: promptList, missionRowActivate: missionRowActivate, retryActivate: retryActivate }

@@ -38,9 +38,9 @@
     'quickUp', 'quickRight', 'quickDown', 'quickLeft',
     'cover', 'special', 'pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight', 'throttleUp', 'throttleDown'];
   var AIR_TYPES = { heli: 1, plane: 1, jet: 1, helicopter: 1, aircraft: 1 };
-  // 'back' is both the menu action and the move action; menus read pressed('back') via Escape/Backspace,
-  // movement reads down('back') from S/ArrowDown. 'cancel' (Escape, Backspace, pad B) is the unambiguous
-  // menu back-out, so S / ArrowDown / the stick can step a menu's selection down without closing it.
+  // 'back' is the move action (S / ArrowDown); menus step down with it. 'cancel' (Escape, Backspace, pad B) is the
+  // menu back-out. Escape / Backspace no longer carry 'back', so holding them never walks or reverses (QA-B-FE-04);
+  // the UI skips a cutscene shot on 'cancel' itself.
 
   // key code -> list of actions
   var BINDINGS = {
@@ -60,13 +60,14 @@
     KeyH: ['horn'], KeyN: ['radio'], KeyR: ['reload'], KeyM: ['map'], KeyV: ['cameraMode'],
     Equal: ['zoomIn'], NumpadAdd: ['zoomIn'], Minus: ['zoomOut'], NumpadSubtract: ['zoomOut'],
     Delete: ['secondary'],
-    Escape: ['pause', 'back', 'cancel'], KeyP: ['pause'], Backspace: ['back', 'cancel']
+    Escape: ['pause', 'cancel'], KeyP: ['pause'], Backspace: ['cancel']
   };
   var PREVENT = { Space: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, Backspace: 1, Tab: 1, ControlLeft: 1, ControlRight: 1 };
 
   // standard-layout button index -> action, per context
   var PAD_FOOT = { 0: 'jump', 1: 'run', 2: 'reload', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'special', 11: 'lockOn', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
-  var PAD_CAR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'special', 11: 'cameraMode', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
+  // in a vehicle the d-pad up is 'action' (start a cab or HOA shift; QA-B-HUD-01), the quick slots keep right / down / left
+  var PAD_CAR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'weaponPrev', 5: 'weaponNext', 6: 'aim', 7: 'shoot', 8: 'map', 9: 'pause', 10: 'special', 11: 'cameraMode', 12: 'action', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
   var PAD_AIR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'yawLeft', 5: 'yawRight', 6: 'throttleDown', 7: 'throttleUp', 8: 'map', 9: 'pause', 10: 'special', 11: 'cameraMode', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
   var COVER_TAP_MS = 220;   // a B press shorter than this is a cover tap (B held stays sprint)
   var PAD_MENU = { 0: 'confirm', 1: 'cancel', 2: 'secondary', 3: 'tabNext', 4: 'weaponPrev', 5: 'weaponNext', 6: 'zoomOut', 7: 'zoomIn', 8: 'map', 9: 'pause', 12: 'forward', 13: 'back', 14: 'left', 15: 'right' };
@@ -145,6 +146,11 @@
       for (var i = 0; i < (actions || []).length; i++) { var a = actions[i]; if (rawDown(a)) latched[a] = true; pressedFlags[a] = false; }
     },
     latched: function (action) { return !!latched[action]; },
+    // use up this step's presses (a menu or dialogue took the key): Enter / Space / A never also act in play
+    consume: function (actions) {
+      if (typeof actions === 'string') actions = [actions];
+      for (var i = 0; i < (actions || []).length; i++) pressedFlags[actions[i]] = false;
+    },
     // the vehicle the player drives is an aircraft (the vehicles track's heli / plane / jet, or vehicle.air)
     inAircraft: function () {
       var g = GTP.game, p = g && g.player, v = p && p.inVehicle;
@@ -244,9 +250,11 @@
     // which button map applies: menus (title, pause, minigame, cards), the driver's seat, or on foot
     _padContext: function () {
       var g = GTP.game;
-      if (!g || g.state !== 'playing') return g && g.state === 'cutscene' ? 'foot' : 'menu';
+      // cutscenes and the CONTEXT STAMPED card use the menu map: A confirms / holds to skip, B skips a shot or quits (QA-B-FE-05)
+      if (!g || g.state !== 'playing') return 'menu';
       var us = GTP.UI && GTP.UI.state;
       if (us && (us.shopOpen || us.modal)) return 'menu';
+      if (GTP.UI && typeof GTP.UI.wantsMenuPad === 'function' && GTP.UI.wantsMenuPad()) return 'menu';
       var p = g.player;
       if (p && p.inVehicle) return Input.inAircraft() ? 'air' : 'car';
       return 'foot';
@@ -293,11 +301,13 @@
         if (was === 'run' && ctx === 'foot' && pad._bDown && Date.now() - pad._bDown < COVER_TAP_MS) pressedFlags.cover = true;   // a tap of B: cover
       }
       if (used || pad.lx || pad.ly || pad.rx || pad.ry) { Input._device('gamepad'); Input.anyKey = true; Input.lastGesture = Date.now(); }
+      if (used && !pad._unlocked && GTP.Audio && GTP.Audio.unlock) { try { GTP.Audio.unlock(); pad._unlocked = !!(GTP.Audio.ctx && GTP.Audio.ctx.state === 'running'); } catch (e) { /* audio is optional */ } }   // a pad-only player hears the game (QA-D D-07)
     },
     _pointer: function (clientX, clientY) {
       if (!canvas) return;
-      var r = canvas.getBoundingClientRect();
-      Input.mouse.x = clientX - r.left; Input.mouse.y = clientY - r.top;
+      var r = canvas.getBoundingClientRect(), Rd = GTP.Render;
+      var kx = r.width && Rd && Rd.width ? Rd.width / r.width : 1, ky = r.height && Rd && Rd.height ? Rd.height / r.height : 1;   // logical HUD pixels on a stage smaller than the logical size (QAC-55)
+      Input.mouse.x = (clientX - r.left) * kx; Input.mouse.y = (clientY - r.top) * ky;
       Input.mouse.moved = true;
     },
     _gesture: function () {
