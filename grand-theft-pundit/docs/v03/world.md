@@ -99,7 +99,11 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
   off camera). A running event's clock stops in cutscenes and any non-playing state, and it ends (`reason:'story'`) when a
   mission or strand starts. API: `AI.events.list()`, `def(id)`, `start(id)` (forced, ignores eligibility), `stop(ok, reason)`,
   `current()`, `eligible()` (null or why not), `markers()`, `setNext(seconds)`.
-- **Motorcycles in traffic**: `'moto'` is in every district's traffic table except capitol, suburbs, hills and airport.
+- **Motorcycles in traffic**: `GTP.Content.world.spawn.vehicles.motoShare` (downtown 0.12, strip 0.22, campus 0.12,
+  industrial 0.12, marina 0.15, uptown 0.1, port 0.1) of the sedans, sports cars, SUVs and vans the spawner places in a
+  district become `'moto'` (never on the Loop deck). The pick is a hash of the spawn tile and the clock, **not a draw on
+  `GTP.rng`**, so the city's ambient stream (and every seed-tuned test) stays as in v0.2; putting `'moto'` into the
+  `byDistrict` tables shifted every later pick (tests/strands.js and tests/perf.js went red on the different crowd).
   `AI.spawner.vehicleType('moto')` rides a `'bike'` until the vehicles track registers `C.VEHICLES.moto`; then motos
   spawn with their own cruise speed (`K.cruiseMoto`).
 - **Cowering** (shots fired near a cowering civilian break it into a run): a civilian (any non-cop ped on the AI's brain) within 28 m in the line of a gun the player aims (aim
@@ -181,9 +185,8 @@ events `cover:enter`, `cover:exit`, `interior:exit`.
 - The race fix is a wrapper; integration may want to fold the via logic into `09_missions` `races.begin`.
 - Street events and door markers have no minimap icons until the UI appends `AI.blips()`.
 - Flankers that are assigned the same side can pick nearby points (they spread as they walk).
-- Test files of other tracks that depend on the exact ambient traffic: with this branch, `tests/strands.js` "the flagged
-  car drives off (> 8 m in 4 s)" picks a different traffic car (a stopped sedan that spends the 4 s turning round, 5.7 m)
-  because the traffic tables now include motorcycles; it passes on the base commit. `tests/campaign.js` passes (it failed
-  once mid-development when cowering civilians froze in the line of fire; gunfire now breaks a cower).
+- The ambient RNG stream is the v0.2 one on purpose (the event timer and the motorcycle share are hashes, the cop miss
+  roll only draws above tier 4): seed-tuned tests of other tracks (strands' flagged car, perf's draw-call bound,
+  campaign) see the same crowd. The new door markers (one draw call each within 120 m) and shop signs add a few calls.
 - The traffic test in tests/ai.js (>= 80% of a 20-car sample advance 30 m in 10 s) is sensitive to the ambient RNG
   stream; the street-event timer avoids drawing from it.

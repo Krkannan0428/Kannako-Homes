@@ -518,6 +518,8 @@
         if (s.deck && (type === 'bus' || type === 'bike' || type === 'moto')) type = 'sedan';   // no scooters or motorbikes on the Loop
         if (type === 'bus' && !(W().metaAt(s.tx, s.tz) & M.AVENUE)) type = R().pick(['sedan', 'van', 'taxi']);   // buses keep to the avenues
         if (type === 'cop' && wanted.level > 0) type = 'sedan';   // responders come from the precinct while the player is hot
+        var ms = CW.spawn.vehicles.motoShare && CW.spawn.vehicles.motoShare[s.district];
+        if (ms && !s.deck && (type === 'sedan' || type === 'sports' || type === 'suv' || type === 'van') && U.hash2(s.tx * 31 + s.tz, Math.floor(simT() * 4), 913) < ms) type = 'moto';   // no draw on the stream
         type = spawner.vehicleType(type);
         var v = spawner.placeTraffic(s, type, type === 'taxi' && flags().cab_livery ? { wrap: 'pod' } : null);
         if (v) made++;

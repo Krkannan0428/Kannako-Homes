@@ -468,20 +468,23 @@
         }
       },
       vehicles: {
-        // 'moto' is the vehicles track's motorcycle (C.VEHICLES.moto); the spawner rides a 'bike' in its place until it exists
+        // motorcycles (v0.3): `motoShare` of the cars the spawner places in a district become the vehicles track's 'moto'
+        // (a 'bike' stands in until C.VEHICLES.moto exists). The share is picked by a hash of the spot and the clock, not
+        // by a draw on GTP.rng, so the rest of the traffic (and the city's ambient stream) stays exactly as it was.
+        motoShare: { downtown: 0.12, strip: 0.22, campus: 0.12, industrial: 0.12, marina: 0.15, uptown: 0.1, port: 0.1 },
         byDistrict: {
-          downtown: ['sedan', 'taxi', 'sedan', 'sports', 'bus', 'cop', 'suv', 'moto'],
-          strip: ['sports', 'sedan', 'taxi', 'suv', 'van', 'moto', 'moto'],
-          campus: ['sedan', 'bike', 'van', 'sedan', 'moto'],
+          downtown: ['sedan', 'taxi', 'sedan', 'sports', 'bus', 'cop', 'suv'],
+          strip: ['sports', 'sedan', 'taxi', 'suv', 'van'],
+          campus: ['sedan', 'bike', 'van', 'sedan'],
           capitol: ['suv', 'sedan', 'cop', 'cop', 'suv'],
           suburbs: ['sedan', 'suv', 'van', 'sedan'],
-          industrial: ['truck', 'van', 'truck', 'sedan', 'van', 'moto'],
+          industrial: ['truck', 'van', 'truck', 'sedan', 'van'],
           hills: ['sports', 'suv', 'suv', 'sedan'],
-          marina: ['sedan', 'van', 'bike', 'taxi', 'sports', 'moto'],
+          marina: ['sedan', 'van', 'bike', 'taxi', 'sports'],
           // expansion (GDD_EXPANSION §1.6)
-          uptown: ['sedan', 'sports', 'suv', 'taxi', 'sedan', 'moto'],
+          uptown: ['sedan', 'sports', 'suv', 'taxi', 'sedan'],
           airport: ['taxi', 'taxi', 'bus', 'sedan', 'van', 'suv'],
-          port: ['truck', 'truck', 'van', 'sedan', 'suv', 'moto']
+          port: ['truck', 'truck', 'van', 'sedan', 'suv']
         },
         parked: {
           byDistrict: {

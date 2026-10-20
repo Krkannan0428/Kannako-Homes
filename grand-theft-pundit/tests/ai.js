@@ -390,7 +390,11 @@ H.run('ai', async (t) => {
       D.release(rv); rv.destroy();
     }
     // motorcycles in traffic (a 'bike' stands in until the vehicles track registers 'moto'), taxis wear the pod wrap after cab_livery
-    out.moto = { type: AI.spawner.vehicleType('moto'), has: !!GTP.C.VEHICLES.moto, inTables: Object.values(GTP.Content.world.spawn.vehicles.byDistrict).filter((l) => l.indexOf('moto') >= 0).length };
+    const share = GTP.Content.world.spawn.vehicles.motoShare || {};
+    out.moto = { type: AI.spawner.vehicleType('moto'), has: !!GTP.C.VEHICLES.moto, districts: Object.keys(share).filter((k) => share[k] > 0).length };
+    // ride the streets a while: some of the traffic is on two wheels
+    const bikes0 = new Set(); for (let i = 0; i < 20; i++) { g.advance(1); E.list.forEach((e) => { if (!e.removed && e.kind === 'vehicle' && e.ai && e.ai.kind === 'traffic' && (e.type === 'bike' || e.type === 'moto')) bikes0.add(e.id); }); }
+    out.moto.seen = bikes0.size;
     // the HOA patrol: suburb traffic never carries the strand's 'hoa' tag (QA-STR-11)
     const hoa = W.landmark('hoa_hall'); g.debug.teleport(hoa.door.x, hoa.door.z + 20);
     for (let i = 0; i < 12; i++) g.advance(1);
@@ -408,7 +412,7 @@ H.run('ai', async (t) => {
   t.assert(v3.heli.shots >= 10 && v3.heli.hits >= 2, 'the helicopter gunner shoots and hits: ' + JSON.stringify(v3.heli));
   t.assert(v3.race.blockedBefore && v3.race.vias >= 1, 'race legs through a building get road corners: ' + JSON.stringify(v3.race));
   t.assert(v3.race.hit && v3.race.hit.join(',') === '0,1', 'a racer drives round the tower to cp6 and cp7: ' + JSON.stringify(v3.race));
-  t.assert(v3.moto.inTables >= 6 && (v3.moto.has ? v3.moto.type === 'moto' : v3.moto.type === 'bike'), 'motorcycles in the traffic tables: ' + JSON.stringify(v3.moto));
+  t.assert(v3.moto.districts >= 6 && v3.moto.seen >= 1 && (v3.moto.has ? v3.moto.type === 'moto' : v3.moto.type === 'bike'), 'motorcycles in traffic: ' + JSON.stringify(v3.moto));
   t.assert(v3.hoa.patrols >= 1 && v3.hoa.tagged === 0 && v3.hoa.patrolTag === 'hoapatrol', 'HOA patrols keep off the strand tag: ' + JSON.stringify(v3.hoa));
   t.assert(v3.errors.length === 0, 'no game errors: ' + v3.errors.join('; '));
   const errs3 = await t.errors(ctx3);
