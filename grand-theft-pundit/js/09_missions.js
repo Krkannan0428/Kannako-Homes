@@ -936,8 +936,20 @@
     var yaw = U.dirToYaw(giver.x - pl.x, giver.z - pl.z);
     pl.yaw = yaw; pl.aimYaw = yaw; pl.moveYaw = yaw;
     giver.yaw = U.dirToYaw(pl.x - giver.x, pl.z - giver.z);
-    // the rig orbits the giver; swinging it 30 degrees off the player's line puts the player's shoulder at the frame edge
-    Rd.rig.yaw = yaw + 0.52; Rd.rig.pitch = 0.1;
+    // the rig orbits the giver; swinging it 30 degrees off the player's line puts the player's shoulder at the frame edge.
+    // When a wall or a parked car sits where that camera would go (a giver met along a facade, a van at the kerb), the
+    // other shoulder is tried, then wider angles, and the clearest view wins: never a frame full of flat wall or car roof
+    var CAM = C.CAMERA, dist = (CAM.footDist || 4.2) * (CAM.closeScale || 0.5), eyeY = giver.y + 1.3, Wd = W();
+    var offs = [0.52, -0.52, 1.0, -1.0, 0, 1.5, -1.5], best = 0.52, bestScore = -1e9, i, k;
+    for (i = 0; i < offs.length; i++) {
+      var d = U.yawToDir(yaw + offs[i]), cx = giver.x - d.x * dist, cz = giver.z - d.z * dist;
+      var hit = Wd.raycastBuildings(giver.x, eyeY, giver.z, -d.x, 0, -d.z, dist + 0.6), clear = hit ? hit.t : dist + 0.6;
+      var near = E().hash.query(cx, cz, 4, scratch), carBlock = false;
+      for (k = 0; k < near.length; k++) { var o = near[k]; if (o.kind === 'vehicle' && !o.removed && o.pushCircle && o.pushCircle(cx, cz, 0.6)) { carBlock = true; break; } }
+      var score = clear - (carBlock ? 10 : 0) - Math.abs(offs[i]) * 0.05;
+      if (score > bestScore) { bestScore = score; best = offs[i]; }
+    }
+    Rd.rig.yaw = yaw + best; Rd.rig.pitch = 0.1;
     if (Rd.rig.target) Rd.rig.target(giver, true);
   }
   function beginPlay() {

@@ -609,8 +609,10 @@
       var d = DIRS4[i], nx = tx + d.dx, nz = tz + d.dz, t = Wd.tile(nx, nz), m = Wd.metaAt(nx, nz), w = 0;
       var same = d.dx === ai.dir.dx && d.dz === ai.dir.dz, back = d.dx === -ai.dir.dx && d.dz === -ai.dir.dz;
       if (onCross) {
-        if (same) w = t === T.ROAD ? ((m & M.CROSSWALK) ? 10 : 0) : (pedWalkable(t) ? 10 : 0);
-        else if (back) w = 0.01;
+        // forward along the stripes or back to the kerb: never off the crossing into the middle of the junction
+        var okT = t === T.ROAD ? (m & M.CROSSWALK) !== 0 : pedWalkable(t);
+        if (same) w = okT ? 10 : 0;
+        else if (back) w = okT ? 0.01 : 0;
       } else {
         if (t === T.ROAD) {
           if ((m & M.CROSSWALK) && !(m & M.DEAD)) {
@@ -728,7 +730,9 @@
       if (!ai.crossing) { ai.run = false; if (R().chance(K.pedIdleChance) && ai.mode === 'wander') { ai.mode = 'idle'; ai.idleT = R().range(2, 5); p.stop(); } }
       return;
     }
-    if (p.speed < 0.25) { ai.stuckT += dt; if (ai.stuckT > 1.0) { ai.stuckT = 0; ai.lat = R().range(-0.7, 0.7); ai.tgt = null; if (R().chance(0.5)) { var r = R().pick(DIRS4); ai.dir.dx = r.dx; ai.dir.dz = r.dz; } } }
+    // stuck (a car in the crossing, another ped): a fresh lane offset; on the pavement maybe a new heading, mid-crossing
+    // only ahead or back the way we came
+    if (p.speed < 0.25) { ai.stuckT += dt; if (ai.stuckT > 1.0) { ai.stuckT = 0; ai.lat = R().range(-0.7, 0.7); ai.tgt = null; if (R().chance(0.5)) { if (ai.crossing) { ai.dir.dx = -ai.dir.dx; ai.dir.dz = -ai.dir.dz; } else { var r = R().pick(DIRS4); ai.dir.dx = r.dx; ai.dir.dz = r.dz; } } } }
     else ai.stuckT = 0;
   }
   function idleTick(p, ai, dt) {

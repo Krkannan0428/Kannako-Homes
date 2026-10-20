@@ -118,8 +118,9 @@ H.run('tune', async (t) => {
     const f = U.yawToDir(v.yaw), rx = -f.z, rz = f.x;
     const ped = GTP.game.debug.spawnPed(v.x + f.x * 9 - rx * 2.5, v.z + f.z * 9 - rz * 2.5, null, 'thug'); ped.ai = { mission: 'actor', phase: 0.5 }; ped.hostile = true; ped.hp = 500; ped.maxHp = 500;
     p.weapon = 'fist';
+    const sh0 = p.stats.shots, pu0 = p.stats.punches || 0;
     GTP.Input.set('aim', true); GTP.Input.set('shoot', true); GTP.game.advance(0.4); GTP.Input.set('shoot', false); GTP.Input.set('aim', false);
-    const fistShots = p.stats.shots, fistPunch = p.stats.punches || 0;
+    const fistShots = p.stats.shots - sh0, fistPunch = (p.stats.punches || 0) - pu0;
     GTP.game.debug.giveWeapon('pistol', 30);
     R.rig.yaw = U.dirToYaw(ped.x - v.x, ped.z - v.z); R.rig.pitch = 0.1; R.rig.snap();
     const hp0 = ped.hp, vhp0 = v.hp, shots0 = p.stats.shots;

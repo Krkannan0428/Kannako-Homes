@@ -437,9 +437,13 @@
     var c = COLL_CACHE[type]; if (c) return c;
     var hw = cls.width / 2, hl = cls.length / 2, r = Math.min(0.32, hw * 0.45);
     var n = Math.max(2, Math.round(cls.length / 2.6)), pts = [];
+    // two side columns of capsule points per row; a centre column too when the two sides leave a gap a lamp post (r 0.2)
+    // could slip through, so a thin prop dead ahead is hit by the bumper instead of passing between the corner points
+    var centre = (hw - r) - r > 0.15;
     for (var i = 0; i < n; i++) {
       var f = -(hl - r) + (2 * (hl - r)) * (n === 1 ? 0.5 : i / (n - 1));
       pts.push({ r: -(hw - r), f: f, rad: r }); pts.push({ r: hw - r, f: f, rad: r });
+      if (centre) pts.push({ r: 0, f: f, rad: r });
     }
     c = COLL_CACHE[type] = { pts: pts, circles: [{ f: hl - hw, rad: hw + 0.05 }, { f: -(hl - hw), rad: hw + 0.05 }] };
     if (cls.length / cls.width > 3) c.circles.splice(1, 0, { f: 0, rad: hw + 0.05 });

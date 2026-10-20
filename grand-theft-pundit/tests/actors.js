@@ -130,7 +130,9 @@ H.run('actors', async (t) => {
       for (let z = sz - 3; z < b.z - 0.5 && ok; z += 2) { const tt = W.tileAt(sx, z); if (tt === T.BUILDING || tt === T.WATER || tt === T.VOID || tt === T.RAMP || W.deckAt(Math.floor(sx / TILE), Math.floor(z / TILE))) ok = false; }
       for (let x = sx - 1.5; x <= sx + 1.5 && ok; x += 1) { const tt = W.tileAt(x, sz); if (tt === T.BUILDING || tt === T.WATER || tt === T.VOID) ok = false; }
       const props = W.props.filter((pr) => pr.solid && Math.abs(pr.x - sx) < 2.2 && pr.z > sz - 4 && pr.z < b.z);
-      if (ok && !props.length) cands.push({ b, d: Math.hypot(sx - p.x, sz - p.z) });
+      // nothing parked or driving in the run-up either: the test wants the wall, not a fender
+      const cars = GTP.Entities.list.filter((e) => e.kind === 'vehicle' && !e.removed && e !== v && Math.abs(e.x - sx) < 4.5 && e.z > sz - 8 && e.z < b.z + 2);
+      if (ok && !props.length && !cars.length) cands.push({ b, d: Math.hypot(sx - p.x, sz - p.z) });
     });
     cands.sort((a, b) => a.d - b.d);
     const b = cands[0].b, sx = b.cx, sz = b.z - 22;
