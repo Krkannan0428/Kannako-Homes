@@ -9,6 +9,8 @@
  *  4 boats: the speedboat from the water (enter while swimming), throttle planes her, a wake, the quay is a wall;
  *    the jet ski leans into a turn
  *  5 motorcycle: lean in turns, a Shift wheelie, the rider drawn on the saddle, a wall at speed throws the rider
+ *  5b drive_to objectives (real missions): a heli set down in the marker (hovering over it does not count), a speedboat
+ *    at a waterline target, the moto
  *  6 the mod shop and garages: GTP.Vehicles.mod changes stats and rebuilds the mesh, modCatalog / buyMod charge money,
  *    a Spin Doctor drive-in bay emits modshop:open, store / retrieve, GTP.SaveRegistry.vehicles and a slot save keep them
  * Screenshots in tests/out (look at them): veh_heli_flight, veh_parachute, veh_plane_flight, veh_jet_flight,
@@ -349,6 +351,54 @@ H.run('vehicles', async (t) => {
   t.assert(moto2.drop < 0.1, 'the wheel comes down when Shift is let go: ' + moto2.drop);
   t.assert(moto.rider && moto.pose && moto.pose.kind === 'moto', 'the rider sits on the saddle (drawn): ' + JSON.stringify(moto.pose));
   t.assert(!moto2.thrown.inV && moto2.thrown.causes.length >= 1 && moto2.thrown.stat >= 1, 'a wall at speed throws the rider: ' + JSON.stringify(moto2.thrown));
+
+  // ---- 5b. drive_to objectives work with the new types (a heli set down in the marker, a boat at a waterline target, the moto) ----
+  const dto = await page.evaluate(() => {
+    const V = GTP.Vehicles, W = GTP.World, g = GTP.game, p = g.player, Ms = GTP.Missions, out = {}, rw = T_.rw();
+    if (p.inVehicle) { p.inVehicle.vx = p.inVehicle.vz = 0; p.inVehicle.speed = 0; p.inVehicle.exit(p); }
+    p.hp = p.maxHp; p.wanted = 0;
+    const done = []; const fn = (e) => done.push(e && (e.id || (e.mission && e.mission.id))); GTP.Events.on('mission:complete', fn);
+    const mk = (id, x, z, text) => { GTP.Content.missions.push({ id, title: 'Test ' + id, giver: null, requires: [], marker: null, reward: { cash: 1 }, objectives: [{ type: 'drive_to', target: { x, z }, radius: 10, vehicle: 'any', text }] }); };
+    // heli: hovering 20 m over the marker does not count, setting down in it does
+    const tx = rw.x + 110, tz = rw.z;
+    mk('t_veh_heli', tx, tz, 'Set the Spin Cycle down on the runway');
+    g.debug.teleport(tx - 40, tz - 12); g.advance(0.2); T_.clearAround(tx, tz, 40);
+    const h = V.spawn('heli', tx - 30, tz, {}); h.enter(p, 0); g.advance(2.6);
+    out.started = Ms.start('t_veh_heli', { skipIntro: true }); g.advance(0.5);
+    h.x = tx; h.z = tz; h.y = W.heightAt(tx, tz, 0) + 20; h.onGround = false; h.vx = h.vz = h.vy = 0; h.snap(); g.advance(1.5);
+    out.hover = done.indexOf('t_veh_heli') >= 0;
+    GTP.Vehicles.virtAxes = { collective: -1 }; let n = 0; while (!h.onGround && n < 40) { g.advance(0.25); n++; } GTP.Vehicles.virtAxes = null;
+    g.advance(2); out.landed = done.indexOf('t_veh_heli') >= 0; out.heliOk = !h.wreck;
+    // the speedboat to a waterline target in the bay
+    const lm = W.landmark('velvetine_pier'); let sp = null;
+    for (let dx = 40; dx < 400 && !sp; dx += 16) { const c = V.findClear(lm.door.x - dx, 562, 'water', 12, 6); if (c) sp = c; }
+    T_.press('enter'); g.advance(0.5); if (p.inVehicle) p.inVehicle.exit(p);
+    g.debug.teleport(sp.x, sp.z - 30); g.advance(0.5);
+    while (g.state !== 'playing' && n++ < 200) { GTP.Input.press('confirm'); g.advance(0.2); }
+    mk('t_veh_boat', sp.x, sp.z, 'Bring the boat round');
+    const b = V.spawn('speedboat', sp.x - 25, sp.z, { yaw: GTP.util.dirToYaw(1, 0) }); b.enter(p, 0); g.advance(0.3);
+    out.started2 = Ms.start('t_veh_boat', { skipIntro: true }); g.advance(0.5);
+    GTP.Input.set('forward', true); n = 0; while (done.indexOf('t_veh_boat') < 0 && n < 40) { g.advance(0.25); n++; } GTP.Input.set('forward', false);
+    out.boat = done.indexOf('t_veh_boat') >= 0;
+    b.vx = b.vz = 0; b.destroy(); g.advance(0.5);
+    // the moto
+    g.debug.teleport(rw.x + 40, rw.z - 12); g.advance(0.5);
+    while (g.state !== 'playing' && n++ < 300) { GTP.Input.press('confirm'); g.advance(0.2); }
+    mk('t_veh_moto', rw.x + 90, rw.z, 'Ride down the runway');
+    const m = V.spawn('moto', rw.x + 40, rw.z, { yaw: GTP.util.dirToYaw(1, 0) }); m.enter(p, 0); g.advance(0.3);
+    out.started3 = Ms.start('t_veh_moto', { skipIntro: true }); g.advance(0.5);
+    GTP.Input.set('forward', true); n = 0; while (done.indexOf('t_veh_moto') < 0 && n < 40) { g.advance(0.25); n++; } GTP.Input.set('forward', false);
+    out.moto = done.indexOf('t_veh_moto') >= 0;
+    GTP.Events.off('mission:complete', fn);
+    T_.hold('back', 2); if (p.inVehicle) { m.vx = m.vz = 0; m.speed = 0; m.exit(p); }
+    while (g.state !== 'playing' && n++ < 400) { GTP.Input.press('confirm'); g.advance(0.2); }
+    out.done = done; out.state = g.state;
+    return out;
+  });
+  console.log('  drive_to: ' + JSON.stringify(dto));
+  t.assert(dto.started && !dto.hover && dto.landed && dto.heliOk, 'drive_to: a heli hovering over the marker does not count, setting down completes it: ' + JSON.stringify(dto));
+  t.assert(dto.started2 && dto.boat, 'drive_to: a speedboat reaches a waterline target');
+  t.assert(dto.started3 && dto.moto, 'drive_to: the moto rides into the marker');
 
   // ---- 6. the mod shop, garages, saves ----
   const mods = await page.evaluate(() => {

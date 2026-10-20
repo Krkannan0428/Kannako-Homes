@@ -214,7 +214,9 @@ node tests/content_audit.js
 the raw listener, the hover), the bail and the parachute, an autopilot heli flown into a tower (rotor strike), a fake
 gamepad flying a heli (RT, RB, the stick, LT), the plane's takeoff roll / rotate / bank / landing / braking / crash,
 the jet's takeoff and gear, the map-edge turn-back, the speedboat (boarding from the water, planing, the wake, the quay
-wall), the jet ski's lean and rider, the moto's wheelie, lean, rider and the wall throw, the mods (stats, mesh rebuild,
+wall), the jet ski's lean and rider, the moto's wheelie, lean, rider and the wall throw, real `drive_to` missions
+(a heli hovering over the marker does not complete it, setting down does; a speedboat at a waterline target; the
+moto), the mods (stats, mesh rebuild,
 armour), `buyMod`, a stand-in Spin Doctor bay, the garages, the registry and a slot save / load. It writes
 screenshots: `veh_lineup_air`, `veh_lineup_sea`, `veh_heli_flight`, `veh_parachute`, `veh_plane_flight`,
 `veh_jet_flight`, `veh_speedboat`, `veh_jetski`, `veh_moto`, `veh_mods`.
