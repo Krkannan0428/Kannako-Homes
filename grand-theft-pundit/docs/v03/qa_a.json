@@ -387,5 +387,133 @@
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_09.js"
   ],
   "regress": "qa_a_trf_09.js"
+ },
+ {
+  "id": "QA-A-VIS-01",
+  "severity": "medium",
+  "area": "render / building roofs",
+  "title": "Flat roofs stretch the gravel texture 5-40x into streaks (u and v swapped on the roof quad)",
+  "repro": "?seed=7&quality=low (also medium/high), GTP.game.debug.setClock(12); freeCam(40,45,500, 110,0,430) (industrial) or freeCam(40,45,40, 100,0,110) (suburbs) or any elevated view / the Loop deck. Script: scratchpad/vday/shoot.js (views industrial_up, suburbs_up, campus_up), probe scratchpad/vday/p_roof.js",
+  "expected": "Roof gravel with square texels: the same pixels per metre along x and z",
+  "actual": "Every flat roof shows long parallel streaks. Render._roof maps the gravel band with v (the band's 160 px height) across the whole roof width and u repeating b.w/8 times along the depth: a 30 x 20 m roof gets 5.3 px/m along x vs 96 px/m along z (18x), a 40 x 16 m roof 4 vs 160 px/m (40x), 12 x 12 m 13.3 vs 64 (4.8x)",
+  "hint": "js/10_render.js _roof (flat roof branch): rq = [[0, ruv[1]], [b.w/8, ruv[1]], [b.w/8, ruv[3]], [0, ruv[3]]] is assigned to the corners (x0,z0),(x0,z1),(x1,z1),(x1,z0), so u runs along z and v along x; the u span should follow x (b.w/8) and the v span should repeat with b.d (the band is clamped in v, so tile it by splitting or use a dedicated gravel cell)",
+  "lens": "qa-a:visuals-noon-sunset",
+  "evidence": [
+   "scratchpad/vday/shots/low_12_industrial_up.png",
+   "scratchpad/vday/shots/medium_12_industrial_up.png",
+   "scratchpad/vday/shots/medium_12_campus_up.png",
+   "scratchpad/vday/crops/roof.png",
+   "scratchpad/vday/p_roof.js"
+  ],
+  "regress": "qa_a_vis_01.js"
+ },
+ {
+  "id": "QA-A-VIS-02",
+  "severity": "low",
+  "area": "render / airport runway paint",
+  "title": "Runway centreline dashes are split in two mismatched halves with a step and a dark seam down every dash",
+  "repro": "?seed=7 (any preset), setClock(12), freeCam(150,1.5,830, 300,0,822) (street level on Runway 10/10). Script: scratchpad/vday/shoot.js view runway_low (low, medium and high presets)",
+  "expected": "One continuous dashed centreline, each dash a single clean bar",
+  "actual": "Each dash is drawn half in the tile row zc and half in zc+1 (runway_center rotated 0 and 2); the dash pattern in the cell (fillRect 20..110 and 150..220 px) is not symmetric, so the 180-degree half is offset: sampling 0.06 m either side of the seam over the runway length, north and south disagree on 17.5% of the length (559 of 3200 samples) - every dash shows a ~0.3 m stagger and a thin dark line along its middle",
+  "hint": "js/05_assets.js TILES.runway_center (asymmetric dash positions) + js/10_render.js _runwayCell (zc gets rot 0, zc+1 rot 2): mirror the second row (flip v instead of a 180 turn) or make the dash pattern symmetric about the cell centre, and paint the dash to the cell edge so the gutter does not leave a seam",
+  "lens": "qa-a:visuals-noon-sunset",
+  "evidence": [
+   "scratchpad/vday/crops/rw.png",
+   "scratchpad/vday/crops/rw_med.png",
+   "scratchpad/vday/shots/low_12_runway_low.png",
+   "scratchpad/vday/shots/medium_12_runway_low.png"
+  ],
+  "regress": "qa_a_vis_02.js"
+ },
+ {
+  "id": "QA-A-VIS-03",
+  "severity": "medium",
+  "area": "render / sky at dusk and dawn",
+  "title": "At sunset and sunrise the sky shows a hard dark arc about 36 degrees up when looking toward the sun",
+  "repro": "?seed=7&quality=low or high, setClock(18.6) (also 6.8); look toward the sun: sunDir = GTP.Render.lights.sunDir, freeCam(330,60,560, 330+sunDir.x*100, 60+sunDir.y*100, 560+sunDir.z*100). Script: scratchpad/vday/sun.js (PRESET=low and PRESET=high), probe scratchpad/vday/p_sky.js",
+  "expected": "A smooth gradient from the warm horizon glow to the dusk zenith",
+  "actual": "A sharp curved band edge across the top of the frame (both at 18:36 and 06:48, every preset, at any camera height). In the sky canvas column under the sun the luminance jumps 15.7-18.3 levels between two rows at 0.297 of the sky height (18:36) and 13.7-14.3 at 06:48, against at most 4-5 per row anywhere else (noon 4.3)",
+  "hint": "js/10_render.js _paintSky: the dusk horizon band (hg, a radial gradient of radius W*0.45 centred at H*0.5) is filled only into ctx.fillRect(-ox, H*0.3, W, H*0.25), so the gradient is cut off at row 0.3H where it is still bright; fill the whole canvas height (or fade the gradient to 0 before 0.3H)",
+  "lens": "qa-a:visuals-noon-sunset",
+  "evidence": [
+   "scratchpad/vday/shots/sun_low_18.6_sun.png",
+   "scratchpad/vday/shots/sun_low_18.6_mirror.png",
+   "scratchpad/vday/shots/sun_high_18.6_sun.png",
+   "scratchpad/vday/shots/sun_high_18.6_mirror.png",
+   "scratchpad/vday/p_sky.js"
+  ],
+  "regress": "qa_a_vis_03.js"
+ },
+ {
+  "id": "QA-A-VIS-04",
+  "severity": "low",
+  "area": "world / prop placement (trees)",
+  "title": "About 30% of the city's trees push their canopy through the wall of the building next to them",
+  "repro": "?seed=7&quality=medium, setClock(12); stand on the sidewalk of Clarity Close: teleport(102,130), chase camera facing +x (scratchpad/vday/street.js, shot st_medium_12_suburbs.png); or freeCam(103,3,108, 107.2,3,101.5) (Monday Memo Mews, scratchpad/vday/views_tree.json). Probe scratchpad/vday/p_tree.js",
+  "expected": "Street and lawn trees planted clear of facades (canopy outside the walls)",
+  "actual": "Leaves clip straight through house siding and windows. The tree canopy radius is 2.34 m x scale; 245 of 787 trees reach more than 0.6 m into a filler building (uptown 136, suburbs 45, hills 24, campus 20, capitol 20), e.g. (107.2,101.5), (170.5,107.2), (154,304.8)",
+  "hint": "js/04_world.js street furniture (tree at cx - ox*0.5 on sidewalk tiles beside lots, ~line 1405) and GRASS tiles (~line 1413, jitter of +-1.3 m): no clearance check against World.buildings / BUILDING neighbour tiles; skip or shrink trees within canopy radius of a building",
+  "lens": "qa-a:visuals-noon-sunset",
+  "evidence": [
+   "scratchpad/vday/shots/st_medium_12_suburbs.png",
+   "scratchpad/vday/shots/st_medium_18p6_suburbs.png",
+   "scratchpad/vday/shots/tr_medium_12_tree_sub.png",
+   "scratchpad/vday/p_tree.js"
+  ],
+  "regress": "qa_a_vis_04.js"
+ },
+ {
+  "id": "QA-A-VIS-05",
+  "severity": "medium",
+  "area": "render / chunk LOD",
+  "title": "Chunk LOD pop: beyond lodDistance whole blocks turn 20-30% darker (Lambert far materials lack the environment light)",
+  "repro": "?seed=7&quality=low (also high), setClock(12), freeCam(260,40,420, 330,0,250) over downtown and freeCam(30,30,30, 120,0,200) over the suburbs; compare with GTP.C.QUALITY.lodDistance = 1e5 (all chunks near). Script: scratchpad/vday/lod.js",
+  "expected": "The far LOD matches the near look, so nothing changes as a block crosses QUALITY.lodDistance",
+  "actual": "Pixels the swap changes go from mean RGB (78,100,123) to (57,73,89) downtown and (117,133,143) to (88,101,107) in the suburbs on low; (95,122,151) to (78,98,120) downtown on high. With every chunk forced far vs near the changed pixels drop from 107.5 to 81.5 (ratio 0.76). Driving or walking, a block visibly brightens/darkens as it crosses lodDistance (90/120/150/200 m) and the skyline shows a brightness seam between near and far chunks",
+  "hint": "js/05_assets.js facadeMaterialFar / groundMaterialFar / propMaterialFar are MeshLambertMaterial without scene.environment (the near MeshStandardMaterial gets envMapIntensity 0.5-0.7 of the sky PMREM as extra ambient): raise the far materials' colour/emissive or add an ambient term to match, or use a cheap Standard variant",
+  "lens": "qa-a:visuals-noon-sunset",
+  "evidence": [
+   "scratchpad/vday/crops/lod.png",
+   "scratchpad/vday/crops/lod_low_crop.png",
+   "scratchpad/vday/shots/lod_low_12_lod_downtown_on.png",
+   "scratchpad/vday/shots/lod_low_12_lod_downtown_off.png",
+   "scratchpad/vday/shots/lod_high_12_lod_suburbs_on.png",
+   "scratchpad/vday/shots/lod_high_12_lod_suburbs_off.png"
+  ],
+  "regress": "qa_a_vis_05.js"
+ },
+ {
+  "id": "QA-A-VIS-06",
+  "severity": "medium",
+  "area": "render / signs and billboards",
+  "title": "Sign lettering is stretched sideways on half the signs (up to 3.2x): textures come in only 1:1, 2:1 and 4:1",
+  "repro": "?seed=7&quality=medium, setClock(12); look at THE YELL NETWORK (300,220,y 39.4), GOLDPLATE INTERNATIONAL (304,696), OCTANE OPINIONS (206,436), THE HEIRLOOM CLUB (798,260) head-on. Script: scratchpad/vday/signshot.js, probe scratchpad/vday/p_sign4.js",
+  "expected": "Letters keep their proportions on every sign",
+  "actual": "Wide squat lettering: Render._buildProps picks a texture ratio of 1, 2 or 4 (0.5 for banners) while the planes are up to 13:1, so 72 of 138 sign planes stretch their texture by more than 25%: THE YELL NETWORK 3.23x (31 x 2.4 m on a 4:1 texture), CUSTOMS: NOTHING TO DECLARE 3.14x, GOLDPLATE 2.81x, WEATHER BALLOON REPAIR 2.77x, GOLDPLATE INTERNATIONAL 2.70x, THE HEIRLOOM CLUB 2.05x",
+  "hint": "js/10_render.js _buildProps signs.forEach: ratio = banner ? 0.5 : ar >= 3 ? 4 : ar >= 1.5 ? 2 : 1 - pass the real aspect (rounded to a few buckets up to 16) to Assets.signMaterial / Assets.billboard (js/05_assets.js), which already sizes the canvas as 512 x 512/ar",
+  "lens": "qa-a:visuals-noon-sunset",
+  "evidence": [
+   "scratchpad/vday/crops/signs.png",
+   "scratchpad/vday/shots/sign_THE_YELL_NETWORK.png",
+   "scratchpad/vday/shots/sign_THE_HEIRLOOM_CLUB.png",
+   "scratchpad/vday/shots/sign_GOLDPLATE_INTERNATIONAL.png",
+   "scratchpad/vday/p_sign4.js"
+  ],
+  "regress": "qa_a_vis_06.js"
+ },
+ {
+  "id": "QA-A-VIS-90",
+  "severity": "low",
+  "area": "page layout / index.html",
+  "title": "The game view never fills a desktop window: 16 px black bars down both sides (the GL and HUD canvases are 1248 px wide in a 1280 px window)",
+  "repro": "Open index.html?headless=1&seed=7&skipTitle=1 in a 1280x720 viewport and take any screenshot (e.g. tests/out/qa_boot.png, or any feel2_*.png). document.getElementById('gl').getBoundingClientRect() -> x 16, width 1248. Seen on every screenshot of every tester (two separate boots checked).",
+  "expected": "On a desktop (no safe-area insets) the game fills the window edge to edge, as a GTA-style game should; the gutter belongs only where a notch or rounded corner needs it.",
+  "actual": "#app has padding-left/right max(16px, env(safe-area-inset-*)), so a constant 16 px dark strip frames the view on both sides at every size; the HUD's left health bar sits next to it.",
+  "hint": "index.html #app CSS: use env(safe-area-inset-left, 0px) alone (or a max() with 0) so the gutter is only the safe area; Render.resize already reads the stage size.",
+  "lens": "qa-a:visuals",
+  "evidence": [
+   "scratchpad/me/canvas.js"
+  ],
+  "regress": "qa_a_vis_90.js"
  }
 ]
