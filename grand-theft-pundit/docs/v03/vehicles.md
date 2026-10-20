@@ -181,8 +181,10 @@ Deferred (DOMContentLoaded before the autoboot, or the first vehicle add / step)
   (`ped.weaponMods[id].muzzle` matching /supp|silenc/, or `opts.suppressed`, or `def.suppressed`) gives
   `shot_suppressed`. Voices: `shot_pistol revolver smg rifle lmg shotgun sniper launcher heavy thrown special suppressed`
   (class aliases: handgun, magnum, pdw, assault, carbine, mg, dmr, marksman, rocket, grenade, minigun, gatling, ...).
-  `Audio.counts['shot_<class>']` counts them; `Audio.shotClass(opts)` exposes the routing. **For the shooting track:**
-  pass `{weapon: id}` (and `suppressed`) to `Audio.play('shot', ...)` to skip the inference.
+  `Audio.counts['shot_<class>']` counts them; `Audio.shotClass(opts)` exposes the routing; each class has its own
+  audible range (sniper 220 m, launcher 160 m, suppressed 30 m). **For the shooting track:** pass `{weapon: id, ped}`
+  (and `suppressed`) to `Audio.play('shot', ...)`: today 08_combat.js passes neither, so the class is inferred from the
+  armed ped nearest the muzzle (usually the shooter, but an armed bystander right at the muzzle can win).
 - New names (all in `Audio.names`): `dryFire reloadShell reloadBolt cover coverSlide melee_light melee_heavy
   melee_counter whoosh rotorStart chuteOpen bail stall gearUp splash phoneRing phoneBlip phoneHang chapter
   bossStinger bossPhase bossDefeat special_focus special_focusEnd special_shout special_chatmob special_boost
@@ -190,9 +192,11 @@ Deferred (DOMContentLoaded before the autoboot, or the first vehicle add / step)
   rangeStart rangeHit rangeMedal door gps`.
 - Horns: `moto`, `speedboat` (a ship horn), `jetski`; the mod shop horns (`air clown fanfare gavel trombone`) play
   for a vehicle whose `mods.horn` is set (or `opts.horn`).
-- Wired events: `phone:call` (ring), `phone:answer` (blip), `phone:end` / `phone:hangup`, `chapter`, `boss:phase`
-  (the first phase of a boss stings, later ones hit), `boss:defeated`, `special:state` (activation per id, focus end,
-  meter full = ready), `shop:buy` (not `mod:` items: the mod shop plays its own wrench and spray), `shop:deny`,
+- Wired events (several have no emitter yet in this branch; they fire once the other tracks land): `phone:call` (ring), `phone:answer` (blip), `phone:end` / `phone:hangup`, `chapter`, `boss:phase`
+  (the first phase of a boss stings, a phase change hits; repeats of the same phase are silent; reset on a load or a
+  failed mission), `boss:defeated`, `special:state` (activation per id, focus end,
+  meter full = ready), `shop:buy` (not when the payload carries `player`: the Combat shop plays its own `cash`; not `mod:` items: the mod
+  shop plays its wrench and spray), `shop:deny`,
   `shop:open` / `armory:inspect` / `clothing:open` / `barber:open` / `property:open` / `heist:board` (browse tick),
   `heist:plan`, `golf:shot` (putt when `club: 'putter'`, `putt`, or power < 0.2), `golf:end`, `achievement`,
   `range:start` / `range:hit` / `range:end` (medal fanfare by medal, the fail slide with none), `interior:enter` /

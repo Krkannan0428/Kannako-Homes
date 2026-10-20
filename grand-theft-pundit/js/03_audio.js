@@ -45,7 +45,7 @@
   var LOOKAHEAD = 0.18;        // s of radio notes scheduled ahead of the context clock
   var MAX_VOICES = 28;         // concurrent one-shot voices
   var MAX_ERRORS = 6;          // after this many caught errors the module goes silent for good
-  var MIN_GAP = { shot: 0.025, phoneRing: 1.2, chapter: 1, bossStinger: 1, bossDefeat: 1, achievement: 0.4, shopBrowse: 0.04, gps: 0.5, stall: 0.6, rotorStart: 1, door: 0.4, rangeHit: 0.05, hit: 0.04, punch: 0.04, ui: 0.03, crash: 0.06, skid: 0.25, land: 0.05, horn: 0.08, siren: 0.3, enter: 0.1, exit: 0.1, pickup: 0.05, cash: 0.05, explode: 0.05, debate: 0.15, dunk: 0.1, jump: 0.05, mission: 0.5, fail: 0.5, swap: 0.05, static: 0.1, reload: 0.08, reloadDone: 0.08, hitmark: 0.03, confirm: 0.2 };
+  var MIN_GAP = { shot: 0.025, dryFire: 0.25, bossPhase: 0.5, melee_light: 0.12, melee_heavy: 0.12, melee_counter: 0.12, phoneRing: 1.2, chapter: 1, bossStinger: 1, bossDefeat: 1, achievement: 0.4, shopBrowse: 0.04, gps: 0.5, stall: 0.6, rotorStart: 1, door: 0.4, rangeHit: 0.05, hit: 0.04, punch: 0.04, ui: 0.03, crash: 0.06, skid: 0.25, land: 0.05, horn: 0.08, siren: 0.3, enter: 0.1, exit: 0.1, pickup: 0.05, cash: 0.05, explode: 0.05, debate: 0.15, dunk: 0.1, jump: 0.05, mission: 0.5, fail: 0.5, swap: 0.05, static: 0.1, reload: 0.08, reloadDone: 0.08, hitmark: 0.03, confirm: 0.2 };
   // audible range in metres per sound (full volume within 5 m, quadratic falloff to the range)
   var RANGE = { shot: 110, shot_sniper: 220, shot_launcher: 160, shot_suppressed: 30, cover: 30, coverSlide: 25, melee_light: 30, melee_heavy: 36, melee_counter: 36, whoosh: 20,
     rotorStart: 120, chuteOpen: 60, bail: 40, stall: 40, gearUp: 40, splash: 60, dryFire: 15, reloadShell: 24, reloadBolt: 24, rangeHit: 80, golfSwing: 40, golfPutt: 25, golfCup: 30, punch: 28, hit: 40, explode: 240, pickup: 25, horn: 90, siren: 160, enter: 25, exit: 25, mission: 60, fail: 60, ui: 40, cash: 40, debate: 60, dunk: 60, jump: 20, land: 30, skid: 80, crash: 130, swap: 20, static: 20, reload: 24, reloadDone: 24, hitmark: 40, confirm: 40 };
@@ -140,12 +140,13 @@
     var CB = GTP.Combat, W = CB && CB.WEAPONS && CB.WEAPONS[id];
     if (W) return W;
     var P = GTP.Content && GTP.Content.parity && GTP.Content.parity.weapons;
-    if (Array.isArray(P)) for (var i = 0; i < P.length; i++) if (P[i] && P[i].id === id) return P[i];
+    if (Array.isArray(P)) { for (var i = 0; i < P.length; i++) if (P[i] && P[i].id === id) return P[i]; }
+    else if (P && P[id]) return P[id];
     return null;
   }
   function shotClass(o) {
     if (o.cls && SHOT_MAP[o.cls]) return o.suppressed ? 'suppressed' : SHOT_MAP[o.cls];
-    var id = o.weapon || null, ped = null;
+    var ped = o.ped || null, id = o.weapon || (ped && ped.weapon) || null;
     if (!id && o.x != null && GTP.Entities && GTP.Entities.hash) {
       var list = GTP.Entities.hash.query(o.x, o.z, 3, scratch), bd = 9;
       for (var i = 0; i < list.length; i++) { var e = list[i]; if ((e.kind !== 'ped' && e.kind !== 'player') || !e.weapon || e.weapon === 'fist') continue; var d = U.dist2d(e.x, e.z, o.x, o.z); if (d < bd) { bd = d; ped = e; } }
@@ -958,19 +959,27 @@
     E.on('phone:end', function () { cue('phoneHang', 0.6); });
     E.on('phone:hangup', function () { cue('phoneHang', 0.6); });
     E.on('chapter', function () { cue('chapter', 0.9); });
-    var bossSeen = {};
-    E.on('boss:phase', function (ev) { var id = ev && ev.id || '?'; cue(!bossSeen[id] ? 'bossStinger' : 'bossPhase', 0.9); bossSeen[id] = true; });
-    E.on('boss:defeated', function (ev) { cue('bossDefeat', 0.9); if (ev && ev.id) bossSeen[ev.id] = false; });
-    var specials = {};
+    // a boss stings on its first phase and hits on each phase change (boss:phase may also fire on every hp change)
+    var bossSeen = {}, specials = {};
+    E.on('boss:phase', function (ev) {
+      var id = ev && ev.id || '?', ph = ev && ev.phase;
+      if (bossSeen[id] === undefined) cue('bossStinger', 0.9); else if (bossSeen[id] !== ph) cue('bossPhase', 0.9);
+      bossSeen[id] = ph;
+    });
+    E.on('boss:defeated', function (ev) { cue('bossDefeat', 0.9); if (ev && ev.id) delete bossSeen[ev.id]; });
+    ['load:begin', 'mission:fail', 'mission:failed', 'failed', 'player:wasted'].forEach(function (n) { E.on(n, function () { bossSeen = {}; if (n === 'load:begin') specials = {}; }); });
     E.on('special:state', function (ev) {
       if (!ev || !ev.id) return;
-      var was = specials[ev.id] || { active: false, meter: 0 }, id = String(ev.id);
+      // the first state seen for an id (a load, a new game) only seeds the map
+      if (!specials[ev.id]) { specials[ev.id] = { active: !!ev.active, meter: +ev.meter || 0 }; if (!ev.active) return; specials[ev.id].active = false; }
+      var was = specials[ev.id], id = String(ev.id);
       if (ev.active && !was.active) cue(SFX['special_' + id] ? 'special_' + id : 'special_boost', 0.85, id === 'boost' ? here() : null);
       else if (!ev.active && was.active && id === 'focus') cue('special_focusEnd', 0.7);
       if (ev.meter >= 1 && was.meter < 1 && !ev.active) cue('specialReady', 0.5);
       specials[ev.id] = { active: !!ev.active, meter: +ev.meter || 0 };
     });
-    E.on('shop:buy', function (ev) { if (ev && typeof ev.item === 'string' && ev.item.indexOf('mod:') === 0) return; cue('shopBuy', 0.8); });
+    // the Combat shop plays its own 'cash' (its payload carries the player); the mod shop plays its wrench and spray
+    E.on('shop:buy', function (ev) { if (ev && (ev.player || (typeof ev.item === 'string' && ev.item.indexOf('mod:') === 0))) return; cue('shopBuy', 0.8); });
     E.on('shop:deny', function () { cue('shopDeny', 0.6); });
     ['shop:open', 'armory:inspect', 'clothing:open', 'barber:open', 'property:open', 'heist:board'].forEach(function (n) { E.on(n, function () { cue('shopBrowse', 0.5); }); });
     E.on('heist:plan', function () { cue('specialReady', 0.7); });
@@ -1035,12 +1044,13 @@
       Audio.last = name;
       if (!ctx || Audio.muted || disabled) { if (name === 'shot') { var hc = 'shot_' + shotClass(opts); Audio.counts[hc] = (Audio.counts[hc] || 0) + 1; } return false; }
       var fn = SFX[name]; if (!fn) return false;
-      if (name === 'shot') { var sc = shotClass(opts); Audio.counts['shot_' + sc] = (Audio.counts['shot_' + sc] || 0) + 1; fn = SFX['shot_' + sc] || fn; }
+      var rname = name;
+      if (name === 'shot') { var sc = shotClass(opts); Audio.counts['shot_' + sc] = (Audio.counts['shot_' + sc] || 0) + 1; fn = SFX['shot_' + sc] || fn; rname = 'shot_' + sc; }
       // rate limit per name: the same sound from (about) the same spot within the gap is dropped (the voice cap handles the rest)
       var now = ctx.currentTime, gap = MIN_GAP[name] || 0.03, la = lastAt[name];
       if (la && now - la.t < gap && (opts.x == null || la.x == null || U.dist2d(opts.x, opts.z, la.x, la.z) < 2.5)) return false;
       var gain = opts.gain == null ? 1 : U.clamp(+opts.gain || 0, 0, 1.5);
-      var v = voiceOut(name, opts.x, opts.z, gain);
+      var v = voiceOut(RANGE[rname] ? rname : name, opts.x, opts.z, gain);
       if (!v) return false;
       lastAt[name] = { t: now, x: opts.x, z: opts.z };
       var dur = fn(v.g, now + 0.005, gain, opts) || 1;
