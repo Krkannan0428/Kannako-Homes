@@ -37,7 +37,8 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 
 ### World data the other tracks consume
 
-- `World.doors`: `[{id, landmark, kind, x, y, z, r, mode:'foot'|'drive', interior, store, property, label, color}]`.
+- `World.doors`: `[{id, landmark, kind, x, y, z, yaw, r, mode:'foot'|'drive', interior, store, property, label, color}]`;
+  `yaw` faces out of the building toward the street (the way a player faces stepping out of the interior).
   Kinds: `armory` (the three Both Sides Arms), `modshop`, `clothing`, `barber`, `safehouse`, `garage` (`<id>:garage`).
   Every door stands on a kerb tile next to a road the campus quad's road graph reaches (tests/world.js).
 - `World.helipads`: `[{id, name, x, y, z, tx, tz}]`, five ground-level pads (`heli_airport`, `heli_tower` (on the
@@ -68,9 +69,11 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 - **Door markers** (`GTP.AI.doors`): a ring of light (`GTP.Render.markerMesh` / `addMarker`) at every door within 120 m.
   A foot door fires when the player walks in on foot; a drive door when the player drives in (driver, < 7 m/s). It fires
   once, then waits until the player has stepped 1.5 m out of it (and after leaving an interior the door they come out at
-  is latched). While wanted only the armory lets the player in ("Lose the heat first.").
+  is latched; a garage that shares its kerb tile with the front door also latches the front door). While a mission or a
+  strand (race, rampage, cab shift) runs, or while wanted ("Lose the heat first."), only the armory door opens (m01c
+  walks the player into the armory as an objective).
   - shops and owned safehouses: `GTP.Interiors.enter(door.interior, {store, landmark, kind, door:{x,y,z,yaw}, property,
-    branch})` where `door.interior` is `'armory' | 'clothing' | 'barber' | 'safehouse'` and `store` / `landmark` /
+    branch})` where `door.yaw` faces the street and `door.interior` is `'armory' | 'clothing' | 'barber' | 'safehouse'` and `store` / `landmark` /
     `branch` name the branch (`both_sides_strip`, `lanyard_uptown`, `safe_penthouse`, ...).
   - without `GTP.Interiors.enter`: clothing emits `clothing:open {store, landmark}`, barber `barber:open`.
   - a safehouse or garage whose `GTP.Systems.owns(id)` (or `Systems.properties.owns/owned(id)`) is `false` emits
@@ -92,12 +95,13 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
   kind:'event'}` and `gps:clear {kind:'event'}`), `ev_donor_van` (stop the armoured donor van: cash pickups spill and
   2 stars). Emits `event:start {id, name, blurb, x, z}` and `event:end {id, ok, reward, reason}`; pays the reward (the
   van pays in pickups). Event people are persistent while it runs; afterwards they go back to the city (or are removed
-  off camera). API: `AI.events.list()`, `def(id)`, `start(id)` (forced, ignores eligibility), `stop(ok, reason)`,
+  off camera). A running event's clock stops in cutscenes and any non-playing state, and it ends (`reason:'story'`) when a
+  mission or strand starts. API: `AI.events.list()`, `def(id)`, `start(id)` (forced, ignores eligibility), `stop(ok, reason)`,
   `current()`, `eligible()` (null or why not), `markers()`, `setNext(seconds)`.
 - **Motorcycles in traffic**: `'moto'` is in every district's traffic table except capitol, suburbs, hills and airport.
   `AI.spawner.vehicleType('moto')` rides a `'bike'` until the vehicles track registers `C.VEHICLES.moto`; then motos
   spawn with their own cruise speed (`K.cruiseMoto`).
-- **Cowering**: a civilian (any non-cop ped on the AI's brain) within 28 m in the line of a gun the player aims (aim
+- **Cowering** (shots fired near a cowering civilian break it into a run): a civilian (any non-cop ped on the AI's brain) within 28 m in the line of a gun the player aims (aim
   held, a weapon that is not melee) stops, faces the player and cowers (`ped.cowering = true`, `ai.mode = 'cower'`,
   emits `ped:cower {ped}`, a "Don't shoot!" bark); 1.4 s after the aim leaves them they run. `AI.isAimedAt(ped)`.
   The models / shooting tracks can map `ped.cowering` to a hands-up crouch pose.
@@ -131,8 +135,10 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
   corners as pass-through points (`via: true`); the wrapped `onCheckpoint` only reports real checkpoints, by their own
   index; a loop's closing leg's corners go at the end of the list. `AI.routeVias(route, loop, onCp)` is the helper.
   tests/ai.js drives a racer cp5 -> cp6 -> cp7 round the tower.
-- **QA-STR-11** (HOA SUV tag): suburb HOA patrol traffic is tagged `'hoapatrol'`, so `liveTagged('hoa')` finds only the
-  strand's parked SUV. (The strand side of that bug, spawning the vest when `hoa_vest` is set, is the story track's.)
+- **QA-STR-11** (HOA SUV tag): suburb HOA patrol traffic is tagged `'hoapatrol'` (and carries `vehicle.hoaPatrol = true`),
+  so `liveTagged('hoa')` finds only the strand's parked SUV. Note for the story track: `S.hoa_patrol.canStart` and the
+  `h_patrol` hint (12_cutscenes) check `tag === 'hoa'`, so hijacking an ambient patrol SUV no longer starts the strand;
+  that matches the bug's hint (the strand SUV gets its own tag) but test `v.hoaPatrol` if the hijack start is wanted. (The strand side of that bug, spawning the vest when `hoa_vest` is set, is the story track's.)
 - **QA-STR-15** (my parts): taxis spawn (driven and parked) with wrap `'pod'` once `flags.cab_livery` is set; cops (and
   the heli gunner) miss on purpose by the subscriber tiers' `copAccuracyDelta` (tier 4: 15%), read from
   `GTP.Content.expansion.subscriberTiers` and `Missions.subscribers().tier`. (rampage_king, memo_vest and the gold tables
