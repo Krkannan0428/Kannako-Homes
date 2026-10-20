@@ -1647,19 +1647,13 @@
 
   var OCEAN_PARS = [
     'uniform sampler2D tGtpShore, tGtpNoise, tGtpRip; uniform float uGtpTime, uGtpMap, uGtpChop; varying vec3 vGtpW;',
+    // two long swells, constants folded (k = 2 pi / L, w = sqrt(9.8 k)); the short chop comes from the ripple textures
     'vec3 gtpSwell( vec2 p, float t ) {',
-    '  vec3 r = vec3( 0.0 );',
-    '  vec2 D[4]; float L[4]; float A[4];',
-    '  D[0] = vec2( 0.96, 0.28 ); L[0] = 23.0; A[0] = 0.16;',
-    '  D[1] = vec2( -0.37, 0.93 ); L[1] = 13.0; A[1] = 0.085;',
-    '  D[2] = vec2( 0.8, -0.6 ); L[2] = 7.3; A[2] = 0.042;',
-    '  D[3] = vec2( -0.98, -0.2 ); L[3] = 4.1; A[3] = 0.02;',
-    '  for ( int i = 0; i < 4; i ++ ) {',
-    '    float k = 6.2831853 / L[i], w = sqrt( 9.8 * k ), ph = dot( D[i], p ) * k - w * t;',
-    '    float a = A[i] * ( 0.6 + 0.8 * uGtpChop );',
-    '    r.xy += D[i] * a * k * cos( ph ); r.z += a * sin( ph );',
-    '  }',
-    '  return r;',
+    '  float a = 0.6 + 0.8 * uGtpChop;',
+    '  vec2 d0 = vec2( 0.96, 0.28 ), d1 = vec2( -0.37, 0.93 );',
+    '  float p0 = dot( d0, p ) * 0.27318 - 1.63616 * t, p1 = dot( d1, p ) * 0.48332 - 2.17636 * t;',
+    '  float a0 = 0.16 * a, a1 = 0.085 * a;',
+    '  return vec3( d0 * ( a0 * 0.27318 * cos( p0 ) ) + d1 * ( a1 * 0.48332 * cos( p1 ) ), a0 * sin( p0 ) + a1 * sin( p1 ) );',
     '}'
   ].join('\n');
   var OCEAN_MAP = [
@@ -1668,12 +1662,14 @@
     'vec3 gDeep = vec3( 0.012, 0.05, 0.075 ), gShallow = vec3( 0.03, 0.13, 0.15 );',
     'vec3 gCol = mix( gShallow, gDeep, smoothstep( 0.05, 0.7, gShore ) );',
     'gCol *= 0.9 + 0.35 * clamp( gSw.z * 4.0, -0.3, 0.6 );',   // the crests catch more light through the water
-    'float gFn = texture2D( tGtpNoise, vGtpW.xz / 7.0 + vec2( uGtpTime * 0.013, -uGtpTime * 0.009 ) ).r;',
+    'float gtpFoam = 0.0;',
     'float gBand = 1.0 - smoothstep( 0.0, 0.13, gShore );',
-    'float gPulse = 0.5 + 0.5 * sin( gShore * 38.0 - uGtpTime * 1.4 + gFn * 4.0 );',
-    'float gtpFoam = clamp( gBand * ( gFn * 1.25 + gPulse * 0.55 ) - 0.42, 0.0, 1.0 ) * 1.6;',
-    'gtpFoam = max( gtpFoam, smoothstep( 0.2, 0.32, gSw.z ) * smoothstep( 0.6, 0.85, gFn ) * uGtpChop );',   // whitecaps in a chop
-    'gtpFoam = clamp( gtpFoam, 0.0, 1.0 );',
+    'if ( gBand > 0.0 || gSw.z > 0.2 ) {',   // the foam's noise is only fetched by the shore and on the crests
+    '  float gFn = texture2D( tGtpNoise, vGtpW.xz / 7.0 + vec2( uGtpTime * 0.013, -uGtpTime * 0.009 ) ).r;',
+    '  float gPulse = 0.5 + 0.5 * sin( gShore * 38.0 - uGtpTime * 1.4 + gFn * 4.0 );',
+    '  gtpFoam = clamp( gBand * ( gFn * 1.25 + gPulse * 0.55 ) - 0.42, 0.0, 1.0 ) * 1.6;',
+    '  gtpFoam = clamp( max( gtpFoam, smoothstep( 0.2, 0.32, gSw.z ) * smoothstep( 0.6, 0.85, gFn ) * uGtpChop ), 0.0, 1.0 );',   // whitecaps in a chop
+    '}',
     'diffuseColor.rgb = mix( gCol, vec3( 0.86, 0.92, 0.94 ), gtpFoam );'
   ].join('\n');
   var OCEAN_NORMAL = [
@@ -2140,7 +2136,7 @@
       fbBlob(fb, 0.6, 4.6, 0.3, 0.8, 0.85, inner, innerTop);
       fbBlob(fb, -0.55, 4.7, -0.3, 0.8, 0.85, inner, innerTop);
       var greens = [c('#3c7a30'), c('#4a8a36'), c('#35702e'), c('#5b8f34')];
-      for (i = 0; i < 84; i++) {
+      for (i = 0; i < 62; i++) {
         var th = R.random() * TAU, y = R.random() * 2 - 1;
         y = y < 0 ? -Math.pow(-y, 1.6) : Math.pow(y, 0.8);   // more cards on the upper half
         var rr = Math.sqrt(Math.max(0, 1 - y * y)), d = [Math.cos(th) * rr, y, Math.sin(th) * rr], k = 0.55 + R.random() * 0.45;
@@ -2148,7 +2144,7 @@
         var n = vnorm([d[0] + (R.random() - 0.5) * 1.2, d[1] + (R.random() - 0.5) * 1.2 + 0.3, d[2] + (R.random() - 0.5) * 1.2]);
         var g0 = greens[Math.floor(R.random() * greens.length)], lift = (y + 1) * 0.5;
         var col = [g0[0] * (0.62 + 0.5 * lift), g0[1] * (0.62 + 0.5 * lift), g0[2] * (0.6 + 0.45 * lift)];
-        fbCard(fb, p, n, C0, 1.35 + R.random() * 0.75, R.random() * TAU, col);
+        fbCard(fb, p, n, C0, 1.55 + R.random() * 0.8, R.random() * TAU, col);
       }
       return fb.build();
     },

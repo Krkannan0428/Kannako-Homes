@@ -73,7 +73,7 @@ Branch `v03/environment`. Files owned and changed: `js/05_assets.js`, `js/10_ren
   ping-pong history reprojected through the depth buffer from the unjittered pixel centre, the history clipped to the
   3 x 3 neighbourhood's variance box in YCoCg, Karis-weighted. A camera cut (6 m or 20 degrees in a frame, a fov snap)
   or a preset change resets it (`PostFX.resetHistory()`). FXAA stays on medium.
-- **SSR on wet roads** (high, ultra; only while `weather.wet` > 0.03): half resolution, the reflected ray marched
+- **SSR on wet roads and the sea** (high, ultra; streets only while `weather.wet` > 0.02, the sea always, so the harbour reflects the city at night): half resolution, the reflected ray marched
   through the depth buffer with a binary refinement, only on flat ground, only things standing above the street
   reflect, strength by Fresnel x wetness x the ground shader's own puddle field, smeared into vertical streaks.
 - **Depth of field** (medium and up, only in cutscenes): a half-resolution golden-angle gather, mixed in the composite

@@ -165,27 +165,32 @@
       Render._shadowCams = { near: a, far: b };
       sm.render = function (lights, scene, camera) {
         var Q = C.QUALITY, L = Render.lights;
-        if (!Render._shadowFrame || !L || !(Q.shadows && (Q.cascades | 0) >= 2) || lights.indexOf(L.sunFar) < 0) return orig.call(sm, lights, scene, camera);
+        if (!L || !(Q.shadows && (Q.cascades | 0) >= 2) || lights.indexOf(L.sunFar) < 0) return orig.call(sm, lights, scene, camera);
+        var rest = Render._shadowRest || (Render._shadowRest = []); rest.length = 0; rest.push(L.sun);
+        for (var li = 0; li < lights.length; li++) if (lights[li] !== L.sun && lights[li] !== L.sunFar) rest.push(lights[li]);
+        if (!Render._shadowFrame) { sm.needsUpdate = true; return orig.call(sm, rest, scene, Render._shadowCams.near); }   // another render of the scene this frame: the near map only, the far one stays
         Render._shadowFrame = false;
-        var rest = lights.filter(function (l) { return l !== L.sun && l !== L.sunFar; });
         var fh = (Q.shadowFar || 240) / 2, cs = Render._casc || { fdx: 0, fdz: 0 }, cx = camera.position.x + cs.fdx * fh * 0.7, cz = camera.position.z + cs.fdz * fh * 0.7;
-        var sunKey = Math.round(L.sunDir.x * 200) + ':' + Math.round(L.sunDir.y * 200);
+        var sunKey = Math.round(L.sunDir.x * 200) * 1000 + Math.round(L.sunDir.y * 200);
         var moved = !Render._farAt || !L.sunFar.shadow.map || Math.abs(cx - Render._farAt.x) + Math.abs(cz - Render._farAt.z) > fh * 0.2 || Render._farAt.sun !== sunKey;
         Render._farT--;
         if (moved || Render._farT <= 0) {
           Render._placeCascade(L.sunFar, cx, cz, fh, 320);
           L.sunFar.updateMatrixWorld(); L.sunFar.target.updateMatrixWorld();
-          Render._farAt = { x: cx, z: cz, sun: sunKey };
+          var fa = Render._farAt || (Render._farAt = {}); fa.x = cx; fa.z = cz; fa.sun = sunKey;
           Render._farT = Math.max(1, Q.farEvery | 0 || 2);
           sm.needsUpdate = true; orig.call(sm, [L.sunFar], scene, Render._shadowCams.far);
           Render.stats.farShadow = (Render.stats.farShadow || 0) + 1;
         }
-        sm.needsUpdate = true; orig.call(sm, [L.sun].concat(rest), scene, Render._shadowCams.near);
+        sm.needsUpdate = true; orig.call(sm, rest, scene, Render._shadowCams.near);
       };
     },
     // place a cascade's light: centred on (cx, cz) with the box half-size `half`, the centre snapped to the shadow map's
     // texel grid in light space so the shadow edges do not crawl as the camera moves
     _placeCascade: function (light, cx, cz, half, back) {
+      // far enough up the sun's ray that the tallest tower's whole shadow lands in the map at a low sun
+      var Wd = Render._World; if (Wd && Wd.buildings && Render._tallest == null) { var tall = 40; Wd.buildings.forEach(function (b) { if (b.y + b.h > tall) tall = b.y + b.h; }); Render._tallest = tall; }
+      back = Math.max(back, ((Render._tallest || 60) + 10) / Math.max(Render.lights.sunDir.y, 0.12));
       var d = Render.lights.sunDir, mapN = light.shadow.mapSize.x || 1024, texel = half * 2 / mapN;
       var rx = d.z, rz = -d.x, rl = Math.sqrt(rx * rx + rz * rz) || 1; rx /= rl; rz /= rl;                // right: horizontal, across the light
       var ux = -d.x * d.y, uy = d.x * d.x + d.z * d.z, uz = -d.z * d.y, ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1; ux /= ul; uy /= ul; uz /= ul;   // up, in the light's view
@@ -197,7 +202,7 @@
       light.target.position.set(px, 0, pz);
       light.position.set(px + d.x * back, d.y * back, pz + d.z * back);
       var sc = light.shadow.camera;
-      if (sc.right !== half) { sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.far = back * 2 + 60; sc.updateProjectionMatrix(); }
+      if (sc.right !== half || Math.abs(sc.far - (back * 2 + 60)) > 1) { sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.far = back * 2 + 60; sc.updateProjectionMatrix(); }
     },
     resize: function () {
       var stage = Render.canvas.parentElement;
@@ -261,6 +266,8 @@
           if (L.sun.shadow.mapSize.x !== Q.shadowMap) { L.sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (L.sun.shadow.map) { L.sun.shadow.map.dispose(); L.sun.shadow.map = null; } }
           var two = !!Q.shadows && (Q.cascades | 0) >= 2, fm = Q.shadowMapFar || 1024;
           L.sunFar.castShadow = two; L.sunFar.visible = two;
+          if (!two && L.sunFar.shadow.map) { L.sunFar.shadow.map.dispose(); L.sunFar.shadow.map = null; }
+          Render._farAt = null;
           if (L.sunFar.shadow.mapSize.x !== fm) { L.sunFar.shadow.mapSize.set(fm, fm); if (L.sunFar.shadow.map) { L.sunFar.shadow.map.dispose(); L.sunFar.shadow.map = null; } }
           L.sun.shadow.normalBias = two ? 0.05 : 0.5; L.sun.shadow.bias = two ? -0.0003 : -0.0005;
           for (i = 0; i < L.points.length; i++) L.points[i].visible = i < (Q.pointLights | 0);
@@ -469,14 +476,14 @@
       Render.scene.fog.near = fogNear; Render.scene.fog.far = Q.drawDistance;
       Render.renderer.setClearColor(fog, 1);
       L.hemi.color.copy(mixc('hemiSky')); L.hemi.groundColor.copy(ground); L.hemi.intensity = mixn('hemiI');
-      L._skyBase = L.hemi.color.clone(); L._groundBase = L.hemi.groundColor.clone();
+      (L._skyBase || (L._skyBase = new THREE.Color())).copy(L.hemi.color); (L._groundBase || (L._groundBase = new THREE.Color())).copy(L.hemi.groundColor);
       // moonlight fill: low and medium have no lamp lights (the street is lit by emissives and glow decals alone), so at
       // night a cool ambient keeps the foreground readable (the player, the road at his feet); the lamp presets need less
       L.fill.color.set(C.SKY.night.fill || '#6a7ab0');
       var SN = C.SKY.night, fillK = (Q.pointLights | 0) > 0 ? SN.fillLit : (Q.post ? SN.fillI : SN.fillLow);   // low has no post lift either
       L.fill.intensity = night * U.lerp(1, 0.75, overcast) * (fillK != null ? fillK : 0.3);
-      L._fillBase = L.fill.color.clone(); L._fillI = L.fill.intensity;
-      Render._applyDistrictTint(0);
+      (L._fillBase || (L._fillBase = new THREE.Color())).copy(L.fill.color); L._fillI = L.fill.intensity;
+      Render._applyDistrictTint(0, true);
       // a physically plausible sun: the preset intensity shaped by elevation (a cosine-ish rise, warm and weak at the
       // horizon), dimmed by cloud cover; at night a faint cool moon from the opposite side
       var elevK = U.clamp(Math.sin(Math.max(0, elev)) * 2.2 + 0.08, 0, 1);
@@ -786,12 +793,13 @@
     },
     // the district light: the hemisphere and the night fill lean toward C.DISTRICT_LIGHT of the district under the focus
     _dTint: null,
-    _applyDistrictTint: function (dt) {
+    _applyDistrictTint: function (dt, hold) {
       var L = Render.lights, W = Render._World, DL = C.DISTRICT_LIGHT; if (!L || !L._skyBase || !DL) return;
       var fx = Render.focusPoint(), d = W.districtAt ? W.districtAt(fx.x, fx.z) : null, want = (d && DL[d.id]) || null;
       var T = Render._dTint || (Render._dTint = { sky: [1, 1, 1], ground: [1, 1, 1], night: [1, 1, 1], fill: 1 });
-      var k = dt > 0 ? 1 - Math.exp(-1.4 * dt) : 1;
-      ['sky', 'ground', 'night'].forEach(function (key) { for (var i = 0; i < 3; i++) T[key][i] += ((want ? want[key][i] : 1) - T[key][i]) * k; });
+      // `hold`: re-apply the current blend to fresh base colours (updateEnvironment) without stepping it; the first call snaps
+      var k = hold ? (Render._tintInit ? 0 : 1) : (dt > 0 ? 1 - Math.exp(-1.4 * dt) : 1); Render._tintInit = true;
+      for (var i = 0; i < 3; i++) { T.sky[i] += ((want ? want.sky[i] : 1) - T.sky[i]) * k; T.ground[i] += ((want ? want.ground[i] : 1) - T.ground[i]) * k; T.night[i] += ((want ? want.night[i] : 1) - T.night[i]) * k; }
       T.fill += ((want && want.fill ? want.fill : 1) - T.fill) * k;
       if (L._fillI != null) L.fill.intensity = L._fillI * T.fill;
       L.hemi.color.setRGB(L._skyBase.r * T.sky[0], L._skyBase.g * T.sky[1], L._skyBase.b * T.sky[2]);
@@ -862,8 +870,10 @@
       var t = g && g.time ? g.time.t : 0, dt = Render._lastSimT == null ? 0 : U.clamp(t - Render._lastSimT, 0, 0.25);
       Render._lastSimT = t;
       if (Render.weather) Render.weather.update(dt);
-      if (Render._A.groundUniforms) Render._A.groundUniforms.uGtpTime.value = t % 1000;
-      if (Render._A.treeUniforms) { Render._A.treeUniforms.uGtpTime.value = t % 1000; Render._A.treeUniforms.uGtpWind.value = 0.45 + Render.weather.overcast * 0.35 + Render.weather.rain * 0.5; }
+      // shader clocks wrap on a long period, at night far from the player's eyes (t % 1000 popped every phase at the wrap)
+      var tw = t % 7200;
+      if (Render._A.groundUniforms) Render._A.groundUniforms.uGtpTime.value = tw;
+      if (Render._A.treeUniforms) { Render._A.treeUniforms.uGtpTime.value = tw; Render._A.treeUniforms.uGtpWind.value = 0.45 + Render.weather.overcast * 0.35 + Render.weather.rain * 0.5; }
       var clock = g && g.time ? g.time.clock : C.DAY.startClock;
       if (Math.abs(clock - (Render._envClock == null ? -99 : Render._envClock)) > 0.02) { Render._envClock = clock; Render.updateEnvironment(clock); }
       // sky and sun follow the camera; sun light + shadow box follow the focus point
@@ -879,7 +889,7 @@
       if (Qf.shadows && (Qf.cascades | 0) >= 2) {
         var nh = (Qf.shadowNear || 44) / 2;
         Render._placeCascade(L.sun, fx.x + fdx * nh * 0.45, fx.z + fdz * nh * 0.45, nh, 160);
-        Render._casc = { fdx: fdx, fdz: fdz };
+        var cc = Render._casc || (Render._casc = {}); cc.fdx = fdx; cc.fdz = fdz;
       } else {
         L.target.position.set(fx.x, 0, fx.z);
         L.sun.position.copy(L.sunDir).multiplyScalar(160).add(L.target.position);
@@ -888,7 +898,7 @@
       }
       // the ocean: time, chop from the weather, the shore distance field of the current world
       var WU = Render._A.waterUniforms;
-      if (WU) { WU.uGtpTime.value = t % 3600; WU.uGtpChop.value = U.clamp(0.35 + Render.weather.overcast * 0.25 + Render.weather.rain * 0.4, 0, 1); if (Render._shoreSeed !== Render._World._seed && Render._World.tiles) Render._buildShore(); }
+      if (WU) { WU.uGtpTime.value = t % 7200; WU.uGtpChop.value = U.clamp(0.35 + Render.weather.overcast * 0.25 + Render.weather.rain * 0.4, 0, 1); if (Render._shoreSeed !== Render._World._seed && Render._World.tiles) Render._buildShore(); }
       Render.ensureChunks();
       Render._animateFallen();
       Render._updateLightPool(dt);
@@ -927,7 +937,7 @@
     invalidateAll: function () {
       Render.chunks.forEach(function (ch) { Render._disposeChunk(ch); });
       Render.chunks.clear();
-      Render._runways = null;
+      Render._runways = null; Render._tallest = null;
       if (Render.lights) { Render.lights._lamps = null; Render.lights._near = null; }
       if (Render.weather) Render.weather._pudSeed = null;
       if (Render.grass) Render.grass._seed = null;
@@ -1914,24 +1924,25 @@
     // drop an entity's mesh and build it again from its current state (a vehicle after a mod shop visit, a ped after an
     // outfit or a haircut): same parent, same pose; returns the new mesh (v0.3: the vehicles and systems tracks call it)
     rebuildEntityMesh: function (e) {
-      if (!e) return null;
-      var old = e.mesh, parent = old && old.parent ? old.parent : Render.entityGroup;
-      if (old) {
-        Render.detach(e);
+      if (!e || e.removed) return null;
+      var old = e.mesh, parent = old && old.parent ? old.parent : Render.entityGroup, fresh = null;
+      try { e.mesh = null; fresh = Render.buildEntityMesh(e); } catch (err) { U.reportError(err, 'rebuildEntityMesh'); }
+      if (!fresh) { e.mesh = old; return old; }   // the build failed: keep the old mesh as it was
+      if (old && old !== fresh) {
+        if (old.parent) old.parent.remove(old);
+        var ud = old.userData; if (ud && ud.paint) ud.paint.dispose();
+        if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.visible = false; Render.lights.headlightOwner = null; }
         old.traverse(function (o) { if (o.geometry && o.userData && o.userData.own) o.geometry.dispose(); });
       }
-      e.mesh = null;
-      try { e.mesh = Render.buildEntityMesh(e); } catch (err) { U.reportError(err, 'rebuildEntityMesh'); e.mesh = old; }
-      if (!e.mesh) return null;
-      if (e.mesh !== old && !e.removed) {
-        parent.add(e.mesh);
-        e.mesh.traverse(function (o) { o.layers.set(1); }); e.mesh.userData.gtpLayer = 1;
-        e.mesh.position.set(e.x, e.y, e.z); e.mesh.rotation.y = e.yaw || 0;
-        if (old) { e.mesh.visible = old.visible; e.mesh.quaternion.copy(old.quaternion); }
-      }
-      if (e.kind === 'vehicle' && e.mesh.userData.rec) Render.syncVehicle(e);
+      e.mesh = fresh;
+      e._parts = null;   // 06_entities / the animation code cache the limb pivots of the old mesh
+      if (!fresh.parent) parent.add(fresh);
+      fresh.traverse(function (o) { o.layers.set(1); }); fresh.userData.gtpLayer = 1;
+      fresh.position.set(e.x, e.y, e.z); fresh.rotation.y = e.yaw || 0;
+      if (old && old !== fresh) { fresh.visible = old.visible; fresh.quaternion.copy(old.quaternion); }
+      if (e.kind === 'vehicle' && fresh.userData.rec) Render.syncVehicle(e);
       if (GTP.Events) GTP.Events.emit('entity:mesh', { entity: e });
-      return e.mesh;
+      return fresh;
     },
     buildEntityMesh: function (e) {
       var A = Render._A;
@@ -2253,7 +2264,7 @@
         // only the kick the clamp let through is recovered later: at the top of the range the view comes back to where
         // it was instead of drifting down (QA CMB-13)
         var before = r.pitch;
-        r.pitch = Math.max(r._pitchMin != null ? r._pitchMin : C.CAMERA.pitchMin, r.pitch - kp); r.yaw += ky;
+        r.pitch = Math.max(Math.min(r._pitchMin != null ? r._pitchMin : C.CAMERA.pitchMin, before), r.pitch - kp); r.yaw += ky;
         r.kickP += before - r.pitch; r.kickY += ky; r._kickLam = 4 / (recover || 0.25);
       },
       update: function (dt, input) {

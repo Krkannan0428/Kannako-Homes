@@ -210,7 +210,7 @@
     '  if ( hy < W.y + 0.3 && sea < 0.5 ) { gl_FragColor = vec4( 0.0 ); return; }',
     '  vec2 e = smoothstep( 0.0, 0.12, hit.xy ) * ( 1.0 - smoothstep( 0.88, 1.0, hit.xy ) );',
     '  float cosT = clamp( -dot( V, N ), 0.0, 1.0 ), F = 0.02 + 0.98 * pow( 1.0 - cosT, 5.0 );',
-    '  float k = e.x * e.y * ( 1.0 - smoothstep( 40.0, 140.0, -P.z ) ) * mix( wet * mix( 0.18, 0.75, puddle ), 0.55, sea ) * mix( 0.35, 1.0, F );',
+    '  float k = e.x * e.y * ( 1.0 - smoothstep( 40.0, 140.0, -P.z ) ) * mix( wet * mix( 0.18, 0.75, puddle ), 0.8, sea ) * mix( 0.35, 1.0, F );',
     // wet asphalt smears a reflection into vertical streaks (more on bare wet road than in a puddle)
     '  float sp = mix( mix( 0.035, 0.008, puddle ), 0.02, sea );',
     '  vec3 col = vec3( 0.0 );',
@@ -511,12 +511,12 @@
         lc.p.copy(camera.position); lc.q.copy(camera.quaternion); lc.fov = camera.fov;
         // 1. the scene, linear HDR, with depth (with TAA: through a sub-pixel jittered projection)
         var taa = F.flags.taa;
-        if (taa) { var hi = (F._frame++ % 8) + 1; camera.setViewOffset(w, h, F._halton(hi, 2) - 0.5, F._halton(hi, 3) - 0.5, w, h); }
+        if (taa) { F._aspect = camera.aspect; var hi = (F._frame++ % 8) + 1; camera.setViewOffset(w, h, F._halton(hi, 2) - 0.5, F._halton(hi, 3) - 0.5, w, h); }
         renderer.setRenderTarget(F._rt);
         renderer.clear();
         renderer.render(scene, camera);
         // the matrices TAA and the motion blur reproject with: this frame's (jittered) inverse, the last frame's view-projection
-        if (taa) camera.clearViewOffset();
+        if (taa) { camera.clearViewOffset(); camera.aspect = F._aspect; camera.updateProjectionMatrix(); }
         // reprojection runs from the unjittered pixel centre: a still camera maps every pixel onto itself (no resampling blur)
         F._curVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         F._invVP.copy(F._curVP).invert();
@@ -613,7 +613,7 @@
       } catch (e) {
         U.reportError(e, 'postfx');
         F.enabled = false;
-        if (camera.view && camera.view.enabled) camera.clearViewOffset();
+        if (camera.view && camera.view.enabled) { camera.clearViewOffset(); if (F._aspect) { camera.aspect = F._aspect; camera.updateProjectionMatrix(); } }
         renderer.setRenderTarget(null);
         renderer.render(scene, camera);
       }

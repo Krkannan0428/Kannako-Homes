@@ -260,14 +260,15 @@ H.run('render', async (t) => {
   // the camera: aiming looks far up (QA CMB-07), recoil at the top of the range recovers in full (QA CMB-13)
   const cam3 = await vp.evaluate(() => {
     const R = GTP.Render, rig = R.rig, p = GTP.game.player, C = GTP.C, out = {};
-    GTP.game.debug.followCam(); p.aiming = true;
-    for (let i = 0; i < 40; i++) { GTP.Input.setLook(0, -60); GTP.game.advance(1 / 60); }
+    GTP.game.debug.followCam(); if (!p.weapons || !p.weapons.pistol) { try { GTP.Combat.giveAmmo(p, 'pistol', 30, true); } catch (e) { /* the shooting track may rename it */ } } p.weapon = p.weapons && p.weapons.pistol ? 'pistol' : p.weapon;
+    GTP.Input.set('aim', true);
+    for (let i = 0; i < 40; i++) { GTP.Input.set('aim', true); p.aiming = true; GTP.Input.setLook(0, -60); GTP.game.advance(1 / 60); p.aiming = true; }
     const dir = new THREE.Vector3(); R.camera.getWorldDirection(dir);
     out.aimPitchDeg = +(rig.pitch * 180 / Math.PI).toFixed(1); out.aimElevDeg = +(Math.asin(dir.y) * 180 / Math.PI).toFixed(1);
     const before = rig.pitch;
-    for (let k = 0; k < 6; k++) { rig.kick(3, 0, 0.25); GTP.game.advance(0.7); }
+    for (let k = 0; k < 6; k++) { rig.kick(3, 0, 0.25); for (let j = 0; j < 42; j++) { p.aiming = true; GTP.game.advance(1 / 60); } }
     out.recoilDriftDeg = +((rig.pitch - before) * 180 / Math.PI).toFixed(2);
-    p.aiming = false; GTP.game.advance(1.5);
+    GTP.Input.set('aim', false); p.aiming = false; GTP.game.advance(1.5);
     out.chasePitchDeg = +(rig.pitch * 180 / Math.PI).toFixed(1); out.chaseMinDeg = +(C.CAMERA.pitchMin * 180 / Math.PI).toFixed(1);
     return out;
   });
