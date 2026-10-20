@@ -12,7 +12,7 @@
  * 11 the letterbox and the HOLD TO SKIP pill in a cutscene; hint toasts; the race HUD; the stunt slow-motion overlay; the memo counter
  * 12 settings apply (quality preset, draw distance, volumes, hints, gamepad) and persist in localStorage
  * 13 the gamepad: a fake standard pad confirms menus, steps selections with the stick, switches the glyphs; rumble is a no-op without an actuator
- * 14 a 400x800 touch viewport: eight touch buttons inside the screen, the virtual stick walks, the map page with pinch zoom, the long-press weapon wheel
+ * 14 a 400x800 touch viewport: ten touch buttons (with COVER and SPCL) inside the screen, the virtual stick walks, the map page with pinch zoom, the long-press weapon wheel
  * Screenshots in tests/out: ui_loading, ui_title, ui_title_settings, ui_title_slots, ui_title_confirm, ui_hud_foot, ui_hud_car_night, ui_dialogue,
  * ui_pause, ui_map, ui_phone_missions, ui_phone_strands, ui_shop, ui_wheel, ui_scope, ui_hitmark, ui_failed_retry, ui_letterbox, ui_hint, ui_race,
  * ui_stunt, ui_debate, ui_ratio, ui_wanted3, ui_ratiod, ui_credits, ui_title_continue, ui_pause_slots, ui_phone_touch, ui_map_touch (look at them). */
@@ -69,6 +69,10 @@ H.run('ui', async (t) => {
   const started = await page.evaluate(() => ({ state: GTP.game.state, free: GTP.Render.free, d: Math.hypot(GTP.Render.camera.position.x - GTP.game.player.x, GTP.Render.camera.position.z - GTP.game.player.z), slot: GTP.game.activeSlot, loading: GTP.game.loading.active }));
   console.log('  after Enter: ' + JSON.stringify(started));
   t.assert(started.state === 'playing' && !started.free && started.d < 8 && started.slot === 1, 'Enter on NEW GAME (no saves) starts play at once in slot 1 with the chase camera on the player');
+  // QA-C1-07: the first-ever NEW GAME queues the opening cutscene too (it would play once the loading screen ends); the
+  // rest of this file drives the HUD directly, so the opening is taken off the queue here
+  const opening = await page.evaluate(() => { const o = GTP.game._openingPending; GTP.game._openingPending = false; return o; });
+  t.assert(opening === true, 'NEW GAME with no saves queues the opening cutscene (QA-C1-07)');
   // the live loop is off: finish the New Game's chunk prebuild synchronously so the loading state never lingers
   await page.evaluate(() => { GTP.Render.prebuild(GTP.game.player.x, GTP.game.player.z, 100); GTP.game._loadT = 0; GTP.game._endLoading(); });
 
@@ -163,13 +167,13 @@ H.run('ui', async (t) => {
   t.assert(mapPage.state === 'paused' && mapPage.page === 'phone' && mapPage.tab0 === 0 && mapPage.rect, 'M opens the full-screen map page');
   t.assert(mapPage.zoom > 1.4 && mapPage.waypoint && mapPage.tab1 === 1 && mapPage.tab0b === 0, 'zoom, the waypoint and the tab keys work: ' + JSON.stringify(mapPage));
   await t.shot(page, 'ui_map');
-  const tabs = await page.evaluate(() => { T_.press('weaponNext'); GTP.game.render(); return GTP.UI.state.pause.tab; });
-  t.assert(tabs === 1, 'RB / ] moves from the map to the MISSIONS tab (arrows pan the map): ' + tabs);
+  const tabs = await page.evaluate(() => { T_.press('weaponNext'); GTP.game.render(); const a = [GTP.UI.phoneTabs[GTP.UI.state.pause.tab]]; T_.press('right'); GTP.game.render(); a.push(GTP.UI.phoneTabs[GTP.UI.state.pause.tab]); return a; });
+  t.assert(tabs[0] === 'STORY' && tabs[1] === 'MISSIONS', 'RB / ] moves from the map to the STORY tab, then right to MISSIONS (arrows pan the map): ' + tabs);
   await t.shot(page, 'ui_phone_missions');
-  await page.evaluate(() => { T_.press('right'); T_.press('right'); GTP.game.render(); });
+  await page.evaluate(() => { T_.press('right'); T_.press('right'); T_.press('right'); GTP.game.render(); });   // STOCKS, STATS, STRANDS
   await t.shot(page, 'ui_phone_strands');
   const aborted = await page.evaluate(() => {
-    T_.press('left'); T_.press('left');   // back to MISSIONS
+    T_.press('left'); T_.press('left'); T_.press('left'); GTP.game.render();   // back to MISSIONS (its rows come from the draw)
     const rows = GTP.UI.state.pause.rows.map((r) => r.kind);
     T_.press('secondary'); GTP.game.advance(0.2);
     return { rows, active: GTP.Missions.state.active, state: GTP.game.state };
@@ -276,7 +280,7 @@ H.run('ui', async (t) => {
     GTP.UI.openPause('pause'); GTP.game.render();
     const items = GTP.UI.state.pause.sel; void items;
     // SAVE opens the slot cards in save mode; confirm on slot 2 writes it
-    GTP.UI.state.pause.sel = 1; T_.press('confirm'); GTP.game.render();
+    GTP.UI.state.pause.sel = 2; T_.press('confirm'); GTP.game.render();   // RESUME, STORY, SAVE
     const a = { page: GTP.UI.state.pause.page, mode: GTP.UI.state.pause.slotMode };
     T_.press('right'); GTP.game.render(); a.sel = GTP.UI.state.pause.slotSel;
     T_.press('confirm'); GTP.game.advance(0.1);
@@ -290,7 +294,7 @@ H.run('ui', async (t) => {
   await t.shot(page, 'ui_pause_slots');
   const quit = await page.evaluate(() => {
     T_.press('cancel');   // back to the pause menu
-    GTP.UI.state.pause.sel = 8; T_.press('confirm'); GTP.game.render();
+    GTP.UI.state.pause.sel = 9; T_.press('confirm'); GTP.game.render();   // QUIT TO TITLE
     const a = { confirm: GTP.UI.state.confirm && GTP.UI.state.confirm.title };
     GTP.UI.state.confirm.sel = 0; T_.press('confirm'); GTP.game.advance(0.2); GTP.game.render();
     a.state = GTP.game.state; a.free = GTP.Render.free; a.items = GTP.UI.state.title.items.map((i) => i.id);
@@ -543,7 +547,7 @@ H.run('ui', async (t) => {
   });
   console.log('  touch: ' + JSON.stringify(touch));
   t.assert(touch.visible && touch.active && touch.w >= 360 && touch.w <= 400 && touch.h === 800, 'touch controls appear on the first tap at 400x800 (the shell keeps 16 px side gutters)');
-  t.assert(touch.bad.length === 0 && touch.buttons === 8 && /reload/.test(touch.ids), 'all eight touch buttons (with RELOAD) sit inside the screen');
+  t.assert(touch.bad.length === 0 && touch.buttons === 10 && /reload/.test(touch.ids) && /cover/.test(touch.ids) && /special/.test(touch.ids), 'all ten touch buttons (with RELOAD, COVER, SPCL) sit inside the screen');
   await t.shot(mp, 'ui_phone_touch');
   const stick = await mp.evaluate(() => {
     const p = GTP.game.player, x0 = p.x, z0 = p.z;
