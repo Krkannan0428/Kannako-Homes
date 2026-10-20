@@ -339,7 +339,7 @@
     return Math.abs(d - this.rr) <= this.band / 2 + 0.35;
   };
   Telegraph.prototype.strikePlayer = function () {
-    var p = player(); if (!p || !p.alive) return false;
+    var p = player(); if (!p || !p.alive || !(this.dmg > 0)) return false;   // a warning line (a charge's path) strikes nobody itself
     var v = p.inVehicle;
     if (Math.abs((v ? v.y : p.y) - this.y) > 4) return false;
     if (!this.inside(v ? v.x : p.x, v ? v.z : p.z)) return false;
@@ -1879,6 +1879,9 @@
     hud: function () { var e = Bosses.active; return e && e.state !== 'ended' ? e.hud() : null; },
     target: function () { var e = Bosses.active; return e ? e.target() : null; },
     resumeInfo: function () { return resume; },
+    // the arena as a mission target (an approach objective: {type:'goto', target: GTP.Bosses.arenaTarget('b01_goldplate'), radius: 160})
+    arenaTarget: function (id) { var a = DEFS[id] && DEFS[id].arena; return a ? { landmark: a.landmark, offset: { x: (a.offset && a.offset.x) || 0, z: (a.offset && a.offset.z) || 0 }, metres: true } : null; },
+    arena: function (id) { var d = DEFS[id]; if (!d) return null; var c = resolveArena(d); return { x: c.x, z: c.z, y: groundY(c.x, c.z, 0), landmark: d.arena.landmark }; },
     cards: CARDS,
     Telegraph: Telegraph, BossPart: BossPart, BossRig: BossRig, meshes: Meshes,
     debug: {
@@ -2035,12 +2038,14 @@
     trigger: function (id) { return fireSpecial(id); },
     stop: function (id) { if (id === 'focus') stopFocus(); else if (id === 'boost') stopBoost(); },
     allies: function () { return sp.allies.slice(); },
-    reset: function () {
+    // drop whatever is running (a load, a new game) and keep the meters (the save restores them)
+    clear: function () {
       stopFocus(); stopBoost();
       for (var i = 0; i < sp.allies.length; i++) removeEntity(sp.allies[i]);
       sp.allies.length = 0; sp.holdT = -1;
-      for (var k = 0; k < SPECIAL_IDS.length; k++) { sp.meters[SPECIAL_IDS[k]] = 1; sp.active[SPECIAL_IDS[k]] = false; }
+      for (var k = 0; k < SPECIAL_IDS.length; k++) sp.active[SPECIAL_IDS[k]] = false;
     },
+    reset: function () { Specials.clear(); for (var k = 0; k < SPECIAL_IDS.length; k++) sp.meters[SPECIAL_IDS[k]] = 1; },
     // Game.step (through the Combat.update wrapper) in state playing
     update: function (dt) {
       var g = game(), p = player(), In = GTP.Input, i, id;
@@ -2191,7 +2196,7 @@
   GTP.Events.on('load:progress', installLate);
   if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('load', function () { try { installLate(); } catch (e) { U.reportError(e, 'bosses.install'); } });
   // a new game / load drops every fight and resets the specials
-  GTP.Events.on('loaded', function () { Bosses.endAll('load'); Specials.reset(); });
+  GTP.Events.on('loaded', function () { Bosses.endAll('load'); Specials.clear(); });
 
   // ------------------------------------------------------------------ fallback HUD --
   // The ui track draws the boss bar (boss:phase) and the special meters (special:state); until it says so (UI.drawsBossBar,
