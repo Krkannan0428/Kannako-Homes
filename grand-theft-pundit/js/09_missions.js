@@ -57,7 +57,7 @@
     subsPerReward: 3,         // story subscribers: reward x 3, so the story alone ends in tier 3 (GDD_EXPANSION §5.8, QA-STR-16)
     chaosCapPerMinute: 500,
     weaponAmmo: { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16, tableleg: Infinity, revolver: 24, rifle: 90, hotmic: 4, sniper: 10, ratio: 3 },
-    meleeSwing: [1.3, 2.0],   // seconds between a mission goon's punches (a wind-up, not the fist's 2.5/s player rate; QA-C1-01)
+    meleeSwing: [1.6, 2.4],   // seconds between a mission goon's punches (a wind-up, not the fist's 2.5/s player rate; QA-C1-01)
     meleeWindup: 0.35,        // the goon telegraphs a punch this long before it lands
     meleeAttackers: 2,        // goons that punch at once; the rest circle at arm's length
     followGrace: 4,           // a tail's 'too close' clock starts after this many seconds or once the target first pulls away
@@ -2398,7 +2398,7 @@
   var SK = C.STRANDS = Object.assign({
     hailRadius: 4, hailHold: 1, fareMin: 150, fareMax: 450, fareSpawnMin: 60, fareSpawnMax: 140, farePerMetre: 0.25, fareBase: 20, fareLeave: 10, fareWantedEnd: 3,
     hoaTargetMin: 120, hoaTargetMax: 240, hoaStopHold: 2, hoaNextDelay: 4, hoaLevels: 12, hoaLeave: 10, stopNear: 6,   // a stop: the patrol car this close (QA-STR-02)
-    raceRepeatPay: 0.2, raceCooldown: 120,   // a repeat win pays a fifth of the prize, and the start light rests two minutes (QA-STR-17)
+    raceRepeatPay: 0.2, raceCooldown: 0,   // a repeat win pays a fifth of the prize (QA-STR-17); raceCooldown > 0 also rests the start light
     sponsorLeave: 15, sponsorArrive: 14, sponsorCrash: 20, sponsorMinPay: 100,
     rampageCountdown: 3, rampageWave: 4, rampageRadius: 40, rampageRespawn: 60, rampageReplay: 600,
     raceRing: 8, raceDnfLeave: 8, raceRacers: 3, raceSpeed: 0.95, raceBand: 0.08, raceCountdown: 3, racerHp: 320,
@@ -2945,7 +2945,7 @@
           if (prize && repeat) prize = Math.round(prize * SK.raceRepeatPay);
           if (prize) pay(prize, 'race');
           var smk = null; for (var mi = 0; mi < strandMarkers.length; mi++) if (strandMarkers[mi].id === id) smk = strandMarkers[mi];
-          if (smk) smk.cooldown = SK.raceCooldown;
+          if (smk && SK.raceCooldown > 0) { smk.cooldown = SK.raceCooldown; refreshMarkerVisibility(); }
           addSubs(res.place === 1 ? (firstWin ? RL.subsFirstWin : RL.subsRepeat) : 0, 'race');
           var ord = ['1st', '2nd', '3rd', '4th'][res.place - 1] || res.place + 'th';
           if (!callUI('card', res.place === 1 ? 'passed' : 'failed', 'RACE: ' + ord.toUpperCase(), r.def.name + '  ' + U.fmtTime(res.time) + (prize ? '  ' + U.fmtMoney(prize) : ''))) toast('RACE: ' + ord + ' ' + U.fmtTime(res.time));

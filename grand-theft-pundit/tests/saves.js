@@ -1,4 +1,6 @@
-/* saves.js: the v3 save system (30_game.js).
+/* saves.js: the v4 save system (30_game.js).
+ *  0 GTP.SaveRegistry: an entry's get() is saved under data.registry and set() gets it back on load; the story's heist plan
+ *    rides along; a v3 slot written by v0.2 migrates into the v4 key at boot (registry {}) and loads
  *  1 save to slot 2, change everything, load slot 2: position, money, weapons + ammo, completed missions, flags, strand progress,
  *    memos, best times, subscribers and the clock come back; slots() meta is right; latestSlot picks it
  *  2 delete the slot
@@ -36,8 +38,13 @@ H.run('saves', async (t) => {
     const d = W.landmark('fish_shack').door; g.debug.teleport(d.x + 3, d.z); p.yaw = 0.7;
     g.debug.setClock(3.25); g.time.day = 2;
     g.playTime = 321;
+    // a module's own state through the registry, and the story's heist plan
+    window.T_.reg = { n: 41, list: ['a'] };
+    GTP.SaveRegistry.t_module = { get: () => ({ n: T_.reg.n, list: T_.reg.list.slice(), inf: Infinity }), set: (d) => { T_.regSet = d; } };
+    GTP.Heist.setPlan({ approach: 'loud', crew: ['kip'] }, 'h01_casing');
     g.advance(0.1);
     const ok = g.saveSlot(2);
+    T_.raw = JSON.parse(localStorage.getItem('gtp.save.v4.slot2'));
     const slots = g.slots();
     return { ok, slots, latest: g.latestSlot(), active: g.activeSlot, x: +p.x.toFixed(2), z: +p.z.toFixed(2), memos: S.memos().collected.slice(), events: T_.events.slice(), hasSave: g.hasSave(), errors: GTP.errors.length };
   });
@@ -54,12 +61,14 @@ H.run('saves', async (t) => {
     // change everything, then load slot 2
     g.debug.setMoney(1); g.player.weapons = { fist: Infinity }; g.player.weapon = 'fist'; g.player.subs = 0;
     g.debug.teleport(100, 100); M.state.completed.clear(); M.state.flags = {}; S.progress().loud_cab.fares = 0;
+    T_.reg.n = 0; GTP.Heist.reset();
     const ok = g.loadSlot(2);
     g.advance(0.5);
     const p = g.player, P = S.progress();
     return { ok, state: g.state, x: +p.x.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2), money: p.money, subs: p.subs, weapons: Object.assign({}, p.weapons, { fist: 'inf' }), weapon: p.weapon,
       ammo: GTP.Combat.ammo(p, 'pistol'), completed: Array.from(M.state.completed), flags: M.state.flags, best: M.state.bestTimes, fares: P.loud_cab.fares, hoa: P.hoa_patrol.best, stunts: P.stunt_jumps.done,
-      memos: S.memos().collected, memoPickupsLeft: Object.keys(S.memoPickups()).length, clock: +g.time.clock.toFixed(2), day: g.time.day, playTime: Math.round(g.playTime), markers: M.markers().map((m) => m.id), tier: M.subscribers().tier, events: T_.events.slice(), errors: GTP.errors.length };
+      memos: S.memos().collected, memoPickupsLeft: Object.keys(S.memoPickups()).length, clock: +g.time.clock.toFixed(2), day: g.time.day, playTime: Math.round(g.playTime), markers: M.markers().map((m) => m.id), tier: M.subscribers().tier, events: T_.events.slice(), errors: GTP.errors.length,
+      version: T_.raw.version, rawRegistry: T_.raw.registry, regSet: T_.regSet, heist: GTP.Heist.plan(), gps: GTP.Story.gpsTarget ? GTP.Story.gpsTarget.missionId : null };
   });
   console.log('  loaded: ' + JSON.stringify(loaded));
   t.assert(loaded.ok && loaded.state === 'playing' && Math.hypot(loaded.x - saved.x, loaded.z - saved.z) < 1.5 && Math.abs(loaded.yaw - 0.7) < 0.05, 'loadSlot(2) restores the position');
@@ -70,6 +79,10 @@ H.run('saves', async (t) => {
   t.assert(loaded.fares === 3 && loaded.hoa === 4 && loaded.stunts.join(',') === 'sj_01' && loaded.memos.length === 2 && loaded.memoPickupsLeft === 48, 'strand progress and the memo count come back (48 envelopes left in the world)');
   t.assert(Math.abs(loaded.clock - 3.25) < 0.03 && loaded.day === 2 && loaded.playTime >= 321 && loaded.playTime < 330, 'clock, day and play time come back');
   t.assert(loaded.events.indexOf('loaded:2') >= 0 && loaded.errors === 0, 'the loaded event fired without errors');
+  t.assert(loaded.version === 4 && loaded.rawRegistry && loaded.rawRegistry.t_module && loaded.rawRegistry.t_module.n === 41 && loaded.rawRegistry.story, 'the save is v4 with the registry: ' + JSON.stringify(loaded.rawRegistry));
+  t.assert(loaded.regSet && loaded.regSet.n === 41 && loaded.regSet.list.join(',') === 'a' && loaded.regSet.inf === Infinity, 'SaveRegistry set() gets its state back (Infinity survives): ' + JSON.stringify(loaded.regSet));
+  t.assert(loaded.heist && loaded.heist.approach === 'loud' && loaded.heist.crew.join(',') === 'kip', 'the heist plan comes back through the story entry: ' + JSON.stringify(loaded.heist));
+  t.assert(loaded.gps === loaded.markers[0], 'after a load the GPS points at the next story mission: ' + loaded.gps);
 
   // ---- 2. delete ----
   const del = await page.evaluate(() => { const g = GTP.game; const a = g.deleteSlot(2); const b = g.deleteSlot(2); const slot1 = g.slots()[0].empty; g.deleteSlot(1); return { a, b, slot1, slots: g.slots().map((s) => s.empty), hasSave: g.hasSave() }; });
@@ -108,20 +121,31 @@ H.run('saves', async (t) => {
     localStorage.clear();
     const old = { version: 2, seed: 7, money: 4321, x: 300, z: 300, yaw: 1.2, weapons: { fist: 'inf', pistol: 17 }, weapon: 'pistol', armor: 25, hp: 80, completed: ['m00_intro', 'm01_van', 'm02_read'], flags: { has_table: true, has_van: true, sponsored: true }, stats: { missions: 3 }, clock: 9.25, day: 1, radioStation: 1, cameraMode: 'chase' };
     localStorage.setItem('gtp.save.v2', JSON.stringify(old));
+    // and a v0.2 (v3) slot 2 with a mission done and strand progress
+    const v3 = { version: 3, slot: 2, seed: 7, savedAt: 1000, playTime: 640, money: 2468, subs: 9000, x: 320, z: 310, y: 0, yaw: 0.4, hp: 90, armor: 10, weapon: 'fist', weapons: { fist: 'inf', megaphone: 12 }, ammo: {},
+      completed: ['m00_intro', 'm01_van', 'm01b_airport', 'm02_read', 'm03_ratio'], flags: { has_table: true, has_van: true }, stats: {}, failed: {}, bestTimes: { m00_intro: 70 }, clock: 12, day: 3, radioStation: 0, cameraMode: 'chase',
+      memos: ['mm_01'], strands: { loud_cab: { fares: 7 } }, waypoint: null, vehicle: null, summary: { missions: 5, money: 2468, playTime: 640, savedAt: 1000, seed: 7 } };
+    localStorage.setItem('gtp.save.v3.slot2', JSON.stringify(v3));
   });
   await page.goto(t.url({ seed: 3 }));
   await t.waitPlaying(page);
   const c2 = ctx;
   const mig = await c2.page.evaluate(() => {
     const g = GTP.game;
-    const slots = g.slots(), raw = localStorage.getItem('gtp.save.v3.slot1'), legacy = !!localStorage.getItem('gtp.save.v2');
+    const slots = g.slots(), raw = localStorage.getItem('gtp.save.v4.slot1'), legacy = !!localStorage.getItem('gtp.save.v2');
+    const v4 = JSON.parse(localStorage.getItem('gtp.save.v4.slot2') || 'null'), v3kept = !!localStorage.getItem('gtp.save.v3.slot2');
+    const ok3 = g.loadSlot(2); g.advance(0.3);
+    const m3 = { ok: ok3, v4: v4 ? { version: v4.version, from: v4.migratedFrom, registry: v4.registry } : null, v3kept, money: g.player.money, completed: GTP.Missions.state.completed.size, fares: GTP.Strands.progress().loud_cab.fares, memos: GTP.Strands.memos().collected.length, megaphone: g.player.weapons.megaphone, next: GTP.Story.next() && GTP.Story.next().missionId };
+    window.T_ = { m3 };
     const ok = g.load();
     g.advance(0.3);
     const p = g.player, M = GTP.Missions;
-    return { slots: slots.map((s) => s.empty), meta: slots[0].meta, hasRaw: !!raw, legacy, ok, seed: g.seed, x: Math.round(p.x), z: Math.round(p.z), money: p.money, pistol: p.weapons.pistol, armor: p.armor, hp: p.hp, completed: Array.from(M.state.completed), markers: M.markers().map((m) => m.id), clock: +g.time.clock.toFixed(2), slot: g.activeSlot, errors: GTP.errors.length };
+    return { m3: T_.m3, slots: slots.map((s) => s.empty), meta: slots[0].meta, hasRaw: !!raw, legacy, ok, seed: g.seed, x: Math.round(p.x), z: Math.round(p.z), money: p.money, pistol: p.weapons.pistol, armor: p.armor, hp: p.hp, completed: Array.from(M.state.completed), markers: M.markers().map((m) => m.id), clock: +g.time.clock.toFixed(2), slot: g.activeSlot, errors: GTP.errors.length };
   });
   console.log('  migration: ' + JSON.stringify(mig));
-  t.assert(!mig.slots[0] && mig.slots[1] && mig.slots[2] && mig.hasRaw && mig.legacy, 'the v2 save migrated into slot 1 and the old key stayed');
+  t.assert(!mig.slots[0] && !mig.slots[1] && mig.slots[2] && mig.hasRaw && mig.legacy, 'the v2 save migrated into slot 1, the v3 slot into slot 2, and the old keys stayed');
+  t.assert(mig.m3.ok && mig.m3.v4 && mig.m3.v4.version === 4 && mig.m3.v4.from === 3 && mig.m3.v4.registry && mig.m3.v3kept, 'the v3 slot was upgraded into the v4 key at boot: ' + JSON.stringify(mig.m3));
+  t.assert(mig.m3.money === 2468 && mig.m3.completed === 5 && mig.m3.fares === 7 && mig.m3.memos === 1 && mig.m3.megaphone === 12 && mig.m3.next === 'm03b_range', 'the migrated v3 game loads with its missions, strands and weapons: ' + JSON.stringify(mig.m3));
   t.assert(mig.meta && mig.meta.missions === 3 && mig.meta.playTime === 0 && mig.meta.money === 4321 && mig.meta.migrated === true, 'the migrated summary was rebuilt: ' + JSON.stringify(mig.meta));
   t.assert(mig.ok && mig.seed === 7 && mig.x === 300 && mig.z === 300 && mig.money === 4321 && mig.pistol === 17 && mig.armor === 25 && mig.hp === 80 && mig.completed.length === 3 && mig.markers.indexOf('m03_ratio') >= 0 && Math.abs(mig.clock - 9.25) < 0.03 && mig.slot === 1, 'load() continues the migrated game in the old city: ' + JSON.stringify(mig));
 

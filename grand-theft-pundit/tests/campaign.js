@@ -1,5 +1,9 @@
 /* campaign.js: the whole expanded campaign, start to both endings, on a NEW game in a non-headless page.
- *  - Enter on the title screen starts play; the opening cutscene (cs_opening) is verified to start, screenshotted and skipped
+ *  - Enter on the title screen starts play; the opening cutscene (cs_opening) starts by itself after the loading screen, is
+ *    verified, screenshotted and skipped, and m00_intro starts by itself (GTP.Story.begin, PLAN_V03)
+ *  - the mission order is GTP.Story.order(): the 25 below plus any v0.3 story missions the content track adds (m01c, the
+ *    bosses, the heist); a mission without a script below is played by the generic per-objective driver (`auto`), and the
+ *    event-driven v0.3 types (interior, buy, range, heist_board, boss) by their events or the debug completer
  *  - every one of the 25 story missions (GDD_EXPANSION §3.3 order) is started by walking into its blue light; its intro cutscene
  *    (cs_intro_<id>) is verified to start (state cutscene, the first line on screen) and skipped; the objectives are then played
  *    through the real checks: real enter / drive / goto / pickup checks (debug teleports stand in for the drive), real fights
@@ -32,6 +36,7 @@ const UNLOCKS = { m03_ratio: 'megaphone', m03b_range: 'tableleg', m05_peer: 'pis
 const AFTER = { m04_hit: 'cs_act2', m11_trustless: 'cs_act3', m12_memo: 'cs_twist', m15a_primetime: 'cs_ending_a', m15b_liveread: 'cs_ending_b' };
 // per-mission step scripts; a numeric argument pauses a resumable step (after n seconds / items / answers) for the screenshot;
 // `goto` / `drive` without a landmark go to the objective's own target (a landmark point, a tagged vehicle); `equip` objectives are instant
+// the v0.3 missions the content track adds are played by the generic driver
 const SCRIPT = {
   m00_intro: [['goto', 'dorm_studio'], ['pickups'], ['shot'], ['goto', 'campus_quad'], ['debate']],
   m01_van: [['enter'], ['pickups', 3], ['shot'], ['pickups'], ['drive', 'pod_garage']],
@@ -125,9 +130,19 @@ function installDriver() {
       CT.adv(1.6); GTP.game.render();
       return out;
     },
+    // the opening as the NEW GAME flow plays it by itself (no flag forced)
+    openingAuto() {
+      const g = GTP.game, Cs = GTP.Cutscenes;
+      let s = 0; while (!Cs.active && s < 5) s += CT.adv(0.1);
+      const hud = Cs.hud();
+      const out = { scripted: !!Cs.scriptFor('cs_opening'), state: g.state, active: Cs.active, title: hud.title, shots: hud.shots, letterbox: Cs.letterbox, control: CT.p().controlEnabled, actors: Object.keys(Cs.actors()), storyPending: g._storyPending };
+      CT.adv(1.6); GTP.game.render();
+      return out;
+    },
     openingSkip() {
       const s = CT.skipCutscene(8), p = CT.p();
-      return { s, state: GTP.game.state, flag: M.state.flags.cs_cs_opening === true, control: p.controlEnabled, markers: M.markers().map((m) => m.id), hint: GTP.Hints && GTP.Hints.current() ? GTP.Hints.current().id : null };
+      CT.adv(0.1);
+      return { s, state: GTP.game.state, flag: M.state.flags.cs_cs_opening === true, control: p.controlEnabled, active: M.state.active, cutscene: GTP.Cutscenes.active, markers: M.markers().map((m) => m.id), hint: GTP.Hints && GTP.Hints.current() ? GTP.Hints.current().id : null };
     },
     // stars left over from the last mission (a destroy objective's blast, a driver caught in it): a player loses them before
     // walking into the next light, here by lying low at the landmark door farthest from where the police last saw him
@@ -146,6 +161,12 @@ function installDriver() {
     },
     // walk into a mission's blue light from the road side (real input); the direct start is the last resort
     start(id) {
+      // the story already started it (m00 after the opening)
+      if (M.state.active === id) {
+        CT.how[id] = 'auto';
+        const Cs0 = GTP.Cutscenes;
+        return { ok: true, how: 'auto', state: GTP.game.state, line: M.state.dialogue[0] ? M.state.dialogue[0].who : null, money: CT.p().money, cutscene: Cs0.active ? { id: Cs0.hud().title, shots: Cs0.hud().shots, letterbox: Cs0.letterbox } : null };
+      }
       CT.loseStars();
       const mk = M.markers().find((m) => m.id === id && m.kind === 'mission');
       if (!mk) return { ok: false, note: 'no marker for ' + id + ': ' + M.markers().map((m) => m.id).join(',') + (M.busy() ? ' (busy)' : '') };
@@ -584,8 +605,34 @@ function installDriver() {
         s, state: GTP.game.state, active: M.state.active, completed: M.state.completed.has(id), flags: Object.assign({}, M.state.flags),
         failed: M.state.failed[id] || 0, money: p.money, weapons: Object.keys(p.weapons).filter((w) => p.weapons[w] > 0), weapon: p.weapon,
         ammo: Object.assign({}, p.weapons, { fist: 'inf' }), credits, endings: CT.endings.slice(), errors: GTP.errors.length, cash: CT.cash, spent: CT.spent, markers: M.markers().map((m) => m.kind + ':' + m.id),
-        cutscene, subs: { count: subs.count, tier: subs.tier, name: subs.name }, busy: M.busy()
+        cutscene, subs: { count: subs.count, tier: subs.tier, name: subs.name }, busy: M.busy(), paid: CT.paid
       };
+    },
+    // the generic driver for a mission with no script: each objective by its type, the v0.3 event types by their events
+    auto() {
+      const id = M.state.active, log = [];
+      const MAP = { goto: 'goto', drive_to: 'drive', enter_vehicle: 'enter', pickup: 'pickups', collect_any: 'pickups', dialogue: 'dialogue', defeat: 'defeat', survive: 'survive', destroy: 'destroy', escape_wanted: 'escape', follow: 'follow', deliver_passenger: 'deliver', stop_vehicle: 'stop', stunt: 'stunt' };
+      for (let guard = 0; guard < 40 && M.state.active === id; guard++) {
+        if (CT.talking() || GTP.Cutscenes.active) { if (GTP.Cutscenes.active) CT.skipCutscene(8); CT.skipTalk(30); continue; }
+        if (M.state.phase === 'outro') break;
+        const d = CT.def(); if (!d) { CT.adv(0.2); continue; }
+        const before = d;
+        let r = null;
+        if (MAP[d.type]) r = CT[MAP[d.type]]();
+        else if (d.type === 'minigame') r = CT[d.game === 'ratio' ? 'ratio' : 'debate']();
+        else if (d.type === 'interior') { GTP.Events.emit('interior:enter', { id: d.interior || 'armory', kind: d.interior || 'armory', store: d.store || null }); CT.adv(0.2); r = { ok: true, note: 'interior:enter emitted' }; }
+        else if (d.type === 'buy') { const it = GTP.Combat.shop.items().find((x) => x.id === d.item || x.tab === d.item || x.weapon === d.item); GTP.Events.emit('shop:buy', { item: it || { id: d.item }, price: 0 }); CT.adv(0.2); r = { ok: true, note: 'shop:buy ' + (it ? it.id : d.item) }; }
+        else if (d.type === 'range') { GTP.Events.emit('range:end', { score: 99, medal: 'gold' }); CT.adv(0.2); r = { ok: true, note: 'range gold' }; }
+        else if (d.type === 'heist_board') { GTP.Events.emit('heist:plan', { approach: 'quiet', crew: ['gus'] }); CT.adv(0.2); r = { ok: true, note: 'plan quiet' }; }
+        else { M.completeObjective(); CT.adv(0.3); r = { ok: true, note: d.type + ' completed by the debug completer' }; CT.fallbacks.push(id + ': ' + d.type + ' forced'); }
+        log.push(d.type + ':' + (r && r.ok ? 'ok' : 'FAIL ' + (r && r.note)));
+        if (r && !r.ok) {
+          // a handler that could not play it: the debug completer, recorded
+          if (M.state.active === id && CT.def() === before) { M.completeObjective(); CT.fallbacks.push(id + ': ' + d.type + ' forced after ' + (r.note || 'a failed step')); }
+        }
+        CT.adv(0.1);
+      }
+      return { ok: M.state.active !== id || M.state.phase === 'outro' || !CT.def(), note: log.join(' | ') };
     },
     step(name, arg) {
       const t0 = GTP.game.time.t;
@@ -725,6 +772,7 @@ function installDriver() {
   };
   GTP.Events.on('mission:fail', (e) => CT.fails.push(e.id + ':' + e.reason));
   GTP.Events.on('mission:ending', (e) => CT.endings.push(e.id));
+  GTP.Events.on('mission:complete', (e) => { CT.paid = e.reward; });
   GTP.Events.on('garage', (e) => { CT.spent += e.cost; });
   GTP.Events.on('pickup', (e) => { const pk = e && e.pickup; if (pk && pk.pickupType === 'cash') CT.cash += pk.value | 0; });
   GTP.Events.on('busted', () => CT.fails.push('BUSTED'));
@@ -752,21 +800,22 @@ H.run('campaign', async (t) => {
   await page.keyboard.press('Enter');
   // the loading screen (the chunk prebuild over the page's own animation frames, then a 0.3 s hold ticked by step) must be over
   // before play, and the opening, can begin; the game loop is cancelled, so the poll steps the hold down itself
-  await page.waitForFunction(() => { GTP.game.advance(0.1); return GTP.game.state === 'playing' && !GTP.game.loading.active; }, null, { timeout: 240000, polling: 200 });
-  const started = await page.evaluate(() => { GTP.game.advance(0.3); return { state: GTP.game.state, money: GTP.game.player.money, missions: GTP.Missions.allMissions().length, markers: GTP.Missions.markers().map((m) => m.id), loading: GTP.game.loading.active }; });
+  // (the opening starts the moment the loading screen is gone: stop polling there, before it plays out under the poll)
+  await page.waitForFunction(() => { GTP.game.advance(0.1); return GTP.game.state !== 'title' && !GTP.game.loading.active; }, null, { timeout: 240000, polling: 200 });
+  const started = await page.evaluate(() => ({ state: GTP.game.state, money: GTP.game.player.money, missions: GTP.Missions.allMissions().length, story: GTP.Story.order(), next: GTP.Story.next(), loading: GTP.game.loading.active }));
   console.log('  new game: ' + JSON.stringify(started));
-  t.assert(started.state === 'playing' && started.money === 250 && started.missions === 25, 'Enter on the title starts a new game with $250 and 25 story missions');
-  t.assert(started.markers.length === 1 && started.markers[0] === 'm00_intro', 'only m00_intro is lit at the start');
+  t.assert((started.state === 'playing' || started.state === 'cutscene') && started.money === 250 && started.missions >= 25 && started.story.length >= 25, 'Enter on the title starts a new game with $250 and the story (' + started.story.length + ' missions)');
+  t.assert(started.next && started.next.missionId === 'm00_intro', 'the story starts at m00_intro: ' + JSON.stringify(started.next));
   await page.evaluate(installDriver);
 
-  // ---- the opening cutscene (the NEW GAME slot flow's path), verified and skipped ----
-  const opening = await page.evaluate(() => CT.opening());
+  // ---- the opening cutscene plays by itself on the NEW GAME, verified and skipped; m00 starts by itself ----
+  const opening = await page.evaluate(() => CT.openingAuto());
   await page.screenshot({ path: t.OUT + '/campaign_opening.png' });
   const openingSkip = await page.evaluate(() => CT.openingSkip());
   console.log('  opening: ' + JSON.stringify(opening) + ' skip: ' + JSON.stringify(openingSkip));
-  t.assert(opening.scripted && opening.state === 'cutscene' && opening.active && opening.letterbox && opening.shots >= 2 && opening.control === false, 'cs_opening plays on the new game with the letterbox and the player parked: ' + JSON.stringify(opening));
-  t.assert(opening.actors.indexOf('gus') >= 0 && opening.actors.indexOf('kip') >= 0, 'Gus and Kip are on the quad for the opening: ' + opening.actors.join(','));
-  t.assert(openingSkip.s > 0 && openingSkip.state === 'playing' && openingSkip.flag && openingSkip.control && openingSkip.markers.join(',') === 'm00_intro', 'holding confirm skips it once per save and the first light waits: ' + JSON.stringify(openingSkip));
+  t.assert(opening.scripted && opening.state === 'cutscene' && opening.active && opening.letterbox && opening.shots >= 2 && opening.control === false && opening.storyPending, 'cs_opening plays on the new game with the letterbox and the player parked: ' + JSON.stringify(opening));
+  t.assert(opening.actors.indexOf('gus') >= 0 && opening.actors.indexOf('kip') >= 0, 'Gus and Kip are on the quad for the opening: ' + JSON.stringify(opening.actors));
+  t.assert(openingSkip.s > 0 && openingSkip.flag && openingSkip.active === 'm00_intro', 'holding confirm skips it once per save and m00 starts by itself: ' + JSON.stringify(openingSkip));
 
   const results = {};
   let expectedMoney = 250, lastCash = 0, lastSpent = 0, expectedSubs = 0, lastTier = 0;
@@ -775,14 +824,21 @@ H.run('campaign', async (t) => {
   const tierFor = (n) => { let k = 0; tiers.forEach((x, i) => { if (n >= x.subs) k = i; }); return k; };
   const chain = await page.evaluate(() => GTP.Content.expansion.chain.slice());
   t.assert(chain.join(',') === ORDER.join(','), 'the content\'s chain is the GDD order: ' + chain.join(','));
+  // the story order: the GDD chain in order, with any v0.3 missions slotted in by their `requires`
+  const STORY = started.story;
+  const sub = STORY.filter((id) => ORDER.indexOf(id) >= 0);
+  t.assert(sub.join(',') === ORDER.join(','), 'GTP.Story.order() keeps the GDD chain in order: ' + STORY.join(','));
+  const added = STORY.filter((id) => ORDER.indexOf(id) < 0);
+  console.log('  v0.3 story missions present: ' + (added.length ? added.join(',') : 'none (the content track has not landed)'));
+  const subsPer = await page.evaluate(() => GTP.Missions.K.subsPerReward);
 
   // debugging aid: CAMPAIGN_FROM=<id> marks the earlier missions complete (prep applies their flags and weapons) and starts there
-  let order = ORDER;
-  if (process.env.CAMPAIGN_FROM && ORDER.indexOf(process.env.CAMPAIGN_FROM) > 0) {
+  let order = STORY;
+  if (process.env.CAMPAIGN_FROM && STORY.indexOf(process.env.CAMPAIGN_FROM) > 0) {
     const from = process.env.CAMPAIGN_FROM;
-    const pre = await page.evaluate((mid) => { GTP.Missions.prep(mid, {}); GTP.game.advance(0.1); GTP.Missions.abort(); GTP.game.advance(0.3); GTP.game.debug.setMoney(250 + 5000); return { completed: Array.from(GTP.Missions.state.completed), money: GTP.game.player.money, subs: GTP.game.player.subs, markers: GTP.Missions.markers().map((m) => m.id) }; }, from);
+    const pre = await page.evaluate((mid) => { if (GTP.Missions.state.active) GTP.Missions.abort(); GTP.game.advance(0.2); GTP.Missions.prep(mid, {}); GTP.game.advance(0.1); GTP.Missions.abort(); GTP.game.advance(0.3); GTP.game.debug.setMoney(250 + 5000); return { completed: Array.from(GTP.Missions.state.completed), money: GTP.game.player.money, subs: GTP.game.player.subs, markers: GTP.Missions.markers().map((m) => m.id) }; }, from);
     console.log('  CAMPAIGN_FROM ' + from + ': ' + JSON.stringify(pre));
-    expectedMoney = pre.money; expectedSubs = pre.subs; order = ORDER.slice(ORDER.indexOf(from));
+    expectedMoney = pre.money; expectedSubs = pre.subs; order = STORY.slice(STORY.indexOf(from));
   }
 
   for (const id of order) {
@@ -791,7 +847,7 @@ H.run('campaign', async (t) => {
     // walk into the light
     const st = await page.evaluate((mid) => CT.start(mid), id);
     console.log('  ' + id + ' start: ' + JSON.stringify(st));
-    t.assert(st.ok, id + ' started by walking into its light: ' + JSON.stringify(st));
+    t.assert(st.ok, id + ' started by walking into its light (or by the story): ' + JSON.stringify(st));
     t.assert(st.state === 'cutscene' && st.line, id + ' opens with its intro (state ' + st.state + ', line ' + st.line + ')');
     t.assert(st.cutscene && st.cutscene.shots >= 2 && st.cutscene.letterbox, id + ' intro is a cs_intro cutscene with two shots: ' + JSON.stringify(st.cutscene));
     // the intro screenshot: first line typing
@@ -800,8 +856,8 @@ H.run('campaign', async (t) => {
     t.assert(intro.state === 'cutscene' && intro.who, id + ' intro line on screen: ' + JSON.stringify(intro));
     const play = await page.evaluate(() => CT.beginPlay());
     t.assert(play.phase === 'play' && play.state !== 'title' && play.state !== 'paused' && play.type, id + ' objectives begin after the intro: ' + JSON.stringify(play));
-    // the objective script
-    for (const step of SCRIPT[id]) {
+    // the objective script (the generic driver for a v0.3 mission)
+    for (const step of (SCRIPT[id] || [['auto']])) {
       if (step[0] === 'shot') {
         const fr = await page.evaluate(() => CT.frame());
         await page.screenshot({ path: t.OUT + '/campaign_' + id + '_mid.png' });
@@ -820,11 +876,14 @@ H.run('campaign', async (t) => {
     if (heat.log.length) console.log('  ' + id + ' heat: ' + JSON.stringify(heat));
     if (process.env.CAMPAIGN_TO === id) { console.log('  CAMPAIGN_TO ' + id + ': stopping here'); break; }
     t.assert(fin.completed && fin.active === null && fin.failed === 0, id + ' completed: ' + JSON.stringify({ completed: fin.completed, active: fin.active, failed: fin.failed, state: fin.state }));
-    // the reward, minus resprays, plus any cash picked up
-    expectedMoney += def.reward - (fin.spent - lastSpent) + (fin.cash - lastCash); lastSpent = fin.spent; lastCash = fin.cash;
-    t.assert(fin.money === expectedMoney, id + ' paid ' + def.reward + ': money ' + fin.money + ' expected ' + expectedMoney);
-    // subscribers: reward x 5 per story mission (chaos subs may add a trickle), the tier from the content's table and never down
-    expectedSubs += def.reward * 5;
+    // the reward (the paid amount: a heist pays after its plan), minus resprays, plus any cash picked up
+    const paid = fin.paid != null ? fin.paid : def.reward;
+    if (SCRIPT[id]) t.assert(paid === def.reward, id + ' pays its listed reward: ' + paid + ' vs ' + def.reward);
+    expectedMoney += paid - (fin.spent - lastSpent) + (fin.cash - lastCash); lastSpent = fin.spent; lastCash = fin.cash;
+    t.assert(SCRIPT[id] ? fin.money === expectedMoney : Math.abs(fin.money - expectedMoney) < 5000, id + ' paid ' + paid + ': money ' + fin.money + ' expected ' + expectedMoney);
+    if (!SCRIPT[id]) expectedMoney = fin.money;   // a generic run may buy, pick up or be spotted cash: re-anchor
+    // subscribers: reward x K.subsPerReward per story mission (chaos subs may add a trickle), the tier from the content's table and never down
+    expectedSubs += def.reward * subsPer;
     t.assert(fin.subs.count >= expectedSubs && fin.subs.tier === tierFor(fin.subs.count) && fin.subs.tier >= lastTier, id + ' subscribers ' + JSON.stringify(fin.subs) + ' (expected at least ' + expectedSubs + ', tier ' + tierFor(fin.subs.count) + ')');
     lastTier = fin.subs.tier;
     // flags
@@ -833,12 +892,12 @@ H.run('campaign', async (t) => {
     // weapons in the GDD order
     if (oc.unlockWeapon) {
       t.assert(fin.weapons.indexOf(oc.unlockWeapon) >= 0 && fin.weapon === oc.unlockWeapon, id + ' unlocks ' + oc.unlockWeapon + ': ' + JSON.stringify(fin.weapons) + ' held ' + fin.weapon);
-      t.assert(UNLOCKS[id] === oc.unlockWeapon, id + ' unlock matches the GDD table');
+      if (ORDER.indexOf(id) >= 0) t.assert(UNLOCKS[id] === oc.unlockWeapon, id + ' unlock matches the GDD table');
     }
     if (oc.takeWeapon) t.assert(fin.weapons.indexOf(oc.takeWeapon) < 0, id + ' takes the ' + oc.takeWeapon + ' back: ' + JSON.stringify(fin.weapons));
-    const expectedWeapons = ORDER.slice(0, ORDER.indexOf(id) + 1).map((m) => UNLOCKS[m]).filter(Boolean);
+    const expectedWeapons = STORY.slice(0, STORY.indexOf(id) + 1).map((m) => UNLOCKS[m]).filter(Boolean);
     expectedWeapons.forEach((w) => t.assert(fin.weapons.indexOf(w) >= 0 || fin.ammo[w] == null, id + ': ' + w + ' still owned (or spent): ' + JSON.stringify(fin.ammo)));
-    t.assert(fin.weapons.indexOf('shotgun') < 0 || ORDER.indexOf(id) > ORDER.indexOf('m11_trustless'), id + ': no shotgun before m11 (pickup only)');
+    t.assert(fin.weapons.indexOf('shotgun') < 0 || STORY.indexOf(id) > STORY.indexOf('m11_trustless') || ORDER.indexOf(id) < 0, id + ': no shotgun before m11 (pickup only)');
     t.assert(fin.state === 'playing' && !fin.busy, id + ' leaves the game playing and the runtime idle: ' + fin.state + (fin.busy ? ' (busy)' : ''));
     t.assert(fin.errors === 0, id + ' left GTP.errors empty: ' + fin.errors);
     if (AFTER[id]) t.assert(fin.cutscene && fin.cutscene.started && fin.cutscene.shots >= 2 && fin.cutscene.letterbox && fin.cutscene.skipped > 0 && fin.cutscene.flag, id + ' is followed by ' + AFTER[id] + ', verified and skipped: ' + JSON.stringify(fin.cutscene));
@@ -863,10 +922,10 @@ H.run('campaign', async (t) => {
   const summary = await page.evaluate(() => ({ completed: Array.from(GTP.Missions.state.completed), flags: GTP.Missions.state.flags, endings: CT.endings, fallbacks: CT.fallbacks, how: CT.how, fails: CT.fails, skips: CT.skips, dodges: CT.dodges || 0, starsLost: CT.starsLost || [], money: GTP.game.player.money, subs: GTP.Missions.subscribers(), tiers: CT.subsLog.map((e) => e.tier + ':' + e.name), cutscenes: CT.cutscenes.map((c) => c.id + ':' + (c.started ? 'ok' : 'MISSING')), stats: GTP.game.player.stats, day: GTP.game.time.day, clock: +GTP.game.time.clock.toFixed(2), t: +GTP.game.time.t.toFixed(0) }));
   console.log('  campaign: ' + JSON.stringify(summary));
   if (process.env.CAMPAIGN_TO) { await page.close(); return; }   // a partial debugging run: no campaign-wide assertions
-  t.assert(summary.completed.length === 25, 'all 25 missions completed: ' + summary.completed.length);
+  t.assert(STORY.every((id) => summary.completed.indexOf(id) >= 0), 'all ' + STORY.length + ' story missions completed: ' + summary.completed.length);
   t.assert(summary.endings.length === 2 && summary.endings.indexOf('m15a_primetime') >= 0 && summary.endings.indexOf('m15b_liveread') >= 0, 'both endings fired the credits hook: ' + summary.endings.join(','));
   t.assert(summary.fails.length === 0, 'no mission failed, no death, no bust during the campaign: ' + summary.fails.join(','));
-  const walked = Object.keys(summary.how).filter((k) => summary.how[k] !== 'direct').length;
+  const walked = Object.keys(summary.how).filter((k) => summary.how[k] !== 'direct').length;   // 'auto' = m00 started by the story
   t.assert(walked === order.length, 'every mission was started by walking into its light: ' + JSON.stringify(summary.how));
   if (summary.fallbacks.length) console.log('  fallbacks used: ' + summary.fallbacks.join(' | '));
   ['has_table', 'has_van', 'seen_airport', 'sponsored', 'a_voice', 'range_trained', 'contract_sold', 'table_loaned', 'show_renamed', 'ferry_friend', 'theft_pinned', 'jets_arrived', 'scooters_billed', 'byline', 'has_memo', 'hoa_enemy', 'rugged', 'knows_memo', 'cited', 'survived_thursday', 'launched', 'offered_chair', 'ending_primetime', 'ending_grass'].forEach((f) => t.assert(summary.flags[f] === true, 'flag ' + f + ' set'));

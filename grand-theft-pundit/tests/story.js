@@ -176,4 +176,81 @@ H.run('story', async (t) => {
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
   await page.close();
+
+  // ---- 6. QA round-1 regressions in the story files (headless) ----
+  const q = await t.boot({ seed: 7 });
+  const qa = await q.page.evaluate(() => {
+    const g = GTP.game, M = GTP.Missions, S = GTP.Strands, p = g.player, W = GTP.World, out = {};
+    g.debug.godMode(false);
+    // QA-C1-02: QUIT drops the retry offer for good
+    M.registerTest({ id: 't_fail', title: 'Fail', giver: 'gus', marker: 'campus_quad', requires: [], reward: 1, intro: [], outro: [], objectives: [{ type: 'goto', target: { landmark: 'fish_shack' }, text: 'Go' }], failOn: [] });
+    M.start('t_fail', { skipIntro: true }); g.advance(0.2); M.fail('timer'); g.advance(0.2);
+    const before = M.canRetry(); M._dropRetry(); out.retry = { before, after: M.canRetry() };
+    // QA-STR-02 / STR-05 / STR-11: the HOA stop distance, the fare names, the strand SUV tag
+    out.stopNear = GTP.C.STRANDS.stopNear;
+    out.hoaTraffic = S.S.hoa_patrol.canStart({ type: 'suv', tag: 'hoa' }); out.hoaSuv = S.S.hoa_patrol.canStart({ type: 'suv', tag: 'hoasuv' });
+    // QA-C1-01: four Act I goons, no input: the player is still standing after 4 s
+    const lm = W.landmark('campus_quad');
+    M.registerTest({ id: 't_brawl', title: 'Brawl', giver: 'gus', marker: 'campus_quad', requires: [], reward: 1, intro: [], outro: [], objectives: [{ type: 'defeat', spawn: { ped: 'thug', count: 4, around: { landmark: 'campus_quad' }, radius: 40 }, text: 'Brawl' }], failOn: ['player_dead'] });
+    g.debug.teleport(lm.door.x, lm.door.z); p.hp = 100;
+    M.start('t_brawl', { skipIntro: true }); g.advance(0.1);
+    M.current().ctx.peds.forEach((h, i) => { h.x = p.x + Math.cos(i * 1.6) * 1.5; h.z = p.z + Math.sin(i * 1.6) * 1.5; h.snap(); });
+    const hp = []; for (let k = 0; k < 8; k++) { g.advance(0.5); hp.push(Math.round(p.hp)); }
+    out.brawl = { hp, alive: p.alive };
+    M.abort(); g.advance(0.3); p.hp = 100;
+    // QA-C1-03: a weapon-restricted defeat refills the named weapon when it runs dry
+    M.registerTest({ id: 't_dry', title: 'Dry', giver: 'gus', marker: 'campus_quad', requires: [], reward: 1, intro: [], outro: [], objectives: [{ type: 'defeat', weapon: 'pistol', spawn: { ped: 'cutout', count: 2, around: { landmark: 'campus_quad' }, radius: 40, stationary: true, hostile: false }, text: 'Cite' }], failOn: [] });
+    M.start('t_dry', { skipIntro: true }); g.advance(0.1);
+    p.weapons.pistol = 0; if (p.ammo) delete p.ammo.pistol; g.advance(3);
+    out.refill = { pistol: p.weapons.pistol, refills: M.current().ctx.refills || 0 };
+    M.abort(); g.advance(0.3);
+    // QA-C1-05: the tail starts well ahead
+    M.registerTest({ id: 't_tail', title: 'Tail', giver: 'gus', marker: 'campus_quad', requires: [], reward: 1, intro: [], outro: [], objectives: [{ type: 'follow', spawn: { ped: 'courier', at: { landmark: 'campus_quad' }, path: [{ landmark: 'dorm_studio' }, { landmark: 'fish_shack' }] }, maxDist: 400, text: 'Tail' }], failOn: [] });
+    g.debug.teleport(lm.door.x, lm.door.z);
+    M.start('t_tail', { skipIntro: true }); g.advance(0.1);
+    const ped = M.current().ctx.ped; out.tail = { start: +Math.hypot(ped.x - p.x, ped.z - p.z).toFixed(1) };
+    g.advance(5); out.tail.active = M.state.active;
+    M.abort(); g.advance(0.3);
+    // QA-C1-10: a goto reached by car completes once stopped
+    M.registerTest({ id: 't_car', title: 'Car', giver: 'gus', marker: 'campus_quad', requires: [], reward: 1, intro: [], outro: [], objectives: [{ type: 'goto', target: { landmark: 'fish_shack' }, text: 'Go' }], failOn: [] });
+    const fs = W.landmark('fish_shack').door, rp = W.nearestRoadPoint(fs.x, fs.z);
+    const car = g.debug.spawnVehicle(rp.x, rp.z, 'sedan'); car.enter(p, 0); g.advance(0.1);
+    M.start('t_car', { skipIntro: true }); g.advance(0.1);
+    g.debug.teleport(fs.x, fs.z); g.advance(0.5);
+    out.carGoto = { done: M.state.completed.has('t_car'), inCar: !!p.inVehicle };
+    if (M.state.active) M.abort();
+    p.exitVehicle(); g.advance(0.6);
+    // QA-STR-01 / STR-07: dying in a rampage ends it, and the loaner goes back
+    p.weapons = { fist: Infinity }; p.weapon = 'fist';
+    const mk = S.debug.markers().find((m) => m.id === 'rr_02');
+    g.debug.teleport(mk.x + 20, mk.z); g.advance(0.3); g.debug.teleport(mk.x, mk.z); g.advance(0.8);
+    const started = S.active(); g.advance(3.2);
+    p.applyDamage(9999, null, 'debug'); g.advance(0.2);
+    out.rampage = { started, afterDeath: S.active(), pistol: p.weapons.pistol || 0 };
+    g.advance(12);
+    out.rampage.afterRespawn = S.active(); out.rampage.state = g.state;
+    // QA-CMB-06: the click that closes a line is not a shot
+    p.hp = 100; g.debug.giveWeapon('pistol', 24); GTP.Combat.ammo(p, 'pistol');
+    const shots0 = (p.stats.shots || 0);
+    M.say([{ who: 'gus', text: 'Only line.' }]); g.advance(0.6);
+    GTP.Input.set('shoot', true); GTP.Input.set('confirm', true); g.advance(1 / 60); GTP.Input.set('confirm', false); g.advance(0.2);
+    out.latch = { state: g.state, shots: (p.stats.shots || 0) - shots0 };
+    GTP.Input.set('shoot', false); g.advance(0.1);
+    GTP.Input.set('shoot', true); g.advance(0.1); GTP.Input.set('shoot', false); g.advance(0.1);
+    out.latch.after = (p.stats.shots || 0) - shots0;
+    out.errors = GTP.errors.map((e) => e.where + ': ' + e.message);
+    return out;
+  });
+  console.log('  qa: ' + JSON.stringify(qa));
+  t.assert(qa.retry.before === true && qa.retry.after === false, 'QA-C1-02: QUIT drops the retry offer: ' + JSON.stringify(qa.retry));
+  t.assert(qa.stopNear === 6 && qa.hoaTraffic === false && qa.hoaSuv === true, 'QA-STR-02 / STR-11: stopNear 6, only the strand SUV starts a patrol');
+  t.assert(qa.brawl.alive && qa.brawl.hp[qa.brawl.hp.length - 1] > 30, 'QA-C1-01: four goons do not flatten an idle player in 4 s: ' + JSON.stringify(qa.brawl));
+  t.assert(qa.refill.pistol > 0 && qa.refill.refills >= 1, 'QA-C1-03: a dry weapon-restricted objective refills: ' + JSON.stringify(qa.refill));
+  t.assert(qa.tail.start >= 9 && qa.tail.active === 't_tail', 'QA-C1-05: the tail starts ahead and nobody is spotted standing still: ' + JSON.stringify(qa.tail));
+  t.assert(qa.carGoto.done, 'QA-C1-10: a goto reached by car completes once stopped: ' + JSON.stringify(qa.carGoto));
+  t.assert(qa.rampage.started === 'ratio_rampages' && qa.rampage.afterDeath === null && qa.rampage.afterRespawn === null && qa.rampage.pistol === 0, 'QA-STR-01 / STR-07: death ends the rampage and the loaner goes back: ' + JSON.stringify(qa.rampage));
+  t.assert(qa.latch.state === 'playing' && qa.latch.shots === 0 && qa.latch.after >= 1, 'QA-CMB-06: the press that closes the dialogue fires nothing; the next one does: ' + JSON.stringify(qa.latch));
+  t.assert(qa.errors.length === 0, 'qa errors: ' + qa.errors.join(' | '));
+  const qerrs = await t.errors(q);
+  t.assert(qerrs.length === 0, 'errors:\n' + qerrs.join('\n'));
 });

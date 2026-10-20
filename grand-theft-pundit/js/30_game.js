@@ -209,6 +209,7 @@
     this.player = null;
     var sp = this._spawnPoint();
     this.player = this._makePlayer(sp);
+    this._spawnAt = { x: sp.x, z: sp.z };
     this.time = { t: 0, clock: C.DAY.startClock, day: 1 };
     this.steps = 0;
     this.playTime = 0;
@@ -318,9 +319,17 @@
   // and then the story begins: the first mission starts with its intro and objective (PLAN_V03: within a minute of New Game)
   Game.prototype._maybeOpening = function () {
     if (!this._openingPending || this.state !== 'playing' || this.loading.active) return;
-    var Cs = GTP.Cutscenes, Ms = GTP.Missions, self = this;
+    var Cs = GTP.Cutscenes, Ms = GTP.Missions, self = this, p = this.player;
     this._openingPending = false;
     if (Ms && Ms.state && Ms.state.active) { this._storyPending = false; return; }
+    // already off and playing (in a car, or far from the spawn): no cutscene yanks them out; the GPS and Gus's call point at
+    // the first mission instead
+    var sp = this._spawnAt;
+    if (p && (p.inVehicle || (sp && U.dist2d(p.x, p.z, sp.x, sp.z) > 30))) {
+      this._storyPending = false;
+      if (GTP.Story) { try { GTP.Story.gps(true); if (Cs && Cs.scriptFor && Cs.scriptFor('cs_opening') && Ms.state) Ms.state.flags.cs_cs_opening = true; GTP.Story.call(); } catch (e) { U.reportError(e, 'story.gps'); } }
+      return;
+    }
     var played = !!(Cs && Cs.playOnce && Cs.scriptFor && Cs.scriptFor('cs_opening')) && Cs.playOnce('cs_opening', function () {
       if (GTP.Hints && GTP.Hints.fire) GTP.Hints.fire('h_move');
       self._autosavePending = null;
