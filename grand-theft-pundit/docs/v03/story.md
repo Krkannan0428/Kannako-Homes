@@ -155,7 +155,7 @@ addMarker, removeMarker, updateEnvironment}`, `THREE` (for the beacon mesh).
 | C1-15 | `vehicleName` / `backIn`: "Get back in the SUV", "Get back on the scooter" (drive_to, deliver_passenger, stunt, fail text) |
 | CMB-01 | A `vehicle:exploded` with no `vehicle:damage` (a direct rocket) records the player's weapon as the ignite hit, so m13b's vans count |
 | CMB-06 | The fire latch (above) |
-| CMB-10 | Stationary ranged goons open fire from `max(weapon range, spawn.fireRange, 140 m)`. Their shots miss beyond the gun's range ("badly"); the courier sightlines in 24_content are content-side |
+| CMB-10 | Stationary ranged goons open fire from `max(weapon range, spawn.fireRange, 140 m)`. Inside the gun's range they fire real rounds. Beyond it they take potshots that land short and wide ("badly": a tracer, a report and `mission:potshot`, but no real round), so a sniper duel does not alarm the city's police. The courier sightlines in 24_content are content-side |
 
 ## Decisions
 - The first mission starts by itself after the opening, **with** its intro cutscene. The intro is story, and the dialogue

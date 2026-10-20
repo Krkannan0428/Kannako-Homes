@@ -161,6 +161,7 @@ function installDriver() {
     },
     // walk into a mission's blue light from the road side (real input); the direct start is the last resort
     start(id) {
+      CT._cur = id; CT._expectEnd = false;
       // the story already started it (m00 after the opening)
       if (M.state.active === id) {
         CT.how[id] = 'auto';
@@ -204,6 +205,8 @@ function installDriver() {
     expect(type) {
       if (CT.talking()) CT.skipTalk(30);
       const d = CT.def();
+      // the last objective already done on arrival (a goto reached by car now counts once stopped: QA-C1-10)
+      if (!d && !M.state.active && CT._cur && M.state.completed.has(CT._cur)) { CT.skips.push(CT._cur + ':' + type + ' (done on arrival)'); CT._expectEnd = true; return 'skip'; }
       if (!d) return 'no objective (active ' + M.state.active + ', phase ' + M.state.phase + ')';
       if (d.type !== type) {
         const f = CT.flat(), i = f.indexOf(d);
@@ -373,7 +376,7 @@ function installDriver() {
     // a beat cop closing in for the arrest: step away from him (a player would run; the bust needs 2.2 s at arm's reach)
     dodge() {
       const p = CT.p(), fl = M.state.flags || {};
-      const cop = GTP.Entities.near(p.x, p.z, 3.2, 'ped').find((e) => e.alive && !e.inVehicle && !e.hostile && !e.knockedDown && (e.role === 'cop' || e.role === 'swat' || (e.role === 'hoa' && fl.hoa_enemy)));
+      const cop = GTP.Entities.near(p.x, p.z, 5, 'ped').find((e) => e.alive && !e.inVehicle && !e.hostile && !e.knockedDown && (e.role === 'cop' || e.role === 'swat' || (e.role === 'hoa' && fl.hoa_enemy)));
       if (!cop) return false;
       const dx = p.x - cop.x, dz = p.z - cop.z, l = Math.hypot(dx, dz) || 1;
       const r = GTP.World.resolveCapsule(p.x + dx / l * 8, p.z + dz / l * 8, p.y + 0.5, 0.45);
@@ -415,7 +418,7 @@ function installDriver() {
       const r = W.resolveCapsule(h.x + dx * range, h.z + dz * range, h.y + 0.5, 0.45);
       CT.tp(r.x, r.z); p.yaw = U.dirToYaw(h.x - p.x, h.z - p.z); p.aimYaw = p.yaw; p.weapon = w;
       if (scoped) { const hp0 = h.hp; CT.aimedShot(h.x, h.y + 1.05, h.z, true); CT._snipes = (CT._snipes || 0) + 1; if (h.hp < hp0 || !h.alive) CT._snipeHits = (CT._snipeHits || 0) + 1; return; }
-      CT.hold('shoot', true); CT.adv(0.6); CT.hold('shoot', false);
+      CT.hold('shoot', true); CT.adv(0.3); CT.dodge(); CT.adv(0.3); CT.hold('shoot', false);
     },
     defeat(pauseAt) {
       const e = CT.expect('defeat'); if (e === 'skip') return { ok: true, note: 'defeat already passed' }; if (e) return { ok: false, note: e };
@@ -815,7 +818,8 @@ H.run('campaign', async (t) => {
   console.log('  opening: ' + JSON.stringify(opening) + ' skip: ' + JSON.stringify(openingSkip));
   t.assert(opening.scripted && opening.state === 'cutscene' && opening.active && opening.letterbox && opening.shots >= 2 && opening.control === false && opening.storyPending, 'cs_opening plays on the new game with the letterbox and the player parked: ' + JSON.stringify(opening));
   t.assert(opening.actors.indexOf('gus') >= 0 && opening.actors.indexOf('kip') >= 0, 'Gus and Kip are on the quad for the opening: ' + JSON.stringify(opening.actors));
-  t.assert(openingSkip.s > 0 && openingSkip.flag && openingSkip.active === 'm00_intro', 'holding confirm skips it once per save and m00 starts by itself: ' + JSON.stringify(openingSkip));
+  // (skipCutscene reports -1 here: m00's intro cutscene follows the opening at once)
+  t.assert(openingSkip.flag && openingSkip.active === 'm00_intro' && openingSkip.cutscene, 'holding confirm skips it once per save and m00 starts by itself: ' + JSON.stringify(openingSkip));
 
   const results = {};
   let expectedMoney = 250, lastCash = 0, lastSpent = 0, expectedSubs = 0, lastTier = 0;
@@ -866,6 +870,7 @@ H.run('campaign', async (t) => {
       }
       const r = await page.evaluate((s) => CT.step(s[0], s[1]), step);
       console.log('    ' + step.join(' ') + ': ' + JSON.stringify(r));
+      if (r.fails.length || !r.ok) console.log('    heat: ' + JSON.stringify(await page.evaluate(() => CT.heat.slice(-12))));
       t.assert(r.ok, id + ' step ' + step.join(' ') + ' failed: ' + JSON.stringify(r));
       t.assert(r.fails.length === 0, id + ' failed mid-run: ' + r.fails.join(','));
     }

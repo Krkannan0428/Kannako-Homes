@@ -592,12 +592,22 @@
       p.stop();
       if (d < 60) p.yaw = U.angleDamp(p.yaw, U.dirToYaw(pl.x - p.x, pl.z - p.z), 4, dt);
       if (ai.passive || !ranged || !wdef) { p.aiming = false; return; }
-      // a stationary shooter opens up from far beyond the gun's range (it misses there: 'badly'; QA-CMB-10)
-      var rng = Math.max(wdef.range || 30, ai.fireRange || K.stationaryFireRange);
+      // a stationary shooter opens up from far beyond the gun's range (QA-CMB-10). Out there it misses ('badly'): a tracer and a
+      // report that land short and wide, no real round, so a sniper duel does not summon the city's police to the causeway
+      var real = wdef.range || 30, rng = Math.max(real, ai.fireRange || K.stationaryFireRange);
       if (d <= rng && !pl.inVehicle) {
         p.aiming = true; p.aimYaw = U.dirToYaw(pl.x - p.x, pl.z - p.z);
         ai.shotT -= dt;
-        if (ai.shotT <= 0 && CB && CB.fire) { ai.shotT = R().range(1.4, 2.6); try { CB.fire(p, p.weapon); } catch (e) { U.reportError(e, 'missions.fire'); } }
+        if (ai.shotT <= 0 && CB && CB.fire) {
+          if (d <= real) { ai.shotT = R().range(1.4, 2.6); try { CB.fire(p, p.weapon); } catch (e) { U.reportError(e, 'missions.fire'); } }
+          else {
+            ai.shotT = R().range(2.2, 3.6);
+            var k = R().range(0.55, 0.85), side = R().range(-4, 4), f = U.yawToDir(p.aimYaw);
+            fx({ type: 'tracer', x: p.x + f.x * 0.6, y: p.y + 1.4, z: p.z + f.z * 0.6, x2: p.x + (pl.x - p.x) * k - f.z * side, y2: pl.y + R().range(0.2, 2.5), z2: p.z + (pl.z - p.z) * k + f.x * side, life: 0.08 });
+            sfx('shot', p.x, p.z, 0.35);
+            emit('potshot', { ped: p, dist: d });
+          }
+        }
       } else p.aiming = false;
       return;
     }
