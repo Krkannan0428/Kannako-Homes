@@ -264,6 +264,11 @@
       if ((cls === 'pistol' || cls === 'smg' || (cls === 'shotgun' && o.hold === 'one')) && o.driveBy == null) o.driveBy = true;
     }
     if (!o.rate) o.rate = 1; if (o.range == null) o.range = 30; if (o.dmg == null) o.dmg = 10; if (o.price == null) o.price = 500;
+    // a thrown thing (and the megaphone) has no magazine whatever the table says; a magazine always has a reload time; a
+    // shell-by-shell reload takes the table's whole-magazine time per shell
+    if ((o.lobbed && !o.impact) || o.cone || o.melee) delete o.mag;
+    if (o.mag > 0 && !(o.reload > 0)) o.reload = base && base.reload > 0 ? base.reload : 1.8;
+    if (o.shellReload && o.mag > 0 && typeof src.reload === 'number' && src.reload > 0) o.reload = base && base.reload > 0 && Math.abs(src.reload - base.reload) < 1e-6 ? base.reload : Math.max(0.25, src.reload / o.mag);
     o.slot = base && base.slot != null && base.cls === cls ? base.slot : slotForClass(o);
     o.parity = true;
     return o;
@@ -280,6 +285,8 @@
   // merge GTP.Content.parity.weapons over the table (cheap when nothing changed: a length + id signature)
   function syncArsenal() {
     var P = GTP.Content && GTP.Content.parity, list = P && P.weapons;
+    if (list && !Array.isArray(list) && list === arsenal.obj && ORDER.length) return;
+    arsenal.obj = list && !Array.isArray(list) ? list : null;
     var arr = list ? (Array.isArray(list) ? list : Object.keys(list).map(function (k) { var o = list[k]; if (o && !o.id) o.id = k; return o; })) : null;
     var sig = arr ? arr.length + ':' + (arr[0] && arr[0].id) + ':' + (arr[arr.length - 1] && arr[arr.length - 1].id) : 'none';
     if (sig === arsenal.sig && ORDER.length) return;
@@ -1680,6 +1687,7 @@
     }
     syncArsenal();
     registerSave();
+    if (pendingSave && player() && GTP.SaveRegistry.combat) GTP.SaveRegistry.combat.set(pendingSave);
   }
 
   // ----------------------------------------------------------- scope --
@@ -1849,6 +1857,8 @@
     V = { m: new THREE.Matrix4(), inv: new THREE.Matrix4(), w: new THREE.Matrix4(), p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3(), a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3(), hand: new THREE.Vector3(0, -0.61, 0) };
     return V;
   }
+  // a weapon mesh leaving a hand: its only per-mesh resource is the hot mic's blinking cap material
+  function dropWeapon(obj) { if (!obj) return; if (obj.parent) obj.parent.remove(obj); obj.traverse(function (o) { if (o.userData && o.userData.cap && o.material && o.material.dispose) o.material.dispose(); }); }
   function tagWeapon(obj) { obj.userData.weaponPart = true; obj.traverse(function (o) { o.userData.noFlash = true; }); return obj; }
   function wantHeld(e) {
     if (!e.alive || !e.weapon || e.weapon === 'fist' || !WEAPONS[e.weapon]) return null;
@@ -1861,13 +1871,14 @@
   }
   // the holstered pair: the best owned hip weapon and the best owned back weapon that are not in the hand (the player); AI peds
   // carry their own weapon holstered while it is not drawn
+  var _hol = [null, null], NO_HOL = [null, null];
   function holsterIds(e, heldId) {
-    if (!settings.holsters) return [null, null];
+    if (!settings.holsters) return NO_HOL;
     var hip = null, back = null, hipP = -1, backP = -1;
     if (e.kind !== 'player') {
-      if (heldId || !e.weapon || e.weapon === 'fist' || !WEAPONS[e.weapon]) return [null, null];
-      var f0 = fitOf(e.weapon); if (!f0) return [null, null];
-      return f0.holster === 'hip' ? [e.weapon, null] : f0.holster === 'back' ? [null, e.weapon] : [null, null];
+      if (heldId || !e.weapon || e.weapon === 'fist' || !WEAPONS[e.weapon]) return NO_HOL;
+      var f0 = fitOf(e.weapon); if (!f0) return NO_HOL;
+      _hol[0] = f0.holster === 'hip' ? e.weapon : null; _hol[1] = f0.holster === 'back' ? e.weapon : null; return _hol;
     }
     for (var id in e.weapons) {
       if (id === heldId || id === 'fist' || !owns(e, id) || !WEAPONS[id]) continue;
@@ -1876,7 +1887,7 @@
       if (f.holster === 'hip' && pr > hipP) { hip = id; hipP = pr; }
       else if (f.holster === 'back' && pr > backP) { back = id; backP = pr; }
     }
-    return [hip, back];
+    _hol[0] = hip; _hol[1] = back; return _hol;
   }
   function partsOf(e, m) {
     if (e._cparts && e._cparts.root === m) return e._cparts;
@@ -1930,7 +1941,7 @@
     var m = e.mesh; if (!m) return null;
     var heldId = wantHeld(e), mods = heldId ? modsOf(e, heldId) : null, sig = heldId ? heldId + '|' + modsKey(mods) : null;
     if (e._heldSig !== sig) {
-      if (e._held) { if (e._held.parent) e._held.parent.remove(e._held); e._held = null; }
+      if (e._held) { dropWeapon(e._held); e._held = null; }
       e._heldSig = sig; e._heldId = heldId;
       if (heldId && GTP.Assets && GTP.Assets.weaponMesh) { var wm = GTP.Assets.weaponMesh(heldId, mods); if (wm) { wm.name = 'held'; tagWeapon(wm); m.add(wm); e._held = wm; } }
     }
@@ -1943,7 +1954,8 @@
     var m = e.mesh; if (!m) return;
     if (!m.visible) { if (e._hands) e._hands.valid = false; return; }
     var heldId = ensureHeld(e);
-    var parts = partsOf(e, m), anim = !!GTP.Anim;
+    if (!e._held && !e._holH && !e._holB && !(e.cover && !GTP.Anim) && !(e._melee && !GTP.Anim)) { if (e._hands) e._hands.valid = false; return; }   // nothing to place
+    var parts = partsOf(e, m), anim = !!GTP.Anim, bodyY = m.position.y;
     // the fallback rig's crouch behind low cover (the models track animates pose.crouch itself): sink, knees forward, lean in
     if (!anim && e.cover && !e.cover.high && !e._vault) {
       var ck = 1 - (e.cover.peekK || 0);
@@ -1966,7 +1978,7 @@
     var yaw = m.rotation.y;
     if (raised) {
       var fr = gunFrame(e, heldId, true, null, yaw, e._aimPitch || 0);
-      fr.gx += m.position.x - e.x; fr.gy += m.position.y - e.y; fr.gz += m.position.z - e.z;   // the interpolated body
+      fr.gx += m.position.x - e.x; fr.gy += bodyY - e.y; fr.gz += m.position.z - e.z;   // gunFrame crouches on its own   // the interpolated body
       placeWorld(held, m, fr.gx, fr.gy, fr.gz, fr.X, fr.Y, fr.Z, fr.s);
       // the right hand on the grip (a handgun: low on the grip, so the slide shows above the fist)
       var oneH = holdOf(heldId) === 'one' && !fit.upright;
@@ -1981,7 +1993,7 @@
     } else if (holdOf(heldId) === 'two' && !fit.melee && !fit.upright) {
       // the long gun at low ready across the chest, both hands on it
       var fl = gunFrame(e, heldId, false, null, yaw, 0);
-      fl.gx += m.position.x - e.x; fl.gy += m.position.y - e.y; fl.gz += m.position.z - e.z;
+      fl.gx += m.position.x - e.x; fl.gy += bodyY - e.y; fl.gz += m.position.z - e.z;
       if (e.reloadT > 0) { var rk = 1 - e.reloadT / (e.reloadTotal || 1), ph = rk < 0.5 ? rk / 0.5 : 1 - (rk - 0.5) / 0.5; fl.gy += 0.12 * ph; }
       placeWorld(held, m, fl.gx, fl.gy, fl.gz, fl.X, fl.Y, fl.Z, fl.s);
       hands.right.x = fl.gx; hands.right.y = fl.gy; hands.right.z = fl.gz;
@@ -2019,7 +2031,7 @@
   function syncHolster(e, m, slot, id) {
     var key = slot ? '_holB' : '_holH', sigK = key + 'Id', mods = id ? modsOf(e, id) : null, sig = id ? id + '|' + modsKey(mods) : null;
     if (e[sigK] === sig) return;
-    var old = e[key]; if (old && old.parent) old.parent.remove(old);
+    var old = e[key]; if (old) dropWeapon(old);
     e[key] = null; e[sigK] = sig;
     if (!id || !GTP.Assets || !GTP.Assets.weaponMesh) return;
     var hm = GTP.Assets.weaponMesh(id, mods); if (!hm) return;
@@ -2062,7 +2074,7 @@
     e._shotAge = (e._shotAge == null ? 99 : e._shotAge) + dt;
     P.weaponId = e.weapon || 'fist'; P.hold = holdOf(P.weaponId);
     P.aim = !!e.alive && !e.knockedDown && (!!e.aiming || (e.firePoseT > 0 && !!w && !w.melee) || !!e._cook || !!(e.cover && e.cover.peek && e.aiming));
-    P.aimYaw = e.aimYaw || e.yaw; P.aimPitch = e._aimPitch || 0; P.fire = e._shotAge;
+    P.aimYaw = e.aimYaw != null ? e.aimYaw : e.yaw; P.aimPitch = e._aimPitch || 0; P.fire = e._shotAge;
     P.reload = e.reloadT > 0 ? U.clamp(1 - e.reloadT / (e.reloadTotal || 1), 0, 1) : null;
     if (e._melee) { var mm = P._melee || (P._melee = { type: 'light', t: 0, combo: 0 }); mm.type = e._melee.type === 'ai' ? 'light' : e._melee.type; mm.t = U.clamp(e._melee.t, 0, 1); mm.combo = e._melee.combo; mm.windup = e._melee.type === 'ai' && e._melee.t < e._melee.at; P.melee = mm; }
     else P.melee = null;
@@ -2225,12 +2237,14 @@
     var c = p.cover;
     if (p._coverRun) {
       var cr = p._coverRun, cand = cr.cand; cr.t += dt;
-      if (!p.alive || p.knockedDown || p.inVehicle || cr.t > 4 || (GTP.Input.move.x || GTP.Input.move.z)) { p._coverRun = null; }
+      if (U.dist2d(p.x, p.z, cand.x, cand.z) > COVER.runMax + 4 || !p.alive || p.knockedDown || p.inVehicle || cr.t > 4 || (GTP.Input.move.x || GTP.Input.move.z)) { p._coverRun = null; }
       else { var d = p.moveTo(cand.x, cand.z, true); if (d < 0.5) { cand.dist = d; enterCover(p, cand); } }
       return;
     }
     if (!c) return;
     if (!p.alive || p.knockedDown || p.inVehicle || p.swimming || p.entering) { exitCover(p, 'interrupted'); return; }
+    // a teleport (a mission retry, a restart, a load) leaves cover instead of snapping back to it
+    if (U.dist2d(p.x, p.z, c.bx, c.bz) > 2 && !(c.slide && c.slide.t < c.slide.dur)) { exitCover(p, 'moved'); return; }
     if (c.kind === 'vehicle' && c.ref && (c.ref.removed || c.ref.speed2d() > 1.5 || c.ref.wreck)) { exitCover(p, 'moved'); return; }
     c.t += dt; c.alertT += dt;
     if (c.alertT > COVER.alertEvery) { c.alertT = 0; coverAlert(p); }
@@ -2273,6 +2287,7 @@
   // Ped.update calls this while ped._vault is set (the physics step is skipped): the hop along an arc
   function vaultStep(p, dt) {
     var v = p._vault; if (!v) return false;
+    if (!p.alive || p.knockedDown || p.inVehicle || p.entering || p.swimming) { p._vault = null; return false; }
     v.t += dt;
     var k = U.clamp(v.t / v.dur, 0, 1), e = k * k * (3 - 2 * k);
     p.x = v.fx + (v.tx - v.fx) * e; p.z = v.fz + (v.tz - v.fz) * e;
@@ -2970,12 +2985,15 @@
   // ------------------------------------------------------------ saves --
   // GTP.SaveRegistry.combat (when the story track's registry exists): the attachments and tints the player owns and wears, and the
   // aim-assist setting; weapons and ammo stay in the save's player block as before
+  var pendingSave = null;
   function registerSave() {
-    var SR = GTP.SaveRegistry; if (!SR || SR.combat) return;
+    var SR = GTP.SaveRegistry = GTP.SaveRegistry || {}; if (SR.combat) return;
     SR.combat = {
       get: function () { var p = player() || {}; return { v: 1, mods: p.weaponMods || {}, owned: p.weaponModsOwned || {}, aimAssist: settings.aimAssist, holsters: settings.holsters }; },
       set: function (j) {
-        var p = player(); if (!j || !p) return;
+        var p = player(); if (!j) return;
+        if (!p) { pendingSave = j; return; }   // a load before the player exists: applied on the first update
+        pendingSave = null;
         p.weaponMods = j.mods && typeof j.mods === 'object' ? j.mods : {}; p.weaponModsOwned = j.owned && typeof j.owned === 'object' ? j.owned : {};
         if (j.aimAssist != null) settings.aimAssist = !!j.aimAssist;
         if (j.holsters != null) settings.holsters = !!j.holsters;
@@ -3026,7 +3044,7 @@
     fillPose: fillPose,
     postSync: postSync,
     handTargets: handTargets,
-    gunFrame: function (ped, raised) { var f = gunFrame(ped, ped.weapon, raised !== false, {}); return f; },
+    gunFrame: function (ped, raised) { return gunFrame(ped, ped.weapon, raised !== false, { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }); },
     muzzle: muzzle,
     moveScale: moveScale,
     inSmoke: inSmoke,
@@ -3054,7 +3072,7 @@
         Combat.death = null; p.controlEnabled = true;
       }
       if (st === 'playing') { updateAim(p, dt); playerTick(p, dt); shopTick(p, dt); }
-      else { aim.active = false; aim.target = null; aim.hip = false; p.lockTarget = null; if (scope.active) updateScope(p, dt); if (wheel.open) closeWheel(p, false); if (p.cover) exitCover(p, 'cutscene'); }
+      else { aim.active = false; aim.target = null; aim.hip = false; p.lockTarget = null; if (scope.active) updateScope(p, dt); if (wheel.open) closeWheel(p, false); if (p.cover) exitCover(p, 'cutscene'); p._coverRun = null; }
       if (p.weapon !== lastWeapon) { lastWeapon = p.weapon; cancelReload(p); p._cook = null; GTP.Events.emit('weapon', { id: p.weapon, name: Combat.weaponName(p.weapon), ammo: p.weapons[p.weapon] }); }
       entityPass(dt);
       tickSmokes(dt); tickPuddles(dt);
@@ -3294,6 +3312,7 @@
       spawnPickup({ type: 'cash', value: r.int(10, 50), x: x, z: z, yHint: ped.y });
     }
   });
+  registerSave();   // at load, so a load from the title restores attachments and tints (the story track merges into the registry)
   // a cutscene or an interior teleport leaves cover
-  GTP.Events.on('interior:fade', function () { var p = player(); if (p && p.cover) exitCover(p, 'interior'); });
+  GTP.Events.on('interior:fade', function () { var p = player(); if (!p) return; if (p.cover) exitCover(p, 'interior'); p._coverRun = null; p._vault = null; });
 })();

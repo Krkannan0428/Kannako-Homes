@@ -360,7 +360,7 @@
   var MUZZLE_LEN = { suppressor: 0.16, compensator: 0.05 };
 
   // ---------------------------------------------------------------- cache --
-  var geoCache = {}, fitCache = {}, stencilTex = null, capMatProto = null, lensMat = null, attachGeo = {};
+  var geoCache = {}, fitCache = {}, stencilTex = null, capMatProto = null, lensMat = null, attachGeo = {}, capGeo = null, stencilGeo = null, stencilMat = null;
   function hashId(id) { var h = 2166136261; for (var i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   // the builder for an id: its own, else a built weapon of its class (picked by a hash of the id, so it is stable)
   function builderFor(id, cls) {
@@ -473,13 +473,15 @@
     if (base === 'hotmic') {
       // the ON AIR cap: its own material so Combat can blink it toward the bang
       if (!capMatProto) capMatProto = new THREE.MeshBasicMaterial({ color: 0xe0302a });
-      var capM = new THREE.Mesh(new THREE.CylinderGeometry(0.041, 0.041, 0.022, 8), capMatProto.clone());
+      if (!capGeo) capGeo = new THREE.CylinderGeometry(0.041, 0.041, 0.022, 8);
+      var capM = new THREE.Mesh(capGeo, capMatProto.clone());   // its own material (it blinks per mic); the owner disposes it
       capM.position.y = 0.225; capM.name = 'cap'; capM.userData.cap = true;
       m.add(capM);
     } else if (base === 'ratio') {
-      var sm = new THREE.MeshBasicMaterial({ map: stencil() });
-      var sa = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.07), sm); sa.position.set(0.11, 0.1, 0.069); sa.name = 'held'; m.add(sa);
-      var sb = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.07), sm); sb.position.set(0.11, 0.1, -0.069); sb.rotation.y = Math.PI; sb.name = 'held'; m.add(sb);
+      if (!stencilMat) { stencilMat = new THREE.MeshBasicMaterial({ map: stencil() }); stencilGeo = new THREE.PlaneGeometry(0.2, 0.07); }
+      var sm = stencilMat;
+      var sa = new THREE.Mesh(stencilGeo, sm); sa.position.set(0.11, 0.1, 0.069); sa.name = 'held'; m.add(sa);
+      var sb = new THREE.Mesh(stencilGeo, sm); sb.position.set(0.11, 0.1, -0.069); sb.rotation.y = Math.PI; sb.name = 'held'; m.add(sb);
     } else if (base === 'spin') {
       var key = 'spin:' + ((mods && mods.tint) || 'stock'), sg = attachGeo[key];
       if (!sg) {

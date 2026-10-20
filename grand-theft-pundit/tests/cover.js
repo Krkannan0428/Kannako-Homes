@@ -6,6 +6,7 @@
  *  5 a building wall is high cover: aim mid-wall is a blind spot, at the corner aim leans out; cover again leaves (cover:exit)
  *  6 cover to cover: cover pressed while looking away from the wall runs to the car and takes it
  *  7 lamp posts and hydrants are not cover; nothing near means no cover
+ *  8 a teleport leaves cover; a knockdown cancels a vault
  * Screenshots in tests/out: cover_low.png, cover_peek.png, cover_wall.png, cover_vault.png (look at them). */
 'use strict';
 const H = require('./_harness');
@@ -239,6 +240,26 @@ H.run('cover', async (t) => {
   console.log('  none: ' + JSON.stringify(none));
   t.assert(!none.open && !none.openTake, 'open ground has no cover');
   t.assert(!none.lamp || none.lampTake === null || none.lampTake.indexOf('lamp') < 0, 'a lamp post is not cover: ' + JSON.stringify(none));
+
+  // ---- 8. a teleport (a retry, a load) leaves cover instead of snapping back; a knockdown cancels a vault ----
+  const tele = await page.evaluate(({ spot, EAST }) => {
+    const p = GTP.game.player;
+    T_.setup(spot.x, spot.z, EAST);
+    const car = GTP.game.debug.spawnVehicle(spot.x + 2.4, spot.z, 'sedan', { yaw: 0 }); GTP.game.advance(0.2);
+    T_.tap('cover'); GTP.game.advance(0.4); const inCover = !!p.cover;
+    GTP.game.debug.teleport(spot.x - 30, spot.z); GTP.game.advance(0.3);
+    const after = { cover: !!p.cover, dx: +(p.x - (spot.x - 30)).toFixed(2) };
+    GTP.game.debug.teleport(spot.x, spot.z); GTP.game.advance(0.2); T_.tap('cover'); GTP.game.advance(0.4);
+    GTP.Input.set('jump', true); GTP.game.advance(1 / 60); GTP.Input.set('jump', false); GTP.game.advance(0.1);
+    const vaulting = !!p._vault; p.knockDown(-3, 0, 0, null, 'test'); GTP.game.advance(0.1);
+    const out = { inCover, after, vaulting, cancelled: !p._vault };
+    GTP.game.advance(3); car.destroy();
+    out.frame = (() => { const f = GTP.Combat.gunFrame(p); return !!(f && f.X && isFinite(f.gx)); })();
+    return out;
+  }, { spot, EAST });
+  console.log('  teleport: ' + JSON.stringify(tele));
+  t.assert(tele.inCover && !tele.after.cover && Math.abs(tele.after.dx) < 0.5, 'a teleport leaves cover: ' + JSON.stringify(tele));
+  t.assert(tele.vaulting && tele.cancelled && tele.frame, 'a knockdown cancels the vault; Combat.gunFrame works: ' + JSON.stringify(tele));
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

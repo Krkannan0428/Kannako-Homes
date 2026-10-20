@@ -102,8 +102,10 @@ at the fist, `pose.melee.windup`), damage x0.45, a 0.9..1.5 s cooldown and at mo
   flagship`. Attachments and tints need the weapon, buy once, equip on purchase; an owned one toggles for free
   (`equip:false` takes it off). Emits `shop:buy {item, price}`.
 - The legacy `shop.items(tab)` / `shop.buy(id)` (the v0.2 UI) work on top of it; the shop lists the original twelve first.
-- Save: `GTP.SaveRegistry.combat = {get, set}` (registered when the story track's registry exists) holds
-  `player.weaponMods`, `player.weaponModsOwned` and the aim-assist / holster settings.
+- Save: `GTP.SaveRegistry.combat = {get, set}` holds `player.weaponMods`, `player.weaponModsOwned` and the aim-assist /
+  holster settings. Combat creates `GTP.SaveRegistry = GTP.SaveRegistry || {}` at load and registers the entry then (and again
+  on its first update if the object was replaced): **the story track should add to the existing registry, not replace it**. A
+  `set()` before the player exists is held and applied on the first update.
 
 ## QA round 1 bugs fixed (all with a test in `tests/combat.js` section 20 or 21 unless noted)
 | id | fix |
@@ -187,17 +189,28 @@ Pickup.collect: Combat.collectPickup may return 'skip' (the crate stays)
 - AI melee is deliberately gentle (Act I is an on-ramp): about 3 hp/s from four goons on a passive player.
 - The shop keeps the original twelve first in its list; the wheel and the cycle order group weapons by slot.
 
+## Adversarial review (a subagent read the whole diff)
+Fixed from its report: a teleport (retry, restart, load) while in cover snapped the player back (now leaves cover); a knockdown
+did not cancel a vault; the save entry could miss a load from the title; `Combat.gunFrame()` threw; parity weapons with `mag`
+on thrown items or a missing `reload` could soft-lock or never run out (normalised now; a shell-by-shell reload takes the
+table's magazine time per shell); the blind-fire gun sat 0.42 m low in the fallback crouch; the cover-to-cover run survived
+cutscenes and interiors; `pose.aimYaw` ignored a yaw of exactly 0; per-frame allocations in `postSync`/`holsterIds`/`syncArsenal`;
+the hot mic cap and launcher stencil leaked geometry and materials on weapon swaps.
+
 ## Tests
 ```
 cd grand-theft-pundit
 NODE_PATH=/opt/node-tools/node_modules node tests/combat.js   # arsenal (37 weapons fire, hurt, spend, sit in the hand), aim, reload,
                                                               # bloom, zones, hot mic, rocket, scope, drive-by, wheel, shop, QA regressions,
                                                               # parity merge, mods, pose contract, holsters, melee combos (~2 min)
-NODE_PATH=/opt/node-tools/node_modules node tests/cover.js    # cover (~1 min)
+NODE_PATH=/opt/node-tools/node_modules node tests/cover.js    # cover, teleport out of cover, vault cancel (~1 min)
 NODE_PATH=/opt/node-tools/node_modules node tests/actors.js   # the player controller and vehicles (unchanged)
 ```
 Screenshots to look at: `tests/out/combat_aim.png`, `combat_firefight.png`, `combat_holsters.png`, `combat_held_*.png`,
 `cover_low.png`, `cover_peek.png`, `cover_wall.png`.
+
+Full run on this branch: `node tests/all.js` -> all 20 test files passed (actors, ai, artifact, audio, campaign, combat,
+content_audit, cover, cutscenes, feel, feel2, missions, perf, render, saves, smoke, strands, tune, ui, world).
 
 ## Known issues
 - The fallback rig has no elbows: arms are straight and slightly stretched to reach the gun; the models track's IK should

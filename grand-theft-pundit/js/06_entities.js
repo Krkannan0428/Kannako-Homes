@@ -189,6 +189,7 @@
     }
     _step(dt) {
       this.age += dt;
+      if (this._vault && (this.knockedDown || !this.alive || this.inVehicle || this.entering)) this._vault = null;   // a knockdown cancels a vault
       if (this.hurtT > 0) this.hurtT -= dt;
       if (this.firePoseT > 0) this.firePoseT -= dt;
       if (this.punchT > 0) this.punchT -= dt;
