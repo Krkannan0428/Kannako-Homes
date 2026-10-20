@@ -398,6 +398,7 @@
     return out;
   }
   function refreshAvailable(force) {
+    if (force) _nextKey = null;
     var list = run ? [] : available(), key = list.map(function (mm) { return mm.id; }).join(',');
     if (!force && key === availKey) return;
     availKey = key;
@@ -1913,11 +1914,17 @@
     return typeof m.act === 'number' ? m.act : act;
   }
   function requiresMet(m) { var req = m.requires || []; for (var k = 0; k < req.length; k++) if (!state.completed.has(req[k])) return false; return true; }
+  // cached per (order, completed count): the markers ask every step
+  var _next = null, _nextKey = null;
   function storyNextMission() {
-    var order = storyOrder();
-    for (var i = 0; i < order.length; i++) { var m = order[i]; if (!state.completed.has(m.id) && requiresMet(m)) return m; }
-    return null;
+    var order = storyOrder(), key = _orderKey + '|' + state.completed.size + '|' + (state === Missions.state ? 1 : 0);
+    if (_nextKey === key && state.completed === _nextSet) return _next;
+    _next = null;
+    for (var i = 0; i < order.length; i++) { var m = order[i]; if (!state.completed.has(m.id) && requiresMet(m)) { _next = m; break; } }
+    _nextKey = key; _nextSet = state.completed;
+    return _next;
   }
+  var _nextSet = null;
   function storyInfo(m) {
     if (!m) return null;
     var pt = null;
