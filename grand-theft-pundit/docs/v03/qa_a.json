@@ -643,6 +643,159 @@
   "regress": "qa_a_vis_06.js"
  },
  {
+  "id": "QA-A-NGT-01",
+  "severity": "medium",
+  "area": "render / street lamps at night",
+  "title": "Every street lamp's arm and head point away from the road, so the orange night glow, the ground light pool and the high/ultra point light hang in mid-air 2.85 m from the lamp head",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=medium&clock=22 (also low/high/ultra). debug.followCam(); debug.teleport(329,524); debug.freeCam(329,1.8,524, 326,4,590) (Sponsor Span, marina) or teleport/freeCam(727,1.8,312 -> 730,4,246) (uptown). Script: scratchpad/vnight/survey.js medium 22 clear marina,uptown; numeric check scratchpad/vnight/p1_probe.js medium (LAMP line).",
+  "expected": "The lamp head overhangs the road and the glow sprite / light pool / point light sit under and on the lens.",
+  "actual": "All 816 lamps: the head mesh is at p - yawToDir(rot)*1.4 (over the sidewalk / away from the road) while the glow sprite, the 11 m ground pool and the point light are at p + yawToDir(rot)*1.4; measured head-to-glow distance 2.85 m on every lamp (min 2.8500, max 2.8500, e.g. head (81.9, 258) vs glow (84.75, 258)). On screen a bright orange ball floats in the air beside each lamp head, on the road side, in every lamp district (marina, uptown, airport, port, downtown, capitol) and at every preset.",
+  "hint": "js/05_assets.js prop builders 'lamp' builds the arm toward local +z ('toward the road at rot 0'), but the InstancedMesh in js/10_render.js chunk build rotates it by p.rot about +y (sends +z to (sin rot, cos rot)), whereas the glow / pool (10_render night glow block) and _updateLightPool use U.yawToDir(rot) = (-sin, -cos). Build the arm toward -z (or compose with rot + PI) so mesh and lights agree; world gen's rot already points yawToDir at the road.",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/shots/medium_clear_22_marina.png",
+   "scratchpad/vnight/shots/medium_clear_22_uptown.png",
+   "scratchpad/vnight/shots/high_clear_22_marina.png",
+   "scratchpad/vnight/shots/high_clear_22_port.png",
+   "scratchpad/vnight/shots/ev_medium_lamp_close.png",
+   "scratchpad/vnight/p1_probe.js"
+  ],
+  "regress": "qa_a_ngt_01.js"
+ },
+ {
+  "id": "QA-A-NGT-02",
+  "severity": "medium",
+  "area": "render / weather / puddles",
+  "title": "Rain puddles only ever appear north of the player: the puddle budget is spent on the northern rows of the 32x32-tile window, none to the south and often none within 30 m",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=medium&weather=rain&clock=22. For each spot (322,254) (98,126) (326,422) (650,730) (738,314) (230,730): debug.teleport(nearestRoadPoint), GTP.game.advance(0.2), render, then read Render.weather._puddles instance matrices. Script: scratchpad/vnight/p1_probe.js medium (PUDDLES line); overhead view scratchpad/vnight/p2_puddles.js medium 13.",
+  "expected": "Puddles scattered around the player in all directions (and near him), so a rainy street shows puddles ahead whichever way he faces.",
+  "actual": "All 24 puddles (medium; same at 40 high / 60 ultra) lie between 65 m north and 4 m south of the focus: mean dz -29..-46 m, max dz +4, 0 puddles more than 8 m to the south at all 6 spots; within 30 m only 0-5 (Sponsor Strip: 0, nearest 31 m). Walking or driving south you never see a puddle in front of you; the set re-seeds every 24 m of movement.",
+  "hint": "js/10_render.js weather._placePuddles: scans tz0..tz0+32, tx0..tx0+32 in row order from the north-west corner and stops at QUALITY.puddles; candidates (hash < 0.085) outnumber the budget so the southern rows are never reached. Collect all candidates, then pick by distance to the focus (or a hash-ordered subset).",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/p1_probe.js",
+   "scratchpad/vnight/shots/puddles_overhead_medium_326_422.png",
+   "scratchpad/vnight/sheets/medium_rain_22_1.png"
+  ],
+  "regress": "qa_a_ngt_02.js"
+ },
+ {
+  "id": "QA-A-NGT-03",
+  "severity": "low",
+  "area": "render / weather / puddles",
+  "title": "Sidewalk puddles float over the road: a disc at curb height (0.13 m) placed anywhere in a sidewalk tile reaches 1-2 m out over the asphalt",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=medium&weather=rain&clock=22; teleport to the nearest road point of (322,254), (326,422), (650,730), (738,314), call Render.weather._placePuddles and sample each disc rim (0.85-0.9 r) against World.heightAt. Scripts: scratchpad/vnight/p1_probe.js (overhang counts), scratchpad/regress/qa_a_ngt_03.js; close-up scratchpad/vnight/p17_evidence.js (kerb_puddle).",
+  "expected": "A puddle lies on the surface it covers (clipped to its tile or kept clear of the kerb).",
+  "actual": "13 of 96 placed puddles hang over lower ground, e.g. disc centre (309.0, 0.13, 188.7) r 2.4: its rim at (310.9, 187.4) is 0.13 m above the road (heightAt 0). Per spot 3-7 of 24 overhang. The dark mirror sheet hovers above the gutter with its edge in the air.",
+  "hint": "js/10_render.js weather._placePuddles: y = W.groundY(t) + 0.012 per tile, x/z anywhere in the tile and scale up to 3.2 x 2.1 m; clamp the radius to the distance to the tile edge (or reject discs whose rim leaves tiles of the same ground height).",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/p1_probe.js",
+   "scratchpad/vnight/shots/puddle_curb_medium_326_422.png",
+   "scratchpad/vnight/shots/ev_medium_kerb_puddle.png"
+  ],
+  "regress": "qa_a_ngt_03.js"
+ },
+ {
+  "id": "QA-A-NGT-04",
+  "severity": "low",
+  "area": "render / night sky",
+  "title": "The moon is 80 degrees away from the moonlight that lights the city, and it never moves during the night",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&clock=22&weather=clear; for h in 22, 1, 3: debug.setClock(h); GTP.game.render(); compare (sky.moon.position - sky.dome.position) with (lights.sun.position - lights.target.position). Script: scratchpad/vnight/p1_probe.js (MOON line); view scratchpad/vnight/p16_moon.js.",
+  "expected": "The night directional light (and its shadows) comes from where the moon is drawn, and the moon crosses the sky over the night.",
+  "actual": "Moon direction (0.42, 0.72, -0.56) (north-east, 46 deg up) vs light direction (-0.35, 0.81, 0.46) (south-west): 80 deg apart at 22:00, 01:00 and 03:00; both identical at all three hours.",
+  "hint": "js/10_render.js updateEnvironment sets sunDir to a fixed (-0.3, 0.7, 0.4) when night > 0.5, and frame() places the moon at (-sunDir.x, 0.6, -sunDir.z): the sign flip mirrors it. Derive both from one moon model (e.g. opposite the sun's arc) and place the sprite along +lightDir.",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/p1_probe.js",
+   "scratchpad/vnight/shots/moon_medium_600_noclouds.png"
+  ],
+  "regress": "qa_a_ngt_04.js"
+ },
+ {
+  "id": "QA-A-NGT-05",
+  "severity": "medium",
+  "area": "render / lamp light pool (high, ultra)",
+  "title": "Street-lamp point lights pop on and off at full brightness while driving (no fade), and a third of them light lamps behind the camera",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=high&clock=22&weather=clear. Spawn a sedan at the nearest road point of (322,254) (and of (738,314)), v.enter(player,0), hold forward, step GTP.game.advance(1/30) + Render.frame(1) for 150 frames, diff Render.lights.points each frame. Script: scratchpad/vnight/p5_pool.js high. A/B of one swap: scratchpad/vnight/p15_ab.js high 322 254.",
+  "expected": "Lamps entering or leaving the 8 (12) light slots fade in/out, and slots go to lamps in view.",
+  "actual": "Route 1 (downtown, up to 32 m/s): 20 lamps left the pool in 5 s, all 20 at intensity > 0.8 (1.24-1.35); route 2 (uptown): 23, all > 0.8. 379/1200 and 440/1200 lit slot-frames were lamps more than 8 m behind the camera. The A/B of one swap-out (lamp at (335.3, 218), 42 m ahead, intensity 1.10) turns the far crossing and the building base from warm-lit to blue-dark in one frame (17305 pixels change by > 20 levels).",
+  "hint": "js/10_render.js _updateLightPool: every 0.3 s re-sorts lamps by distance to rig.focus and writes the new lamp position into each slot with intensity 1.35*lit*clamp(1.3-d/80, 0.25, 1); keep per-lamp slots with a fade (intensity lerp over ~0.4 s) and weight candidates by the camera frustum / forward direction.",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/p5_pool.js",
+   "scratchpad/vnight/sheets/ab_high_322.png",
+   "scratchpad/vnight/sheets/ab_high_322_crop.png",
+   "scratchpad/vnight/shots/ab_high_322_on.png",
+   "scratchpad/vnight/shots/ab_high_322_off.png"
+  ],
+  "regress": "qa_a_ngt_05.js"
+ },
+ {
+  "id": "QA-A-NGT-06",
+  "severity": "medium",
+  "area": "render / player headlight / performance",
+  "title": "Getting into a car at night freezes the game: the player's headlight SpotLight turning visible changes the light count and recompiles every lit material",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=medium&clock=22 (also low, high). Spawn a sedan next to the player, render a few frames, v.enter(player,0), advance 1/30 and render. Script: scratchpad/vnight/p6_headlight.js medium / high.",
+  "expected": "No shader compile when the headlights come on (the pool lights already avoid it by staying visible at intensity 0).",
+  "actual": "medium: the entering frame takes 8996 ms (SwiftShader) against 14 ms before, programs 36 -> 50 -> 54; high: 18153 ms, programs 39 -> 54 -> 58; low: programs 24 -> 37, visible lights 3 -> 4. Later entries are fast (programs cached), so it hits the first car of a night session, and again when night falls (night > 0.25) while driving.",
+  "hint": "js/10_render.js syncVehicle: L.headlight.visible = lightsOn (and the initial head.visible = false in _initLights). Keep the headlight spot visible always and drive intensity (0 when off), like the points / spots pools.",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/p6_headlight.js"
+  ],
+  "regress": "qa_a_ngt_06.js"
+ },
+ {
+  "id": "QA-A-NGT-07",
+  "severity": "low",
+  "area": "render / weather / rain streaks",
+  "title": "It rains under the Loop deck: the streak cloud falls through the 7 m deck onto the covered road",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=medium&weather=rain&clock=23. debug.followCam(); debug.teleport(186,402); advance 0.3; debug.freeCam(187,1.6,396, 187,2.8,432) (Lower Loop leg) or teleport(178,182) + freeCam(179,1.6,172, 179,2.8,215) (upper Loop). Scripts: scratchpad/vnight/p16_moon.js (underloop shot), scratchpad/vnight/p17_evidence.js.",
+  "expected": "No drops under the deck slab (rain only falls where the sky is open).",
+  "actual": "Drops fall between the pillars right in front of the camera under the deck; of the 321 drawn drops within 12 m, 37 (186,402) and 39 (178,182) are under the deck slab (deck tile overhead, y < 6.6 m).",
+  "hint": "js/10_render.js weather.frame wraps every drop in an 18 m box around the camera with no cover test; drop (or clamp the column of) drops whose tile has World.deck set when the camera is below DECK_Y, or hide the streaks under cover.",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/shots/underloop_rain_medium.png",
+   "scratchpad/vnight/shots/ev_medium_underloop_178_182.png"
+  ],
+  "regress": "qa_a_ngt_07.js"
+ },
+ {
+  "id": "QA-A-NGT-08",
+  "severity": "low",
+  "area": "render / night sky",
+  "title": "Starless hole overhead: the 700 stars only go up to 56 degrees, so the sky around the zenith is blank",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=medium&clock=23&weather=clear; debug.freeCam(330,3,400, 330.01,200,400.2) (look straight up). Script: scratchpad/vnight/p8_misc.js medium (zenith_clear); geometry check scratchpad/regress/qa_a_ngt_08.js.",
+  "expected": "Stars spread over the whole sky dome, including straight up.",
+  "actual": "Highest star at 56.1 deg; 0 of 700 stars above 60 deg (a uniform sky has ~13%). Looking up shows a large empty disc ringed by stars.",
+  "hint": "js/10_render.js _initSky: e = 0.06 + R.random() * 0.92 (radians: 3.4 to 56 deg). Use e = asin(0.06 + random * 0.94) (uniform on the dome) or extend the range to PI/2.",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/shots/misc_medium_zenith_clear.png",
+   "scratchpad/vnight/sheets/misc_medium_0.png"
+  ],
+  "regress": "qa_a_ngt_08.js"
+ },
+ {
+  "id": "QA-A-NGT-09",
+  "severity": "low",
+  "area": "render / weather / puddles",
+  "title": "At night the rain puddles look like dark stains on the shining wet road and hide the lamp reflections",
+  "repro": "index.html?headless=1&seed=7&skipTitle=1&quality=ultra&weather=rain&clock=23 (also medium/high). debug.teleport(325,248), debug.freeCam(325,1.8,248, 322,4,314): puddle at (322.8, 248.8) ahead. Port: puddle at (619.3, 727) seen from 9 m along the road. Scripts: scratchpad/vnight/survey.js ultra 23 rain downtown, scratchpad/vnight/p18_puddlelook.js ultra|high|medium.",
+  "expected": "A puddle reads as a mirror, at least as bright as the wet road around it, with the lamps and neon reflected in it.",
+  "actual": "Puddles render as dark matte ellipses over the lit asphalt and cover the lane dashes: screen luminance inside vs a ring of road around the Container Crescent puddle: 36 vs 56 (medium), 82 vs 93 (high), 81 vs 92 (ultra); the downtown one is a dark blot in the middle of the lamp glare.",
+  "hint": "js/10_render.js weather.init puddle material (color #2a323c, roughness 0.02, metalness 0.4, opacity 0.6, envMapIntensity 2): at night it mirrors the near-black env map and its tiny highlight hides the broad wet-road specular below. Blend additively / multiply-darken less, raise roughness a little so lamps spread, or reflect the lit facades (planar reflection or a night env with lit windows).",
+  "lens": "qa-a:vnight",
+  "evidence": [
+   "scratchpad/vnight/shots/ultra_rain_23_downtown.png",
+   "scratchpad/vnight/shots/puddlelook_ultra_650_730.png",
+   "scratchpad/vnight/shots/puddlelook_medium_650_730.png"
+  ],
+  "regress": "qa_a_ngt_09.js"
+ },
+ {
   "id": "QA-A-VIS-90",
   "severity": "low",
   "area": "page layout / index.html",
