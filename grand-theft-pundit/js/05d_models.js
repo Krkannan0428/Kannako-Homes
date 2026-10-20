@@ -1151,6 +1151,7 @@
       var side = k <= 2, corner = !side && k < 3 + nCorner, top = !side && !corner;
       var roofZone = t > tR0 && t < tR1, windshield = t <= tR0, rear = t >= tR1;
       var roofCol = two ? two : paintC, roofG = two ? 'detail' : 'paint';
+      if (sp.bus && windshield && (top || corner) && cst[i].pts[j][1] > roofH - 0.42) return { g: 'paint', c: paintC };   // the band above the bus windshield
       if (top) return roofZone ? { g: roofG, c: roofCol } : { g: 'glass', c: glassC };
       if (corner) return windshield && (sp.bus) ? { g: 'glass', c: glassC } : { g: roofG, c: roofCol };
       // the sides: trim at the belt, glass in the openings, paint in the pillars and the rear quarter
