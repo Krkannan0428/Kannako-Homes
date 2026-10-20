@@ -1152,8 +1152,13 @@
       if (U.dist2d(p.x, p.z, this.x, this.z) < 1.1 && Math.abs(p.y - this.y) < 1.5) this.collect(p);
     }
     collect(p) {
-      var handled = false;
-      if (GTP.Combat && GTP.Combat.collectPickup) { try { handled = GTP.Combat.collectPickup(this, p) !== false; } catch (e) { U.reportError(e, 'combat.collectPickup'); } }
+      var handled = false, CB = GTP.Combat;
+      if (CB && CB.collectPickup) {
+        var r = false;
+        try { r = CB.collectPickup(this, p); } catch (e) { U.reportError(e, 'combat.collectPickup'); }
+        if (r === 'skip') return;   // Combat left it (a weapon crate with the gun already full): it stays where it is
+        handled = r !== false;
+      }
       if (!handled) {
         if (this.pickupType === 'cash') p.money += this.value;
         else if (this.pickupType === 'health') p.hp = Math.min(p.maxHp, p.hp + (this.value || 50));

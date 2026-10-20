@@ -293,7 +293,7 @@
       bx(g, -0.2, 0.12, -0.06, 0.1, 0.12, GUN); bx(g, -0.24, -0.2, -0.04, 0.08, 0.1, GUN2);
       bx(g, -0.06, 0.08, 0.1, 0.12, 0.02, STEEL); bx(g, -0.06, -0.04, 0.06, 0.12, 0.02, STEEL); bx(g, 0.06, 0.08, 0.06, 0.12, 0.02, STEEL);
       pistolGrip(g, RUBBER, 0.1, 0.034); bx(g, -0.16, -0.02, -0.2, -0.06, 0.1, OLIVE); bx(g, -0.15, -0.03, -0.205, -0.19, 0.105, GREY);
-      return { muzzle: [0.72, 0.02, 0], rail: [0.0, 0.12, 0], under: [0.3, -0.04, 0], mag: [-0.09, -0.2, 0], support: [0.0, 0.12, 0], len: 0.96, holster: 'back', hold: 'two', spinBarrels: true };
+      return { muzzle: [0.72, 0.02, 0], rail: [0.0, 0.12, 0], under: [0.3, -0.04, 0], mag: [-0.09, -0.2, 0], support: [0.02, 0.12, -0.02], len: 0.96, holster: 'back', hold: 'two', spinBarrels: true };
     },
     // Viral Loop: a firework launcher, stars on the tube
     firework: function (g) {

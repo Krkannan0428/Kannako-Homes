@@ -303,7 +303,7 @@
     var shY = y + (1.38 * ck + (ck < 1 ? 0.06 : 0)) * sc, sx = x + rx * 0.3 * sc, sz = z + rz * 0.3 * sc;
     var gx, gy, gz, X, Y;
     if (raised) {
-      if (fit.spinBarrels) { gx = x + rx * 0.2 * sc + fx_ * 0.28 * sc; gy = y + 1.0 * ck * sc; gz = z + rz * 0.2 * sc + fz_ * 0.28 * sc; X = [ax, ay * 0.5, az]; Y = [ux, uy, uz]; }
+      if (fit.spinBarrels) { gx = x + rx * 0.1 * sc + fx_ * 0.3 * sc; gy = y + 1.0 * ck * sc; gz = z + rz * 0.1 * sc + fz_ * 0.3 * sc; X = [ax, ay * 0.5, az]; Y = [ux, uy, uz]; }
       else if (fit.shoulder) { gx = sx + ax * 0.12 * sc - ux * 0.16 * sc; gy = shY + ay * 0.12 * sc - uy * 0.16 * sc; gz = sz + az * 0.12 * sc - uz * 0.16 * sc; X = [ax, ay, az]; Y = [ux, uy, uz]; }
       else if (fit.upright) { gx = sx + ax * 0.1 * sc + fx_ * 0.08 * sc; gy = shY + 0.12 * sc; gz = sz + az * 0.1 * sc + fz_ * 0.08 * sc; X = [rx, 0, rz]; Y = id === 'megaphone' ? [ax, ay, az] : [ux * 0.3 + fx_ * 0.2, 0.95, uz * 0.3 + fz_ * 0.2]; }
       else if (fit.melee || fit.knuckle) { gx = sx + fx_ * 0.35 * sc; gy = shY - 0.25 * sc; gz = sz + fz_ * 0.35 * sc; X = [fx_ * 0.6, 0.8, fz_ * 0.6]; Y = [-fx_ * 0.8, 0.6, -fz_ * 0.8]; }
@@ -520,6 +520,21 @@
     var h = trace(cr.o, cr.d, range * 1.9 + dc + 2, p, traceOut);
     return { x: h.x, y: h.y, z: h.z, entity: h.entity, zone: h.zone, dist: Math.max(0, h.t - dc), dir: cr.d, o: cr.o };
   }
+  // where a hip shot goes without a target: along the camera's yaw, level at the rig's resting pitch (0.2) and tilting with the look
+  // (the chase camera itself looks down at the player, so its screen centre would put hip fire into the pavement); a thrown thing
+  // goes where the screen centre meets the ground, within its range
+  function hipPoint(p, w, range) {
+    var r = rig(), cy = camYaw(), f = U.yawToDir(cy), sc = (p.look && p.look.scale) || 1;
+    if (w.lobbed && !w.impact) {
+      var cp = cameraAimPoint(p, range);
+      if (cp.dist >= 2.5 && cp.dist <= range) return { x: cp.x, y: cp.y, z: cp.z, entity: cp.entity, zone: cp.zone, dist: cp.dist };
+      return { x: p.x + f.x * range * 0.6, y: p.y + 0.3, z: p.z + f.z * range * 0.6, entity: null, zone: null, dist: range * 0.6 };
+    }
+    var e = U.clamp(0.2 - (r ? r.pitch : 0.2), -0.5, 0.7), ce = Math.cos(e), se = Math.sin(e);
+    var o = { x: p.x, y: p.y + 1.35 * sc * crouchK(p), z: p.z }, d = { x: f.x * ce, y: se, z: f.z * ce };
+    var h = trace(o, d, range, p, traceOut);
+    return { x: h.x, y: h.y, z: h.z, entity: h.entity, zone: h.zone, dist: h.t };
+  }
   // the centre of a ped's hit zone (the sight rests on the sphere; the shot goes for its middle)
   function zonePoint(e, zone, dist) {
     var sc = (e.look && e.look.scale) || 1, k = crouchK(e), h = zone === 'head' ? 1.55 : zone === 'torso' ? 1.05 : zone === 'legs' ? 0.45 : 0.35;
@@ -574,7 +589,7 @@
     var yawErr = signedAngle({ x: cr.d.x / dl, z: cr.d.z / dl }, vx / hl, vz / hl);
     var elevT = Math.atan2(vy, hl), elevC = Math.atan2(cr.d.y, dl), pe = elevT - elevC;
     var k = 1 - Math.exp(-gain * dt), CAM = C.CAMERA;
-    r.yaw += yawErr * k;
+    r.yaw -= yawErr * k;   // signedAngle is clockwise-positive against the rig's counter-clockwise yaw
     r.pitch = U.clamp(r.pitch - pe * k * 1.25, CAM.pitchMin, CAM.pitchMax);
     return Math.sqrt(yawErr * yawErr + pe * pe);
   }
@@ -590,8 +605,8 @@
       aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0;
       aim.hip = !!(p.alive && !p.inVehicle && !w.melee && !w.cone && p.weapon !== 'fist');
       if (aim.hip) {
-        // the hip crosshair: a dot where the screen centre rests (the UI draws it; the shot itself uses hipContext)
-        var hp = cameraAimPoint(p, range); aim.hover = hp.entity || null; aim.range = hp.dist || 0;
+        // the hip crosshair: a dot where a hip shot would go (the UI draws it from hud().crosshair)
+        var hp = hipPoint(p, w, range); aim.hover = hp.entity || null; aim.range = hp.dist || 0;
         aim.screen = Rd && Rd.worldToScreen ? Rd.worldToScreen(hp.x, hp.y, hp.z) : null;
       } else { aim.hover = null; aim.screen = null; }
       decayAimPitch(p, dt);
@@ -633,13 +648,12 @@
     }
     p.lockTarget = aim.target = cur;
     var pt, cp = cameraAimPoint(p, range);
-    // the shot goes where the screen centre rests: a ray on a ped's zone aims at that zone's centre; a lock pulls the shot onto
+    // the shot goes where the screen centre rests (aimed shots travel the camera's line, see hitscan); a lock pulls the shot onto
     // itself only when the crosshair is within 3° of it and rests on nothing else
-    if (cp.entity && (cp.entity.kind === 'ped' || cp.entity.kind === 'player') && cp.zone) cp = zonePoint(cp.entity, cp.zone, cp.dist);
     pt = cp;
     if (cur && cp.entity !== cur && cr && !(cp.entity && cp.entity !== cur)) {
       var cx = chestY(cur);
-      if (rayAngleTo(cr, cur.x, cx, cur.z) < 3 * DEG || aim.snapT <= 0.3) pt = { x: cur.x, y: cx, z: cur.z, entity: cur, zone: 'torso', dist: U.dist2d(p.x, p.z, cur.x, cur.z) };
+      if (rayAngleTo(cr, cur.x, cx, cur.z) < (p.inVehicle ? 8 : 3) * DEG || aim.snapT <= 0.3) pt = { x: cur.x, y: cx, z: cur.z, entity: cur, zone: 'torso', dist: U.dist2d(p.x, p.z, cur.x, cur.z) };
     }
     aim.point = pt; aim.hover = pt.entity || null; aim.zone = pt.entity ? pt.zone : null; aim.range = pt.dist || 0;
     aim.inRange = U.dist2d(p.x, p.z, pt.x, pt.z) <= w.range + 0.5;
@@ -833,9 +847,7 @@
           ped.aimYaw = U.dirToYaw(target.x - ped.x, target.z - ped.z);
         } else {
           ped.aimYaw = cyw;
-          var cp = cameraAimPoint(ped, Math.max(w.range, 8));
-          if (cp.dist > 6 || cp.entity) pt = { x: cp.x, y: cp.y, z: cp.z };
-          else pt = { x: ped.x + cfd.x * w.range, y: ped.y + 1.3, z: ped.z + cfd.z * w.range };   // the camera looks at the ground right ahead: shoot level
+          var hp2 = hipPoint(ped, w, Math.max(w.range, 8)); pt = { x: hp2.x, y: hp2.y, z: hp2.z };
         }
         ped.yaw = ped.aimYaw;
         o = muzzle(ped, id);
@@ -937,9 +949,21 @@
     if (isPlayer) muzzleLight(o, ctx.dir, w);
     // a player in cover is safe from shots that come from the far side of it (flanking works); a peek exposes them
     var shield = !isPlayer && ctx.target && ctx.target.kind === 'player' ? coverShield(ctx.target, ped) : null;
+    // an aimed shot travels down the camera's sight line (from level with the muzzle), so what the crosshair sees is what it hits:
+    // no parallax between the eye over the shoulder and the gun below it; the tracer still leaves the gun
+    var so = o, sdir = ctx.dir;
+    if (isPlayer && ped.aiming && !ped.inVehicle && ctx.point) {
+      var cr = cameraRay();
+      if (cr) {
+        var t0 = Math.max(0, (o.x - cr.o.x) * cr.d.x + (o.y - cr.o.y) * cr.d.y + (o.z - cr.o.z) * cr.d.z);
+        so = { x: cr.o.x + cr.d.x * t0, y: cr.o.y + cr.d.y * t0, z: cr.o.z + cr.d.z * t0 };
+        var sx = ctx.point.x - so.x, sy = ctx.point.y - so.y, sz = ctx.point.z - so.z, sl = Math.sqrt(sx * sx + sy * sy + sz * sz);
+        if (sl > 0.5) sdir = { x: sx / sl, y: sy / sl, z: sz / sl }; else so = o;
+      }
+    }
     for (var k = 0; k < pellets; k++) {
-      var d = jitter(ctx.dir, spread);
-      var hit = trace(o, d, range, ped, traceOut);
+      var d = jitter(sdir, spread);
+      var hit = trace(so, d, range, ped, traceOut);
       if (shield && hit.entity === ctx.target) {
         hit.entity = null; hit.x = shield.x; hit.y = Math.min(hit.y, shield.y); hit.z = shield.z; hit.t = U.dist2d(o.x, o.z, shield.x, shield.z);
         tracer(o, d, hit, id); impactFx(hit, 'cover'); continue;
@@ -1012,9 +1036,12 @@
     var dx = pt.x - o.x, dz = pt.z - o.z, dist = Math.sqrt(dx * dx + dz * dz) || 1;
     var hx = dx / dist, hz = dz / dist;
     dist = U.clamp(dist, 2.5, w.range);
-    var g = C.PHYS.gravity, s = w.speed, arg = g * dist / (s * s);
-    var ang = arg >= 1 ? Math.PI / 4 : 0.5 * Math.asin(arg);
-    ang += 0.06;   // a touch of loft so it clears the hand
+    // the low arc that lands on the aim point from the hand's height (a target: at its feet)
+    var g = C.PHYS.gravity, s = w.speed, s2 = s * s;
+    var landY = ctx.target && ctx.target.kind !== 'vehicle' && ctx.target.kind !== 'heli' ? Math.max(W().heightAt(pt.x, pt.z, pt.y), pt.y - 1.2) : pt.y;
+    var dy = landY - (o.y + 0.15), disc = s2 * s2 - g * (g * dist * dist + 2 * dy * s2);
+    var ang = disc >= 0 ? Math.atan((s2 - Math.sqrt(disc)) / (g * dist)) : Math.PI / 4;
+    ang += 0.02;   // a touch of loft so it clears the hand
     var opts = { x: o.x + hx * 0.3, y: o.y + 0.15, z: o.z + hz * 0.3, owner: ped, weaponId: id, dmg: w.dmg, life: 4, lobbed: true, stun: w.stun, radius: 0.2 };
     var pr;
     if (w.fuse || w.smoke || w.splash || w.stick) { opts.life = 14; opts.fuse = fuse != null ? fuse : (w.fuse || 0); opts.radius = 0.16; pr = new HotMic(opts); }
@@ -1485,7 +1512,7 @@
     ck.t += dt; p.firePoseT = Math.max(p.firePoseT || 0, 0.3);
     if (ck.t >= w.fuse) {
       // it was on the whole time
-      p._cook = null; p._cookLock = true; p._fireT = simT();
+      p._cook = null; p._cookLock = true; p._fireT = simT(); p._fireRate = w.rate;
       var pr = new HotMic({ x: p.x, y: p.y + 1.2, z: p.z, owner: p, weaponId: ck.id, dmg: w.dmg, life: 1, fuse: 0.01, radius: 0.16 });
       pr.snap(); E().add(pr);
       spend(p, ck.id);
@@ -1495,7 +1522,7 @@
       p._cook = null;
       if (p.knockedDown) return;
       var ctx = aimContext(p, w, ck.id);
-      if (lob(p, w, ck.id, ctx, Math.max(0.25, w.fuse - ck.t))) { p._fireT = simT(); spend(p, ck.id); }
+      if (lob(p, w, ck.id, ctx, Math.max(0.25, w.fuse - ck.t))) { p._fireT = simT(); p._fireRate = w.rate; spend(p, ck.id); }
     }
   }
   // spend one round of the player's weapon (the magazine for guns, the reserve for the rest)
@@ -1881,11 +1908,11 @@
     else if (ms.type === 'counter') { var hk = Math.sin(Math.PI * k); parts.armR.rotation.set(1.3 * hk + 0.3, 0, -0.5 + 1.1 * hk); }
     else { var pk = Math.sin(Math.PI * k); if (ms.combo === 1) { parts.armL.rotation.set(0.4 + 1.3 * pk, 0, 0.2); } else parts.armR.rotation.set(0.4 + 1.35 * pk, 0, ms.combo === 2 ? -0.1 - 0.7 * pk : -0.1); }
   }
-  var _hf = {}, _hfL = {}, _pt = {}, _pt2 = {};
-  function postSync(e) {
-    if (e.kind !== 'ped' && e.kind !== 'player') return;
-    var m = e.mesh; if (!m) return;
-    if (!m.visible) { if (e._hands) e._hands.valid = false; return; }
+  var _hf = {}, _pt = {}, _pt2 = {};
+  // the held weapon's mesh and the holstered ones, made or swapped when the weapon or its mods change (also run from the update, so
+  // the meshes exist without a render); returns the held id
+  function ensureHeld(e) {
+    var m = e.mesh; if (!m) return null;
     var heldId = wantHeld(e), mods = heldId ? modsOf(e, heldId) : null, sig = heldId ? heldId + '|' + modsKey(mods) : null;
     if (e._heldSig !== sig) {
       if (e._held) { if (e._held.parent) e._held.parent.remove(e._held); e._held = null; }
@@ -1894,6 +1921,13 @@
     }
     var hol = holsterIds(e, heldId);
     syncHolster(e, m, 0, hol[0]); syncHolster(e, m, 1, hol[1]);
+    return heldId;
+  }
+  function postSync(e) {
+    if (e.kind !== 'ped' && e.kind !== 'player') return;
+    var m = e.mesh; if (!m) return;
+    if (!m.visible) { if (e._hands) e._hands.valid = false; return; }
+    var heldId = ensureHeld(e);
     var parts = partsOf(e, m), anim = !!GTP.Anim;
     m.updateMatrixWorld(true);
     var hands = e._hands || (e._hands = { valid: false, right: { x: 0, y: 0, z: 0 }, left: { x: 0, y: 0, z: 0 }, leftOn: false, raised: false });
@@ -1946,6 +1980,8 @@
       var s = holdScale(heldId) * ((e.look && e.look.scale) || 1);
       placeWorld(held, m, hf.x, hf.y, hf.z, X, Y, Z, s);
       hands.right.x = hf.x; hands.right.y = hf.y; hands.right.z = hf.z;
+      // a two-handed melee weapon: the left hand just below the right on the handle
+      if (fit.melee && holdOf(heldId) === 'two' && parts.armL) { framePoint({ gx: hf.x, gy: hf.y, gz: hf.z, X: X, Y: Y, Z: Z, s: s }, [-0.1, 0, 0], _pt2); hands.left.x = _pt2.x; hands.left.y = _pt2.y; hands.left.z = _pt2.z; hands.leftOn = true; if (!anim) reach(parts.armL, _pt2.x, _pt2.y, _pt2.z); }
       if (e.reloadT > 0 && fit.mag && !anim && parts.armL) { framePoint({ gx: hf.x, gy: hf.y, gz: hf.z, X: X, Y: Y, Z: Z, s: s }, fit.mag, _pt2); reach(parts.armL, _pt2.x, _pt2.y, _pt2.z); hands.left.x = _pt2.x; hands.left.y = _pt2.y; hands.left.z = _pt2.z; hands.leftOn = true; }
     }
     hands.raised = raised; hands.valid = true;
@@ -1975,10 +2011,10 @@
       void sc;
     }
     if (e._holB) {
-      var hb = e._holB, fit = fitOf(e._holBId ? e._holBId.split('|')[0] : null) || { len: 0.8, muzzle: [0.6, 0, 0] };
-      var X = norm3([-0.55, 0.83, 0]), Z = [0, 0, 1], Y = cross3(Z, X), off = (fit.muzzle[0] || 0.5) * 0.45 * s;
+      var hb = e._holB, bb = hb.geometry && (hb.geometry.boundingBox || (hb.geometry.computeBoundingBox(), hb.geometry.boundingBox));
+      var X = norm3([-0.5, 0.866, 0]), Z = [0, 0, 1], Y = cross3(Z, X), off = bb ? (bb.min.x + bb.max.x) * 0.5 * s : 0.2;
       // the middle of the gun on the middle of the back: the grip low on the right, the muzzle over the left shoulder
-      hb.position.set(-X[0] * off, 1.18 - X[1] * off, 0.17); hb.scale.setScalar(s);
+      hb.position.set(-X[0] * off, 1.22 - X[1] * off, 0.17); hb.scale.setScalar(s);
       vscratch().m.makeBasis(V.a.set(X[0], X[1], X[2]), V.b.set(Y[0], Y[1], Y[2]), V.c.set(Z[0], Z[1], Z[2])); hb.quaternion.setFromRotationMatrix(V.m);
     }
   }
@@ -2390,7 +2426,7 @@
       if (w.melee) { p.weapons[id] = Infinity; msg = w.name; }
       else {
         var got = giveAmmo(p, id, n, true);
-        if (!(got > 0) && had) return false;   // full: the crate stays for later
+        if (!(got > 0) && had) return 'skip';   // full: the crate stays for later
         msg = w.name + ' +' + got;
       }
       if (pk.label) msg += ' (' + pk.label + ')';
@@ -2480,6 +2516,7 @@
       if (e.kind === 'ped' || e.kind === 'player') {
         if (e.kind === 'ped' && !e._armed && isCopRole(e)) armCop(e);
         if (e._melee) tickMelee(e, dt);
+        if (e.mesh && (e.kind === 'player' || e._held || e.weapon !== 'fist')) ensureHeld(e);
         if (e.mesh && !e.alive && e.kind === 'ped' && !e.persistent) {
           // the fade: sink and shrink into the pavement over the last 1.5 s
           var k = (e.corpseT - (cs - 1.5)) / 1.5;
@@ -3023,8 +3060,9 @@
         startMelee(ped, id, 'ai', 0, tgt);
         return true;
       }
-      // the cadence comes first, the hot mic's cook too (QA CMB-03)
-      if (ped._fireT != null && now - ped._fireT < 1 / w.rate - 1e-6) return false;
+      // the cadence comes first, the hot mic's cook too (QA CMB-03); it belongs to the weapon that fired last (a switch does not
+      // inherit a slow weapon's wait)
+      if (ped._fireT != null && now - ped._fireT < 1 / Math.max(ped._fireRate || 0, w.rate) - 1e-6) return false;
       if (isPlayer && w.cook && ped.weapons[id] > 0) { if (!ped._cook && !ped._cookLock) { startCook(ped, id); ped._cookLock = true; } return false; }   // the mic cooks until the trigger is released
       if (isPlayer && w.spinUp && (ped._spin || 0) < 1) return false;   // the minigun spins up first
       if (isPlayer && !w.melee) {
@@ -3037,7 +3075,7 @@
         }
         if (ped.reloadT > 0) { if (w.shellReload && a.mag > 0) cancelReload(ped); else return false; }   // a pump interrupts its own shell-by-shell reload
       }
-      ped._fireT = now; ped._shotAge = 0;
+      ped._fireT = now; ped._fireRate = w.rate; ped._shotAge = 0;
       var ctx = aimContext(ped, w, id), fired;
       if (w.cone) fired = megaphone(ped, w, ctx);
       else if (w.rocket) fired = launch(ped, w, id, ctx);
