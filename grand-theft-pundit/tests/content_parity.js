@@ -268,6 +268,18 @@ function objective(o, where) {
   if (o.type === 'heist_board') ok(P.heists[o.heist], where + ': heist ' + o.heist);
   if (o.type === 'escape_wanted') ok(o.setWanted >= 1 && o.setWanted <= 5, where + ': wanted 1..5');
 }
+// QA-C1-10: a goto never completes from a car, so a goto right after a vehicle objective must tell the player to get out
+function onFootLegs(objs, where) {
+  for (let i = 1; i < objs.length; i++) {
+    const prev = objs[i - 1], o = objs[i];
+    if (o.type === 'goto' && ['drive_to', 'enter_vehicle'].indexOf(prev.type) >= 0) ok(/get out|on foot|walk/i.test(o.text), where + ' obj ' + i + ': goto after ' + prev.type + ' says to get out: ' + o.text);
+  }
+}
+// a mission that drives a tagged vehicle fails cleanly when it is lost (drive_to waits forever otherwise)
+function tagsCovered(m, objs, where) {
+  const s = JSON.stringify(objs);
+  for (const mt of s.match(/"vehicle":"spawned:[a-z_]+"/g) || []) { const tag = mt.split(':')[2].replace('"', ''); ok(m.failOn.indexOf('vehicle_lost:' + tag) >= 0, where + ': failOn covers vehicle_lost:' + tag); }
+}
 ok(P.missions.length === 10, 'ten new story missions');
 ok(NEW_IDS.every((id) => P.missionById(id)), 'every planned new mission id exists: ' + NEW_IDS.join(','));
 for (const m of P.missions) {
@@ -283,7 +295,8 @@ for (const m of P.missions) {
   ok(m.intro.some((l) => l.who === 'player') && m.outro.some((l) => l.who === 'player'), where + ': Bryce speaks in intro and outro');
   m.objectives.forEach((o, i) => objective(o, where + ' obj ' + i));
   ok(Array.isArray(m.failOn) && m.failOn.indexOf('player_dead') >= 0, where + ': failOn includes player_dead');
-  for (const f of m.failOn) { const tag = f.split(':')[1]; if (f.indexOf('vehicle_lost:') === 0) ok(JSON.stringify(m.objectives).indexOf('"tag":"' + tag + '"') >= 0, where + ': ' + f + ' names a spawned tag'); }
+  onFootLegs(m.objectives, where); tagsCovered(m, m.objectives, where);
+  for (const f of m.failOn) { const tag = f.split(':')[1]; if (f.indexOf('vehicle_lost:') === 0) ok(JSON.stringify([m.objectives].concat(m.heist ? Object.values(P.heists[m.heist].variants).map((v) => v[m.id] || []) : [])).indexOf('"tag":"' + tag + '"') >= 0, where + ': ' + f + ' names a spawned tag'); }
   const oc = m.onComplete || {};
   if (oc.unlockWeapon) ok(WIDS.has(oc.unlockWeapon), where + ': unlockWeapon ' + oc.unlockWeapon);
   if (oc.setFlag) ok(/^[a-z_]+$/.test(oc.setFlag), where + ': setFlag');
@@ -362,6 +375,7 @@ for (const a of H.approaches) {
     const objs = P.heistObjectives('hedge_job', mid, a.id);
     ok(Array.isArray(objs) && objs.length >= 3, 'approach ' + a.id + ' has objectives for ' + mid);
     (objs || []).forEach((o, i) => objective(o, 'heist ' + a.id + ' ' + mid + ' obj ' + i));
+    onFootLegs(objs || [], 'heist ' + a.id + ' ' + mid); tagsCovered(P.missionById(mid), objs || [], 'heist ' + a.id + ' ' + mid);
   }
 }
 const worst = Math.min(...H.approaches.map((a) => a.payoutMul)) * 0.6 * (1 - 0.2 - 0.12 - 0.15);

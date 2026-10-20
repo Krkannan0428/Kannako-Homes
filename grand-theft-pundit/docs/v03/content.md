@@ -145,8 +145,20 @@ Playwright is present and checks the 35 missions and 10 new intro cutscenes are 
   (now 35) and `tests/saves.js` expects the next light after m01_van to be m01b (now m01c_both_sides);
   `tests/campaign.js` compares `expansion.chain` with its own 25-id ORDER and walks missions that now need the v0.3
   objective types. `tests/cutscenes.js` and `tests/strands.js` stay green.
-- Until the story track registers `interior`, `range`, `buy`, `boss` and `heist_board`, the new missions cannot be
-  completed in the game; the chain therefore stops at m01c on this branch alone.
+- Until the story track registers `interior`, `range`, `buy`, `boss` and `heist_board`, 09_'s `beginObjective`
+  skips each unknown type with a `GTP.errors` entry (no throw, no stall): m01c plays as goto, equip, dialogue; boss
+  missions skip the fight; h01 skips the board. Campaign runs that reach them fail their "no GTP.errors" assert.
+  Nothing reads `mission.heist` / `heists.hedge_job.variants` yet, so h02/h03 always run the quiet list.
+- **Dependency on the shooting track:** `onComplete.unlockWeapon` names 8 new ids (golf_club, mic_stand, carbine,
+  sticky, spin_smoke, lmg, auto_shotgun, minigun). They only work once `parity.weapons` is merged into
+  `Combat.WEAPONS`. Before that, 09_'s applyComplete gives 30 "rounds" of an id `Combat.fire` refuses, selects it,
+  and toasts the raw id. I kept the grants (they are the point of the reward) rather than drop them. Integration
+  must merge the weapons before these missions can be played.
+- Runtime review fixes already in the data: h02/h03 `failOn` cover every tagged vehicle a variant drives (drive_to
+  never fails on a lost vehicle by itself); no `goto` follows a vehicle leg without telling the player to get out
+  (QA-C1-10); Goldplate's b01 call-down is a `radio` line. The test enforces both rules. h03's `enter_vehicle newsvan`
+  spawns a fresh van, because h02's van is no longer persistent after cleanup. That is harmless, but two vans with
+  the same tag can be on screen.
 - QA bugs whose hints point at 24_ beyond the `requires` arrays (QA-STR-05 passenger `name`, QA-STR-13 memo offsets,
   QA-C1-04 intro shot-2 camera `z` sign in buildIntro, QA-C1-06 m12b courier sightlines, QA-C1-12 cs_ending_b
   from-point) are outside what I may edit; the intros I add go through the same builder and inherit QA-C1-04's

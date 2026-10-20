@@ -633,7 +633,7 @@
         { who: 'sloane', text: "He renamed the show. Now he's flying the new name over the city. On a ribbon. Behind a gold helicopter." },
         { who: 'player', text: "He has a helicopter?" },
         { who: 'sloane', text: "He has one. The roof sign says two. That's why the ticker says both." },
-        { who: 'goldplate', text: "Takesworth! Look up! THE GOLDPLATE HOUR WITH GOLDPLATE. The ribbon's a ten. The helicopter's a ten. You're a guest." },
+        { who: 'goldplate', radio: true, text: "Takesworth! Look up! THE GOLDPLATE HOUR WITH GOLDPLATE. The ribbon's a ten. The helicopter's a ten. You're a guest." },
         { who: 'gus', text: "The ribbon's on four spools under the skids. Shoot the spools. I'm sound, but even I can hear that's physics." }
       ],
       objectives: [
@@ -765,7 +765,7 @@
           { who: 'gus', text: "Cameras on the corners. Guards on the hour. The vault door is a hedge. A literal hedge. Behind it, a door." },
           { who: 'kip', text: "The guards are interns. They don't get paid either. We have a union. It's me." }
         ] },
-        { type: 'goto', target: { landmark: 'pod_garage' }, radius: 48, text: 'Back to the van. The board is in the van' },
+        { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'any', text: 'Back to the garage. The board is in the van' },
         { type: 'heist_board', heist: 'hedge_job', text: 'Pick an approach and a crew on the planning board' }
       ],
       outro: [
@@ -801,7 +801,7 @@
         { who: 'sloane', text: "Nobody's sure. Sure is for anchors." },
         { who: 'kip', text: "I laminated the plan. Is this paid?" }
       ],
-      failOn: ['player_dead', 'vehicle_lost:newsvan'],
+      failOn: ['player_dead', 'vehicle_lost:newsvan', 'vehicle_lost:hedgetruck', 'vehicle_lost:drillvan'],
       onComplete: { unlockWeapon: 'spin_smoke', setFlag: 'heist_prepped' }
     },
 
@@ -817,7 +817,7 @@
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'van', tag: 'newsvan', at: { landmark: 'pod_garage' }, color: '#c94040' }, text: 'Get in the news van' },
         { type: 'drive_to', target: { landmark: 'vault_bank' }, vehicle: 'spawned:newsvan', text: "Drive to Vaultwright Capital. You're live in two minutes" },
-        { type: 'goto', target: { landmark: 'vault_bank' }, radius: 32, text: "Walk in with the camera crew. Smile. You're on" },
+        { type: 'goto', target: { landmark: 'vault_bank' }, radius: 32, text: "Park, get out and walk in with the camera crew. Smile. You're on" },
         { type: 'timer_wrap', seconds: 120, objectives: [
           { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'vault_bank' }, radius: 90, label: ['THE CONTRACT', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE'] }, text: 'Grab the contract and the hedge cash before the segment ends' }
         ] },
@@ -835,7 +835,7 @@
         { who: 'vaultwright', text: "I'm whispering *hedged*. The contract was always worth less than the cash. Keep both. I shorted you." },
         { who: 'kip', text: "I countersigned it. Thursday's tomorrow. Is this paid?" }
       ],
-      failOn: ['player_dead'],
+      failOn: ['player_dead', 'vehicle_lost:newsvan', 'vehicle_lost:hedgetruck'],
       onComplete: { unlockWeapon: 'lmg', setFlag: 'heist_done' }
     },
 
@@ -947,13 +947,14 @@
         },
         both_sides: {
           h02_prep: [
-            { type: 'goto', target: { landmark: 'protest_plaza' }, radius: 48, text: 'Get to Perpetual Assembly Plaza' },
+            { type: 'drive_to', target: { landmark: 'protest_plaza' }, vehicle: 'any', text: 'Get to Perpetual Assembly Plaza' },
             { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'protest_plaza' }, radius: 160, label: 'BOTH-SIDED SIGN' }, text: 'Collect six protest signs. Both sides of each' },
             { type: 'enter_vehicle', spawn: { type: 'van', tag: 'drillvan', at: { landmark: 'warehouse_42' }, color: '#7fbf6a' }, text: "Take the drill van from Warehouse 42" },
             { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'spawned:drillvan', text: "Park the drill van at Gus's Garage" }
           ],
           h03_job: [
-            { type: 'goto', target: { landmark: 'vault_bank' }, radius: 64, text: 'Get to Vaultwright Capital and start the protest' },
+            { type: 'drive_to', target: { landmark: 'vault_bank' }, vehicle: 'any', text: 'Get to Vaultwright Capital' },
+            { type: 'goto', target: { landmark: 'vault_bank' }, radius: 64, text: 'Get out on foot and start the protest' },
             { type: 'survive', seconds: 45, waves: { protester: 6, thug: 3 }, text: 'Hold the protest, both sides of it, while Gus drills' },
             { type: 'timer_wrap', seconds: 100, objectives: [
               { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'vault_bank' }, radius: 90, label: ['THE CONTRACT', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE'] }, text: 'Through the drill hole: grab the contract and the hedge cash' }
@@ -1067,7 +1068,7 @@
     b01_goldplate: { camA: [-16, 10, 14], camB: [-5, 3, 5], split: 3, tilt: 0.5, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane', note: 'camA tilts up the tower; the gold helicopter and its ribbon cross the sky' },
     b02_velvetine: { camA: [-10, 5, -9], camB: [-3, 2, -3], split: 3, extras: [{ castId: 'velvetine', at: [6, -8], anim: 'talk' }], look: 'velvetine', note: 'the yacht behind, forty silent speakers on deck' },
     b03_warbanner: { camA: [9, 5, 9], camB: [3, 2, 4], split: 3, extras: [{ castId: 'warbanner', at: [-3, 1], anim: 'talk' }, { castId: 'sloane', at: [4, 3] }], look: 'warbanner', note: 'two embassy flags; scooters idling on the kerb' },
-    b04_redacted: { camA: [8, 6, 8], camB: [3, 2, 3], split: 2, tilt: 0.6, extras: [{ castId: 'redacted', at: [-2.6, 1.4], anim: 'idle' }, { castId: 'gus', at: [3.6, 3] }], look: 'redacted', noKip: true, note: "kip's line is from inside the balloon (portrait only); the balloon of Bryce's face fills the sky" },
+    b04_redacted: { camA: [8, 6, 8], camB: [3, 2, 3], split: 2, tilt: 0.6, extras: [{ castId: 'redacted', at: [-2.6, 1.4], anim: 'idle' }, { castId: 'gus', at: [3.6, 3] }], look: 'redacted', note: "Kip waves from the balloon's basket at the door; the balloon of Bryce's face fills the sky" },
     h01_casing: { camA: [9, 4, 9], camB: [4, 2, 4], split: 3, extras: [{ castId: 'sloane', at: [2, 3] }], look: 'gus', note: 'the planning board leans on the van' },
     h02_prep: { camA: [-9, 4, 8], camB: [-3, 2, 4], split: 2, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane' },
     h03_job: { camA: [10, 5, 10], camB: [4, 2, 4], split: 2, extras: [{ castId: 'sloane', at: [2, 3] }, { castId: 'kip', at: [3, 2], anim: 'wave' }], look: 'gus', note: 'the crew lined up in front of the bay' },
