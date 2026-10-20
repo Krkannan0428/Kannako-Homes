@@ -13,6 +13,11 @@
  *   zone   : district index + 1
  *   bidx   : building index + 1 for BUILDING tiles
  *   roadId : road segment index + 1 (street names)
+ *
+ * v0.3 (PLAN_V03 "world"): GTP.Content.world.places claim filler buildings as shops and safehouses (World._adoptPlaces),
+ * World.doors lists their door markers (GTP.AI.doors runs them), World.helipads / aircraft / boatSlips are the spawn
+ * points for the vehicles track (World.vehicleSpots), World.golf the nine holes, World.route(ax, az, bx, bz) the GPS
+ * line, World.stuntCorridors the cleared stunt-jump lines.
  */
 (function () {
   'use strict';
@@ -41,6 +46,8 @@
     tiles: null, deck: null, meta: null, dmeta: null, laneH: null, laneV: null, dlaneH: null, dlaneV: null,
     rampY: null, zone: null, bidx: null, roadId: null,
     districts: [], landmarks: [], buildings: [], props: [], ramps: [], piers: [], roads: [], lots: [], stuntRamps: [], parks: [], promenades: [],
+    // v0.3: door markers, helipads, the aircraft apron, boat slips, the golf course, the stunt corridors (see the v0.3 section)
+    doors: [], helipads: [], aircraft: [], boatSlips: [], golf: null, stuntCorridors: [], _noPark: null, _routeCache: [],
     bounds: { x0: 0, z0: 0, x1: 0, z1: 0 },
     loopName: 'The Loop', lowerLoopName: 'The Lower Loop', generateMs: 0,
     _seed: null, _lm: {}, _roadTiles: [], _sidewalkTiles: [], _propGrid: null, _propTile: null, _wedges: null, _wedgeTile: null, _stamp: 1,
@@ -746,6 +753,15 @@
 
       // 9. street furniture and greenery
       World._furnish(styleAt, parkTile, seed, R);
+      // 9b. v0.3 (PLAN_V03 "world"): shops and safehouses claim filler buildings (no RNG draws, so the city stays as it
+      //     was), helipads, the aircraft apron, the nine golf holes. Their own stream, never the city's.
+      World._noPark = new Uint8Array(N);
+      World.helipads = []; World.aircraft = []; World.boatSlips = []; World.doors = []; World.golf = null; World.stuntCorridors = []; World._routeCache = [];
+      var Rv = GTP.makeRng((U.hash('world:v03') ^ seed) >>> 0);
+      World._adoptPlaces(CW.places || [], Rv, parkTile);
+      World._placeHelipads(CW.helipads || []);
+      World._placeAircraft(CW.aircraft || []);
+      World._placeGolf(CW.golf || null);
 
       // 10. doors, named points, stunt ramps, tile lists, building index, prop grid
       World.landmarks.forEach(function (lmk) {
@@ -754,6 +770,9 @@
         for (var pn in pts) lmk.points[pn] = World._doorAt(pts[pn].tx, pts[pn].tz);
       });
       World._placeStuntRamps(CW.stuntRamps || []);
+      World._clearStuntCorridors();
+      World._placeBoatSlips(CW.boatSlips || []);
+      World._buildDoors();
       World._roadTiles = []; World._sidewalkTiles = [];
       for (var i2 = 0; i2 < N; i2++) {
         if (tiles[i2] === T.ROAD && !((meta[i2] & M.H) && (meta[i2] & M.V)) && !(meta[i2] & M.DEAD)) World._roadTiles.push(i2);
@@ -795,8 +814,10 @@
       }
       defs.forEach(function (d) {
         var pos = resolve(d.at), land = resolve(d.landing); if (!pos) return;
-        var yHint = d.at && d.at.y != null ? d.at.y : 0;
-        var y = World.heightAt(pos.x, pos.z, yHint), yaw = HEADING_YAW[d.heading] || 0, f = U.yawToDir(yaw);
+        var yHint = d.at && d.at.y != null ? d.at.y : 0, yaw = HEADING_YAW[d.heading] || 0, f = U.yawToDir(yaw);
+        // the wedge's base is the run-up surface under its back edge (a road-to-kerb wedge whose base sat on the 0.12 m
+        // kerb lifted the car 0.5 m and dropped it: QA-STR-03 sj_10)
+        var y = World.heightAt(pos.x - f.x * STUNT_LEN * 0.45, pos.z - f.z * STUNT_LEN * 0.45, yHint);
         var p = World._prop({ kind: 'ramp_prop', x: pos.x, z: pos.z, y: y, rot: yaw, solid: false, h: STUNT_H, len: STUNT_LEN, w: STUNT_W, fx: f.x, fz: f.z, stunt: d.id });
         var rec = { id: d.id, name: d.name, x: pos.x, z: pos.z, y: y, yaw: yaw, heading: d.heading, landing: land ? { x: land.x, z: land.z } : null, minAir: d.minAir || 1, prop: p };
         World.stuntRamps.push(rec);
@@ -981,7 +1002,7 @@
           } else if (def.bandstand) {
             // Old Money Common: paths, an octagonal bandstand that has never hosted a band, a fountain, the WELL, ACTUALLY statue
             paths(true, true);
-            P({ kind: 'gazebo', x: cxm, z: czm, rot: 0, r: 4.2, solid: true, h: 6 });
+            P({ kind: 'gazebo', x: cxm, z: lz + Math.min(26, ld * 0.33), rot: 0, r: 4.2, solid: true, h: 6 });   // north of the Well, Actually jump's line
             P({ kind: 'fountain', x: cxm, z: lz + 12, rot: 0, r: 0, solid: false, h: 1 });
             P({ kind: 'statue', x: cxm, z: lz + ld - 12, rot: 0, r: 0.9, solid: true, h: 4 });
             P({ kind: 'sign', text: 'WELL, ACTUALLY', x: cxm, z: lz + ld - 12 + 1.3, y: 0.9, rot: Math.PI, w: 2.4, h: 0.6, solid: false });
@@ -989,12 +1010,8 @@
             for (k = 0; k < 8; k++) P({ kind: 'bench', x: cxm + ((k % 2) ? 6 : -6), z: lz + 10 + k * (ld - 20) / 7, rot: (k % 2) ? -Math.PI / 2 : Math.PI / 2, r: 0.7, solid: true, h: 0.9 });
             if (def.sign) P({ kind: 'sign', text: def.sign, x: lx + 0.9, z: czm, y: 1.5, rot: Math.PI / 2, w: 5, h: 0.9, standing: true, solid: false });
           } else if (lmk.id === 'goldplate_links') {
-            // mown stripes, five par-ten holes with flags, two bunkers, a sign
+            // mown stripes, two bunkers, a sign; the nine holes' tees and pins come from World._placeGolf (v0.3)
             interior(function (xx, zz, ii) { if (tiles[ii] === T.GRASS) meta[ii] |= M.LAWN; });
-            for (k = 0; k < 5; k++) {
-              z = lz + TILE * 3 + k * (ld - 6 * TILE) / 4; x = cxm + ((k % 2) ? 8 : -8);
-              P({ kind: 'flag', x: x, z: z, rot: 0, r: 0.2, solid: true, h: 3, color: '#e8b53a' });
-            }
             [[lot.x + 2, lot.z + 10], [lot.x + 6, lot.z + 30]].forEach(function (c) {
               for (var dz = 0; dz < 2; dz++) for (var dx = 0; dx < 2; dx++) { i = (c[1] + dz) * w + c[0] + dx; if (tiles[i] === T.GRASS) { tiles[i] = T.SAND; meta[i] &= ~M.LAWN; } }
             });
@@ -1043,8 +1060,11 @@
             }
             World.piers.push({ tx: px, tz: shoreZ, tw: 2, len: len });
             for (var bz2 = 1; bz2 < len - 1; bz2 += 3) {
-              var sd = (bz2 % 2) ? 1 : -1;
-              P({ kind: 'boat', x: (px + 1 + sd * 2.6) * TILE, z: (shoreZ + bz2 + 1) * TILE, y: WATER_Y + 0.35, rot: sd > 0 ? 0 : Math.PI, r: 1.8, solid: true, h: 2.2, color: R.pick(['#f4f4f4', '#e8e2c8', '#2b4c7e', '#c94040', '#f0c050']) });
+              var sd = (bz2 % 2) ? 1 : -1, bcol = R.pick(['#f4f4f4', '#e8e2c8', '#2b4c7e', '#c94040', '#f0c050']);
+              var bxm = (px + 1 + sd * 2.6) * TILE, bzm = (shoreZ + bz2 + 1) * TILE;
+              // only on open water: the Sponsor Span runs past the second pier, and two boats used to sit in its lanes
+              // (a 1.8 m collision circle on the bridge deck). The colour is drawn either way so the stream stays put.
+              if (World.tileAt(bxm, bzm) === T.WATER) P({ kind: 'boat', x: bxm, z: bzm, y: WATER_Y + 0.35, rot: sd > 0 ? 0 : Math.PI, r: 1.8, solid: true, h: 2.2, color: bcol });
               P({ kind: 'bollard', x: (px + 2) * TILE - 0.4, z: (shoreZ + bz2 + 0.5) * TILE, r: 0.2, solid: true, h: 0.7 });
             }
           }
@@ -1097,7 +1117,7 @@
           if (b) {
             // the hedge maze (also a hedge) and a pool
             var mx = b.x + b.w + 4, mz = b.z;
-            for (k = 0; k < 5; k++) P({ kind: 'hedge', x: mx + k * 2.4, z: mz + b.d / 2 + ((k % 2) ? 1.5 : -1.5), rot: 0, r: 1, solid: true, h: 1.8, sx: 1, sz: b.d - 3 - ((k % 2) ? 3 : 0) });
+            for (k = 0; k < 5; k++) P({ kind: 'hedge', x: mx + k * 2.4, z: mz + b.d / 2 + ((k % 2) ? 1.5 : -1.5), rot: 0, r: 1, solid: true, h: 1.8, sx: 1, sz: b.d - 3 - ((k % 2) ? 3 : 0), jumpOver: 'sj_05' });   // the Hedge Fund jump clears the maze
             P({ kind: 'pool', x: b.cx, z: b.z + b.d + 5, rot: 0, r: 0, solid: false, h: 0.1, w: 9, d: 5 });
             for (k = 0; k < 8; k++) P({ kind: 'tree', x: lx + TILE * 1.5 + R.random() * (lw - 3 * TILE), z: lz + TILE * 1.5 + R.random() * (ld - 3 * TILE), r: 0.5, solid: true, scale: R.range(0.9, 1.4), h: 7 });
             P({ kind: 'hedge', x: b.x - 2, z: b.cz, rot: 0, r: 1, solid: true, h: 1.2, sx: 1, sz: b.d + 2 });
@@ -1196,7 +1216,9 @@
             P({ kind: 'pallet', x: b.x - 2.5, z: b.z + b.d - 2, rot: 0.3, r: 0.9, solid: true, h: 1.4 });
             P({ kind: 'pallet', x: b.x + b.w + 2, z: b.z + 2, rot: 1.1, r: 0.9, solid: true, h: 1.4 });
             // the cutout jet, parked diagonally on the south apron (sj_08 jumps it)
-            P({ kind: 'plane', x: cxm + 2, z: lz + ld - 11, y: 0, rot: 0.35, r: 4.2, solid: true, h: 5.5, scale: 0.6 });
+            // collision only 1 m high: a car on the ground bumps it, a car in the air clears it (QA-STR-03: prop collision
+            // honours h, and the 5.5 m it had stopped every Hangar Hop dead)
+            P({ kind: 'plane', x: cxm + 2, z: lz + ld - 11, y: 0, rot: 0.35, r: 4.2, solid: true, h: 1.0, scale: 0.6, cutout: true, jumpOver: 'sj_08' });
           }
           break;
         }
@@ -1222,7 +1244,7 @@
             P({ kind: 'sign', text: 'MERCH', x: (lot.x + 2 + 3 * mk) * TILE + 2 + 2.57, z: (lot.z + 1) * TILE + 6 * mrow + 3, y: 1.4, rot: -Math.PI / 2, w: 2.2, h: 0.8, neon: false, solid: false });
           }
           // the Container Clear jump's single-high box across its lane
-          P({ kind: 'container', x: (lot.x + 2 + 3 * 3) * TILE + 2 + 6, z: lz + ld - 20, y: CURB, rot: Math.PI / 2, r: 1.3, solid: true, h: 2.6, color: cols[2] });
+          P({ kind: 'container', x: (lot.x + 2 + 3 * 3) * TILE + 2 + 6, z: lz + ld - 20, y: CURB, rot: Math.PI / 2, r: 1.3, solid: true, h: 2.6, color: cols[2], jumpOver: 'sj_09' });
           // two gantry cranes straddling the east lanes (the legs are the solid part), a kiosk at the gate, the sign
           for (k = 0; k < 2; k++) {
             var crx = (lot.x + 2 + 3 * 4) * TILE + 2 + 6, crz = lz + 16 + k * 34;
@@ -1334,6 +1356,43 @@
           }
           break;
         }
+        // ---- v0.3 places (adopted filler buildings, World._adoptPlaces) ----
+        case 'modshop': {
+          if (b) {
+            facadeSign(def.sign, !!def.neon, true);
+            var fs = face(def.door, 0.2), half = Math.max(1.2, Math.min(4.2, fs.len / 2 - 0.9));
+            P({ kind: 'rolldoor', x: fs.x, z: fs.z, y: b.y, rot: fs.rot, r: 0, solid: false, h: 1, sx: Math.min(1, (fs.len - 1.6) / 9), w: 9, d: 6.5 });
+            var ft = face(def.door, 0.7);
+            P({ kind: 'tirestack', x: ft.x + ft.rx * half, z: ft.z + ft.rz * half, rot: 0, r: 0.45, solid: true, h: 1 });
+            P({ kind: 'tirestack', x: ft.x - ft.rx * half, z: ft.z - ft.rz * half, rot: 0.6, r: 0.45, solid: true, h: 1 });
+          }
+          break;
+        }
+        case 'clothing': case 'barber': {
+          if (b) {
+            facadeSign(def.sign, !!def.neon, def.kind === 'clothing');
+            var fc = face(def.door, 1.1);
+            P({ kind: 'awning', x: fc.x, z: fc.z, y: 2.7, rot: fc.rot, r: 0, solid: false, h: 1, w: Math.min(4.5, fc.len - 0.8), d: 2, color: def.kind === 'clothing' ? '#d94f8a' : '#2fb3b3' });
+            var off = Math.max(1.4, Math.min(3, fc.len / 2 - 0.9)), fw = face(def.door, 0.45);   // the shop window either side of the door
+            if (def.kind === 'clothing') {
+              P({ kind: 'mannequin', x: fw.x + fw.rx * off, z: fw.z + fw.rz * off, rot: fw.rot, r: 0, solid: false, h: 1.8 });
+              P({ kind: 'mannequin', x: fw.x - fw.rx * off, z: fw.z - fw.rz * off, rot: fw.rot, r: 0, solid: false, h: 1.8 });
+            } else P({ kind: 'barberpole', x: fw.x + fw.rx * off, z: fw.z + fw.rz * off, rot: 0, r: 0.2, solid: true, h: 2.3 });
+          }
+          break;
+        }
+        case 'safehouse': {
+          if (b) facadeSign(def.sign, !!def.neon, false);
+          break;
+        }
+        case 'hangar2': {
+          if (b) {
+            var fh2 = face(def.door, 0.2);
+            P({ kind: 'rolldoor', x: fh2.x, z: fh2.z, y: b.y, rot: fh2.rot, r: 0, solid: false, h: 1, sx: Math.min(1, (fh2.len - 1.6) / 9), w: 9, d: 6.5 });
+            P({ kind: 'sign', text: def.sign, x: fh2.x, z: fh2.z, y: Math.min(b.h - 0.6, 7.6), rot: fh2.rot, w: Math.min(8, fh2.len - 1), h: 1.3, neon: false, solid: false });
+          }
+          break;
+        }
         default:
           facadeSign(def.sign, !!def.neon, def.kind === 'mall' || def.kind === 'hospital');
       }
@@ -1375,6 +1434,283 @@
       void meta;
     },
     _doorAt: function (tx, tz) { return { x: (tx + 0.5) * TILE, z: (tz + 0.5) * TILE, y: CURB, tx: tx, tz: tz }; },
+
+    // ------------------------------------------------------------- v0.3 --
+    // a kerb tile: sidewalk with a road or bridge beside it (where every landmark door stands)
+    _kerbTile: function (tx, tz) {
+      if (!World.inBounds(tx, tz) || World.tiles[tz * World.w + tx] !== T.SIDEWALK || (World.meta[tz * World.w + tx] & M.WALKWAY)) return false;
+      for (var k = 0; k < 4; k++) { var t = World.tile(tx + DIRS[k][0], tz + DIRS[k][1]); if (t === T.ROAD || t === T.BRIDGE) return true; }
+      return false;
+    },
+    // the best door for a building: the kerb tile nearest the middle of one of its faces (one or two tiles out)
+    _faceDoor: function (b) {
+      var best = null, sides = ['s', 'n', 'e', 'w'];
+      for (var si = 0; si < 4; si++) {
+        var side = sides[si];
+        for (var out = 1; out <= 2; out++) {
+          var len = side === 's' || side === 'n' ? b.tw : b.td;
+          for (var a = 0; a < len; a++) {
+            var tx = side === 's' || side === 'n' ? b.tx + a : (side === 'e' ? b.tx + b.tw - 1 + out : b.tx - out);
+            var tz = side === 'e' || side === 'w' ? b.tz + a : (side === 's' ? b.tz + b.td - 1 + out : b.tz - out);
+            if (!World._kerbTile(tx, tz)) continue;
+            var sc = Math.abs(a + 0.5 - len / 2) + (out - 1) * 3;
+            if (!best || sc < best.score) best = { side: side, tx: tx, tz: tz, score: sc };
+          }
+        }
+      }
+      return best;
+    },
+    // PLAN_V03: each place claims the unclaimed filler building nearest its `near` tile in its district (the tallest one
+    // close by for `tall`) that has a kerb on some face, and becomes a landmark with a door on that face. No RNG draws.
+    _adoptPlaces: function (defs, R, parkTile) {
+      defs.forEach(function (def) {
+        if (World._lm[def.id] || !def.near) return;
+        var best = null, bs = 1e9, rad = def.radius || 40;
+        for (var i = 0; i < World.buildings.length; i++) {
+          var b = World.buildings[i];
+          if (b.landmark || b.adopted || (def.district && b.district !== def.district)) continue;
+          if (b.tw < (def.minW || 2) || b.td < (def.minD || 2)) continue;
+          var d = Math.sqrt(Math.pow(b.tx + b.tw / 2 - def.near.tx, 2) + Math.pow(b.tz + b.td / 2 - def.near.tz, 2));
+          if (d > (def.tall ? 10 : rad)) continue;
+          var sc = def.tall ? d * 0.5 - b.h / 4 : d;
+          if (sc >= bs) continue;
+          var door = World._faceDoor(b); if (!door) continue;
+          bs = sc; best = { b: b, door: door };
+        }
+        if (!best) return;
+        var b2 = best.b, lot = { x: b2.tx - 1, z: b2.tz - 1, w: b2.tw + 2, d: b2.td + 2 };
+        var d2 = Object.assign({}, def, { door: best.door.side, doorAt: { tx: best.door.tx, tz: best.door.tz }, adopted: true, lot: { bx: lot.x, bz: lot.z, w: lot.w, d: lot.d } });
+        var lmk = { id: def.id, name: def.name, kind: def.kind, label: def.label || def.name, lot: lot, building: b2, district: def.district || b2.district,
+          x: b2.cx, z: b2.cz, y: CURB, w: lot.w * TILE, d: lot.d * TILE, door: null, sign: def.sign || null, gag: def.gag || null, def: d2, points: {}, npcs: [], adopted: true };
+        b2.landmark = def.id; b2.kind = def.kind; b2.sign = def.sign || null; b2.neon = !!def.neon; b2.adopted = true;
+        if (def.height && b2.h < def.height) { b2.h = def.height; b2.floors = Math.max(1, Math.round(def.height / C.FLOOR_H)); }   // a hangar is no shed
+        World.landmarks.push(lmk); World._lm[def.id] = lmk;
+        // the shop front stays readable: no street tree or lamp right in front of the door and its sign
+        var fx = best.door.side === 'e' ? b2.x + b2.w : best.door.side === 'w' ? b2.x : b2.cx, fz = best.door.side === 's' ? b2.z + b2.d : best.door.side === 'n' ? b2.z : b2.cz;
+        World._removeProps(function (p) { return (p.kind === 'tree' || p.kind === 'palm' || p.kind === 'lamp' || p.kind === 'bin' || p.kind === 'hydrant') && U.dist2d(p.x, p.z, fx, fz) < 7.5; });
+        World._landmarkProps(lmk, d2, lot, R, parkTile);
+      });
+    },
+    // drop props in place (before the prop grid is built); returns how many went
+    _removeProps: function (pred) {
+      var n0 = World.props.length;
+      World.props = World.props.filter(function (p) { return !pred(p); });
+      return n0 - World.props.length;
+    },
+    // furniture a clearing may take away (never structure: buildings' props, cranes, ships, planes, pillars, containers)
+    _clearable: { tree: 1, palm: 1, lamp: 1, bench: 1, hydrant: 1, bin: 1, bollard: 1, planter: 1, stanchion: 1, crate: 1, pallet: 1, luggage: 1, flag: 1, cutout: 0, sign: 1, signal: 1, busstop: 1, windsock: 1, hedge: 0, table: 0, kiosk: 0, trash: 1, edgelight: 1 },
+    _tallStructure: { billboard: 1, crane: 1, craneleg: 1, gantry: 1, canopy: 1, jetbridge: 1, mast: 1, stack: 1, pillar: 1, plane: 1, ship: 1, yacht: 1 },
+    _markNoPark: function (cx, cz, r) {
+      var tx0 = Math.floor((cx - r) / TILE), tx1 = Math.floor((cx + r) / TILE), tz0 = Math.floor((cz - r) / TILE), tz1 = Math.floor((cz + r) / TILE);
+      for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) if (World.inBounds(tx, tz)) World._noPark[tz * World.w + tx] = 1;
+    },
+    // ground-level helipads: the clear 3 x 3 patch of plaza / parking / lawn nearest each def's tile
+    _placeHelipads: function (defs) {
+      var w = World.w, tiles = World.tiles, meta = World.meta;
+      function padOk(t, i) { return (t === T.PLAZA || t === T.PARKING || t === T.GRASS) && !World.deck[i] && !(meta[i] & (M.RUNWAY | M.DOCK | M.CORRIDOR)); }
+      defs.forEach(function (def) {
+        var best = null, bd = 1e9, n = def.near;
+        for (var r = 0; r <= 16 && !best; r++) {
+          for (var dz = -r; dz <= r; dz++) for (var dx = -r; dx <= r; dx++) {
+            if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+            var tx = n.tx + dx, tz = n.tz + dz, ok = true;
+            for (var qz = tz; qz < tz + 3 && ok; qz++) for (var qx = tx; qx < tx + 3 && ok; qx++) { if (!World.inBounds(qx, qz) || !padOk(tiles[qz * w + qx], qz * w + qx)) ok = false; }
+            // rotor room: no building in the ring of tiles round the pad
+            for (qz = tz - 1; qz < tz + 4 && ok; qz++) for (qx = tx - 1; qx < tx + 4 && ok; qx++) { if (World.tile(qx, qz) === T.BUILDING) ok = false; }
+            if (!ok) continue;
+            var cx = (tx + 1.5) * TILE, cz = (tz + 1.5) * TILE;
+            // structure on the pad (a non-clearable solid prop) or tall structure beside it (billboards, cranes, canopies,
+            // masts, pillars: a rotor's reach) rules the patch out
+            for (var k = 0; k < World.props.length && ok; k++) {
+              var p = World.props[k], dd2 = Math.max(Math.abs(p.x - cx), Math.abs(p.z - cz));
+              if (p.solid && !World._clearable[p.kind] && dd2 < 6.5 + (p.r || 0)) ok = false;
+              else if (World._tallStructure[p.kind] && dd2 < 7.5 + (p.r || 0)) ok = false;
+            }
+            if (!ok) continue;
+            var dd = Math.abs(dx) + Math.abs(dz);
+            if (dd < bd) { bd = dd; best = { x: cx, z: cz, tx: tx + 1, tz: tz + 1 }; }
+          }
+        }
+        if (!best) return;
+        World._removeProps(function (p) { var rr = p.kind === 'tree' || p.kind === 'palm' ? 9 : 6.5; return World._clearable[p.kind] && Math.abs(p.x - best.x) < rr && Math.abs(p.z - best.z) < rr && !p.landmark; });   // tree canopies overhang the rotor
+        var y = World.heightAt(best.x, best.z, 0);
+        World._prop({ kind: 'helipad', x: best.x, z: best.z, y: y + 0.01, rot: 0, r: 0, solid: false, h: 0.1, helipad: def.id });
+        World._markNoPark(best.x, best.z, 7);
+        World.helipads.push({ id: def.id, name: def.name || def.id, x: best.x, z: best.z, y: y, tx: best.tx, tz: best.tz, district: def.district || null });
+      });
+    },
+    // the plane and jet spawn points on the airport apron (World.aircraft; the vehicles track spawns there)
+    _placeAircraft: function (defs) {
+      defs.forEach(function (def) {
+        var x = (def.at.tx + 0.5) * TILE, z = (def.at.tz + 0.5) * TILE, yaw = HEADING_YAW[def.heading] || 0;
+        World._removeProps(function (p) { return World._clearable[p.kind] && U.dist2d(p.x, p.z, x, z) < 9; });
+        World._markNoPark(x, z, 9);
+        World.aircraft.push({ id: def.id, type: def.type, x: x, z: z, y: World.heightAt(x, z, 0), yaw: yaw, landmark: def.landmark || null });
+      });
+    },
+    // Goldplate Links' nine holes: a tee box and a gold pin flag each, trees cleared round both, named landmark points
+    // tee1..tee9 / pin1..pin9 and World.golf = {landmark, holes:[{n, par, tee:{x,y,z}, pin:{x,y,z}, length}]}
+    _placeGolf: function (def) {
+      if (!def || !def.holes) return;
+      var lmk = World._lm[def.landmark]; if (!lmk) return;
+      var P = GTP.Content.parity, pars = P && P.golf && (P.golf.holes || P.golf);
+      var holes = def.holes.map(function (h, i) {
+        var tee = { x: (h.tee.tx + 0.5) * TILE, z: (h.tee.tz + 0.5) * TILE }, pin = { x: (h.pin.tx + 0.5) * TILE, z: (h.pin.tz + 0.5) * TILE };
+        tee.y = World.heightAt(tee.x, tee.z, 0); pin.y = World.heightAt(pin.x, pin.z, 0);
+        var par = h.par; if (Array.isArray(pars) && pars[i] && pars[i].par) par = pars[i].par;
+        lmk.points['tee' + h.n] = { x: tee.x, z: tee.z, y: tee.y, tx: h.tee.tx, tz: h.tee.tz };
+        lmk.points['pin' + h.n] = { x: pin.x, z: pin.z, y: pin.y, tx: h.pin.tx, tz: h.pin.tz };
+        return { n: h.n, par: par, tee: tee, pin: pin, length: Math.round(U.dist2d(tee.x, tee.z, pin.x, pin.z)) };
+      });
+      World._removeProps(function (p) { if (p.kind !== 'tree' && p.kind !== 'palm' && p.kind !== 'bench') return false; for (var i = 0; i < holes.length; i++) if (U.dist2d(p.x, p.z, holes[i].tee.x, holes[i].tee.z) < 4 || U.dist2d(p.x, p.z, holes[i].pin.x, holes[i].pin.z) < 4) return true; return false; });
+      holes.forEach(function (h) {
+        var yaw = U.dirToYaw(h.pin.x - h.tee.x, h.pin.z - h.tee.z);
+        World._prop({ kind: 'teebox', x: h.tee.x, z: h.tee.z, y: h.tee.y + 0.005, rot: yaw, r: 0, solid: false, h: 0.3, golf: h.n });
+        World._prop({ kind: 'flag', x: h.pin.x, z: h.pin.z, y: h.pin.y, rot: 0, r: 0.2, solid: false, h: 2.6, color: '#e8b53a', golf: h.n });
+      });
+      for (var tz = lmk.lot.z; tz < lmk.lot.z + lmk.lot.d; tz++) for (var tx = lmk.lot.x; tx < lmk.lot.x + lmk.lot.w; tx++) if (World.inBounds(tx, tz)) World._noPark[tz * World.w + tx] = 1;
+      World.golf = { landmark: def.landmark, holes: holes };
+    },
+    // QA-STR-03: a clear corridor down every stunt jump, from 40 m before the wedge to 14 m past the landing point: no tree,
+    // lamp or bench within 3 m of the line and no parked car on it (World.stuntCorridors; the spawner reads World._noPark)
+    _clearStuntCorridors: function () {
+      World.stuntRamps.forEach(function (s) {
+        var f = U.yawToDir(s.yaw), ax = s.x - f.x * 40, az = s.z - f.z * 40, bx, bz;
+        if (s.landing) { var dx = s.landing.x - s.x, dz = s.landing.z - s.z, l = Math.sqrt(dx * dx + dz * dz) || 1; bx = s.landing.x + dx / l * 14; bz = s.landing.z + dz / l * 14; }
+        else { bx = s.x + f.x * 30; bz = s.z + f.z * 30; }
+        var cor = { id: s.id, x0: ax, z0: az, x1: bx, z1: bz, w: 3, y: s.y };
+        World.stuntCorridors.push(cor);
+        World._removeProps(function (p) {
+          if (!p.solid || !World._clearable[p.kind] || p.landmark === 'impression_alley') return false;
+          if (s.y > 3 ? p.y < s.y - 3 : p.y > 3) return false;   // the deck jump keeps the plaza's furniture under it, and the other way round
+          return World._segDist(p.x, p.z, ax, az, bx, bz) < 3 + (p.r || 0.4);
+        });
+        for (var t = 0; t <= 1.0001; t += 2 / Math.max(1, U.dist2d(ax, az, bx, bz))) World._markNoPark(ax + (bx - ax) * t, az + (bz - az) * t, 3);
+      });
+    },
+    _segDist: function (px, pz, ax, az, bx, bz) {
+      var dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz, t = l2 ? U.clamp(((px - ax) * dx + (pz - az) * dz) / l2, 0, 1) : 0;
+      return U.dist2d(px, pz, ax + dx * t, az + dz * t);
+    },
+    // boat slips on open water beside a landmark's piers or waterfront: up to `n` per landmark, 12 m apart, clear of
+    // every solid prop (moored boats, the yacht, the ship's hull) by 4 m; yaw points out to sea
+    _placeBoatSlips: function (defs) {
+      var w = World.w, tiles = World.tiles;
+      function water(tx, tz) { return World.inBounds(tx, tz) && tiles[tz * w + tx] === T.WATER && !World.deck[tz * w + tx]; }
+      defs.forEach(function (def) {
+        var lmk = World._lm[def.landmark]; if (!lmk) return;
+        var lot = lmk.lot, cands = [], ox = lmk.door ? lmk.door.x : lmk.x, oz = lmk.door ? lmk.door.z : lmk.z;
+        for (var tz = lot.z - 2; tz < lot.z + lot.d + 14; tz++) for (var tx = lot.x - 4; tx < lot.x + lot.w + 4; tx++) {
+          var ok = true;
+          for (var dz = -1; dz <= 1 && ok; dz++) for (var dx = -1; dx <= 1 && ok; dx++) if (!water(tx + dx, tz + dz)) ok = false;
+          if (!ok) continue;
+          // a slip sits by the shore or a pier: some land within 3 tiles
+          var land = null, lx = 0, lz = 0;
+          for (dz = -3; dz <= 3; dz++) for (dx = -3; dx <= 3; dx++) { if (World.inBounds(tx + dx, tz + dz) && !water(tx + dx, tz + dz)) { var wgt = 1 / (dx * dx + dz * dz); lx += dx * wgt; lz += dz * wgt; land = true; } }
+          if (!land) continue;
+          land = { dx: lx, dz: lz };
+          var cx = (tx + 0.5) * TILE, cz = (tz + 0.5) * TILE;
+          for (var k = 0; k < World.props.length && ok; k++) { var p = World.props[k]; if (p.solid && Math.abs(p.x - cx) < 14 && Math.abs(p.z - cz) < 14 && U.dist2d(p.x, p.z, cx, cz) < (p.r || 0.4) + 4) ok = false; }
+          if (!ok) continue;
+          cands.push({ x: cx, z: cz, tx: tx, tz: tz, d: U.dist2d(cx, cz, ox, oz), yaw: U.dirToYaw(-land.dx, -land.dz) });
+        }
+        cands.sort(function (a, b) { return a.d - b.d || a.tz - b.tz || a.tx - b.tx; });
+        var got = 0;
+        for (var i = 0; i < cands.length && got < (def.n || 1); i++) {
+          var c = cands[i], near = false;
+          for (var j = 0; j < World.boatSlips.length; j++) if (U.dist2d(World.boatSlips[j].x, World.boatSlips[j].z, c.x, c.z) < 12) near = true;
+          if (near) continue;
+          World.boatSlips.push({ id: def.landmark + ':' + got, landmark: def.landmark, x: c.x, z: c.z, y: WATER_Y, yaw: c.yaw });
+          var f = U.yawToDir(c.yaw);
+          World._prop({ kind: 'pontoon', x: c.x - f.z * 2.6, z: c.z + f.x * 2.6, y: WATER_Y - 0.1, rot: c.yaw, r: 0, solid: false, h: 0.5, slip: true });
+          got++;
+        }
+      });
+    },
+    // Door markers (GTP.AI.doors runs them): [{id, landmark, kind, x, y, z, r, mode:'foot'|'drive', interior, store, property,
+    // label, color}]. Shops and safehouses on foot call GTP.Interiors.enter(interior, {...}); the mod shops and the safehouse
+    // garages trigger from a car.
+    DOOR_KINDS: {
+      gunshop: { kind: 'armory', interior: 'armory', mode: 'foot', color: '#3fd27f' },
+      modshop: { kind: 'modshop', interior: null, mode: 'drive', color: '#ff8a3d' },
+      clothing: { kind: 'clothing', interior: 'clothing', mode: 'foot', color: '#ff6fae' },
+      barber: { kind: 'barber', interior: 'barber', mode: 'foot', color: '#3fd2d2' },
+      safehouse: { kind: 'safehouse', interior: 'safehouse', mode: 'foot', color: '#f4f4f4' }
+    },
+    // the yaw a door faces: out of the building toward the street (the way a player faces stepping out), axis-snapped
+    _doorYaw: function (lmk, x, z) {
+      var b = lmk.building, cx = b ? b.cx : lmk.x, cz = b ? b.cz : lmk.z, dx = x - cx, dz = z - cz;
+      if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? HEADING_YAW.e : HEADING_YAW.w;
+      return dz > 0 ? HEADING_YAW.s : HEADING_YAW.n;
+    },
+    _buildDoors: function () {
+      World.landmarks.forEach(function (lmk) {
+        var dk = World.DOOR_KINDS[lmk.kind]; if (!dk || !lmk.door) return;
+        var def = lmk.def || {}, d = lmk.door;
+        World.doors.push({ id: lmk.id, landmark: lmk.id, kind: dk.kind, x: d.x, y: d.y, z: d.z, yaw: World._doorYaw(lmk, d.x, d.z), r: dk.mode === 'drive' ? 3.2 : 1.4, mode: dk.mode, interior: dk.interior,
+          store: def.store || lmk.id, property: def.property || null, label: lmk.name, color: dk.color });
+        if (lmk.kind === 'safehouse') {
+          // the garage: another kerb tile 2-4 tiles from the door along the street (the door tile itself as a last resort)
+          var g = null, gd = 1e9;
+          for (var r = 2; r <= 4; r++) for (var dz = -r; dz <= r; dz++) for (var dx = -r; dx <= r; dx++) {
+            if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+            var tx = d.tx + dx, tz = d.tz + dz; if (!World._kerbTile(tx, tz)) continue;
+            var sc = Math.abs(dx) + Math.abs(dz); if (sc < gd) { gd = sc; g = World._doorAt(tx, tz); }
+          }
+          g = g || { x: d.x, y: d.y, z: d.z, tx: d.tx, tz: d.tz };
+          lmk.points.garage = g; lmk.garageDoor = g;
+          World.doors.push({ id: lmk.id + ':garage', landmark: lmk.id, kind: 'garage', x: g.x, y: g.y, z: g.z, yaw: World._doorYaw(lmk, g.x, g.z), r: 3.2, mode: 'drive', interior: null, store: def.store || lmk.id, property: def.property || lmk.id, label: lmk.name + ' garage', color: '#f4f4f4', foot: lmk.id });
+        }
+      });
+    },
+    // door markers within r of a point (all of them without a point)
+    doorsNear: function (x, z, r) { if (x == null) return World.doors.slice(); return World.doors.filter(function (d) { return U.dist2d(d.x, d.z, x, z) <= r; }); },
+    // spawn points for a vehicle type: 'heli' -> the helipads, 'plane' / 'jet' -> the apron, 'boat' (or 'speedboat',
+    // 'jetski') -> the boat slips. [{x, y, z, yaw, id}]
+    vehicleSpots: function (type) {
+      if (type === 'heli') return World.helipads.map(function (h) { return { id: h.id, x: h.x, y: h.y, z: h.z, yaw: 0 }; });
+      if (type === 'plane' || type === 'jet') return World.aircraft.filter(function (a) { return a.type === type; }).map(function (a) { return { id: a.id, x: a.x, y: a.y, z: a.z, yaw: a.yaw }; });
+      if (type === 'boat' || type === 'speedboat' || type === 'jetski') return World.boatSlips.map(function (s) { return { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw }; });
+      return [];
+    },
+    // true when nothing solid (buildings, ramp wedges, the void, water) lies on the straight segment at height y
+    segmentClear: function (ax, az, bx, bz, y) {
+      var d = U.dist2d(ax, az, bx, bz), n = Math.max(1, Math.ceil(d / 2));
+      for (var i = 1; i < n; i++) {
+        var t = i / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+        if (World.solidAt(x, z, y == null ? 0.5 : y)) return false;
+        var tt = World.tileAt(x, z); if ((y == null || y < 3) && (tt === T.WATER || tt === T.VOID)) return false;
+      }
+      return true;
+    },
+    // GPS line (PLAN_V03): a road route from (ax, az) to (bx, bz) as [{x, z}] starting at a and ending at b, corners only.
+    // Car A* (roads, ramps, the Loop; parking, plaza and sidewalk at a cost) with the ends snapped to the nearest road when
+    // they sit far from one; a straight line when there is no route at all (an island with no bridge). Cached per tile pair.
+    route: function (ax, az, bx, bz, opts) {
+      opts = opts || {};
+      var key = Math.floor(ax / TILE) + ',' + Math.floor(az / TILE) + '>' + Math.floor(bx / TILE) + ',' + Math.floor(bz / TILE) + (opts.fromY > 3.5 ? 'd' : '');
+      var cache = World._routeCache || (World._routeCache = []);
+      for (var c = 0; c < cache.length; c++) if (cache[c].key === key) return World._routeCopy(cache[c].pts, ax, az, bx, bz);
+      var mx = opts.maxExpansions || 80000;
+      var path = World.findPath(ax, az, bx, bz, { mode: 'car', fromY: opts.fromY, toY: opts.toY, maxExpansions: mx });
+      if (!path) {
+        var ra = World.nearestRoadPoint(ax, az) || { x: ax, z: az }, rb = World.nearestRoadPoint(bx, bz) || { x: bx, z: bz };
+        path = World.findPath(ra.x, ra.z, rb.x, rb.z, { mode: 'car', maxExpansions: mx });
+        if (path) { path.unshift({ x: ra.x, z: ra.z }); path.push({ x: rb.x, z: rb.z }); }
+      }
+      var pts = [];
+      if (path) for (var i = 0; i < path.length; i++) pts.push({ x: path[i].x, z: path[i].z });
+      cache.unshift({ key: key, pts: pts }); if (cache.length > 12) cache.pop();
+      return World._routeCopy(pts, ax, az, bx, bz);
+    },
+    _routeCopy: function (pts, ax, az, bx, bz) {
+      var out = [{ x: ax, z: az }];
+      for (var i = 0; i < pts.length; i++) { var p = pts[i], q = out[out.length - 1]; if (U.dist2d(p.x, p.z, q.x, q.z) > 1) out.push({ x: p.x, z: p.z }); }
+      var last = out[out.length - 1]; if (U.dist2d(last.x, last.z, bx, bz) > 1 || out.length === 1) out.push({ x: bx, z: bz });
+      return out;
+    },
+    // the length in metres of a route from World.route
+    routeLength: function (pts) { var l = 0; for (var i = 1; i < (pts || []).length; i++) l += U.dist2d(pts[i - 1].x, pts[i - 1].z, pts[i].x, pts[i].z); return l; },
 
     // lamps, signals, hydrants, trees, benches, pillars, promenade, bridge pylons
     _furnish: function (styleAt, parkTile, seed, R) {
