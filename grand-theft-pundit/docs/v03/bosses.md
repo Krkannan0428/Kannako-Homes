@@ -84,7 +84,9 @@ the player), `boss:counter {id, why}` (a Dunk counter), `special:state {id, mete
 {allies}`, `special:boost {on}`, and the cartoon `damage` event for boss peds (with `boss: id`).
 
 Consumed: `mission:objective` (fallback), `mission:start`, `mission:retry`, `mission:abort`, `hitmarker`
-(meter gain), `player:respawn`, `loaded`, `load:progress` (installers).
+(meter gain), `player:respawn`, `player:wasted` (a fight outside a mission ends), `state` (Focus and the defeat
+slow motion stop outside play), `loaded` and `load:begin` (every fight ends, the specials clear, the meters stay),
+`load:progress` (installers).
 
 Flags written: `flags.boss_<id>` on a defeat; `flags.special_<id>` by `Specials.unlock`. Stats:
 `player.stats.bossesDefeated`, `player.stats.chatmobs`.
@@ -149,7 +151,11 @@ rig.shake`, `GTP.GeoBuilder`, `GTP.Assets.propMaterial`.
   weapons and ammo as they are) and remembers the phase; RETRY of that mission resumes the boss there with the
   hp at the phase's top. A fresh start or a restart begins at phase 1.
 - A won fight leaves the set (rigs, the humiliated cast) up for the outro and clears it 40 s later or once the
-  player is 180 m away.
+  player is 180 m away. Its wrecks and a scooter the player rides off on become ordinary city vehicles.
+- Lifecycle: a new game (detected by `load:begin` and by the player object changing under a fight), a load, an
+  abort or the player's death outside a mission ends the encounter and removes everything it added (entities,
+  scene objects, owned geometries and label materials). Boss vehicles brake between phases and after the fight.
+  The defeat's 0.45x slow motion (not in headless) plays before the defeat lines, never under them.
 
 ## Tests
 
@@ -169,11 +175,14 @@ mission completes within 6 minutes of play, no errors, and the boss is humiliate
 checkpoint (die in Goldplate's phase 2, RETRY resumes phase 2 at 200 hp in the arena), and all four specials
 (locked at first, shout knocks peds down, chat mob calls three allies that hit a goon and log off, focus slows
 time and toggles off, boost outruns plain throttle 33.7 vs 13.8 m/s in 1.5 s, the X fallback key, `special:state`
-shape). Screenshots: `tests/out/boss_<id>_p1.png` (the set piece from a free camera) and `_p2.png` (a later
+shape), and the lifecycle regressions an adversarial review turned up (spools cut while the helicopter takes off,
+a fight outside a mission ending on death, wrecks cleared, vehicles parked between phases, a new game clearing a
+running fight down to zero boss entities and scene objects, Focus stopped by a minigame, the X key ignored while
+paused). Screenshots: `tests/out/boss_<id>_p1.png` (the set piece from a free camera) and `_p2.png` (a later
 phase from the chase camera).
 
-Last run (seed 7): all six beaten, sim time 70 to 230 s each, the bot losing 10 to 190 hp per fight with 0 or 1
-retries. The bot aims perfectly through the lock-on and dodges every armed telegraph, so a first-time player
+Last run (seed 7): all six beaten in 55 to 155 s of simulated play each (up to 230 s on other runs), the bot
+losing 2 to 150 hp per fight with 0 or 1 retries. `tests/all.js` passed (20 of 20 files) with this branch. The bot aims perfectly through the lock-on and dodges every armed telegraph, so a first-time player
 will take longer and take more hits; each phase hands out health (and armor from phase 2) and RETRY resumes at
 the phase.
 

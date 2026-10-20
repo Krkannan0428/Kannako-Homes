@@ -96,7 +96,7 @@
     MATS[key] = m;
     return m;
   }
-  var GEO = {};
+  var GEO = {}, UP = new THREE.Vector3(0, 1, 0), TMPV = new THREE.Vector3(), SCRATCH = [];
   function geo(name) {
     if (GEO[name]) return GEO[name];
     var g;
@@ -145,6 +145,8 @@
     var s = new THREE.Sprite(sm); s.scale.set(sx || 2.4, sy || 1.2, 1); s.renderOrder = 8;
     return s;
   }
+  // a material made for one mesh (a label plate): disposed with it (the shared ones from mat() never are)
+  function own(m) { m.userData.own = true; return m; }
   function sceneAdd(o) { var Rd = GTP.Render; if (Rd && Rd.scene && o) Rd.scene.add(o); return o; }
   function sceneRemove(o) {
     if (!o) return;
@@ -235,7 +237,7 @@
     podium: function (text, bg, fg) {
       var grp = new THREE.Group();
       grp.add(part('box', mat(0x2b2f3d, { rough: 0.6 }), 0, 0.6, 0, 1.2, 1.2, 0.7));
-      var plate = new THREE.Mesh(geo('plane'), new THREE.MeshBasicMaterial({ map: labelTexture(text, bg || '#1a2a5a', fg || '#ffffff', 256, 128) }));
+      var plate = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture(text, bg || '#1a2a5a', fg || '#ffffff', 256, 128) })));
       plate.position.set(0, 0.7, -0.36); plate.rotation.y = Math.PI; plate.scale.set(1.1, 0.55, 1);
       grp.add(plate);
       grp.userData = { plate: plate };
@@ -244,7 +246,7 @@
     flag: function () {
       var grp = new THREE.Group();
       grp.add(part('cyl', mat(0xcfd3da, { metal: 0.8, rough: 0.3 }), 0, 2.2, 0, 0.05, 4.4, 0.05));
-      var f = new THREE.Mesh(geo('plane'), new THREE.MeshBasicMaterial({ map: labelTexture('BRAVADIA\nVOLUME IS POLICY', '#3d6fcf', '#ffffff', 256, 160), side: THREE.DoubleSide }));
+      var f = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture('BRAVADIA\nVOLUME IS POLICY', '#3d6fcf', '#ffffff', 256, 160), side: THREE.DoubleSide })));
       f.position.set(0.75, 3.8, 0); f.scale.set(1.5, 0.95, 1);
       grp.add(f);
       return grp;
@@ -269,7 +271,7 @@
     tether: function () { return part('box', mat(0x25272b, { rough: 0.7 }), 0, 0, 0, 0.08, 1, 0.08); },
     patch: function () {
       var grp = new THREE.Group();
-      var p = new THREE.Mesh(geo('plane'), new THREE.MeshBasicMaterial({ map: labelTexture('[REDACTED]', '#050505', '#ffffff', 256, 128), side: THREE.DoubleSide }));
+      var p = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture('[REDACTED]', '#050505', '#ffffff', 256, 128), side: THREE.DoubleSide })));
       p.scale.set(3.0, 1.5, 1);
       var halo = new THREE.Mesh(geo('plane'), mat(0xff3b30, { basic: true, opacity: 0.35, side: THREE.DoubleSide })); halo.scale.set(3.6, 2.0, 1); halo.position.z = -0.02;
       grp.add(halo); grp.add(p);
@@ -282,7 +284,7 @@
       var leg = mat(0x6d7078, { metal: 0.6, rough: 0.4 });
       grp.add(part('box', leg, -0.8, 0.37, 0, 0.05, 0.74, 0.6)); grp.add(part('box', leg, 0.8, 0.37, 0, 0.05, 0.74, 0.6));
       if (text) {
-        var s = new THREE.Mesh(geo('plane'), new THREE.MeshBasicMaterial({ map: labelTexture(text, '#111111', '#15e0ff', 256, 96), side: THREE.DoubleSide }));
+        var s = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture(text, '#111111', '#15e0ff', 256, 96), side: THREE.DoubleSide })));
         s.position.set(0, 0.45, -0.41); s.scale.set(1.7, 0.6, 1); grp.add(s);
       }
       return grp;
@@ -290,13 +292,13 @@
     desk: function () {
       var grp = new THREE.Group();
       grp.add(part('box', mat(0x0f1d3a, { rough: 0.4, metal: 0.3 }), 0, 0.55, 0, 3.2, 1.1, 1.0));
-      var s = new THREE.Mesh(geo('plane'), new THREE.MeshBasicMaterial({ map: labelTexture('BREAKING', '#c8102e', '#ffffff', 256, 96) }));
+      var s = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture('BREAKING', '#c8102e', '#ffffff', 256, 96) })));
       s.position.set(0, 0.6, -0.51); s.rotation.y = Math.PI; s.scale.set(2.8, 0.7, 1); grp.add(s);
       return grp;
     },
     memoCard: function (text) {
       var grp = new THREE.Group();
-      var p = new THREE.Mesh(geo('plane'), new THREE.MeshBasicMaterial({ map: labelTexture(text, '#fffbe8', '#c8102e', 256, 128), side: THREE.DoubleSide }));
+      var p = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture(text, '#fffbe8', '#c8102e', 256, 128), side: THREE.DoubleSide })));
       p.scale.set(1.8, 0.9, 1); grp.add(p);
       return grp;
     }
@@ -439,7 +441,7 @@
       sfx('explode', this.x, this.z, 0.5);
       if (this.boss) this.boss.partBroken(this);
       if (this.onBreak) { try { this.onBreak(this, src); } catch (e) { U.reportError(e, 'bosses.part.break'); } }
-      E().remove(this);
+      E().remove(this); disposeOwn(this.mesh);
     }
     update(dt) {
       this.age += dt;
@@ -518,6 +520,7 @@
     this.vuln = 1; this.ped = null; this.parts = []; this.adds = []; this.vehicles = []; this.tele = []; this.rigs = []; this.objs = []; this.pickups = []; this.peds = [];
     this.timers = {}; this.data = {}; this.lastEmit = -9; this.leashT = 0; this.failReason = null; this.hint = ''; this.log = [];
     this.shieldNoteT = -9; this.windowDmg = 0;
+    this.playerRef = player();
     var c = opts.at ? { x: opts.at.x, z: opts.at.z } : resolveArena(def);
     this.center = { x: c.x, z: c.z, y: groundY(c.x, c.z, 0) };
   }
@@ -643,6 +646,7 @@
   // phase lines through the mission dialogue queue (the fight pauses while they show); barks when the queue is not there
   EP.say = function (lines, done) {
     var M = GTP.Missions, self = this;
+    if (this.state === 'ended') return;
     if (!lines || !lines.length) { if (done) done(); return; }
     if (M && M.say && !(M.dialogue && M.dialogue.active)) {
       this.talking = true;
@@ -705,10 +709,14 @@
     if (p.ammo) { var a = {}; for (var k in p.ammo) a[k] = { mag: p.ammo[k].mag, reserve: p.ammo[k].reserve, total: p.ammo[k].total }; cp.player.ammo = a; }
     cp.vehicle = null; cp.bossPhase = this.phase;
   };
+  // nobody steers between phases or after the fight: every boss vehicle brakes where it is
+  EP.parkVehicles = function () {
+    for (var i = 0; i < this.vehicles.length; i++) { var v = this.vehicles[i]; if (!v.removed && !v.wreck && !v.hasPlayer()) v.setControls(0, 0, false, 1); }
+  };
   EP.endPhase = function () {
     if (this.state !== 'fight') return;
     var self = this;
-    this.clearTele();
+    this.clearTele(); this.parkVehicles();
     if (this.def.phaseEnd) { try { this.def.phaseEnd(this, this.phase); } catch (e) { U.reportError(e, 'bosses.phaseEnd'); } }
     if (this.phase >= this.phases) { this.defeat(); return; }
     this.state = 'break'; this.stateT = 0;
@@ -720,8 +728,9 @@
     var self = this;
     this.state = 'defeated'; this.stateT = 0; this.hp = 0; this.shield = false;
     this.clearTele();
-    for (var i = 0; i < this.parts.length; i++) if (!this.parts[i].removed) E().remove(this.parts[i]);
+    for (var i = 0; i < this.parts.length; i++) if (!this.parts[i].removed) { E().remove(this.parts[i]); disposeOwn(this.parts[i].mesh); }
     for (i = 0; i < this.adds.length; i++) if (!pedOut(this.adds[i])) releasePed(this.adds[i], true);
+    this.parkVehicles();
     try { if (this.def.defeat) this.def.defeat(this); } catch (e) { U.reportError(e, 'bosses.defeat ' + this.id); }
     if (this.ped && !this.ped.removed) humiliate(this, this.ped);
     this.emitPhase(true);
@@ -734,7 +743,8 @@
     textFx('RATIO\'D', at.x, (at.y || 0) + 3.2, at.z, '#ff3fa4', 3);
     if (GTP.UI && GTP.UI.ticker && this.def.ticker) { try { GTP.UI.ticker(this.def.ticker); } catch (e) { /* ui optional */ } }
     this._next = null;
-    this.say(this.def.lines.defeat || [], function () { self.state = 'done'; self.stateT = 0; });
+    // the lines start once the defeat slow motion is over (they pause the world, which would hold it at 0.45x)
+    this._defeatLines = function () { self.say(self.def.lines.defeat || [], function () { self.state = 'done'; self.stateT = 0; }); };
   };
   EP.target = function () {
     var p = player(); if (!p) return null;
@@ -767,6 +777,7 @@
     } else if (this.state === 'break') {
       if (this.stateT >= K.breakTime && this._next) { var nx = this._next; this._next = null; nx(); }
     } else if (this.state === 'defeated' || this.state === 'done') {
+      if (this._defeatLines && !(this._slowmo > 0)) { var dl = this._defeatLines; this._defeatLines = null; dl(); }
       if (this.def.after) { try { this.def.after(this, dt); } catch (e) { U.reportError(e, 'bosses.after'); } }
       if (this.ped && !this.ped.removed && this.state === 'done') walkOff(this, this.ped, dt);
     }
@@ -778,9 +789,13 @@
     this.clearTele();
     var i, peds = this.peds.slice();
     if (this.ped && peds.indexOf(this.ped) < 0) peds.push(this.ped);
-    for (i = 0; i < this.parts.length; i++) if (!this.parts[i].removed) E().remove(this.parts[i]);
+    for (i = 0; i < this.parts.length; i++) if (!this.parts[i].removed) { E().remove(this.parts[i]); disposeOwn(this.parts[i].mesh); }
     for (i = 0; i < this.adds.length; i++) { var a = this.adds[i]; if (!a.removed) { if (keep && a.alive) releasePed(a, true); else removeEntity(a); } }
-    for (i = 0; i < this.vehicles.length; i++) { var v = this.vehicles[i]; if (!v.removed && !v.hasPlayer()) { if (keep && (v.wreck || v.burning)) v.persistent = false; else removeEntity(v); } }
+    for (i = 0; i < this.vehicles.length; i++) {
+      var v = this.vehicles[i]; if (v.removed) continue;
+      if (v.hasPlayer() || (keep && (v.wreck || v.burning))) { v.persistent = false; v.tag = null; }   // the player's ride (a carjacked scooter) and the won fight's wrecks become ordinary city vehicles
+      else removeEntity(v);
+    }
     for (i = 0; i < this.pickups.length; i++) if (!this.pickups[i].removed) E().remove(this.pickups[i]);
     // a won fight leaves the set and the humiliated cast standing for the outro (they walk off or clear later)
     if (keep) leftovers.push({ enc: this, t: 0, rigs: this.rigs, objs: this.objs, peds: peds });
@@ -790,6 +805,7 @@
     this.parts = []; this.rigs = []; this.objs = []; this.adds = []; this.vehicles = []; this.peds = []; this.pickups = [];
     this.state = 'ended'; this.endReason = reason || 'end';
     var k = active.indexOf(this); if (k >= 0) active.splice(k, 1);
+    Bosses.active = active[0] || null;
     emit('boss:end', { id: this.id, reason: reason || 'end' });
   };
   EP.hud = function () {
@@ -815,7 +831,10 @@
   }
   function disposeOwn(o) {
     if (!o) return;
-    o.traverse(function (n) { if (n.userData && n.userData.ownGeo && n.geometry) n.geometry.dispose(); if (n.isSprite && n.material) n.material.dispose(); });
+    o.traverse(function (n) {
+      if (n.userData && n.userData.ownGeo && n.geometry) n.geometry.dispose();
+      if (n.material && (n.isSprite || (n.material.userData && n.material.userData.own))) n.material.dispose();
+    });
   }
   function removeEntity(e) {
     if (!e || e.removed) return;
@@ -979,7 +998,7 @@
     },
     partBroken: function (enc) {
       textFx('SNIP', enc.heli.x, enc.heli.y - 3, enc.heli.z, '#ffd45a', 1);
-      if (enc.liveParts('spool') === 0 && enc.data.mode === 'air') {
+      if (enc.liveParts('spool') === 0 && (enc.data.mode === 'air' || enc.data.mode === 'takeoff')) {
         enc.data.mode = 'landing'; enc.clearTele();
         textFx('RIBBON IN THE ROTOR!', enc.heli.x, enc.heli.y + 2, enc.heli.z, '#ff3b30', 2);
         enc.bark('My ribbon! The ribbon is in the thing!');
@@ -992,7 +1011,7 @@
         d.ang += def.orbit[n - 1] * dt;
         var tx = c.x + Math.cos(d.ang) * 16, tz = c.z + Math.sin(d.ang) * 16, ty = d.heliY;
         h.x = U.damp(h.x, tx, 1.4, dt); h.z = U.damp(h.z, tz, 1.4, dt); h.y = U.damp(h.y, ty, d.mode === 'takeoff' ? 1.2 : 2, dt);
-        if (d.mode === 'takeoff' && Math.abs(h.y - ty) < 1) d.mode = 'air';
+        if (d.mode === 'takeoff' && Math.abs(h.y - ty) < 1) { d.mode = 'air'; if (enc.liveParts('spool') === 0) DEFS.b01_goldplate._spools(enc, def.spools[n - 1]); }
         h.yaw = U.angleDamp(h.yaw, d.ang + Math.PI, 2, dt); h.data.bank = Math.sin(enc.t * 0.7) * 0.08 - 0.12;
         h.data.rotor = (h.data.rotor || 0) + dt * 34;
         if (d.mode === 'air' && p) enc.every('attack', def.attackEvery[n - 1], dt, function () {
@@ -1108,7 +1127,7 @@
               self.yaw = U.dirToYaw(self.x - c.x, self.z - c.z) + Math.PI;
               self.data.pulseT = (self.data.pulseT == null ? 1.5 + k * (enc.def.pulse[enc.phase - 1] / n) : self.data.pulseT) - dt;
               var glow = self.data.pulseT < 1.0 && self.data.pulseT > 0;
-              if (self.mesh && self.mesh.userData.glow) self.mesh.userData.glow.material = mat(glow ? 0xff66ff : 0xb04ad8, { glow: glow ? 1.6 : 0.2, rough: 0.3 });
+              if (glow !== self.data.glowOn && self.mesh && self.mesh.userData.glow) { self.data.glowOn = glow; self.mesh.userData.glow.material = mat(glow ? 0xff66ff : 0xb04ad8, { glow: glow ? 1.6 : 0.2, rough: 0.3 }); }
               if (self.data.pulseT <= 1.0 && !self.data.warned) { self.data.warned = true; textFx('( silence )', self.x, self.y + 2.2, self.z, '#e9b8ff', 1); }
               if (self.data.pulseT <= 0 && enc.state === 'fight') {
                 self.data.pulseT = enc.def.pulse[enc.phase - 1]; self.data.warned = false;
@@ -1275,10 +1294,12 @@
       enc.every('jets', def.jetEvery[n - 1], dt, function () { DEFS.b03_warbanner._jets(enc, n === 3); });
       enc.every('bark', 8, dt, function () { enc.randomBark('fight'); });
       // the scooters: circle, then a telegraphed charge along a flashing line
+      var liveScooters = 0;
       for (i = enc.vehicles.length - 1; i >= 0; i--) {
         var v = enc.vehicles[i];
-        if (v.removed) { enc.vehicles.splice(i, 1); continue; }
+        if (v.removed || v._bossCounted) continue;
         if (v.wreck || v.burning || !v.driver || !v.driver.alive) { DEFS.b03_warbanner._wrecked(enc, v); continue; }
+        liveScooters++;
         if (!p) continue;
         var vd = v.data; vd.t += dt;
         if (vd.mode === 'circle') {
@@ -1302,7 +1323,7 @@
       }
       if (n === 1) {
         if (w && !w.removed) standFacing(w, dt);
-        if (enc.vehicles.length === 0 && enc.hp > def.thresholds[0]) enc.hurt(enc.hp - def.thresholds[0]);
+        if (liveScooters === 0 && enc.hp > def.thresholds[0]) enc.hurt(enc.hp - def.thresholds[0]);
       } else if (n === 2) {
         if (d.thrown) {
           d.window -= dt;
@@ -1315,8 +1336,7 @@
     },
     _wrecked: function (enc, v) {
       if (v._bossCounted) return;
-      v._bossCounted = true;
-      var k = enc.vehicles.indexOf(v); if (k >= 0) enc.vehicles.splice(k, 1);
+      v._bossCounted = true;   // it stays in enc.vehicles so the end of the fight clears it
       textFx('SCOOTER WRECKED', v.x, v.y + 2.2, v.z, '#9dff3c', 1.4);
       var dvr = v.driver;
       if (v.pmRide) {
@@ -1339,7 +1359,7 @@
       var p = player(), best = null, bd = 1e9, n = enc.phase;
       if (n === 2 && enc.data.thrown && enc.ped) return enc.ped;
       if (n === 3 && enc.ped) return enc.ped;
-      for (var i = 0; i < enc.vehicles.length; i++) { var v = enc.vehicles[i]; if (v.wreck || v.removed) continue; if (n === 2 && !v.pmRide) continue; var dd = U.dist2d(p.x, p.z, v.x, v.z); if (dd < bd) { bd = dd; best = v; } }
+      for (var i = 0; i < enc.vehicles.length; i++) { var v = enc.vehicles[i]; if (v.wreck || v.removed || v._bossCounted) continue; if (n === 2 && !v.pmRide) continue; var dd = U.dist2d(p.x, p.z, v.x, v.z); if (dd < bd) { bd = dd; best = v; } }
       return best || enc.ped;
     }
   };
@@ -1399,7 +1419,8 @@
           var cyc = self.age % 7.7; self.invuln = cyc > 5.2;
           var flash = cyc > 4.5 && cyc <= 5.2 && Math.floor(cyc * 10) % 2 === 0;
           var ud = self.mesh && self.mesh.userData;
-          if (ud) { ud.plate.material.color.setHex(self.invuln ? 0x777777 : 0xffffff); ud.halo.material = mat(self.invuln ? 0x9a9a9a : flash ? 0xffffff : 0xff3b30, { basic: true, opacity: 0.35, side: THREE.DoubleSide }); }
+          var look = self.invuln ? 2 : flash ? 1 : 0;
+          if (ud && look !== self.data.look) { self.data.look = look; ud.plate.material.color.setHex(self.invuln ? 0x777777 : 0xffffff); ud.halo.material = mat(look === 2 ? 0x9a9a9a : look === 1 ? 0xffffff : 0xff3b30, { basic: true, opacity: 0.35, side: THREE.DoubleSide }); }
         } });
       pt.mesh.rotation.order = 'YXZ';
       d.patch = pt;
@@ -1418,9 +1439,8 @@
       var d = enc.data, def = enc.def;
       d.need = def.patches[n - 1]; d.popped = 0; d.patchT = 0;
       DEFS.b04_redacted._patch(enc);
-      var vans = 0; for (var i = 0; i < enc.vehicles.length; i++) if (!enc.vehicles[i].wreck && !enc.vehicles[i].removed) vans++;
+      var vans = 0; for (var i = 0; i < enc.vehicles.length; i++) { var vv = enc.vehicles[i]; if (!vv.wreck && !vv.removed && !vv._bossCounted && vv.driver) vans++; }
       for (i = vans; i < def.vans[n - 1]; i++) DEFS.b04_redacted._van(enc, i);
-      d.vanRespawn = 0;
     },
     partBroken: function (enc, pt) {
       var d = enc.data, b = enc.balloon, def = enc.def;
@@ -1442,7 +1462,7 @@
       for (i = 0; i < d.tethers.length; i++) {
         var tt = d.tethers[i], bx = b.x, by = b.y - 10.4, bz = b.z, dx = bx - tt.x, dy = by - tt.y, dz = bz - tt.z, l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
         tt.mesh.position.set((bx + tt.x) / 2, (by + tt.y) / 2, (bz + tt.z) / 2); tt.mesh.scale.set(0.08, l, 0.08);
-        tt.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / l, dy / l, dz / l));
+        tt.mesh.quaternion.setFromUnitVectors(UP, TMPV.set(dx / l, dy / l, dz / l));
       }
       if (d.patchT > 0) { d.patchT -= dt; if (d.patchT <= 0 && !d.patch) DEFS.b04_redacted._patch(enc); }
       if (p) enc.every('bars', def.barEvery[n - 1], dt, function () {
@@ -1796,6 +1816,7 @@
         } else if (d.result === 'lose') {
           d.result = null;
           if (p && p.alive) p.applyDamage(18, null, 'boss');
+          if (enc.state === 'ended' || !p || !p.alive) return;   // the round's loss was the last straw: the fight is over
           textFx('TALKED OVER', p.x, p.y + 2.2, p.z, '#ff3b30', 1.6);
           d.retryT = 3.5; d.mode = 'wait';
           enc.say(def.lines.lost);
@@ -1869,6 +1890,7 @@
       var g = game(); if (!g || g.state !== 'playing') return;
       for (var i = active.length - 1; i >= 0; i--) {
         var e = active[i];
+        if (e.playerRef && e.playerRef !== player()) { e.end('newgame'); continue; }   // a new game replaced the world under the fight
         try { e.update(dt); } catch (err) { U.reportError(err, 'bosses.update'); }
         if (e.state === 'done' && !e.mission && e.stateT > 1) e.end('complete');
         else if (e.state === 'failed' && !e.mission) e.end('escaped');
@@ -2006,7 +2028,7 @@
   function allyTick(a, dt) {
     var p = player(); if (!p || a.removed || !a.alive) return;
     if (a.knockedDown) return;
-    var best = null, bd = 30, list = E().hash.query(a.x, a.z, 30, []);
+    var best = null, bd = 30, list = E().hash.query(a.x, a.z, 30, SCRATCH);
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
       if (e.kind !== 'ped' || !e.alive || e.removed || e.inVehicle || e.knockedDown || e.humiliated || !(e.hostile || e.boss)) continue;
@@ -2050,7 +2072,7 @@
     update: function (dt) {
       var g = game(), p = player(), In = GTP.Input, i, id;
       if (!g || !p) return;
-      if (g.state !== 'playing') { if (sp.active.focus && g.state !== 'paused') stopFocus(); return; }
+      if (g.state !== 'playing') { sp.keyPressed = false; if (sp.active.focus && g.state !== 'paused') stopFocus(); return; }
       // input: the `special` action, or X / Shift-while-aiming without a binding
       var down = In && In.down('special'), pressed = In && In.pressed('special'), shiftFocus = false;
       if (!hasSpecialBinding() && In) {
@@ -2108,7 +2130,7 @@
   GTP.Events.on('player:respawn', function () { stopFocus(); stopBoost(); });
   // the fallback key: X while no `special` binding exists (the ui track adds the action)
   if (typeof window !== 'undefined' && window.addEventListener) {
-    window.addEventListener('keydown', function (e) { if (e.code === 'KeyX' && !e.repeat && !hasSpecialBinding()) { sp.keyDown = true; sp.keyPressed = true; } });
+    window.addEventListener('keydown', function (e) { var g = game(); if (e.code === 'KeyX' && !e.repeat && g && g.state === 'playing' && !hasSpecialBinding()) { sp.keyDown = true; sp.keyPressed = true; } });
     window.addEventListener('keyup', function (e) { if (e.code === 'KeyX') sp.keyDown = false; });
   }
 
@@ -2197,6 +2219,16 @@
   if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('load', function () { try { installLate(); } catch (e) { U.reportError(e, 'bosses.install'); } });
   // a new game / load drops every fight and resets the specials
   GTP.Events.on('loaded', function () { Bosses.endAll('load'); Specials.clear(); });
+  GTP.Events.on('load:begin', function () { Bosses.endAll('load'); Specials.clear(); });
+  // the slow motion never outlives play: a minigame, a menu or the title runs at full speed
+  GTP.Events.on('state', function (e) {
+    var s = e && e.state; if (s === 'playing' || s === 'paused') return;
+    stopFocus();
+    if (s === 'cutscene') return;   // the boss's defeat slow motion holds through a line or two
+    var g = game(); if (g && g.timeScale < 1) { for (var i = 0; i < active.length; i++) if (active[i]._slowmo > 0) { active[i]._slowmo = 0; g.timeScale = 1; } }
+  });
+  // a fight outside a mission ends with the player (a mission's fight ends through the mission's failure)
+  GTP.Events.on('player:wasted', function () { for (var i = active.length - 1; i >= 0; i--) if (!active[i].mission) active[i].end('player_dead'); });
 
   // ------------------------------------------------------------------ fallback HUD --
   // The ui track draws the boss bar (boss:phase) and the special meters (special:state); until it says so (UI.drawsBossBar,

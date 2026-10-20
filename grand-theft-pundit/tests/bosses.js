@@ -298,6 +298,60 @@ H.run('bosses', async (t) => {
     t.assert(sp.errors.length === 0, 'no errors in the specials: ' + sp.errors.join(' | '));
   }
 
+  // lifecycle regressions (an adversarial review's findings): new game, death outside a mission, spools cut on takeoff,
+  // wrecks cleared, vehicles parked between phases, no slow motion left behind, the X key ignored outside play
+  if (!ONLY || ONLY.includes('lifecycle')) {
+    const lc = await page.evaluate(() => {
+      const B = GTP.Bosses, M = GTP.Missions, g = GTP.game, out = {};
+      B.endAll('test'); if (M.state.active) M.abort();
+      const count = () => GTP.Entities.list.filter((e) => e.boss || e.bossId || e.bossAdd || e.bossScooter || e.bossVan || e.bossCast || e.kind === 'bossrig').length;
+      const scene = () => { let n = 0; GTP.Render.scene.traverse((o) => { if (o.material && o.material.name && String(o.material.name).indexOf('boss:') === 0) n++; }); return n; };
+      // 1. spools cut while the helicopter is still taking off: it lands anyway
+      let e = B.spawn('b01_goldplate', {}); g.debug.teleport(e.center.x, e.center.z + 10); g.player.godMode = true;
+      for (let i = 0; i < 40 && e.state !== 'fight'; i++) { if (M.dialogue.active) M.skipDialogue(); g.advance(0.25); }
+      e.data.mode = 'takeoff'; B.debug.breakParts('spool'); g.advance(0.1);
+      out.takeoffLanding = e.data.mode;
+      // 2. a fight outside a mission ends when the player goes down
+      g.player.godMode = false; g.player.applyDamage(9999, null, 'test'); g.advance(0.2);
+      out.endedOnDeath = e.state === 'ended' && !B.active;
+      for (let i = 0; i < 30 && g.state !== 'playing'; i++) g.advance(0.25);
+      // 3. b03: wrecked scooters are cleared with the fight; vehicles brake between phases
+      e = B.spawn('b03_warbanner', {}); g.debug.teleport(e.center.x, e.center.z + 10); g.player.godMode = true;
+      for (let i = 0; i < 40 && e.state !== 'fight'; i++) { if (M.dialogue.active) M.skipDialogue(); g.advance(0.25); }
+      g.advance(2);
+      const sc = e.vehicles.slice(); sc[0].applyDamage(999, g.player, 'test'); g.advance(0.2);
+      out.wreckKept = e.vehicles.indexOf(sc[0]) >= 0;
+      B.debug.skipPhase(); g.advance(0.05);
+      out.parked = e.vehicles.filter((v) => !v.removed && !v.wreck && v.driver).every((v) => v.throttle === 0 && v.brake === 1);
+      e.end('test');
+      out.scootersGone = sc.every((v) => v.removed);
+      // 4. a new game under a running fight drops it (the encounter, its rigs, its scene objects)
+      e = B.spawn('b04_redacted', {}); g.debug.teleport(e.center.x, e.center.z + 10);
+      for (let i = 0; i < 20 && e.state !== 'fight'; i++) { if (M.dialogue.active) M.skipDialogue(); g.advance(0.25); }
+      out.before = { ents: count(), scene: scene() };
+      g.newGame(7); g.advance(0.2);
+      out.afterNewGame = { state: e.state, active: !!B.active, ents: count(), scene: scene() };
+      // 5. focus and the X key: no slow motion in a menu, the X latch ignored while paused
+      for (const k of GTP.Specials.ids) GTP.Specials.unlock(k);
+      GTP.Input.set('aim', true); g.step(); GTP.Specials.trigger('focus'); const ts = g.timeScale;
+      g.setState('minigame'); out.focusInMinigame = { before: ts, after: g.timeScale, active: GTP.Specials.state().focus.active };
+      g.setState('playing'); GTP.Input.set('aim', false); g.step();
+      g.setState('paused');
+      return out;
+    });
+    await page.keyboard.press('x');
+    lc.latch = await page.evaluate(() => { const g = GTP.game, S = GTP.Specials; S.meters.shout = 1; g.setState('playing'); g.advance(0.2); return +S.meters.shout.toFixed(2); });
+    lc.errors = await page.evaluate(() => GTP.errors.slice(0, 4).map((e) => e.where + ': ' + e.message));
+    console.log('  lifecycle: ' + JSON.stringify(lc));
+    t.assert(lc.takeoffLanding === 'landing', 'spools cut during takeoff still bring the helicopter down');
+    t.assert(lc.endedOnDeath, 'a fight outside a mission ends when the player dies');
+    t.assert(lc.wreckKept && lc.parked && lc.scootersGone, 'wrecks stay tracked and clear with the fight; vehicles brake between phases');
+    t.assert(lc.before.ents > 0 && !lc.afterNewGame.active && lc.afterNewGame.state === 'ended' && lc.afterNewGame.ents === 0 && lc.afterNewGame.scene === 0, 'a new game ends the fight and clears it: ' + JSON.stringify(lc));
+    t.assert(lc.focusInMinigame.before < 1 && lc.focusInMinigame.after === 1 && !lc.focusInMinigame.active, 'focus stops when a minigame opens');
+    t.assert(lc.latch === 1, 'the X key pressed while paused does not shout on resume');
+    t.assert(lc.errors.length === 0, 'no errors in the lifecycle checks: ' + lc.errors.join(' | '));
+  }
+
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'no errors: ' + errs.slice(0, 5).join('\n'));
   console.log('  summary: ' + Object.keys(results).map((k) => k + ' ' + results[k].simSeconds + 's sim, hp lost ' + Math.round(results[k].bot.hpLost) + ', retries ' + results[k].bot.retries).join('; '));
