@@ -142,8 +142,20 @@ material. Geometry is cached per `cls|wrap|modsKey`.
   paint finish / primary, and tones the default paint down (metalness <= 0.28, roughness >= 0.36) so roofs no longer
   mirror the sky like glass. Integration can fold this into `Render.syncVehicle`.
 - `GTP.Assets.pedParts` and `GTP.Assets.vehicleGeometry` replaced (from `05d`).
-- `GTP.Render.detach` wrapped (from `05d`, installed lazily on the first `pedParts` call because Render loads later):
-  the original runs, then the ped's look geometry is released.
+- `GTP.Render.detach` and `GTP.Render.attach` wrapped (from `05d`, installed lazily on the first `pedParts` call
+  because Render loads later): detach releases the ped's look geometry and disposes its skeleton's bone texture;
+  attach of a mesh that was detached (09_missions `setSign`, 12_cutscenes `placeActor` detach and re-attach the same
+  mesh) takes the look back, re-registering it if it was evicted meanwhile.
+
+## Adversarial review (fixed)
+A review pass over the diff found and this branch fixed: the look released on a detach + re-attach of the same mesh
+(could dispose geometry still on screen); a bone texture leaked per despawned ped; far peds' guns flickering between
+Combat's per-step arm pose and the hand pose (the hand pose is now re-applied every frame); props not hidden while
+seated or swimming; blends running on the wall clock between steps and during pauses (now game time only, and
+`GTP.Anim.poseOf` no longer advances the clock); car occupants not following the vehicle's pitch and roll; two
+passengers sharing a seat after one left (seats come from the live occupant lists); `mods: {}` rebuilding an identical
+record, modded records never leaving the cache (now swept after 120 s unused), and paint finishes never reverting.
+`tests/characters.js` guards the first, third and sixth of these.
 
 ## Decisions
 - One skinned mesh per ped instead of rigid parts: 1 draw call (v0.2: 6), smooth joints; the crowd lowered the frame's

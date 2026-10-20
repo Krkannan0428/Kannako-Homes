@@ -765,16 +765,34 @@
     if (--e.refs > 0) return;
     IDLE.set(e.key, e);
     while (IDLE.size > IDLE_MAX) {
-      var k = IDLE.keys().next().value, old = IDLE.get(k); IDLE.delete(k); GEO.delete(k);
-      old.lods.forEach(function (g) { if (g) g.dispose(); }); stats.disposed++;
+      var k = IDLE.keys().next().value, old = IDLE.get(k); IDLE.delete(k); if (GEO.get(k) === old) GEO.delete(k);
+      old.lods.forEach(function (g) { if (g) g.dispose(); }); old.lods = [null, null, null]; old.evicted = true; stats.disposed++;
     }
   }
-  // Render.detach (environment track) releases a ped's look; wrapped the first time a ped is built (Render loads later)
-  function hookDetach() {
+  // Render.detach / attach (environment track): a detach releases a ped's look and frees its bone texture; an attach of
+  // the same mesh (09_missions setSign, 12_cutscenes placeActor detach and re-attach) takes the look back, re-registering
+  // an entry that was evicted meanwhile. Wrapped the first time a ped is built (Render loads after this file).
+  function hookRender() {
     var R = GTP.Render; if (!R || !R.detach || R.detach._models) return;
-    var orig = R.detach;
-    R.detach = function (e) { var m = e && e.mesh, ud = m && m.userData; var r = orig.apply(this, arguments); if (ud && ud.models && ud.entry && !ud.released) { ud.released = true; release(ud.entry); } return r; };
+    var origD = R.detach, origA = R.attach;
+    R.detach = function (e) {
+      var m = e && e.mesh, ud = m && m.userData, r = origD.apply(this, arguments);
+      if (ud && ud.models && ud.entry && !ud.released) { ud.released = true; release(ud.entry); if (ud.skin && ud.skin.skeleton) ud.skin.skeleton.dispose(); }
+      return r;
+    };
     R.detach._models = true;
+    if (origA) R.attach = function (e) {
+      var m = e && e.mesh, ud = m && m.userData;
+      if (ud && ud.models && ud.entry && ud.released) {
+        var en = ud.entry, cur = GEO.get(en.key);
+        if (cur && cur !== en) { en = ud.entry = cur; ud.lods = cur.lods; }
+        else if (!cur) { GEO.set(en.key, en); en.evicted = false; }
+        ud.released = false; acquire(en); ud.lods = en.lods;
+        ud.skin.geometry = lodOf(en, ud.lod || 0);
+        if (!en.rig) en.rig = ud.rest;
+      }
+      return origA.apply(this, arguments);
+    };
   }
   function inverses(rig) {
     var key = rig.map(function (p) { return p[0].toFixed(4); }).join(',') + rig[11][0].toFixed(4);
@@ -786,7 +804,7 @@
   }
   function pedParts(look) {
     look = look || {};
-    hookDetach();
+    hookRender();
     var entry = entryFor(look), rig = entry.rig;
     acquire(entry); lodOf(entry, 1);
     var bones = [], i;
@@ -833,7 +851,7 @@
       for (var k = 0; k < ud.boneList.length; k++) { var ch = ud.boneList[k].children; for (var j = 0; j < ch.length; j++) if (ch[j].name === 'prop') ch[j].visible = i < 2 && !ch[j].userData.hidden; }
     },
     lodGeometry: function (root, i) { var ud = root && root.userData; return ud && ud.entry ? lodOf(ud.entry, i) : null; },
-    release: function (root) { var ud = root && root.userData; if (ud && ud.entry && !ud.released) { ud.released = true; release(ud.entry); } },
+    release: function (root) { var ud = root && root.userData; if (ud && ud.entry && !ud.released) { ud.released = true; release(ud.entry); if (ud.skin && ud.skin.skeleton) ud.skin.skeleton.dispose(); } },
     stats: function () { return { lookGeometries: stats.built, live: GEO.size - IDLE.size, idle: IDLE.size, disposed: stats.disposed, peds: stats.peds, atlasCells: ATLAS.next }; },
     _helpers: { SB: SB, tube: tube, ellipsoid: ellipsoid, torus: torus, hex3: hex3, shade: shade, mix: mix }
   };
@@ -1441,10 +1459,27 @@
     return { wheels: U.clamp(mods.wheels | 0, 0, 5), spoiler: mods.spoiler == null ? null : U.clamp(mods.spoiler | 0, 0, 3), tint: tint, secondary: p.secondary ? hex3(p.secondary) : null, finish: p.finish || null, primary: p.primary || null,
       tintC: [[0.55, 0.62, 0.7], [0.32, 0.36, 0.42], [0.16, 0.18, 0.22], [0.06, 0.06, 0.08]][tint] };
   }
-  function modsKey(m) { return m ? [m.wheels | 0, m.spoiler == null ? '-' : m.spoiler, m.tint | 0, m.paint && m.paint.secondary || ''].join(',') : ''; }
+  // '' for no mods and for all-default mods, so a car with mods {} shares the base record
+  function modsKey(m) {
+    if (!m) return '';
+    var sec = m.paint && m.paint.secondary || '';
+    if (!(m.wheels | 0) && m.spoiler == null && !(m.tint | 0) && !sec) return '';
+    return [m.wheels | 0, m.spoiler == null ? '-' : m.spoiler, m.tint | 0, sec].join(',');
+  }
+  // modded records unused for MOD_TTL seconds of game time leave the cache and free their buffers (a car still holding
+  // one re-uploads it on its next draw); the nine base records stay
+  var MOD_TTL = 120;
+  function gameT() { return GTP.game && GTP.game.time ? GTP.game.time.t : 0; }
+  function sweepCache() {
+    var now = gameT();
+    for (var k in CACHE) {
+      var r = CACHE[k];
+      if (r.modsKey && now - (r.usedT || 0) > MOD_TTL) { r.lods.forEach(function (g) { g.dispose(); }); r.wheelLods.forEach(function (g) { g.dispose(); }); delete CACHE[k]; }
+    }
+  }
   function vehicleGeometry(cls, wrap, mods) {
     var key = cls + (wrap ? ':' + wrap : '') + '|' + modsKey(mods);
-    if (CACHE[key]) return CACHE[key];
+    if (CACHE[key]) { CACHE[key].usedT = gameT(); return CACHE[key]; }
     var spec = C.VEHICLES[cls];
     if (!spec) { if (A.vehicleGeometryV02 && cls !== 'sedan') { var v2 = A.vehicleGeometryV02(cls, wrap); if (v2) return v2; } cls = 'sedan'; spec = C.VEHICLES.sedan; }
     var M = normMods(mods), L = spec.length, Wd = spec.width, H = spec.height, wr = spec.wheelRadius, hl = L / 2, hw = Wd / 2;
@@ -1480,7 +1515,7 @@
       doorPoints: [{ x: -(hw + 0.7), z: -hl * 0.15, seat: 0 }, { x: hw + 0.7, z: -hl * 0.15, seat: 1 }],
       size: { length: L, width: Wd, height: H }, wrap: wrap || null,
       lods: lods, wheelLods: wheelLods, seats: info.seats || null, wheelPoint: info.wheelPoint || null, bars: info.bars || null,
-      mods: M, modsKey: modsKey(mods), finish: M.finish, models: true, tris: lods.map(function (g) { return g.userData.tris; })
+      mods: M, modsKey: modsKey(mods), finish: M.finish, models: true, usedT: gameT(), tris: lods.map(function (g) { return g.userData.tris; })
     };
     stats.built++;
     return rec;
@@ -1493,6 +1528,7 @@
     var F = FINISH[f]; if (F) { mat.roughness = F.roughness; mat.metalness = F.metalness; if (mat.clearcoat != null) mat.clearcoat = f === 'matte' ? 0 : 1; if (f === 'chrome') mat.color.setRGB(0.85, 0.86, 0.9); }
     if (primary && f !== 'chrome') mat.color.set(primary);
   }
+  var sweepN = 0;
   function syncVehicle(v, m, ud) {
     var body = ud._body || (ud._body = m.getObjectByName('body')); if (!body || !ud.rec) return;
     var mk = modsKey(v.mods);
@@ -1500,11 +1536,19 @@
       var rec = vehicleGeometry(v.type || 'sedan', v.wrap, v.mods);
       if (rec.models) { ud.rec = rec; ud.lodI = -1; }
     }
-    if (!ud._paintTuned && ud.paint) { ud._paintTuned = true; if (!(v.mods && v.mods.paint && v.mods.paint.finish)) { ud.paint.metalness = Math.min(ud.paint.metalness, 0.28); ud.paint.roughness = Math.max(ud.paint.roughness, 0.36); } }
-    if (ud._finishKey !== mk + (v.mods && v.mods.paint ? v.mods.paint.finish + v.mods.paint.primary : '')) {
-      ud._finishKey = mk + (v.mods && v.mods.paint ? v.mods.paint.finish + v.mods.paint.primary : '');
-      if (v.mods && v.mods.paint) applyFinish(ud.paint, v.mods.paint.finish, v.mods.paint.primary);
+    if (ud.rec.modsKey) ud.rec.usedT = gameT();
+    if (!ud._paint0 && ud.paint) {
+      // the default paint, toned down from v0.2's mirror-like metallic; kept to restore when mods.paint goes away
+      ud._paint0 = { metalness: Math.min(ud.paint.metalness, 0.28), roughness: Math.max(ud.paint.roughness, 0.36), clearcoat: ud.paint.clearcoat, color: ud.paint.color.getHex() };
+      ud.paint.metalness = ud._paint0.metalness; ud.paint.roughness = ud._paint0.roughness;
     }
+    var pk = v.mods && v.mods.paint ? (v.mods.paint.finish || '') + '|' + (v.mods.paint.primary || '') : '';
+    if (ud.paint && ud._finishKey !== pk) {
+      ud._finishKey = pk;
+      var P0 = ud._paint0; ud.paint.metalness = P0.metalness; ud.paint.roughness = P0.roughness; if (P0.clearcoat != null) ud.paint.clearcoat = P0.clearcoat; ud.paint.color.setHex(P0.color);
+      if (pk) applyFinish(ud.paint, v.mods.paint.finish, v.mods.paint.primary);
+    }
+    if (++sweepN % 600 === 0) sweepCache();
     var r = ud.rec; if (!r.lods) return;
     var cam = GTP.Render && GTP.Render.camera, d = 0;
     if (cam) { var dx = v.x - cam.position.x, dz = v.z - cam.position.z; d = Math.sqrt(dx * dx + dz * dz); }

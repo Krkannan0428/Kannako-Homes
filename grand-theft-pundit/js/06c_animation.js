@@ -99,7 +99,7 @@
   }
 
   // ----------------------------------------------------------- per-ped state --
-  function state(p, m) {
+  function state(p, m, peek) {
     var st = p._anim;
     if (!st || st.mesh !== m) {
       st = p._anim = { mesh: m, pose: {}, aimW: 0, holdW: 0, crouchW: 0, airW: 0, lookY: 0, lookX: 0, t: nowS(), dt: 0, fpt: 0, shotAt: 0, seed: (p.id * 0.6180339) % 1, coverLean: 0, driveW: 0 };
@@ -109,10 +109,11 @@
       st.parts = { legL: B.legL, legR: B.legR, armL: B.armL, armR: B.armR, torso: B.torso, head: B.head, body: m, _mesh: m };
       for (k in B) st.parts[k] = B[k];
     }
-    // blend time: the game clock's step (frames between steps, pauses and tests that sync repeatedly see 0), else the wall clock
+    if (peek) return st;
+    // blend time: the game clock's step (frames between steps, pauses and the wheel's slow motion see 0 or little), the
+    // wall clock only without a game; after a long gap (off screen, a test advancing without frames) blends land at once
     var now = nowS(), g = GTP.game, gt = g && g.time ? g.time.t : null, dg = gt != null && st.gt != null ? gt - st.gt : 0;
-    // after a long gap (the ped was off screen, a test advanced the world without frames) blends land at once
-    st.dt = dg > 0.25 ? 10 : clamp(dg > 0 ? dg : now - st.t, 0, 0.1); st.t = now; st.gt = gt;
+    st.dt = dg > 0.25 ? 10 : clamp(gt != null ? Math.max(dg, 0) : now - st.t, 0, 0.1); st.t = now; st.gt = gt;
     return st;
   }
   function rot(b, x, y, z) { b.rotation.set(x, y, z); }
@@ -166,9 +167,9 @@
     st.holdW = U.damp(st.holdW, armed ? 1 : 0, 10, dt);
     var wl = P.weaponId === 'fist' ? 0 : 1;
 
-    if (seated) { seatedPose(p, B, R, P, st, t); return; }
-    if (lying) { lyingPose(p, B, R, P, st, t); return; }
-    if (swim) { swimPose(p, B, P, st, t); headLook(p, B, st, 0); return; }
+    if (seated) { seatedPose(p, B, R, P, st, t); syncHeld(p, B, P, st, wi, false); return; }
+    if (lying) { lyingPose(p, B, R, P, st, t); syncHeld(p, B, P, st, wi, false); return; }
+    if (swim) { swimPose(p, B, P, st, t); headLook(p, B, st, 0); syncHeld(p, B, P, st, wi, false); return; }
 
     // ---- locomotion
     var walkS = p.walkSpeed ? p.walkSpeed() : 1.6, sp = p.speed || 0, k = clamp(sp / 1.2, 0, 1), run = sp > walkS + 0.8;
@@ -296,7 +297,7 @@
     _qHand.copy(_qGun).multiply(wi.upright ? Q_UPRIGHT_INV : Q_BARREL_INV);
     gripC.set(gx, gy, gz).applyMatrix4(_m);
     armIK(B.armR, B.lowerArmR, B.handR, _m, _qChest, gripC, _qHand, POLE_R);
-    st.gunQ = _qGun; st.gunAt = gripC;
+    st.gunQ = _qGun;
     // the support hand
     var support = two || (!wi.upright && !wi.thrown && aimW > 0.3) || (wi.melee && (aimW > 0.3 || (P.melee && P.melee.t >= 0)));
     if (support || rl != null) {
@@ -348,22 +349,25 @@
   }
   // the gun Combat hangs on armR moves to the hand; held props hide while a weapon is out
   function syncHeld(p, B, P, st, wi, armed) {
-    var held = p._held, hand = B.handR;
-    if (held && held.parent && held.parent !== hand) hand.add(held);
-    if (held && held.parent === hand) {
-      held.position.copy(GRIP);
-      if (armed && st.gunQ) {
-        // gun in hand = hand^-1 * gun (both in R): by construction the barrel mapping
-        held.quaternion.copy(wi.upright ? Q_UPRIGHT : Q_BARREL);
-      } else {
-        _q.setFromAxisAngle(_v.set(1, 0, 0), wi.upright ? 0 : -0.7); held.quaternion.copy(_q).multiply(wi.upright ? Q_UPRIGHT : Q_BARREL);
-      }
-      held.scale.setScalar(1);
-    }
+    var hq = st.heldQ || (st.heldQ = new THREE.Quaternion());
+    // gun in hand = hand^-1 * gun (both in R): by construction the barrel mapping; relaxed, pointing down and forward
+    if (armed && st.gunQ) hq.copy(wi.upright ? Q_UPRIGHT : Q_BARREL);
+    else { _q.setFromAxisAngle(_v.set(1, 0, 0), wi.upright ? 0 : -0.7); hq.copy(_q).multiply(wi.upright ? Q_UPRIGHT : Q_BARREL); }
+    st.heldSet = true;
+    applyHeld(p, st);
     st.gunQ = null;
+    var hand = B.handR;
     var hide = (p.weapon && p.weapon !== 'fist') || p.swimming || (p.inVehicle && !(P.ride));
     var ch = hand.children;
     for (var i = 0; i < ch.length; i++) if (ch[i].name === 'prop') { ch[i].userData.hidden = !!hide; ch[i].visible = !hide && (st.mesh.userData.lod || 0) < 2; }
+  }
+  // the gun Combat hangs on armR (and re-poses every step for the v0.2 arm) sits in the right hand at the grip
+  function applyHeld(p, st) {
+    var held = p._held, hand = st.B.handR;
+    if (!held || !held.parent) return;
+    if (held.parent !== hand) hand.add(held);
+    held.position.copy(GRIP); held.scale.setScalar(1);
+    if (st.heldSet) held.quaternion.copy(st.heldQ);
   }
   function headLook(p, B, st, pitchExtra) {
     var pl = player(), ty = 0, tx = 0, t = p.animTime || 0;
@@ -422,8 +426,8 @@
     rot(B.torso, ride ? -0.3 : 0.08, 0, 0); rot(B.chest, ride ? -0.05 : 0.02, 0, 0); rot(B.neck, ride ? 0.25 : -0.05, 0, 0); rot(B.head, ride ? 0.1 : 0, 0, 0);
     if (ride) { rot(B.legL, 1.15, 0, -0.12); rot(B.legR, 1.15, 0, 0.12); rot(B.lowerLegL, -1.05, 0, 0); rot(B.lowerLegR, -1.05, 0, 0); rot(B.footL, -0.1, 0, 0); rot(B.footR, -0.1, 0, 0); }
     else { rot(B.legL, 1.45, 0, -0.08); rot(B.legR, 1.42, 0, 0.1); rot(B.lowerLegL, -0.5, 0, 0); rot(B.lowerLegR, -0.6, 0, 0); rot(B.footL, -0.45, 0, 0); rot(B.footR, -0.35, 0, 0); }
-    var driver = p.seat === 0 || v.driver === p;
-    var wheel = rec && (ride ? rec.bars : rec.wheelPoint), seat = rec && rec.seats && rec.seats[Math.min(p.seat | 0, rec.seats.length - 1)];
+    var driver = v.driver === p;
+    var wheel = rec && (ride ? rec.bars : rec.wheelPoint), seat = rec && rec.seats && rec.seats[seatIndex(p, v, rec)];
     if (driver && wheel && seat && B.chest) {
       // the wheel point in the body's root frame: (wheel - seat) / scale + the hips' rest height
       chestFrame(B, _m, _qChest);
@@ -478,14 +482,20 @@
     // far peds animate at a third of the frame rate (their phase still runs)
     st.skip = (st.skip || 0) + 1;
     if (lod < 2 || st.skip >= 3 || st.lastLying !== lying) { st.skip = 0; animate(this, m, st, P, lod); st.lastLying = lying; }
+    else applyHeld(this, st);
     m.position.set(x, y, z);
     m.rotation.set(t, yaw, 0, 'YXZ');
   }
   // a car seat (visible through the glass when the vehicle record has seats), the scooter's saddle
+  // Vehicle.enter numbers passengers by the list length and exit never renumbers: derive the seat from the lists
+  function seatIndex(p, v, rec) {
+    var i = v.driver === p ? 0 : 1 + Math.max(0, v.passengers ? v.passengers.indexOf(p) : (p.seat | 0) - 1);
+    return Math.min(i, rec.seats.length - 1);
+  }
   function syncSeated(p, m, a, st, P, firstPerson) {
     var v = p.inVehicle, vm = v.mesh, ud = vm && vm.userData, rec = ud && ud.rec;
-    var seat = rec && rec.seats && rec.seats[Math.min(p.seat | 0, rec.seats.length - 1)];
-    var ride = P.ride && !v.wreck && !v.sinking && (p.seat | 0) === 0;
+    var seat = rec && rec.seats && rec.seats[seatIndex(p, v, rec)];
+    var ride = P.ride && !v.wreck && !v.sinking && v.driver === p;
     var show = !firstPerson && !p.removed && p.alive && !v.wreck && !v.sinking && !(vm && !vm.visible) && !tooFar(p, Math.min(C.QUALITY.pedDraw, ride ? 999 : 55));
     if (!ride && !seat) show = false;
     // v0.2 hides the player's own body inside a car (tests/actors.js); GTP.Anim.showPlayerInCar opts in, NPC occupants show
@@ -499,16 +509,18 @@
     var sx, sy, sz;
     if (seat) { sx = seat.x; sy = seat.y; sz = seat.z; }
     else { sx = 0; sy = 0.86; sz = 0.3; }   // v0.2 saddle: 0.86 m up, 0.3 m behind the centre
-    var cy = Math.cos(yaw), sy2 = Math.sin(yaw), hipY = 0.96 * sc;
-    m.position.set(vx + sx * cy + sz * sy2, vy + sy - hipY + (v.pitch || 0) * -sz * 0, vz - sx * sy2 + sz * cy);
-    m.rotation.set(v.pitch || 0, yaw, v.roll || 0, 'YXZ');
+    var hipY = 0.96 * sc;
+    _e.set(v.pitch || 0, yaw, v.roll || 0, 'YXZ');
+    _v.set(sx, sy - hipY, sz).applyEuler(_e);
+    m.position.set(vx + _v.x, vy + _v.y, vz + _v.z);
+    m.rotation.copy(_e);
     var d2 = camDist2(vx, vz), lod = GTP.Models.lodFor(Math.sqrt(d2));
     GTP.Models.setLod(m, lod);
     animate(p, m, st, P, lod);
   }
 
   GTP.Anim = {
-    poseOf: function (p) { return p.mesh && p.mesh.userData.models ? poseOf(p, state(p, p.mesh)) : null; },
+    poseOf: function (p) { return p.mesh && p.mesh.userData.models ? poseOf(p, state(p, p.mesh, true)) : null; },
     weaponInfo: winfo,
     armIK: armIK,
     syncMesh: syncMesh,

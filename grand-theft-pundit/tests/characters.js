@@ -172,6 +172,38 @@ H.run('characters', async (t) => {
   t.assert(live.modded && live.rough > 0.7, 'vehicle.mods reach the live mesh: ' + JSON.stringify(live));
   t.assert(live.farLod === 2 && !live.farDriver, 'far cars drop to LOD 2 and hide their occupants');
 
+  // ---- review regressions: a detach + re-attach keeps the look referenced; far peds' guns keep their pose between
+  // animated frames; passengers keep distinct seats after one leaves; mods {} shares the base record
+  const reg = await page.evaluate(() => {
+    const E = GTP.Entities, p = GTP.game.player, W = GTP.World, R = GTP.Render, M = GTP.Models, out = {};
+    const look = { skin: 4, hair: 'bob', hairColor: '#123456', shirt: '#654321', pants: '#111111', extra: 'none' };
+    const a = new GTP.Ped({ x: p.x + 2, z: p.z + 3, look, persistent: true }); a.y = W.heightAt(a.x, a.z, p.y); a.snap(); E.add(a);
+    const ud = a.mesh.userData, refs0 = ud.entry.refs;
+    R.detach(a); R.attach(a);
+    out.refs = [refs0, ud.entry.refs, ud.released];
+    // far gun: aim a rifle at LOD 2 and check the gun's local rotation on an animated and a skipped frame
+    const f = new GTP.Ped({ x: p.x + 60, z: p.z, look: { skin: 2, hair: 'short' }, persistent: true }); f.y = W.heightAt(f.x, f.z, p.y); f.snap(); E.add(f);
+    f.weapon = 'rifle'; f.aiming = true; GTP.game.debug.freeCam(p.x, p.y + 2, p.z, f.x, f.y + 1, f.z);
+    const qs = [];
+    for (let i = 0; i < 6; i++) { GTP.game.advance(1 / 60); E.sync(1); if (f._held) qs.push(f._held.quaternion.toArray().map((v) => +v.toFixed(3)).join(',')); }
+    out.farLod = f.mesh.userData.lod; out.gunStable = new Set(qs).size === 1; out.gunParent = f._held && f._held.parent && f._held.parent.name;
+    // seats: two passengers, the first leaves, a third boards: all three occupants on distinct seats
+    const v = new GTP.Vehicle({ type: 'sedan', x: p.x - 8, z: p.z + 3 }); v.y = W.heightAt(v.x, v.z, p.y); v.snap(); E.add(v);
+    const mk = () => { const q = new GTP.Ped({ x: v.x, z: v.z, look: { skin: 3, hair: 'short' }, persistent: true }); E.add(q); return q; };
+    const d = mk(), b1 = mk(), b2 = mk(), b3 = mk();
+    v.enter(d, 0); v.enter(b1, 1); v.enter(b2, 1); v.exit(b1); v.enter(b3, 1);
+    GTP.game.debug.freeCam(v.x - 4, v.y + 1.6, v.z + 2, v.x, v.y + 0.8, v.z); GTP.game.advance(0.05); E.sync(1);
+    const pos = [d, b2, b3].map((q) => q.mesh.position.x.toFixed(2) + ',' + q.mesh.position.z.toFixed(2));
+    out.seats = pos; out.seatsDistinct = new Set(pos).size === 3;
+    out.sameRec = GTP.Assets.vehicleGeometry('sedan', null, {}) === GTP.Assets.vehicleGeometry('sedan');
+    return out;
+  });
+  console.log('  review regressions: ' + JSON.stringify(reg));
+  t.assert(reg.refs[1] === reg.refs[0] && reg.refs[2] === false, 'detach + attach keeps the look referenced: ' + JSON.stringify(reg.refs));
+  t.assert(reg.farLod === 2 && reg.gunStable && reg.gunParent === 'handR', 'a far ped holds its gun steady in the hand: ' + JSON.stringify(reg));
+  t.assert(reg.seatsDistinct, 'occupants keep distinct seats: ' + reg.seats.join(' | '));
+  t.assert(reg.sameRec, 'mods {} shares the base vehicle record');
+
   // ---- a crowd: 60 peds and 24 cars around the camera stay inside the draw and CPU budgets
   const crowd = await page.evaluate(() => {
     const E = GTP.Entities, p = GTP.game.player, W = GTP.World, R = GTP.rng;
