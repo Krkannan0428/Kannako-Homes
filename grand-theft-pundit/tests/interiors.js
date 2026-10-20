@@ -107,8 +107,13 @@ H.run('interiors', async (t) => {
     In.press('action'); GTP.game.advance(0.05);
     const ammoBuy = window.__ev.find((e) => e.n === 'shop:buy');
     // no shooting in the store
-    p.weapon = looking.weaponId; const shotOk = GTP.Combat.fire(p, p.weapon);
-    return { looking, prompt1, inspect: inspect && inspect.e, prompt2, prompt3, buy: buy && buy.e, owned0, owned1, spent: money0 - p.money, prompt4, ammoBuy: ammoBuy && ammoBuy.e, shotOk };
+    p.weapon = looking.weaponId;
+    const lines = []; GTP.Events.on('interior:line', (e) => lines.push(e.text));
+    const shotOk = GTP.Combat.fire(p, p.weapon);
+    const quietOnAction = lines.length === 0;
+    GTP.Input.set('shoot', true); GTP.Combat.fire(p, p.weapon); GTP.Input.set('shoot', false);
+    const muzzle = lines.length === 1;
+    return { looking, prompt1, inspect: inspect && inspect.e, prompt2, prompt3, buy: buy && buy.e, owned0, owned1, spent: money0 - p.money, prompt4, ammoBuy: ammoBuy && ammoBuy.e, shotOk, quietOnAction, muzzle };
   });
   console.log('  browse: ' + JSON.stringify(browse));
   t.assert(browse.looking && browse.looking.weaponId === 'pistol' && /PISTOL/i.test(browse.prompt1), 'looking at the pistol on the rack labels it: ' + browse.prompt1);
@@ -116,7 +121,7 @@ H.run('interiors', async (t) => {
   t.assert(/Buy for \$\d+/.test(browse.prompt2) && /CONFIRM/.test(browse.prompt2), 'without an armory UI the prompt asks to confirm the purchase: ' + browse.prompt2);
   t.assert(browse.buy && browse.owned0 === 0 && browse.owned1 > 0 && browse.spent > 0 && /SOLD/.test(browse.prompt3), 'the second press buys it: ' + browse.prompt3);
   t.assert(/Ammo/.test(browse.prompt4) && browse.ammoBuy && /^ammo_/.test(browse.ammoBuy.item), 'an owned weapon offers ammo: ' + browse.prompt4);
-  t.assert(browse.shotOk === false, 'no shooting in the store');
+  t.assert(browse.shotOk === false && browse.quietOnAction && browse.muzzle, 'no shooting in the store; E (which also reaches fire) is not scolded, the trigger is');
   await shot('int_armory_browse');
   await page.evaluate(() => GTP.game.debug.followCam());
 
@@ -138,10 +143,15 @@ H.run('interiors', async (t) => {
     GTP.game.advance(0.05);
     const hits = window.__ev.filter((e) => e.n === 'range:hit').map((e) => e.e);
     const during = { score: I.range.score, weapon: p.weapon, canShoot: fired };
+    // a save in the middle of a round keeps the real inventory, not the free range rounds
+    const mid = GTP.game.serialize(1);
+    during.saveKeeps = JSON.stringify(mid.weapons) === JSON.stringify(before.weapons) && mid.weapon === before.weapon;
+    during.freeRounds = p.weapons[p.weapon];
     return { started: started && started.e, raised: n, during, hits, before };
   });
   console.log('  range: ' + JSON.stringify(range));
   t.assert(range.started && range.started.seconds === 60, 'standing on the line starts a 60 s round');
+  t.assert(range.during.saveKeeps && range.during.freeRounds >= 300, 'a mid-round save stores the owned inventory, while the round has the free rounds: ' + JSON.stringify(range.during));
   t.assert(range.during.canShoot === true && range.hits.length >= 1 && range.hits[0].points > 0 && range.during.score > 0, 'a shot at a standing target scores: ' + JSON.stringify(range.hits));
   await page.evaluate(() => { const p = GTP.game.player; p.yaw = 0; p.aimYaw = 0; GTP.Render.rig.yaw = 0; GTP.Render.rig.pitch = 0.05; GTP.Render.rig.snap(); GTP.game.advance(0.1); });
   await shot('int_range_player');
@@ -151,10 +161,13 @@ H.run('interiors', async (t) => {
     window.__ev = [];
     GTP.game.advance(60);
     const end = window.__ev.find((e) => e.n === 'range:end');
-    return { end: end && end.e, running: I.range.running, same: JSON.stringify(Object.assign({}, p.weapons)) === JSON.stringify(before.weapons) && p.weapon === before.weapon && JSON.stringify(p.ammo || {}) === before.ammo, best: I.serialize().rangeBest };
+    // still standing on the line: no second round until the player steps off and back on
+    window.__ev = []; GTP.game.advance(5); const again = window.__ev.filter((e) => e.n === 'range:start').length;
+    return { again, end: end && end.e, running: I.range.running, same: JSON.stringify(Object.assign({}, p.weapons)) === JSON.stringify(before.weapons) && p.weapon === before.weapon && JSON.stringify(p.ammo || {}) === before.ammo, best: I.serialize().rangeBest };
   }, range.before);
   console.log('  range end: ' + JSON.stringify(rend));
   t.assert(rend.end && typeof rend.end.score === 'number' && rend.end.score > 0 && 'medal' in rend.end && !rend.running, 'the round ends with range:end {score, medal}');
+  t.assert(rend.again === 0, 'the range does not restart while the player stays on the line');
   t.assert(rend.same, 'range rounds are on the house: the inventory is back exactly as it was');
   t.assert(rend.best === rend.end.score, 'the best score is kept for the save');
   await shot('int_range_line');
@@ -275,6 +288,22 @@ H.run('interiors', async (t) => {
   console.log('  v3 shop: ' + JSON.stringify(v3));
   t.assert(v3.car && v3.pocket && v3.held > 0, 'catalog weapons without a mesh hang with their class mesh');
   t.assert(v3.look && v3.look.weaponId === 'carbine_x' && v3.inspect && v3.inspect.weaponId === 'carbine_x' && v3.bought[0] === 'carbine_x', 'browse and the prompt buy through Combat.buy: ' + JSON.stringify(v3));
+
+  // ---- 8. loading a save in the middle of a range round: the loaded inventory wins, the room is left quietly ----
+  const load = await page.evaluate(() => {
+    const I = GTP.Interiors, p = GTP.game.player, g = GTP.game;
+    p.weapons = { fist: Infinity, shotgun: 20 }; p.weapon = 'shotgun'; delete (p.ammo || {}).pistol;
+    g.saveSlot(2, { reason: 'test' });
+    const savedW = JSON.stringify(p.weapons);
+    I.enter('both_sides_strip', { instant: true }); g.advance(0.3);
+    const r = I.room(); g.debug.teleport(r.ox + 6.5, r.oz - 10.1); g.advance(1.0);
+    const running = I.range.running, loanGun = p.weapon;
+    g.loadSlot(2); g.advance(0.5);
+    const q = g.player; return { running, loanGun, newPlayer: q !== p, active: I.active, rangeRunning: I.range.running, same: JSON.stringify(q.weapons) === savedW, x: q.x, lights: r.lightCount };
+  });
+  console.log('  load mid-round: ' + JSON.stringify(load));
+  t.assert(load.running && !load.active && !load.rangeRunning && load.same && load.x > 0, 'a load mid-round restores the saved inventory and leaves the room');
+  t.assert(load.lights <= 6, 'a handful of point lights per room: ' + load.lights);
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'no errors:\n' + errs.join('\n'));

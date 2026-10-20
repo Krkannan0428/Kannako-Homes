@@ -39,9 +39,11 @@ built lazily on first entry and kept; the room group is in the scene only while 
   on rails; 14% of pop-ups are the MODERATOR (don't shoot: -10). Stand on the green box for 0.6 s: 3 s
   countdown, then 60 s; targets rise faster and live shorter as the round goes on. Head 10, body 5, legs 2.
   Medals: bronze 60, silver 140, gold 220; the first medal of each tier pays a loyalty bonus ($50 / $150 /
-  $400). Leaving the range room ends the round (aborted, no medal). Range rounds are free: the inventory is
+  $400). Leaving the range room ends the round (aborted, no medal); another round needs stepping off the line
+  and back on. Range rounds are free: the inventory is
   snapshotted at the start (the current gun, else the best owned hitscan gun, else a loaner pistol, topped up
-  to 400 rounds) and restored exactly at the end. Hits are scored by a ray through the crosshair while aiming
+  to 400 rounds) and restored exactly at the end. A save made mid-round stores the owned inventory, never the
+  free rounds; a load or New Game mid-round drops the snapshot unapplied, so the loaded inventory wins. Hits are scored by a ray through the crosshair while aiming
   (`Render.camera`), else from the chest along the facing with a 7° assist onto standing targets (the targets
   are not entities, so Combat's lock-on cannot find them). Targets also block bullets and the camera through
   the `raycastBuildings` wrapper, so Combat's own impact puffs land on them.
@@ -56,9 +58,10 @@ built lazily on first entry and kept; the room group is in the scene only while 
 - **Fallbacks while the systems / UI tracks are missing**: the booth and wardrobe cycle six invented outfits
   (shirt / pants / tie), the barber chair cycles the eight hair styles `pedParts` knows ($25), and the player
   mesh is rebuilt (`GTP.Render.rebuildEntityMesh` when it exists, else `Render.detach` + `attach`).
-- **Indoor lighting**: each room has ceiling light panels with point lights and a hemisphere fill; while
+- **Indoor lighting**: each room has emissive ceiling light panels, at most six point lights (nearby lights
+  merge) and a hemisphere fill; while
   inside, the sun, sky hemisphere and moonlight fill are switched off, the fog pushed out, and the scene
-  environment map swapped for a small indoor one, so rooms look the same at noon and at midnight. Vertex
+  environment map swapped for a small indoor one, rain and puddles hidden, so rooms look the same at noon and at midnight. Vertex
   colours are converted sRGB → linear so dark counters stay dark.
 - **Doors** (until the world track's markers land): every landmark whose kind is `gunshop` / `clothing` /
   `barber` / `safehouse` (or id `both_sides_*`, `lanyard*`, `*barber*` / `clip_joint*`, `safe_*`) gets a walk-in
@@ -140,6 +143,7 @@ room, `data.x/z/y/yaw` are replaced by the door outside so a load never lands in
 | `GTP.Combat.fire` | refuse player shots in a room outside the range; score range shots | unchanged |
 | `GTP.Combat.update` | runs `GTP.Interiors.update(dt)` after Combat each sim step (Game.step has no interiors hook) | unchanged |
 | `GTP.Render.updateEnvironment` | re-applies the indoor light after every environment update while inside | unchanged |
+| `GTP.Render.weather.frame` | hides the rain streaks and puddles while inside | unchanged |
 
 Integration: fold the `Combat.update` hook into `Game.step` (after Combat), and the collision wrappers into
 `04_world.js` if preferred (a `World.interior` hook checked first in each function).
@@ -179,10 +183,22 @@ the armory lit at night. Screenshots in `tests/out/int_*.png` (armory player vie
 back wall, front, browse card, range from the line and downrange, the street after leaving, port, uptown,
 night, clothing, barber, two safehouses).
 
+## Review pass
+
+An adversarial review of the module found 17 issues, all fixed with tests where worth guarding: the range
+loan versus save / load / New Game, free rounds lost on the first shot when the gun was already owned, the
+fade surviving a load or a death on the doorstep, E (which Player.control also sends to `Combat.fire`)
+setting off Merle's "no shooting" line, the staff gate being jumpable, the back-wall racks out of browse
+reach, allocations in the room collision and ray paths, the light count, rain falling indoors, targets frozen
+after a round, the range restarting by itself, the range's third lane clipped by the room bounds, the range
+record leaking into a New Game, and a forced entry from a car bringing the car inside.
+
 ## Known issues
 
 - The minimap shows nothing inside a room (it draws the city around the player); the UI may want to draw an
   "INDOORS" panel while `GTP.Interiors.active`.
+- Entering or leaving a room changes the scene's light count, so materials recompile once behind the fade
+  (a short hitch while the screen is black).
 - The camera is the normal chase rig; in the narrow range booths it pulls in close behind the player.
 - Rack items are static copies: attachments / tints from `player.weaponMods` are not shown on the wall.
 - The door triggers are this file's stand-in for the world track's markers; with both present, set

@@ -25,7 +25,7 @@
   'use strict';
   var GTP = window.GTP = window.GTP || {};
   var U = GTP.util, GB = GTP.GeoBuilder;
-  var FAR_X = -3000, BASE_X = -4000, SLOT_Z = 160;
+  var FAR_X = -3000, BASE_X = -4000, SLOT_Z = 160, MAX_LIGHTS = 6;
   var vr = GTP.makeRng ? GTP.makeRng(0x13A7E5) : null;           // visuals only
   function rnd() { return vr ? vr.random() : 0.5; }
 
@@ -323,8 +323,19 @@
     }
     this.g = {};
     // the lights: a few point lights over the room plus a soft hemisphere fill (added to the scene only while inside)
-    for (var i = 0; i < this.lightDefs.length; i++) {
-      var L = this.lightDefs[i], pl = new THREE.PointLight(L.color || 0xfff1dc, L.intensity || 1, L.dist || 14, 1.4);
+    // a handful of lights at most (every light is paid per pixel and per shader): the panels stay, nearby lights merge
+    var defs = this.lightDefs.map(function (d) { return Object.assign({}, d); });
+    while (defs.length > MAX_LIGHTS) {
+      var bi = 0, bj = 1, bd = 1e9;
+      for (var a = 0; a < defs.length; a++) for (var c = a + 1; c < defs.length; c++) { var dd = (defs[a].x - defs[c].x) * (defs[a].x - defs[c].x) + (defs[a].z - defs[c].z) * (defs[a].z - defs[c].z); if (dd < bd) { bd = dd; bi = a; bj = c; } }
+      var A = defs[bi], Bq = defs[bj], wa = A.intensity || 1, wb = Bq.intensity || 1;
+      A.x = (A.x * wa + Bq.x * wb) / (wa + wb); A.z = (A.z * wa + Bq.z * wb) / (wa + wb); A.y = Math.max(A.y, Bq.y);
+      A.intensity = (wa + wb) * 0.72; A.dist = Math.max(A.dist || 12, Bq.dist || 12) + Math.sqrt(bd) * 0.6;
+      defs.splice(bj, 1);
+    }
+    this.lightCount = defs.length;
+    for (var i = 0; i < defs.length; i++) {
+      var L = defs[i], pl = new THREE.PointLight(L.color || 0xfff1dc, L.intensity || 1, L.dist || 14, 1.4);
       pl.position.set(L.x, L.y - 0.15, L.z); pl.name = 'interior:light'; this.group.add(pl);
     }
     var hemi = new THREE.HemisphereLight(0xfff6e8, 0x40362c, this.fill || 0.55); hemi.name = 'interior:fill'; this.group.add(hemi);
@@ -380,7 +391,14 @@
     return out;
   }
   // live status of a rack entry for the prompt: {price, owned, locked, lockReason, ammoItem}
+  var statusCache = { key: null, t: -9, st: null };
   function itemStatus(entry) {
+    var g = game(), now = g && g.time ? g.time.t : 0, key = (entry.itemId || '') + ':' + (entry.weaponId || '');
+    if (statusCache.key === key && now - statusCache.t < 0.25 && now >= statusCache.t) return statusCache.st;
+    var st = itemStatusNow(entry); statusCache.key = key; statusCache.t = now; statusCache.st = st;
+    return st;
+  }
+  function itemStatusNow(entry) {
     var CB = GTP.Combat, p = player(), st = { price: entry.price, owned: false, locked: false, lockReason: null, ammoItem: null, ammoPrice: 0, ammoName: null };
     if (!entry.weaponId) {   // gear
       if (CB && CB.shop && CB.shop.items) { try { var gl = CB.shop.items(); for (var g = 0; g < gl.length; g++) if (gl[g].id === entry.itemId) { st.price = gl[g].price; st.locked = !!gl[g].locked; st.lockReason = gl[g].lockedBy; } } catch (e) { report(e, 'gearStatus'); } }
@@ -452,7 +470,7 @@
     var wallTex = B.wood ? TX.wood('arm-' + branch, '#5a3a24', '#2e1c10') : TX.plaster('arm-' + branch, B.wall);
     var floorTex = TX.tiles('arm-' + branch, B.floorA, B.floorB, B.grout, 4);
     var wallM = texMat(wallTex, { rough: B.wood ? 0.55 : 0.9 }), floorM = texMat(floorTex, { rough: 0.35, metal: 0.05 }), ceilM = texMat(TX.ceiling('arm', '#d8d6d0'), { rough: 0.95 });
-    room.bounds = { x0: -9, z0: -38, x1: 9, z1: 7 };
+    room.bounds = { x0: -9, z0: -38, x1: 10.5, z1: 7 };
     room.shell(-9, -7, 9, 7, 4.2, { wall: wallM, floor: floorM, ceil: ceilM, ts: B.wood ? 1.6 : 2.5, openings: [{ side: 'n', a0: 5.4, a1: 7.6, h: 2.5 }], skirt: scaleCol(A, 0.5) });
     room.spawn = { x: 0, z: 4.3, yaw: 0 };
     room.zone('store', -9, -7, 9, 7);
@@ -505,6 +523,7 @@
     }
     glassCounter(-7, -3.0, 10.4, 0.85);
     room.box('matte', -9, 0, -2.75, 1.95, 1.05, 0.12, dark, true);              // the staff gate at the west end
+    room.solid(-9, 1.05, -2.75, 1.95, 1.6, 0.12, { ray: false });            // no jumping it
     room.box('matte', 3.35, 0, -7, 0.2, 1.2, 4.0, dark, true);                   // the half wall to the range corridor
     room.box('glass', 3.35, 1.2, -7, 0.2, 0.9, 4.0); room.solid(3.35, 1.2, -7, 0.2, 0.9, 4.0, { ray: false });
     // the register, a pellet jar display and a bell on the counter
@@ -683,7 +702,7 @@
     for (var sh = 0; sh < 4; sh++) for (var k = 0; k < 9; k++) room.box('matte', 7.45, 0.3 + sh * 0.55, -4.3 + k * 0.65, 0.45, 0.14 + (k % 2) * 0.05, 0.5, col(shirts[(sh * 3 + k) % shirts.length]));
     // mirrors
     var mirM = new THREE.MeshStandardMaterial({ color: 0xdfe8ee, roughness: 0.04, metalness: 1.0 });
-    [[-7.96, 'e', 3.2], [-7.96, 'e', -4.6]].forEach(function (m) { room.plane(mirM, m[0], 1.4, m[2], 1.1, 2.1, m[1]); room.box('gloss', -8, 0.32, m[2] - 0.6, 0.06, 2.2, 1.2, col('#c8a040')); });
+    [[-7.91, 'e', 3.2], [-7.91, 'e', -4.6]].forEach(function (m) { room.plane(mirM, m[0], 1.4, m[2], 1.1, 2.1, m[1]); room.box('gloss', -8, 0.32, m[2] - 0.6, 0.06, 2.2, 1.2, col('#c8a040')); });
     // mannequins
     [[2, 3.5, '#1e2a44'], [-2, 3.5, '#c0392b']].forEach(function (q) {
       room.cyl('matte', q[0], 0, q[1], 0.25, 0.28, 0.05, 12, dark); room.cyl('metal', q[0], 0.05, q[1], 0.025, 0.025, 0.85, 8, steel);
@@ -874,6 +893,7 @@
       for (var i = 0; i < list.length; i++) {
         var s = list[i]; if (!s.col) continue;
         if (y + h <= s.y0 || y >= s.y1 - 0.05) continue;
+        if (x + r <= s.x0 || x - r >= s.x1 || z + r <= s.z0 || z - r >= s.z1) continue;
         var p = U.aabbCircle(s.x0, s.z0, s.x1 - s.x0, s.z1 - s.z0, x, z, r);
         if (p.hit) { x += p.px; z += p.pz; moved = true; if (Math.abs(p.px) > Math.abs(p.pz)) { hitX = true; nx = p.px > 0 ? 1 : -1; nz = 0; } else { hitZ = true; nz = p.pz > 0 ? 1 : -1; nx = 0; } }
       }
@@ -891,19 +911,27 @@
     return false;
   }
   var FAKE_B = { x: 0, y: 0, z: 0, w: 1, d: 1, h: 1, style: 'interior', interior: true };
+  // the slab test without U.rayAabb's arrays (the camera casts every frame); -1 on a miss
+  function rayBox(ox, oy, oz, dx, dy, dz, x0, y0, z0, x1, y1, z1, maxT) {
+    var tmin = 0, tmax = maxT, inv, t1, t2, tt;
+    if (Math.abs(dx) < 1e-9) { if (ox < x0 || ox > x1) return -1; } else { inv = 1 / dx; t1 = (x0 - ox) * inv; t2 = (x1 - ox) * inv; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return -1; }
+    if (Math.abs(dy) < 1e-9) { if (oy < y0 || oy > y1) return -1; } else { inv = 1 / dy; t1 = (y0 - oy) * inv; t2 = (y1 - oy) * inv; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return -1; }
+    if (Math.abs(dz) < 1e-9) { if (oz < z0 || oz > z1) return -1; } else { inv = 1 / dz; t1 = (z0 - oz) * inv; t2 = (z1 - oz) * inv; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return -1; }
+    return tmin;
+  }
   function roomRay(room, ox, oy, oz, dx, dy, dz, maxDist) {
     var l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1; dx /= l; dy /= l; dz /= l;
     maxDist = maxDist || 100;
     var best = null, bestT = maxDist, list = room.solids, i, t;
     for (i = 0; i < list.length; i++) {
       var s = list[i]; if (!s.ray) continue;
-      t = U.rayAabb(ox, oy, oz, dx, dy, dz, s.x0, s.y0, s.z0, s.x1, s.y1, s.z1, bestT);
+      t = rayBox(ox, oy, oz, dx, dy, dz, s.x0, s.y0, s.z0, s.x1, s.y1, s.z1, bestT);
       if (t > 0 && t < bestT) { bestT = t; best = s; }
     }
     var tg = room === S.room && RANGE.running && room.range ? room.range.targets : null;
     if (tg) for (i = 0; i < tg.length; i++) {
       var q = tg[i]; if (q.ang < -0.3) continue;
-      t = U.rayAabb(ox, oy, oz, dx, dy, dz, q.x - 0.4, q.y, q.z - 0.04, q.x + 0.4, q.y + 1.9, q.z + 0.04, bestT);
+      t = rayBox(ox, oy, oz, dx, dy, dz, q.x - 0.4, q.y, q.z - 0.04, q.x + 0.4, q.y + 1.9, q.z + 0.04, bestT);
       if (t > 0 && t < bestT) { bestT = t; best = { x0: q.x - 0.4, y0: q.y, z0: q.z - 0.04, x1: q.x + 0.4, y1: q.y + 1.9, z1: q.z + 0.04, target: q }; }
     }
     if (!best) return null;
@@ -944,7 +972,7 @@
     wrapped.combat = true;
     var oFire = CB.fire;
     CB.fire = function (ped, weaponId) {
-      if (ped && ped.kind === 'player' && S.active && !canShoot(ped)) { muzzleLine(); return false; }
+      if (ped && ped.kind === 'player' && S.active && !canShoot(ped)) { var I0 = In(); if (I0 && I0.down && I0.down('shoot')) muzzleLine(); return false; }   // E (action) also reaches fire: interacting is not shooting
       var r = oFire.apply(this, arguments);
       if (r && ped && ped.kind === 'player' && RANGE.running && S.room && S.room.range) { try { rangeShot(ped); } catch (e) { report(e, 'rangeShot'); } }
       return r;
@@ -959,6 +987,11 @@
   function wrapRender() {
     var R = Rd(); if (!R || wrapped.env || !R.updateEnvironment) return;
     wrapped.env = true;
+    var Wx = R.weather;
+    if (Wx && Wx.frame) {
+      var oF = Wx.frame;
+      Wx.frame = function () { var r = oF.apply(this, arguments); if (S.active) { if (Wx._rain) Wx._rain.visible = false; if (Wx._puddles) Wx._puddles.visible = false; } return r; };
+    }
     var oE = R.updateEnvironment;
     R.updateEnvironment = function () { var r = oE.apply(this, arguments); if (S.active) indoorLight(); return r; };
   }
@@ -1030,7 +1063,7 @@
         var p = new GTP.Ped({ x: x, z: z, look: look, role: d.role || 'clerk', persistent: true, weapon: 'fist' });
         p.y = 0; p.yaw = d.yaw || 0; p.moveYaw = p.yaw; p.aimYaw = p.yaw; if (p.snap) p.snap();
         p.castId = d.cast || null; p.name = cast ? cast.name : d.name; p.interior = room.id;
-        p.ai = { phase: 0.5, mode: 'mission', mission: 'interior', ambient: false, barkT: 1.2 };
+        p.ai = { phase: 0.5, mode: 'mission', mission: 'interior', ambient: false, mute: true, barkT: 1.2 }; p._barkColor = d.color || null;
         GTP.Entities.add(p);
         S.npcs.push({ ped: p, def: d, x: x, z: z, hello: false });
       } catch (e) { report(e, 'npc'); }
@@ -1047,6 +1080,7 @@
       if (q.intent) { q.intent.x = 0; q.intent.z = 0; }
       var d = U.dist2d(p.x, p.z, q.x, q.z), want = d < 9 ? U.dirToYaw(p.x - q.x, p.z - q.z) : (n.def.yaw || 0);
       q.yaw = U.angleLerp(q.yaw, want, Math.min(1, dt * 5)); q.moveYaw = q.yaw; q.aimYaw = q.yaw;
+      if (GTP.AI && GTP.AI.syncBark && q.mesh) { try { GTP.AI.syncBark(q); } catch (e) { /* optional */ } }   // phase 0.5 keeps the AI's ped tick (and its bark sprite) off them
       if (q.ai) { q.ai.barkT -= dt; if (!n.hello && q.ai.barkT <= 0 && d < 12) { n.hello = true; var ln = n.def.hello ? n.def.hello() : ''; if (ln) { q.speakLine(ln); emit('interior:line', { who: n.def.name, text: ln }); } } }
     }
   }
@@ -1096,8 +1130,9 @@
       cam.getWorldPosition(_v); cam.getWorldDirection(_d);
       for (i = 0; i < room.items.length; i++) {
         it = room.items[i]; if (!it.box) continue;
-        if (U.dist2d(p.x, p.z, it.x, it.z) > 4.6) continue;
-        var t = U.rayAabb(_v.x, _v.y, _v.z, _d.x, _d.y, _d.z, it.box.x0, it.box.y0, it.box.z0, it.box.x1, it.box.y1, it.box.z1, 30);
+        var bx = U.clamp(p.x, it.box.x0, it.box.x1), bz = U.clamp(p.z, it.box.z0, it.box.z1);
+        if ((p.x - bx) * (p.x - bx) + (p.z - bz) * (p.z - bz) > 5.4 * 5.4) continue;   // across the counter to the back wall
+        var t = rayBox(_v.x, _v.y, _v.z, _d.x, _d.y, _d.z, it.box.x0, it.box.y0, it.box.z0, it.box.x1, it.box.y1, it.box.z1, 30);
         if (t > 0 && t < bestT) { bestT = t; best = it; }
       }
     }
@@ -1134,7 +1169,7 @@
     if (pressed('action')) {
       var e = it.entry;
       if (S.confirm && S.confirm.item === it && !S.confirm.msg) {
-        var res = purchase(S.confirm.ammo ? st.ammoItem : (st.itemId || e.itemId));
+        var res = purchase(S.confirm.ammo ? st.ammoItem : (st.itemId || e.itemId)); statusCache.key = null;
         var why = res && res.ok ? 'SOLD' : res && res.reason === 'funds' ? 'Not enough cash' : res && res.reason === 'locked' ? 'Locked' : res && res.reason === 'owned' ? 'Already yours' : res && res.reason === 'full' ? 'Full' : 'No sale';
         S.confirm = { item: it, t: 2.2, msg: why };
         clerkSay(res && res.ok ? 'sale' : res && res.reason === 'locked' ? 'locked' : 'funds');
@@ -1149,6 +1184,7 @@
   }
 
   // ------------------------------------------------------- interactions --
+  var LABELS = {};
   function interactTick(dt, room, p) {
     var near = null, nd = 1e9;
     for (var i = 0; i < room.inter.length; i++) { var q = room.inter[i], d = U.dist2d(p.x, p.z, q.x, q.z); if (d < q.r && d < nd) { nd = d; near = q; } }
@@ -1164,8 +1200,8 @@
       return true;
     }
     if (near.kind === 'range') return rangeBoothTick(dt, room, p, near);
-    var labels = { clerk: ['Merle Firmness', 'Ammo, gear and the full list', '[' + k + '] SHOP'], clothing: ['Lanyard & Co.', 'Outfits, hats, glasses', '[' + k + '] BROWSE'], booth: ['Changing booth', 'Try something on', '[' + k + '] CHANGE'],
-      chair: ['Barber chair', 'A cut, a shave, a take', '[' + k + '] SIT'], bed: ['Bed', 'Sleep six hours and save', '[' + k + '] SLEEP'], wardrobe: ['Wardrobe', 'Change outfit', '[' + k + '] OPEN'] };
+    var labels = LABELS[k] || (LABELS[k] = { clerk: ['Merle Firmness', 'Ammo, gear and the full list', '[' + k + '] SHOP'], clothing: ['Lanyard & Co.', 'Outfits, hats, glasses', '[' + k + '] BROWSE'], booth: ['Changing booth', 'Try something on', '[' + k + '] CHANGE'],
+      chair: ['Barber chair', 'A cut, a shave, a take', '[' + k + '] SIT'], bed: ['Bed', 'Sleep six hours and save', '[' + k + '] SLEEP'], wardrobe: ['Wardrobe', 'Change outfit', '[' + k + '] OPEN'] });
     var lb = labels[near.kind] || [near.label || near.kind, '', '[' + k + ']'];
     showPrompt(lb, near.x, 2.3, near.z, '#3fd27f');
     if (pressed('action')) activate(near, p);
@@ -1233,8 +1269,9 @@
   function rangeBoothTick(dt, room, p, q) {
     if (RANGE.running) return false;
     RANGE.cool -= dt;
-    showPrompt(['The Range', '60 s. Hecklers pop up. Not the moderator.', RANGE.cool > 0 ? 'RESETTING...' : 'HOLD STILL TO START'], q.x, 2.4, q.z - 0.6, '#3fd27f');
-    if (RANGE.cool > 0) { RANGE.hold = 0; return true; }
+    var again = RANGE.needLeave && RANGE.last;
+    showPrompt(['The Range', again ? 'Last round: ' + RANGE.last.score + (RANGE.last.medal ? ', ' + RANGE.last.medal.toUpperCase() : '') : '60 s. Hecklers pop up. Not the moderator.', RANGE.cool > 0 ? 'RESETTING...' : again ? 'STEP OFF AND BACK ON TO GO AGAIN' : 'HOLD STILL TO START'], q.x, 2.4, q.z - 0.6, '#3fd27f');
+    if (RANGE.cool > 0 || RANGE.needLeave) { RANGE.hold = 0; return true; }
     RANGE.hold += dt;
     if (RANGE.hold >= 0.6) { RANGE.hold = 0; startRange(p); }
     return true;
@@ -1259,9 +1296,8 @@
     RANGE.loan = copyInv(p);
     var id = rangeWeapon(p);
     if (id) {
-      var CB = GTP.Combat, w = CB && CB.WEAPONS && CB.WEAPONS[id];
+      var CB = GTP.Combat;
       p.weapons[id] = Math.max(p.weapons[id] > 0 ? p.weapons[id] : 0, 400);
-      if (p.ammo && p.ammo[id] && w && w.mag) { p.ammo[id].total = p.weapons[id] - (p.ammo[id].mag || 0) - (p.ammo[id].reserve || 0) + (p.ammo[id].total || 0); }
       if (CB && CB.ammo) { try { CB.ammo(p, id); } catch (e) { /* optional */ } }
       p.weapon = id;
     }
@@ -1278,8 +1314,17 @@
     t.state = 'rising'; t.t = 0; t.life = life; t.moderator = !!mod; t.board.material = mod ? t.mats.moderator : t.mats.heckler;
     if (t.mover) { t.dir = rr() < 0.5 ? 1 : -1; t.speed = 2.0 + rr() * 1.4 + RANGE.t / ROUND; var room = S.room; t.x = room.ox + (t.dir > 0 ? 2.0 : 10.0); t.pivot.position.x = t.x - room.ox; }
   }
+  function settleTargets(dt, room) {
+    var R = room.range; if (!R) return;
+    for (var i = 0; i < R.targets.length; i++) {
+      var t = R.targets[i]; if (t.state === 'down') continue;
+      t.state = 'falling'; t.ang = Math.max(-Math.PI / 2, t.ang - dt * 7);
+      if (t.ang <= -Math.PI / 2) { t.state = 'down'; if (t.mover) { t.x = t.x0; t.pivot.position.x = t.x0 - room.ox; } }
+      t.pivot.rotation.x = t.ang; t.pivot.visible = t.ang > -1.45;
+    }
+  }
   function rangeTick(dt, room, p) {
-    if (!RANGE.running) return;
+    if (!RANGE.running) { settleTargets(dt, room); if (RANGE.needLeave && room.booth && U.dist2d(p.x, p.z, room.booth.x, room.booth.z) > room.booth.r + 0.3) RANGE.needLeave = false; return; }
     RANGE.t += dt;
     var R = room.range, i, t, live = 0, el = RANGE.t - COUNTDOWN;
     if (el >= 0) {
@@ -1316,7 +1361,7 @@
   function endRange(aborted) {
     if (!RANGE.running) return;
     var p = player(), medal = aborted ? null : medalFor(RANGE.score);
-    RANGE.running = false; RANGE.cool = 2.5;
+    RANGE.running = false; RANGE.cool = 2.5; RANGE.needLeave = true;
     if (p && RANGE.loan) {
       var L = RANGE.loan; p.weapons = L.weapons; p.ammo = L.ammo; p.weapon = L.weapon;
       var CB = GTP.Combat; if (CB && CB.ammo) { try { for (var k in p.weapons) if (p.weapons[k] > 0 && p.weapons[k] !== Infinity) CB.ammo(p, k); } catch (e) { /* optional */ } }
@@ -1472,8 +1517,8 @@
     S.room = room; S.ret = ret; S.active = true; Interiors.active = true;
     S.current = Interiors.current = { id: tg.kind, kind: tg.kind, store: tg.store, branch: tg.branch, landmark: tg.lm || null, room: room };
     S.confirm = null; S.browse = null; S.outfit = null;
-    place(p, room.ox + room.spawn.x, room.oz + room.spawn.z, 0, room.spawn.yaw);
     if (p.inVehicle && p.exitVehicle) { try { p.exitVehicle(); } catch (e) { /* optional */ } }
+    place(p, room.ox + room.spawn.x, room.oz + room.spawn.z, 0, room.spawn.yaw);
     spawnNpcs(room);
     if (R) { R._envClock = null; indoorLight(); }
     if (texCache.scoreboard) drawBoard();
@@ -1530,8 +1575,10 @@
     update: function (dt) {
       ensureWrapped();
       var p = player(); if (!p) return;
+      if (S.player !== p) { newPlayer(p); return; }
       if (S.trans) {
         var T = S.trans; T.t += dt;
+        if (!p.alive && !T.done) { setFade(0); S.trans = null; return; }   // wasted or busted on the doorstep: no corpse goes shopping
         if (!T.done) { setFade(T.t / 0.3); if (T.t >= 0.3) { T.done = true; if (T.dir === 'in') doEnter(T.tg, T.ret); else doExit(); emit('interior:fade', { phase: 'in', id: T.tg ? T.tg.kind : null }); } }
         else { setFade(1 - (T.t - 0.3) / 0.3); if (T.t >= 0.6) { setFade(0); p.controlEnabled = T.ctl !== false; S.trans = null; } }
         return;
@@ -1569,6 +1616,18 @@
     serialize: function () { return { rangeBest: S.saved.rangeBest | 0, medals: Object.assign({}, S.saved.medals) }; },
     deserialize: function (d) { if (!d) return; S.saved.rangeBest = d.rangeBest | 0; S.saved.medals = Object.assign({}, d.medals || {}); RANGE.best = S.saved.rangeBest; }
   };
+  // a New Game or a load swapped the player: drop the range loan unapplied (it belongs to the old player), cancel the
+  // fade, leave the room quietly and start the range record over unless a load just restored it
+  function newPlayer(p) {
+    var had = !!S.player;
+    S.player = p;
+    if (!had) return;
+    RANGE.loan = null; RANGE.running = false; RANGE.needLeave = false;
+    if (S.trans) { S.trans = null; setFade(0); }
+    if (S.active) { S.ret = null; doExitQuiet(); }
+    if (!S.loaded) { S.saved = { rangeBest: 0, medals: {} }; RANGE.best = 0; RANGE.last = null; }
+    S.loaded = false;
+  }
   function doExitQuiet() {
     if (RANGE.running) endRange(true);
     removeNpcs(); hidePrompt();
@@ -1586,10 +1645,23 @@
     name: 'interiors',
     save: function (data) {
       data.interiors = Interiors.serialize();
-      var ret = S.active ? S.ret : (S.trans && S.trans.dir === 'in' ? null : null);
+      var ret = S.active ? S.ret : null;
       if (S.active && ret) { data.x = ret.x; data.z = ret.z; data.y = ret.y; data.yaw = ret.yaw; }
+      // a save in the middle of a range round keeps what the player owned, not the free range rounds
+      if (RANGE.loan) {
+        var L = RANGE.loan, w = {}, a = {}, k;
+        for (k in L.weapons) w[k] = L.weapons[k];
+        for (k in L.ammo) a[k] = Object.assign({}, L.ammo[k]);
+        data.weapons = w; data.ammo = a; data.weapon = L.weapon;
+      }
     },
-    load: function (data) { if (data && data.interiors) Interiors.deserialize(data.interiors); if (S.active) { S.ret = null; doExitQuiet(); } S.trans = null; }
+    load: function (data) {
+      RANGE.loan = null; RANGE.running = false; RANGE.needLeave = false;   // the loaded inventory wins over any range loan
+      if (data && data.interiors) Interiors.deserialize(data.interiors); else Interiors.deserialize({ rangeBest: 0, medals: {} });
+      if (S.active) { S.ret = null; doExitQuiet(); }
+      if (S.trans) { S.trans = null; setFade(0); }
+      S.loaded = true; S.player = player() || S.player;
+    }
   });
   GTP.SaveRegistry = GTP.SaveRegistry || {};
   GTP.SaveRegistry.interiors = { get: function () { return Interiors.serialize(); }, set: function (d) { Interiors.deserialize(d); } };
