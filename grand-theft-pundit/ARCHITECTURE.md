@@ -227,6 +227,7 @@ oscillators through envelopes and filters, a feedback delay for body.
 
 ```js
 GTP.Audio.init({headless, mute}); unlock(); play(name, {x, z, gain, cls?}) -> bool; setMuted(b); muted, headless, unlocked, ctx
+GTP.Audio.setVolumes({master, music, sfx}); volumes   // the Settings sliders (0..1): master gain, the radio bus, the sfx / engine / siren / rotor buses
 GTP.Audio.engine(level, cls)          // Player.control each step: speed / top speed and the vehicle type (null on foot);
                                        // saw + sub + detuned saw through a lowpass, four or five gears, an idle lump, revs on throttle;
                                        // forgotten after 0.25 s without a call, so menus and the title go quiet
@@ -258,8 +259,8 @@ After six caught errors the module disables itself (`disabled`).
 ```js
 GTP.World.generate(seed, onProgress) // from GTP.Content.world; deterministic; synchronous. onProgress(fraction, label) between the stages
                                      // (tiles, roads, landmarks, props, done) and a 'load:progress' event {stage, frac, bar, label, source:'world'}
-                                     // (bar = the absolute share of the loading bar, GDD_EXPANSION §6.1); World.generateMs is the cost (about 0.5 s on a
-                                     // desktop, 3 to 4 s in the SwiftShader test browser; tests/perf.js and tests/world.js watch it)
+                                     // (bar = the absolute share of the loading bar, GDD_EXPANSION §6.1); World.generateMs is the cost (about 0.1 s in the
+                                     // test browser for the 224-tile map; tests/perf.js and tests/world.js keep it under 1.5 s)
 GTP.World.T = { VOID, ROAD, SIDEWALK, BUILDING, GRASS, WATER, SAND, PARKING, PLAZA, BRIDGE, RAMP, HIGHWAY }
 GTP.World.M                          // meta bits; the expansion adds RUNWAY (the runway strip) and LOWER (deck layer: the Lower Loop's legs)
 GTP.World.tiles (Uint8Array), w, h, tileAt(x,z), tileIndex(tx,tz)
@@ -284,7 +285,7 @@ GTP.World.isIntersection(tx,tz), signalPhase(tx,tz,t) -> 'ns'|'ew'
 GTP.World.districts, landmarks, landmark(id), districtAt(x,z)
                                      // landmark: {id, name, kind, district, lot, building|null, x, z, door:{x,z,y,tx,tz}, points:{name:{x,z,y,tx,tz}} (Content `points`,
                                      // e.g. airport_runway east/west, both_sides_strip range, causeway_east island/uptown), npcs:[{role:'doorman'|'clerk', cast?, x, z, yaw}]
-                                     // (the AI / content spawn them), maze (container_yard), range (both_sides_strip), ship (manifest_quay), garage (garages)}
+                                     // (GTP.AI.residents spawns them), maze (container_yard), range (both_sides_strip), ship (manifest_quay), garage (garages)}
 GTP.World.randomRoadPoint(), randomSidewalkPoint(), nearestRoadPoint(x,z), nearestSidewalkPoint(x,z)
 GTP.World.tilesNear(x, z, r, 'road'|'sidewalk') -> [tileIndex]   // the spawnable tiles within r (64 m buckets, a superset by one bucket): the AI spawner
                                      // samples these (cached per kind until the centre moves 24 m, AI.spawner.nearTiles) instead of the whole-city lists
@@ -368,10 +369,11 @@ it counts: car bodies, hoods and trunks are bevelled boxes with chrome trim,
 door seams and handles, lamp housings, framed plates front and back, dished
 rims, seats and a dash seen through tinted glass; peds have rounded limbs,
 knees, cuffs, a collar, a belt and buckle, eyes with whites and brows. The
-look is "modern stylized GTA" at high and still reads at low. A quad's first
-two corners must never coincide (a zero normal is NaN lighting, and the bloom
-chain spreads a NaN across the frame); a degenerate triangle repeats the
-third corner instead. Nothing uses images from the network.
+look is "modern stylized GTA" at high and still reads at low. A zero normal is
+NaN lighting (black facets, and the bloom chain spreads a NaN across the frame):
+`GeoBuilder.quad` takes the face normal from (b - a) x (d - a) and falls back to
+the other corner triangles when a pair coincides (a sphere's pole row, a cone's
+tip), so a degenerate quad still carries the face's normal. Nothing uses images from the network.
 
 ### Entities (06_entities.js)
 
@@ -381,7 +383,7 @@ class GTP.Ped extends Entity   { look, role, state, target, path, inVehicle, sea
 class GTP.Vehicle extends Entity { type, cls, speed, steer, throttle, brake, handbrake, driver, passengers, color, damage, isPolice, siren, wheelSpin, wheelSteer, lights, honk(), enter(ped, seat), exit(ped), applyDamage(n, src), explode() }
 class GTP.Player extends Ped    { money, wanted, heat, weapons, weapon, armor, vehicle, lockTarget, cameraMode ('chase'|'close'|'first'), stats }
 class GTP.Projectile extends Entity { owner, weaponId, dmg, life, tracer }
-class GTP.Pickup extends Entity { pickupType, value, weaponId, bob }
+class GTP.Pickup extends Entity { pickupType, value, weaponId, bob, drawDist? }   // drawDist: hidden beyond it from the camera (the memos: 70 m)
 GTP.Entities = { list, hash, add(e), remove(e), byKind(kind), near(x,z,r,kind?), clearDynamic(), update(dt), sync(alpha) }
 ```
 
@@ -418,7 +420,14 @@ Physics (all custom, no library):
   buildings and props via the oriented box's four corners against AABBs:
   push out, reflect velocity with restitution 0.3, damage by impact speed,
   camera shake. Vehicle-vehicle: two circles per vehicle (front/rear) with
-  impulse by mass. Vehicle-ped: knockdown and damage. `hp` 0: smoke → fire →
+  impulse by mass. Vehicle-ped: knockdown and damage (both contact passes
+  share one hash query). A vehicle at rest where its last full step left it
+  (parked, a wreck, traffic at a light: no velocity, no throttle, same pose)
+  skips the wheel and world sampling; the pair and ped contacts still run and
+  any push, blast or throttle wakes it. Peds take their vehicle push-out and
+  separation from one hash query too; `SpatialHash.update` compares the cached
+  cell range before touching the buckets (no allocation while an entity stays
+  in its cells). `hp` 0: smoke → fire →
   explosion (area damage 8 m) → wreck mesh that stays 60 s.
 - Entering: nearest vehicle within 3 m by door point; the ped walks to the
   door (0.4 s), disappears into the seat; the mesh hides. Exiting places the
@@ -436,15 +445,27 @@ sidewalks, cross at crosswalks on the walk phase, flee, bark lines from
 red, yield, avoid ahead, unstick), police response per wanted level
 (1 foot cops, 2 cruisers, 3 roadblocks, 4 SWAT vans, 5 helicopter: a
 spotlight and rotor sound circling above), busted detection, HOA patrols in
-`suburbs` (flagged, see GDD). Heat sources and thresholds as before:
-`[2, 6, 12, 20, 30]`, decay only without cop line of sight (raycast vs
-buildings) for 4 s. Garages (`kind: 'garage'`) clear stars for $100 each when
-the player drives in.
+`suburbs` (flagged, see GDD). The friendlier numbers of GDD_EXPANSION §6.9:
+thresholds `[2, 7, 14, 24, 36]`, decay only without cop line of sight (raycast
+vs buildings) for 3 s, then `C.WANTED.decayByLevel` (1.6 heat/s at one or two
+stars, 1.2 at three or four, 0.9 at five); a bust takes `C.AI.bustTime` 2.2 s
+within `bustRange` (on foot, or at the door of a stopped car) and never happens
+while the player sprints on foot; the fine is `AI.bustFine(level, money)`: $500
+up to two stars, $800 at three and up, never over 15% of the cash. Garages
+(`kind: 'garage'`) clear stars for $100 each when the player drives in.
 
 ```js
 GTP.AI.update(dt); reset(); updateRespawn(dt)   // Game.step calls updateRespawn while the state is wasted/busted (the AI's fallback DEPLATFORMED flow, a no-op now that Combat defines onPlayerBusted)
-GTP.AI.wanted = { level, heat, lastSeen, lastKnown:{x,z}, addHeat(n, src), crime(name, src), set(n), clear(), see(cop) }   // mirrors player.wanted / player.heat; lastKnown is where the response converges
-GTP.AI.alarm(x, z, r, src, mild)          // Combat calls it on shots and blasts: peds within r flee (mild = honk: only hurries peds off the road)
+GTP.AI.wanted = { level, heat, lastSeen, lastKnown:{x,z}, addHeat(n, src), crime(name, src), set(n), clear(), see(cop) }   // mirrors player.wanted / player.heat; lastKnown is where the response converges;
+                                          // set(n) puts the heat in the middle of the star's band (five: 5 over the last threshold)
+GTP.AI.alarm(x, z, r, src, mild)          // Combat calls it on shots and blasts: peds within r flee (mild = honk: only hurries peds off the road);
+                                          // a no-op while GTP.AI.alarmMuted (Cutscenes sets it for the length of a script)
+GTP.AI.bustFine(level, money) -> dollars  // the DEPLATFORMED fine (C.ECONOMY.bustedFine / bustedFineHigh / bustedFineCap); Combat's precinct respawn charges it
+GTP.AI.residents = { list(), near(castOrRole, x, z, r) }   // World landmark.npcs: the doorman at the Heirloom Club and Merle at every Both Sides
+                                          // Arms, stationary peds (a mission-style brain the AI never ticks) spawned within 120 m and removed past 170 m;
+                                          // they face a player on foot within 7 m and greet them (Content.radio.barks.doorman, expansion.shop.barks.door);
+                                          // a hurt one flees as a civilian and the post stays empty until the player has been away; a mission's blue
+                                          // light within 3 m keeps the resident home; looks roll on their own seeded stream (Content.looks.roll(d, role, rng))
 GTP.AI.drive(v, kind?) / release(v)       // hand a vehicle with a living non-player driver to the traffic ('traffic'|'cop'|'hoa') brain, or take it back; vehicles never get a brain by themselves
 GTP.AI.say(ped, text, color)              // bark: ped.speakLine + a 3D-anchored sprite above the head unless GTP.UI.drawsBarks is true (then the UI draws ped.line itself; GTP.UI.bark(ped, text) is also called when present)
 GTP.AI.spawner = { warmup(), update(dt), spawnPed(x,z,role,opts), spawnVehicle(x,z,type,opts), counts() }
@@ -502,7 +523,8 @@ cone push with a visible wave.
 Damage flashes, knockback, ped death (fall, fade after 10 s, cash drop),
 vehicle bullet damage, player death → `wasted` ("RATIO'D") → hospital
 respawn after 3 s, lose weapons, lose 10% cash; busted → `busted`
-("DEPLATFORMED") → police respawn, lose weapons, $500 fine.
+("DEPLATFORMED") → police respawn, lose weapons, the fine (`AI.bustFine` by the stars at the bust).
+Health and armor pickups come back after 60 s (+50 each), weapon crates after 180 s.
 
 ```js
 GTP.Combat.WEAPONS[id] -> {name, dmg, range, rate, spread?, pellets?, melee?, cone?, lobbed?, stun?}; ORDER; SPONSOR (pickup labels)
@@ -527,7 +549,8 @@ GTP.Combat.wheelStep(game) -> bool             // Game.step calls it first: with
                                                // on 4 of every 5 steps and returns true (the world holds: 0.2x)
 GTP.Combat.scope                               // {active, zoom 2|4, fov 30|15, sway, t, stillT, range, target}: Render.rig reads it (fov, sway, look / zoom)
 GTP.Combat.shop                                // {state, items(tab), buy(id), open(landmark), close(), stores(), discount(), discountHook, rangeT}; a store's
-                                               // trigger (its green light) stands 3.2 m along the wall from the door so a mission's blue light keeps the door
+                                               // trigger (its green light) stands 3.2 m along the wall from the door so a mission's blue light keeps the door,
+                                               // on the podium's side (away from Merle's post, landmark.npcs)
 ```
 
 The arsenal's hooks in other modules are real surfaces, not patches: `Render.rig.kick` and the scope read in
@@ -598,7 +621,7 @@ mission crates around the landmark, collectable on foot or from a vehicle,
 progress in the objective text; `follow` spawns the cast ped at `at` walking the
 `path` of landmark doors (A* on sidewalks at a brisk 3.2 m/s; a tail that stops
 closing on its route point for 2.5 s, e.g. pushing on a car stopped on the
-crosswalk, sidesteps, re-routes and every third time is nudged past) and fails
+crosswalk, sidesteps, re-routes and every third time hops 3 m at most toward it, never a jump across the map; a long route that outgrows the first A* budget gets one bigger search) and fails
 when the player is within 6 m for 3 s (`spotted`) or beyond `maxDist` for 5 s
 (`target_escaped`);
 `escape_wanted` sets the stars (`AI.wanted.set`) and completes at 0;
@@ -737,18 +760,23 @@ frozen through an instance `update`, posed through an instance `syncMesh`
 wrapper over the prototype's (idle talk point table wave; the speaker gestures
 while their line shows); `roof: true` stands one on `landmark.building`'s top;
 `'player'` repositions the real player, whose `controlEnabled` is off until the
-end. `back` skips the shot, `confirm` held 0.6 s the script; `AI.alarm` is a
-no-op and the wanted level is parked for the duration; `music` 'off' /
+end. `back` skips the shot, `confirm` held 0.6 s the script; `AI.alarmMuted` is
+set and the wanted level is parked for the duration; an actor id with a live
+landmark resident within 60 m (Merle at his shop) reuses that ped instead of
+spawning a twin; `music` 'off' /
 'station:<id>' / 'keep'. Events: `cutscene:start`, `cutscene:shot`,
 `cutscene:end {id, skipped, completed}`. The UI draws the letterbox from state
 `cutscene` and the pill from `hud().skip`; mission markers go dark meanwhile.
+`hud().title` is the script's title, else the title of the mission it
+introduces (never a raw `cs_intro_*` id).
 
 Hints: `GTP.Hints.fire(id, force)` queues a §6.6 hint (texts from
 `Content.expansion.hints`, fallbacks inline); `update(dt)` shows one at a time
 for 6 s with a 2 s gap, only in `playing` with no cutscene, as the `hint {id, text,
 keys}` event and `Hints.hud()`; `flags.hint_<id>` makes each once per save (a
 queued `h_enter` is dropped unseen once the player is already driving, `h_drive`
-once they are out, so the proximity trigger can fire it again when it applies);
+once they are out, so the proximity trigger can fire it again when it applies;
+a showing one the player has just acted on leaves after a second);
 `Hints.enabled = false` is the Settings switch; `conditions()` fires the
 proximity / state triggers (h_enter, h_drive, h_arrow, h_aim, h_reload, h_wheel,
 h_wanted, h_bust, h_shop, h_taxi, h_patrol, h_map); the opening cutscene fires
@@ -774,7 +802,8 @@ GTP.Render.lights                     // {hemi, sun, target, fill, headlight, he
                                       // (arc leaning south, intensity by elevation and cloud cover, PCF / PCFSoft shadows sized by the preset in a 120 m box
                                       // following the player), the player car's spot, the pools (QUALITY.pointLights lamps nearest the focus get a point
                                       // light at night, QUALITY.headlights lit cars a spot; unused ones sit at intensity 0 so the shader never recompiles),
-                                      // emissive windows / neon / prop glow at night
+                                      // emissive windows / neon / prop glow at night; `fill` (an AmbientLight) is the cool moonlight at night,
+                                      // C.SKY.night.fill / fillLow 0.6 (low: no post, no lamps) / fillI 0.3 (medium) / fillLit 0.12 (high, ultra)
 GTP.Render.env                        // {night, elev, horizonW, lit, overcast, rain, exposure, sunColor, fogColor, skyTop, horizon, duskW, clock} the last updateEnvironment
 GTP.Render.envMap                     // the PMREM texture of the sky (scene.environment); refreshed every half hour of the clock and on weather changes (stats.envRefreshes)
 GTP.Render.quality                    // {current, auto, list(), set(preset|'auto'), apply(), measure(now), history}: the presets of C.QUALITY_PRESETS applied live
@@ -918,9 +947,8 @@ The expansion's front end (GDD_EXPANSION §6; all in 11_ui.js):
   `Input.text`). Every confirmation is `UI.state.confirm` drawn in-page
   (never `window.confirm`).
 - **Settings** (shared by the title and the pause menu): master / music / sfx
-  sliders (`GTP.Audio.setVolumes({master, music, sfx})` when the audio module
-  defines it, else a wrapper scales `Audio.play`'s gain by master x sfx and
-  `Audio.volumes` carries the values; master 0 mutes), QUALITY (low / medium /
+  sliders (`GTP.Audio.setVolumes({master, music, sfx})`: the master, radio and
+  effects buses; master 0 also mutes), QUALITY (low / medium /
   high / ultra / auto through `Render.quality.set`, the live preset shown),
   DRAW DISTANCE (160 / 260 / 360 m: `C.QUALITY.drawDistance`, `fogStart`
   0.46 x, the scene fog), WEATHER (`Render.weather.cycle`; OFF also sets
@@ -1021,6 +1049,10 @@ helicopter `WEATHER BALLOON`. Cosmetic randomness runs on forks of `GTP.rng`.
   `billboards` (`pairs` with `alley` / `stroll` index lists, `ads`),
   `playerSpawn` landmark id.
 - `cast`, `missions`, `radio`: straight from GDD §4, §6, §8-9 (ids verbatim).
+- `looks` (21_content_cast.js): per-district pools (the eleven districts) and role overrides (donor, cop, swat, hoa,
+  thug, protester, raccoon, doorman, npc); `roll(districtId, role, rng?)` builds a look on `rng` (default `GTP.rng`).
+- `expansion` (24_content_expansion.js): the eight new missions, `retune`, `chain`, the cutscene scripts, the strands,
+  the shop (stores, items, Merle's barks), hints, loading stages and tips, `subscriberTiers`, the radio additions.
 
 ### GTP.Game (30_game.js)
 
@@ -1031,7 +1063,9 @@ gameover`, `step()`, `advance(seconds)`, `render()`, `time {t, clock, day}`
 `newGame(seed)`, `save()`, `load()`, `hasSave()`, and
 `debug = { teleport(x,z,y?) (moves the vehicle the player sits in too), spawnVehicle(x,z,type,opts?) (opts: color, yaw, wrap:'pod', locked, y), spawnPed(x,z,look?,role?), giveWeapon(id, ammo), setWanted(n), setMoney(n), startMission(id), completeObjective(), completeMission(), godMode(b), listLandmarks(), setClock(h), freeCam(x,y,z,lx,ly,lz), followCam(), snapshot() }`.
 `snapshot()` returns a plain-object summary (player pos, state, wanted, mission,
-counts, fps) for tests and for `window.claude?.hot?.snapshot`.
+counts, fps) for tests and for `window.claude?.hot?.snapshot`. `bootTimes` is the
+boot profile in ms (`render`, `newGame`, `generate`, `ui`, `loading`, `first`,
+`atBoot`; tests/perf.js prints it).
 
 URL params: `headless=1 seed=<int> mission=<id> intro=1 skipTitle=1 mute=1 low=1 debug=1 clock=<h>`.
 `mission=<id>` boots straight into that mission (`Missions.prep`: prerequisites
@@ -1100,8 +1134,11 @@ position. All storage access is in try/catch and reported with a toast.
   `GTP.Missions.state`, `GTP.errors`, and pixel checks on screenshots when
   useful. Every subsystem agent adds a test file and keeps `tests/all.js`
   green. Screenshots are looked at (Read tool) and judged.
-- `tests/perf.js`: the headless boot (page load to playing, `World.generateMs`
-  under 4 s on the 224-tile map), a 30 s advance with full AI at steps/s
+- `tests/perf.js`: the headless boot (page load to playing; `World.generateMs`
+  under 1.5 s on the 224-tile map; the `GTP.game.bootTimes` profile: render =
+  Assets.init and the scene, newGame = generation, entities and the AI warm-up,
+  ui, loading = the nine-chunk prebuild, first = the first frame, atBoot = page
+  load to the end of boot), a 30 s advance with full AI at steps/s
   (over 600), 12 rendered frames with the chase camera at ms/frame on the low
   preset (SwiftShader numbers are only relative; report them, target no
   regressions), then 5 frames each at low / medium / high through

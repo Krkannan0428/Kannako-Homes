@@ -101,23 +101,29 @@
     this.canvas = gl;
     if (!gl) { U.reportError(new Error('no #gl canvas'), 'boot'); return this; }
     var self = this;
+    // boot profile (ms): render (Assets.init, the scene), newGame (World.generate, entities, the AI warm-up, missions), ui,
+    // loading (the prebuild; headless only, live it runs over frames), first (the first frame, headless), atBoot (since page load)
+    var bt = this.bootTimes = {}, mark = U.now();
+    function lap(k) { var n = U.now(); bt[k] = Math.round(n - mark); mark = n; }
     try {
       GTP.Input.init(hud || gl);
       GTP.Audio.init({ headless: this.headless, mute: truthy(opts.mute) });
-      GTP.Render.init(gl);
+      GTP.Render.init(gl); lap('render');
       this._bindEvents();
       this.migrateLegacySave();
-      this.newGame(this.seed);
+      this.newGame(this.seed); lap('newGame');
+      bt.generate = Math.round(GTP.World.generateMs || 0);
       if (opts.clock != null && opts.clock !== '') this.debug.setClock(parseFloat(opts.clock));
-      GTP.UI.init();
+      GTP.UI.init(); lap('ui');
       this.setState(skipTitle ? 'playing' : 'title');
       // ?mission=<id> starts that mission right away (prerequisites complete, flags and weapons applied, intro skipped unless &intro=1)
       if (opts.mission && GTP.Missions.start) { try { this._prepMission(String(opts.mission), truthy(opts.intro)); } catch (e) { U.reportError(e, 'boot.mission'); } }
       // the opening cutscene belongs to the title's NEW GAME flow (newGame(seed, {opening: true})); ?opening=1 plays it on this boot
       this._openingPending = truthy(opts.opening) && !this.headless && !opts.mission;
-      this._beginLoading('boot');
-      if (this.headless) { try { GTP.Render.frame(1); } catch (e) { U.reportError(e, 'boot.render'); } }
+      this._beginLoading('boot'); lap('loading');
+      if (this.headless) { try { GTP.Render.frame(1); } catch (e) { U.reportError(e, 'boot.render'); } lap('first'); }
     } catch (e) { U.reportError(e, 'boot'); }
+    bt.atBoot = Math.round(U.now());
     this.booted = true;
     if (!this.headless && typeof requestAnimationFrame === 'function') {
       this._last = U.now();

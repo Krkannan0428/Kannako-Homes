@@ -73,9 +73,9 @@ pad glyphs):
 
 | Button | On foot | In a car | In menus |
 |---|---|---|---|
-| Left stick | Move | Steer | Navigate |
+| Left stick | Move | Steer (x), throttle and brake (y) | Navigate, pan the map |
 | Right stick | Look | Look | Zoom the map |
-| A | Jump | Handbrake | Confirm |
+| A | Jump | Handbrake | Confirm; set a waypoint on the map |
 | B | Sprint | Horn | Cancel |
 | X | Reload | Radio | Secondary (abort, delete) |
 | Y | Enter a vehicle | Exit | Next tab |
@@ -102,9 +102,9 @@ one-finger drag, tap and two-finger pinch.
 
 Blue lights at landmark doors are story missions; walk into one. Yellow lights
 are the current objective, the HUD arrow points at it and the map's waypoint
-draws a route. Green lights beside the three Both Sides Arms shops open the
-shop (weapons, ammo, gear and, at the flagship, a target range); a mission
-unlocks each weapon for sale. Garages (Gus's Garage on campus, Detail &
+draws a route. Green lights beside the three Both Sides Arms shops (Merle
+Firmness minds the door of every one) open the shop (weapons, ammo, gear and,
+at the flagship, a target range); a mission unlocks each weapon for sale. Garages (Gus's Garage on campus, Detail &
 Evidence on the Strip) respray a car and clear wanted stars for $100 a star.
 Stop in a taxi and press E for a Loud Cab shift, in a cruiser for an HOA
 Patrol; the Nap Dynasty van at the depot starts Sponsor Runs; pink bubbles are
@@ -114,8 +114,10 @@ stunt jumps, envelopes the Monday Memos. Everything pays subscribers; the tiers
 perks from cheaper resprays to plot armor.
 
 WASTED reads RATIO'D (the hospital, minus 10% cash), BUSTED reads DEPLATFORMED
-(the precinct, a $500 fine), a failed mission reads CONTEXT STAMPED and offers
-RETRY from the last checkpoint.
+(the precinct; a $500 fine, $800 at three stars and up, never more than 15% of
+your cash; a cop needs two seconds at arm's reach and never catches you
+mid-sprint), a failed mission reads CONTEXT STAMPED and offers RETRY from the
+last checkpoint.
 
 ## Tests
 
@@ -140,10 +142,13 @@ cycle of each side strand), `saves` (the three slots, autosave, migration),
 `campaign` (a new game played through the opening, all twenty-five missions
 with their cutscenes, both endings, every strand and a shop purchase on real
 inputs), `feel` (the Loop at full speed, pay-and-spray, death, bust, save and
-Continue), `tune` (heat fairness, knock-over props, drive-by, the shootable
-helicopter, the aim camera), `ui` (title, slots, settings, HUD, dialogue, the
-map, shop, wheel, scope, both minigames, touch), `audio`, `perf`, `artifact`
-(the single-file build boots) and `content_audit`.
+Continue), `feel2` (the expansion's feel pass: the opening cutscene, the runway
+at speed, the port maze, uptown at night, a race, a rampage, the scope, a
+rocket, the map with a waypoint), `tune` (heat fairness, knock-over props,
+drive-by, the shootable helicopter, the aim camera), `ui` (title, slots,
+settings, HUD, dialogue, the map, shop, wheel, scope, both minigames, touch),
+`audio`, `perf` (the boot profile, simulation steps per second, draw calls per
+quality preset), `artifact` (the single-file build boots) and `content_audit`.
 
 ## Code map
 

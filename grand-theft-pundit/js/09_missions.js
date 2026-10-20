@@ -622,7 +622,9 @@
     if (ai.pauseT > 0) { ai.pauseT -= dt; p.stop(); if (ai.glance && pl) p.yaw = U.angleDamp(p.yaw, U.dirToYaw(pl.x - p.x, pl.z - p.z), 6, dt); return; }
     var wp = c.wps[c.wi]; if (!wp) { c.arrived = true; return; }
     if (!ai.route) {
-      ai.route = W().findPath(p.x, p.z, wp.x, wp.z, { mode: 'ped', fromY: p.y, toY: wp.y, maxExpansions: 12000 }) || [{ x: wp.x, z: wp.z, y: wp.y }];
+      // a long walk on the 224-tile map can outgrow the first budget: one bigger search before the straight-line fallback
+      ai.route = W().findPath(p.x, p.z, wp.x, wp.z, { mode: 'ped', fromY: p.y, toY: wp.y, maxExpansions: 12000 }) ||
+        W().findPath(p.x, p.z, wp.x, wp.z, { mode: 'ped', fromY: p.y, toY: wp.y, maxExpansions: 60000 }) || [{ x: wp.x, z: wp.z, y: wp.y }];
       ai.ri = 0;
     }
     while (ai.ri < ai.route.length - 1 && U.dist2d(p.x, p.z, ai.route[ai.ri].x, ai.route[ai.ri].z) < 1.3) { ai.ri++; ai.bestD = null; }
@@ -644,7 +646,12 @@
       ai.stuckT = 0; ai.progT = 0; ai.bestD = null; ai.stucks++;
       ai.side = ai.stucks % 2 ? 1 : -1; ai.sideT = 0.9;
       if (ai.stucks % 2 === 0) ai.route = null;
-      if (ai.stucks % 3 === 0) { var r = W().resolveCapsule(pt.x, pt.z, p.y, p.radius); p.x = r.x; p.z = r.z; p.snap(); }   // a lamp post is not a plot point
+      // a lamp post is not a plot point: every third time a short hop (3 m at most) toward the route point, never a jump
+      // across the map (the straight-line fallback's point can be a whole district away; the tail would lose the target)
+      if (ai.stucks % 3 === 0) {
+        var hx = pt.x - p.x, hz = pt.z - p.z, hl = Math.sqrt(hx * hx + hz * hz) || 1, hs = Math.min(hl, 3);
+        var r = W().resolveCapsule(p.x + hx / hl * hs, p.z + hz / hl * hs, p.y, p.radius); p.x = r.x; p.z = r.z; p.snap();
+      }
     }
   }
   function giverTick(p, ai, dt) {
@@ -2689,7 +2696,7 @@
     },
     update: function (dt) {
       var p = player(), def = cur.def;
-      if (cur.countdown > 0) { cur.countdown -= dt; var n = Math.ceil(cur.countdown); if (n !== cur.lastN && n > 0) { cur.lastN = n; callUI('banner', String(n), 'RATIO RAMPAGE'); } if (cur.countdown > 0) return; callUI('banner', 'GO', def.weapon.toUpperCase()); S.ratio_rampages.wave(); }
+      if (cur.countdown > 0) { cur.countdown -= dt; var n = Math.ceil(cur.countdown); if (n !== cur.lastN && n > 0) { cur.lastN = n; callUI('banner', String(n), 'RATIO RAMPAGE'); } if (cur.countdown > 0) return; callUI('banner', 'GO', (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(def.weapon) : def.weapon).toUpperCase()); S.ratio_rampages.wave(); }
       cur.t += dt; cur.timer -= dt;
       var live = 0, kills = 0, i, k;
       // a wrecked heckler car counts for both hecklers (destroy-style)
@@ -2740,7 +2747,7 @@
       p.weapon = p.weapons[def.weapon] ? def.weapon : (p.weapons[cur.before.weapon] ? cur.before.weapon : 'fist');
     },
     markerFor: function (id) { for (var i = 0; i < strandMarkers.length; i++) if (strandMarkers[i].id === id) return strandMarkers[i]; return null; },
-    hud: function () { var def = cur.def; return { line: 'RATIO RAMPAGE: ' + cur.kills + ' / ' + def.hecklers, timer: cur.countdown > 0 ? null : { remaining: Math.max(0, cur.timer), total: def.seconds }, progress: (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(def.weapon) : def.weapon) + (cur.wrong ? '  WRONG TAKES ' + cur.wrong : ''), target: null, countdown: Math.max(0, cur.countdown) }; }
+    hud: function () { var def = cur.def; return { line: 'Hecklers ratioed: ' + cur.kills + ' / ' + def.hecklers, timer: cur.countdown > 0 ? null : { remaining: Math.max(0, cur.timer), total: def.seconds }, progress: (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(def.weapon) : def.weapon) + (cur.wrong ? '  WRONG TAKES ' + cur.wrong : ''), target: null, countdown: Math.max(0, cur.countdown) }; }
   };
   // Monday Memos (§5.5): fifty envelopes, one memo
   var memoPickups = {}, memoGeo = null;
@@ -2778,10 +2785,7 @@
         }
         var env = new THREE.Mesh(memoGeo, GTP.Assets.propMaterial()); env.castShadow = true; env.rotation.y = 0.4; m.add(env);
         if (GTP.Assets && GTP.Assets.glow) { var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GTP.Assets.glow, color: 0xff3fa4, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.45 })); sp.scale.set(1.8, 1.8, 1); sp.position.y = 0.2; m.add(sp); }
-        pk.syncMesh = function (alpha) {
-          GTP.Pickup.prototype.syncMesh.call(this, alpha);
-          var cam = GTP.Render && GTP.Render.camera; if (this.mesh && cam && this.mesh.visible) this.mesh.visible = U.dist2d(cam.position.x, cam.position.z, this.x, this.z) < 70;
-        };
+        pk.drawDist = 70;   // Pickup.syncMesh hides the envelope beyond 70 m of the camera
       } catch (e) { U.reportError(e, 'strands.memo.mesh'); }
     },
     collect: function (pk) {

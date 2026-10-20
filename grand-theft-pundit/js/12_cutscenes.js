@@ -188,12 +188,26 @@
     if (a.anim !== undefined) pose(ped, a.anim || 'idle');
     else if (!ped.poseAnim) pose(ped, 'idle');
   }
+  // the pill's title: the script's own, else the mission it introduces (never a raw id like cs_intro_m12b_scope)
+  function scriptTitle(c) {
+    if (c.script.title) return c.script.title;
+    var m = c.mission || null, mid = c.script.mission || (m && m.id) || null;
+    if (m && m.title) return m.title;
+    if (mid && GTP.Missions && GTP.Missions.allMissions) { var all = GTP.Missions.allMissions(); for (var i = 0; i < all.length; i++) if (all[i].id === mid) return all[i].title; }
+    return null;
+  }
+  function residentFor(id, a) {
+    var AI = GTP.AI; if (!AI || !AI.residents || !AI.residents.near) return null;
+    var at = a.at ? spot(a.at, true) : null, pl = player(), x = at ? at.x : (pl ? pl.x : null), z = at ? at.z : (pl ? pl.z : null);
+    return AI.residents.near(id, x, z, 60);
+  }
   function actorFor(a) {
     var id = a.castId || a.id; if (!id) return null;
     var ped = cur.actors[id];
     if (ped && !ped.removed) return ped;
     if (id === 'player') ped = player();
     else if (cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
+    else if (residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
     else {
       var at = a.at ? spot(a.at, true) : null, pl = player();
       var x = at ? at.x : (pl ? pl.x + 2 : 0), z = at ? at.z : (pl ? pl.z : 0);
@@ -307,7 +321,7 @@
     try { if (Ms && Ms.dialogue && Ms.dialogue.active && Ms.skipDialogue) Ms.skipDialogue(); } catch (e) { /* queue may be empty */ }
     try { removeActors(); } catch (e) { U.reportError(e, 'cutscenes.actors'); }
     cur = null;
-    if (c.alarm && GTP.AI) GTP.AI.alarm = c.alarm;
+    if (GTP.AI) GTP.AI.alarmMuted = !!c.alarmWas;
     if (c.wantedWas && GTP.AI && GTP.AI.wanted && GTP.AI.wanted.set) { try { GTP.AI.wanted.set(c.wantedWas); } catch (e) { /* ai optional */ } }
     musicEnd(c);
     var Rd = GTP.Render;
@@ -333,12 +347,12 @@
       if (cur) return false;
       cur = {
         script: s, i: -1, t: 0, shot: null, actors: {}, spawned: [], reused: [], vehicles: [], reuse: opts.reuse || {}, onDone: onDone || null, lines: opts.lines || null, mission: opts.mission || null,
-        restore: g.state === 'cutscene' ? 'playing' : g.state, skipHoldT: 0, hold: 0, linesDone: true, lineToken: 0, wantedWas: 0, alarm: null, skipped: false, musicWas: null,
+        restore: g.state === 'cutscene' ? 'playing' : g.state, skipHoldT: 0, hold: 0, linesDone: true, lineToken: 0, wantedWas: 0, alarmWas: false, skipped: false, musicWas: null,
         from: null, moveTo: null, toSpec: null, seconds: 4, ease: 'inout', camSnap: true, lastFrom: null, look: null, startedAt: simT()
       };
       Cutscenes.active = true; Cutscenes.letterbox = s.letterbox !== false; Cutscenes.current = cur;
       // the world keeps simulating but nobody panics, nothing is wanted, the radio does what the script says
-      if (GTP.AI) { cur.alarm = GTP.AI.alarm; GTP.AI.alarm = function () { }; if (GTP.AI.wanted && GTP.AI.wanted.level > 0) { cur.wantedWas = GTP.AI.wanted.level; GTP.AI.wanted.clear(); } }
+      if (GTP.AI) { cur.alarmWas = !!GTP.AI.alarmMuted; GTP.AI.alarmMuted = true; if (GTP.AI.wanted && GTP.AI.wanted.level > 0) { cur.wantedWas = GTP.AI.wanted.level; GTP.AI.wanted.clear(); } }
       musicStart(s.music);
       if (pl.inVehicle) pl.inVehicle.setControls(0, 0, false, 1);
       pl.stop(); pl.aiming = false; pl.lockTarget = null; pl.controlEnabled = false;
@@ -403,7 +417,7 @@
     },
     hud: function () {
       if (!cur) return { active: false, letterbox: false, skip: 0 };
-      return { active: true, letterbox: Cutscenes.letterbox, skip: U.clamp(cur.skipHoldT / K.skipHold, 0, 1), shot: cur.i, shots: cur.script.shots.length, title: cur.script.title || cur.script.id || null, t: cur.t, seconds: cur.seconds, skippable: cur.script.skippable !== false };
+      return { active: true, letterbox: Cutscenes.letterbox, skip: U.clamp(cur.skipHoldT / K.skipHold, 0, 1), shot: cur.i, shots: cur.script.shots.length, title: scriptTitle(cur), t: cur.t, seconds: cur.seconds, skippable: cur.script.skippable !== false };
     },
     actors: function () { return cur ? cur.actors : {}; },
     debug: { cur: function () { return cur; }, spot: spot, lookAt: lookAt }
@@ -456,7 +470,12 @@
     update: function (dt) {
       var g = game(), p = player(); if (!g || !p || !Hints.enabled) return;
       var playing = g.state === 'playing' && !(GTP.Cutscenes && GTP.Cutscenes.active) && !g.loading.active;
-      if (hcur) { hcur.t += dt; if (hcur.t >= K.hintSeconds || !playing) { hcur = null; hgap = K.hintGap; } }
+      if (hcur) {
+        hcur.t += dt;
+        // a hint the player has just acted on (got in the car, got out) leaves after a second instead of the full six
+        var acted = (hcur.id === 'h_enter' && p.inVehicle) || (hcur.id === 'h_drive' && !p.inVehicle);
+        if (hcur.t >= K.hintSeconds || !playing || (acted && hcur.t > 1)) { hcur = null; hgap = K.hintGap; }
+      }
       if (hgap > 0) hgap -= dt;
       hcheck += dt;
       if (hcheck >= 0.5 && playing) { hcheck = 0; try { Hints.conditions(p, g); } catch (e) { U.reportError(e, 'hints'); } }

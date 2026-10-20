@@ -36,7 +36,7 @@
     yieldSpeed: 5,
     pedIdleChance: 0.06, chatChance: 0.5, barkEvery: [9, 20],
     sight: 70, sightCar: 95, heliSight: 120,
-    bustRange: 1.5, bustTime: 1.0,
+    bustRange: 1.5, bustTime: 2.2,   // GDD_EXPANSION 6.9: 2.2 s in reach, never while the player sprints on foot
     wantedGrace: 8,                                      // seconds after a crime (or a set) before heat may start to decay
     heatEvery: 0.6, heatEveryCar: 2.5,                   // one hitPed / attackCop crime per burst, one hitCopCar per ram (seconds)
     pursuitSpeed: 0.85,                                  // fraction of the cruiser's top speed
@@ -240,7 +240,9 @@
     set: function (n) {
       var p = player(), th = C.WANTED.thresholds;
       n = U.clamp(n | 0, 0, 5);
-      wanted.heat = n ? th[n - 1] : 0; wanted.level = n;
+      // the middle of the star's band (five stars: 5 over the last threshold), so the first second of decay does not take
+      // a scripted star straight back (a mission's "five stars", debug.setWanted)
+      wanted.heat = n ? (n < th.length ? (th[n - 1] + th[n]) / 2 : th[n - 1] + 5) : 0; wanted.level = n;
       if (p) { p.wanted = n; p.heat = wanted.heat; wanted.lastKnown.x = p.x; wanted.lastKnown.z = p.z; }
       wanted.lastSeen = simT(); wanted._lvl = n; wanted.graceUntil = simT() + K.wantedGrace;
       GTP.Events.emit('wanted', { level: n, prev: n });
@@ -264,7 +266,8 @@
       if (p.wanted !== wanted.level && p.wanted !== wanted._lvl) { wanted.set(p.wanted); }
       else if (wanted.level !== wanted._lvl) { wanted.set(wanted.level); }
       if (wanted.heat > 0 && simT() > wanted.graceUntil && simT() - wanted.lastSeen > C.WANTED.decayDelay) {
-        wanted.heat = Math.max(0, wanted.heat - C.WANTED.decayRate * dt);
+        var dr = C.WANTED.decayByLevel ? C.WANTED.decayByLevel[wanted.level] : null;
+        wanted.heat = Math.max(0, wanted.heat - (dr != null ? dr : C.WANTED.decayRate) * dt);
         var lvl = wanted.levelFor(wanted.heat);
         if (lvl !== wanted.level) { var prev = wanted.level; wanted.level = lvl; wanted._lvl = lvl; p.wanted = lvl; GTP.Events.emit('wanted', { level: lvl, prev: prev }); }
         p.heat = wanted.heat;
@@ -1567,6 +1570,8 @@
     if (!pl || !pl.alive || !g || g.state !== 'playing' || wanted.level === 0) { police.bustT = 0; return; }
     var v = pl.inVehicle;
     if (v && Math.abs(v.speed) > 0.5) { police.bustT = Math.max(0, police.bustT - dt); return; }
+    // a sprinting player on foot slips the hand on the shoulder (GDD_EXPANSION 6.9)
+    if (!v && pl.intent && pl.intent.run && (pl.vx * pl.vx + pl.vz * pl.vz) > 9) { police.bustT = Math.max(0, police.bustT - dt); return; }
     var list = E().hash.query(pl.x, pl.z, K.bustRange + 1, scratch3), cop = null;
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
@@ -1581,10 +1586,10 @@
   }
   function bust(cop) {
     var pl = player(), g = GTP.game;
-    police.bustT = 0; police.bustCop = cop;
+    police.bustT = 0; police.bustCop = cop; police.bustLevel = wanted.level;
     if (cop) { say(cop, (GTP.Content.radio && GTP.Content.radio.barks.cop[7]) || 'Busted!', '#8fb6ff'); if (cop.ai) { cop.ai.mode = 'idle'; cop.ai.idleT = 4; } cop.stop(); }
     sfx('siren', pl.x, pl.z, 0.8);
-    GTP.Events.emit('busted', { player: pl, cop: cop || null, level: wanted.level, fine: C.ECONOMY.bustedFine });
+    GTP.Events.emit('busted', { player: pl, cop: cop || null, level: wanted.level, fine: AI.bustFine(wanted.level, pl.money) });
     var CB = GTP.Combat;
     if (CB && typeof CB.onPlayerBusted === 'function') { try { CB.onPlayerBusted(pl, cop); } catch (e) { U.reportError(e, 'combat.onPlayerBusted'); } return; }
     // fallback flow until Combat owns the DEPLATFORMED card: freeze, 3 s, respawn at the precinct
@@ -1603,7 +1608,7 @@
     var pl = player(), g = GTP.game, Wd = W();
     var lm = Wd.landmark((GTP.Content.world.respawn && GTP.Content.world.respawn.police) || 'police_hq');
     var sp = lm && lm.door ? lm.door : { x: pl.x, z: pl.z };
-    pl.weapons = { fist: Infinity }; pl.weapon = 'fist'; pl.money = Math.max(0, pl.money - C.ECONOMY.bustedFine);
+    pl.weapons = { fist: Infinity }; pl.weapon = 'fist'; pl.money = Math.max(0, pl.money - AI.bustFine(police.bustLevel || 1, pl.money));
     pl.hp = pl.maxHp; pl.knockedDown = false; pl.swimming = false; pl.state = 'idle'; pl.alive = true;
     pl.stats.busted = (pl.stats.busted || 0) + 1;
     pl.x = sp.x; pl.z = sp.z; pl.y = Wd.heightAt(sp.x, sp.z, 0); pl.vx = pl.vz = pl.vy = 0; pl.onGround = true; pl.snap();
@@ -1636,13 +1641,100 @@
     }
   }
 
+  // ------------------------------------------------------------ residents --
+  // World landmark.npcs (GDD_EXPANSION §1.5, §2.4): the Heirloom Club's doorman and Merle Firmness at every Both Sides Arms.
+  // Each stands at its post facing the street, spawned when the player comes within 120 m and removed past 170 m; a
+  // mission-style brain (phase 0.5) keeps the AI's ped tick off it. It turns to a player on foot within 7 m and greets
+  // them now and then (the doorman's bark pool, Merle's door lines); a hurt resident is handed to the AI as a fleeing
+  // civilian and the post stays empty until the player has been away. A mission giver standing within 3 m of the post
+  // (a blue light at the same door) keeps the resident home. Looks roll on their own stream, never the city's.
+  var residents = { slots: [], seed: null, count: -1, t: 0, rng: null };
+  function residentRebuild() {
+    var Wd = W(), lms = Wd.landmarks || [];
+    residents.slots.forEach(function (s) { if (s.ped && !s.ped.removed && s.ped.alive) { if (s.ped.destroy) s.ped.destroy(); E().remove(s.ped); } });
+    residents.slots = []; residents.seed = Wd._seed; residents.count = lms.length;
+    residents.rng = GTP.makeRng(((Wd._seed | 0) ^ 0x2E51D) >>> 0);
+    for (var i = 0; i < lms.length; i++) {
+      var lm = lms[i]; if (!lm.npcs || !lm.npcs.length) continue;
+      for (var j = 0; j < lm.npcs.length; j++) { var n = lm.npcs[j]; residents.slots.push({ lm: lm, def: n, id: lm.id + ':' + n.role + j, ped: null, away: true, look: null }); }
+    }
+  }
+  function residentLook(s) {
+    if (s.look) return Object.assign({}, s.look);
+    var cast = s.def.cast && GTP.Content.cast ? GTP.Content.cast[s.def.cast] : null, L = GTP.Content.looks;
+    var look = cast && cast.look ? Object.assign({}, cast.look) : (L && L.roll ? L.roll(s.lm.district, s.def.role, residents.rng) : { role: s.def.role });
+    s.look = look;
+    return Object.assign({}, look);
+  }
+  function residentSpawn(s) {
+    var d = s.def, cast = d.cast && GTP.Content.cast ? GTP.Content.cast[d.cast] : null;
+    var p = new GTP.Ped({ x: d.x, z: d.z, look: residentLook(s), role: d.role, persistent: true, weapon: 'fist' });
+    p.y = W().heightAt(d.x, d.z, s.lm.door ? s.lm.door.y || 0 : 0); p.yaw = d.yaw || 0; p.snap();
+    p.castId = d.cast || null; p.name = cast ? cast.name : (d.role === 'doorman' ? 'The Doorman' : 'Clerk');
+    p.resident = s.id;
+    p.ai = { phase: 0.5, mode: 'mission', mission: 'resident', ambient: false, barkT: residents.rng.range(3, 8) };
+    E().add(p);
+    s.ped = p; s.hp0 = p.hp;
+    return p;
+  }
+  function residentLines(s) {
+    if (s.def.role === 'doorman') { var Rd = GTP.Content.radio; return (Rd && Rd.barks && Rd.barks.doorman) || null; }
+    var X = GTP.Content.expansion, sb = X && X.shop && X.shop.barks;
+    return sb ? sb.door : null;
+  }
+  function residentsTick(dt) {
+    var Wd = W(), pl = player(), g = GTP.game; if (!pl || !Wd || !Wd.landmarks) return;
+    if (residents.seed !== Wd._seed || residents.count !== Wd.landmarks.length) residentRebuild();
+    if (!residents.slots.length) return;
+    residents.t -= dt; if (residents.t > 0) return;
+    var step = 0.25; residents.t = step;
+    var givers = null;
+    for (var i = 0; i < residents.slots.length; i++) {
+      var s = residents.slots[i], d = s.def, dist = U.dist2d(pl.x, pl.z, d.x, d.z), p = s.ped;
+      if (p && p.removed) { s.ped = p = null; }
+      if (dist > 170) s.away = true;
+      if (p && p.ai && p.ai.mission !== 'resident') { s.ped = p = null; s.away = false; continue; }   // handed to the AI (fled) or taken by a mission
+      if (!p) {
+        if (dist > 120 || !s.away) continue;
+        if (givers === null) { givers = []; var Ms = GTP.Missions, mks = Ms && Ms.markers ? Ms.markers() : []; for (var m = 0; m < mks.length; m++) if (mks[m].kind === 'mission') givers.push(mks[m]); }
+        var blocked = false; for (m = 0; m < givers.length; m++) if (U.dist2d(givers[m].x, givers[m].z, d.x, d.z) < 3) blocked = true;
+        if (blocked) continue;
+        p = residentSpawn(s);
+      } else if (dist > 170 && p.alive) { if (p.destroy) p.destroy(); E().remove(p); s.ped = null; continue; }
+      if (!p.alive) { s.away = false; continue; }
+      // hurt: a fleeing civilian from here on (the AI's brain); the post waits for the player to leave
+      if (p.hp < (s.hp0 || p.maxHp)) { p.ai = newPedAI(p, 'civ', { mode: 'wander' }); p.ai.ambient = false; p.persistent = false; startFlee(p, p.ai, pl, 6); s.ped = null; s.away = false; continue; }
+      if (p.cutscene || p.knockedDown || (g && g.state === 'cutscene')) continue;
+      var dp = U.dist2d(p.x, p.z, d.x, d.z);
+      if (dp > 1.2) { p.moveTo(d.x, d.z, false); continue; }
+      if (dp > 0.3 || p.intent) p.stop();
+      var near = dist < 7 && !pl.inVehicle;
+      var want = near ? U.dirToYaw(pl.x - p.x, pl.z - p.z) : (d.yaw || 0);
+      p.yaw = U.angleLerp(p.yaw, want, Math.min(1, step * 6)); p.moveYaw = p.yaw; p.aimYaw = p.yaw;
+      p.ai.barkT -= step;
+      if (near && dist < 5 && p.ai.barkT <= 0 && g && g.state === 'playing') {
+        var lines = residentLines(s);
+        if (lines && lines.length) say(p, lines[residents.rng.int(0, lines.length - 1)], d.role === 'clerk' ? '#3fd27f' : null);
+        p.ai.barkT = residents.rng.range(14, 22);
+      }
+    }
+  }
+
   // --------------------------------------------------------------- update --
   var stepN = 0;
   var AI = GTP.AI = {
     K: K, wanted: wanted, spawner: spawner, police: police, alarms: alarms, Heli: Heli,
     stats: { peds: 0, cars: 0, parked: 0, cops: 0, cruisers: 0, ms: 0 },
     // Combat calls this on every shot / blast; peds within r flee the point
-    alarm: function (x, z, r, src, mild) { addAlarm(x, z, r || 20, src, mild); },
+    // Combat calls it on shots and blasts; a cutscene sets alarmMuted for its duration (nobody panics on camera)
+    alarmMuted: false,
+    // the DEPLATFORMED fine (GDD_EXPANSION 6.9): $500 up to two stars, $800 at three and up, never over 15% of the cash
+    bustFine: function (level, money) {
+      var E = C.ECONOMY, f = (level | 0) >= 3 ? (E.bustedFineHigh || E.bustedFine) : E.bustedFine;
+      if (E.bustedFineCap != null && money != null) f = Math.min(f, Math.floor(Math.max(0, money) * E.bustedFineCap));
+      return Math.max(0, f | 0);
+    },
+    alarm: function (x, z, r, src, mild) { if (GTP.AI.alarmMuted) return; addAlarm(x, z, r || 20, src, mild); },
     // hand a vehicle (with a living non-player driver) to the traffic / police brain: kind 'traffic'|'cop'|'hoa'
     drive: function (v, kind) {
       if (!v || v.kind !== 'vehicle') return null;
@@ -1688,6 +1780,7 @@
         updateRoadblocks(dt);
         bustCheck(dt);
         garageCheck(dt);
+        residentsTick(dt);
         if (police.heli && police.heli.removed) police.heli = null;
       } catch (e) { U.reportError(e, 'ai.police'); }
       AI.stats.ms = U.now() - t0;
@@ -1697,6 +1790,20 @@
       stepN = 0; alarms.length = 0;
       wanted.clear(); wanted.lastSeen = -1e9;
       spawner.reset(); police.reset();
+      residents.slots.forEach(function (s) { s.ped = null; s.away = true; }); residents.seed = null; residents.t = 0;
+    },
+    // the landmark residents (the doorman, Merle at each gunshop): list() for tests, near(castOrRole, x, z, r) -> the live
+    // resident ped (Cutscenes reuse it as an actor instead of spawning a second Merle)
+    residents: {
+      list: function () { var Wd = W(); if (Wd && Wd.landmarks && (residents.seed !== Wd._seed || residents.count !== Wd.landmarks.length)) residentRebuild(); return residents.slots.map(function (s) { return { id: s.id, landmark: s.lm.id, role: s.def.role, cast: s.def.cast || null, x: s.def.x, z: s.def.z, ped: s.ped && !s.ped.removed ? s.ped : null }; }); },
+      near: function (key, x, z, r) {
+        for (var i = 0; i < residents.slots.length; i++) {
+          var s = residents.slots[i], p = s.ped;
+          if (!p || p.removed || !p.alive || (s.def.cast !== key && s.def.role !== key)) continue;
+          if (x == null || U.dist2d(p.x, p.z, x, z) <= (r || 60)) return p;
+        }
+        return null;
+      }
     },
     debug: {
       counts: function () {

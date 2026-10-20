@@ -143,15 +143,16 @@
 
     // --- wanted / police --------------------------------------------------
     WANTED: {
-      thresholds: [2, 6, 12, 20, 30],
-      decayDelay: 4,
+      thresholds: [2, 7, 14, 24, 36],          // GDD_EXPANSION 6.9: the top stars take a little more
+      decayDelay: 3,
       decayRate: 1.2,
+      decayByLevel: [1.6, 1.6, 1.6, 1.2, 1.2, 0.9],   // heat/s by the current stars (index = level): quick at 1-2, slow at 5
       heat: { hitPed: 1, killPed: 3, shootNearCop: 2, stealOccupied: 2, stealSeen: 1, destroyVehicle: 3, attackCop: 5, ramCop: 3 },   // ramCop: a cop knocked over by the player's car (rate-limited, see C.AI.heatEvery)
       sprayCostPerStar: 100
     },
 
     // --- economy ----------------------------------------------------------
-    ECONOMY: { deathCashLoss: 0.1, bustedFine: 500, startMoney: 250 },
+    ECONOMY: { deathCashLoss: 0.1, bustedFine: 500, bustedFineHigh: 800, bustedFineCap: 0.15, startMoney: 250 },   // the fine: $500 up to 2 stars, $800 at 3+, never over 15% of cash
 
     // --- palette ----------------------------------------------------------
     // Neon-noir cable-news town: cool asphalt, warm sodium light, teal water.
@@ -203,7 +204,8 @@
     SKY: {
       day:    { top: '#3f7fd6', horizon: '#bcd7ee', sun: '#fff4d6', fog: '#b9cde0', hemiSky: '#9fc3f0', hemiGround: '#6c6a5c', sunI: 1.25, hemiI: 0.65, ambient: 0.0 },
       sunset: { top: '#3f4790', horizon: '#ff8a44', sun: '#ff9a50', fog: '#e89a6c', hemiSky: '#c88aa8', hemiGround: '#5c4f44', sunI: 0.95, hemiI: 0.55, ambient: 0.0 },
-      night:  { top: '#05070f', horizon: '#1b2240', sun: '#8aa0d8', fog: '#0c1020', hemiSky: '#263160', hemiGround: '#111318', sunI: 0.16, hemiI: 0.32, ambient: 0.0 }
+      night:  { top: '#05070f', horizon: '#1b2240', sun: '#8aa0d8', fog: '#0c1020', hemiSky: '#263160', hemiGround: '#111318', sunI: 0.16, hemiI: 0.32, ambient: 0.0,
+                fill: '#6a7ab0', fillI: 0.3, fillLow: 0.6, fillLit: 0.12 }   // the moonlight fill (Render.lights.fill) at full night: medium (post, no lamp lights), low (no post), high / ultra (lamp lights)
     }
   };
 

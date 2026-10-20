@@ -3,8 +3,11 @@
  *  2 traffic: 20 moving cars over 10 s, >= 80% advance > 30 m, all stay on road tiles
  *  3 crosswalks: no ped on a non-crosswalk road tile for more than 2 s
  *  4 wanted 2: cops spawn and close in       5 decay: 1 star, 300 m away behind buildings, 30 s -> 0
- *  6 busted: a cop 1 m away for 3 s -> state busted + 'busted' event, then the precinct respawn
- * Screenshots in tests/out: ai_avenue.png, ai_chase.png, ai_heli_night.png (look at them). */
+ *  6 busted: a cop 1 m away -> state busted after 2.2 s + 'busted' event, then the precinct respawn and the capped fine
+ *  7 (a fresh page) no bust while sprinting with a cop at the shoulder; the landmark residents: the doorman (post, facing the
+ *    street, turns and greets, removed far away and back, flees when hurt) and Merle at the harbor store (clear of the green
+ *    light; a cutscene casting Merle reuses him)
+ * Screenshots in tests/out: ai_avenue.png, ai_chase.png, ai_heli_night.png, ai_residents.png (look at them). */
 'use strict';
 const H = require('./_harness');
 
@@ -144,8 +147,9 @@ H.run('ai', async (t) => {
     return out;
   });
   console.log('  busted: ' + JSON.stringify(bust));
-  t.assert(bust.state === 'busted' && bust.ev && bust.bustedAt > 0.8 && bust.bustedAt <= 2.5, 'busted within 3 s with the event: ' + JSON.stringify(bust));
-  t.assert(bust.after.state === 'playing' && bust.after.wanted === 0 && bust.after.money === Math.max(0, bust.after.money0 - 500) && bust.after.dHQ < 6, 'respawned at the precinct, fined: ' + JSON.stringify(bust.after));
+  // GDD_EXPANSION 6.9: 2.2 s within reach; the fine is $500 at one star, never over 15% of the cash
+  t.assert(bust.state === 'busted' && bust.ev && bust.bustedAt >= 2 && bust.bustedAt <= 3, 'busted after 2.2 s in reach with the event: ' + JSON.stringify(bust));
+  t.assert(bust.after.state === 'playing' && bust.after.wanted === 0 && bust.after.money === bust.after.money0 - Math.min(500, Math.floor(bust.after.money0 * 0.15)) && bust.after.dHQ < 6, 'respawned at the precinct, fined: ' + JSON.stringify(bust.after));
 
   // ---- screenshots ----
   // a busy downtown avenue by day, chase cam on foot
@@ -213,4 +217,98 @@ H.run('ai', async (t) => {
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
+  await page.close();
+
+  // ---- the landmark residents (World landmark.npcs): the club's doorman and Merle at every Both Sides Arms ----
+  const ctx2 = await t.boot({ seed: 7 });
+  const p2 = ctx2.page;
+  // a sprinting player slips the hand: a cop kept at arm's reach for 3 s does not bust while the player runs flat out
+  const sprint = await p2.evaluate(() => {
+    // down the open runway (nothing to run into), the camera behind the player facing west
+    const W = GTP.World, p = GTP.game.player, rw = W.landmark('airport_runway'), e = rw.points.east, w = rw.points.west;
+    GTP.game.debug.teleport(e.x, e.z); GTP.game.advance(0.2);
+    const yaw = GTP.util.dirToYaw(w.x - e.x, w.z - e.z); p.yaw = yaw; GTP.Render.rig.yaw = yaw; GTP.Render.rig.pitch = 0.2; GTP.Render.rig.snap(); GTP.game.advance(0.05);
+    GTP.game.debug.setWanted(1);
+    const cop = GTP.game.debug.spawnPed(p.x + 1, p.z, null, 'cop');
+    let busted = false; const on = () => { busted = true; }; GTP.Events.on('busted', on);
+    GTP.Input.set('forward', true); GTP.Input.set('run', true);
+    let ran = 0;
+    for (let s = 0; s < 36; s++) {
+      GTP.game.advance(1 / 12); ran = Math.max(ran, Math.hypot(p.vx, p.vz));
+      const f = GTP.util.yawToDir(p.yaw); cop.x = p.x - f.x * 0.9; cop.z = p.z - f.z * 0.9; cop.y = p.y;   // the cop at his shoulder all the way
+      if (cop._sh) GTP.Entities.hash.update(cop);
+    }
+    GTP.Input.set('forward', false); GTP.Input.set('run', false);
+    const whileRunning = busted;
+    GTP.Events.off('busted', on);
+    GTP.AI.wanted.clear(); cop.destroy(); GTP.game.advance(0.3);
+    return { whileRunning, ran: +ran.toFixed(1), state: GTP.game.state };
+  });
+  console.log('  sprint: ' + JSON.stringify(sprint));
+  t.assert(!sprint.whileRunning && sprint.ran > 4 && sprint.state === 'playing', 'no bust while sprinting with a cop at the shoulder: ' + JSON.stringify(sprint));
+  const res = await p2.evaluate(() => {
+    const W = GTP.World, AI = GTP.AI, p = GTP.game.player, U = GTP.util, out = {};
+    out.slots = AI.residents.list().map((s) => s.landmark + ':' + s.role);
+    // the doorman: spawned on approach, at his post, turns to a player on foot and greets him
+    const club = W.landmark('heirloom_club'), d = club.door;
+    GTP.game.debug.teleport(d.x, d.z + 60); GTP.game.advance(1);
+    const slot = () => AI.residents.list().find((s) => s.landmark === 'heirloom_club' && s.role === 'doorman');
+    const s0 = slot();
+    out.spawned = !!s0.ped; out.atPost = s0.ped ? +Math.hypot(s0.ped.x - s0.x, s0.ped.z - s0.z).toFixed(2) : null;
+    out.brain = s0.ped && s0.ped.ai.mission; out.role = s0.ped && s0.ped.role; out.look = s0.ped && s0.ped.look && s0.ped.look.tie;
+    // left alone he faces the street: his forward points away from the club's building
+    const b = club.building, f = U.yawToDir(s0.ped.yaw), ox = s0.ped.x - (b.x + b.w / 2), oz = s0.ped.z - (b.z + b.d / 2), ol = Math.hypot(ox, oz) || 1;
+    out.outward = +((f.x * ox + f.z * oz) / ol).toFixed(2);
+    GTP.game.debug.teleport(s0.x + 3, s0.z); GTP.game.advance(0.6);
+    const want = U.dirToYaw(p.x - s0.ped.x, p.z - s0.ped.z);
+    out.facing = +Math.abs(U.wrapAngle(s0.ped.yaw - want)).toFixed(2);
+    let barked = null; const on = (e) => { if (e.ped === s0.ped) barked = e.text; }; GTP.Events.on('bark', on);
+    for (let i = 0; i < 100 && !barked; i++) GTP.game.advance(0.25);
+    GTP.Events.off('bark', on);
+    out.bark = barked;
+    // far away: removed; back: the same post filled again
+    GTP.game.debug.teleport(d.x, d.z + 220); GTP.game.advance(1);
+    out.removed = !slot().ped;
+    GTP.game.debug.teleport(d.x, d.z + 60); GTP.game.advance(1);
+    out.back = !!slot().ped;
+    // hurt: he runs (a civilian from then on) and the post stays empty while the player is near
+    const doorman = slot().ped; GTP.game.debug.teleport(s0.x + 4, s0.z); GTP.game.advance(0.3);
+    GTP.Combat.damage(doorman, 5, p, 'fist'); GTP.game.advance(1.5);
+    out.fled = doorman.ai && doorman.ai.mission !== 'resident' && doorman.ai.mode === 'flee';
+    GTP.game.advance(1); out.emptyPost = !slot().ped;
+    // Merle at the harbor store, the green light on the other side of the door
+    const port = W.landmark('both_sides_port');
+    GTP.game.debug.teleport(port.door.x, port.door.z + 30); GTP.game.advance(1);
+    const ms = AI.residents.list().find((s) => s.landmark === 'both_sides_port');
+    const store = GTP.Combat.shop.stores().find((s) => s.id === 'both_sides_port');
+    out.merle = ms && ms.ped ? { name: ms.ped.name, cast: ms.ped.castId, toLight: +Math.hypot(ms.ped.x - store.x, ms.ped.z - store.z).toFixed(1), toPost: +Math.hypot(ms.ped.x - ms.x, ms.ped.z - ms.z).toFixed(1), toShop: +Math.hypot(ms.ped.x - (port.building.x + port.building.w / 2), ms.ped.z - (port.building.z + port.building.d / 2)).toFixed(1) } : null;
+    // a cutscene that casts Merle reuses the man at the door instead of spawning a twin
+    const before = GTP.Entities.list.filter((e) => e.kind === 'ped' && e.castId === 'merle' && !e.removed).length;
+    const ok = GTP.Cutscenes.play({ id: 't_merle', letterbox: true, skippable: true, shots: [{ cam: { from: { landmark: 'both_sides_port', offset: { x: 6, y: 3, z: 6 } }, to: { landmark: 'both_sides_port', offset: { x: 0, y: 1.6, z: 0 } }, seconds: 1 }, actors: [{ castId: 'merle', at: { landmark: 'both_sides_port', offset: { x: 1, z: 2 } }, anim: 'wave' }], lines: [], hold: 2 }] }, () => {});
+    GTP.game.advance(0.3);
+    const during = GTP.Entities.list.filter((e) => e.kind === 'ped' && e.castId === 'merle' && !e.removed).length;
+    out.cutscene = { ok, before, during, same: GTP.Cutscenes.actors().merle === ms.ped };
+    GTP.Cutscenes.skip(); GTP.game.advance(0.5);
+    for (let i = 0; i < 20; i++) GTP.game.advance(0.25);
+    out.cutscene.home = +Math.hypot(ms.ped.x - ms.x, ms.ped.z - ms.z).toFixed(2);
+    return out;
+  });
+  console.log('  residents: ' + JSON.stringify(res));
+  t.assert(res.slots.indexOf('heirloom_club:doorman') >= 0 && ['both_sides_strip', 'both_sides_port', 'both_sides_uptown'].every((id) => res.slots.indexOf(id + ':clerk') >= 0), 'the doorman and the three clerks are residents: ' + res.slots.join(','));
+  t.assert(res.spawned && res.atPost < 0.5 && res.brain === 'resident' && res.role === 'doorman' && res.look === 'bowtie' && res.outward > 0.5, 'the doorman stands at the club door in his bow tie, facing the street: ' + JSON.stringify(res));
+  t.assert(res.facing < 0.4 && res.bark, 'he turns to the player and greets him: ' + JSON.stringify({ facing: res.facing, bark: res.bark }));
+  t.assert(res.removed && res.back, 'removed past 170 m, back on the return');
+  t.assert(res.fled && res.emptyPost, 'a hurt doorman runs and the post stays empty: ' + JSON.stringify({ fled: res.fled, empty: res.emptyPost }));
+  t.assert(res.merle && res.merle.cast === 'merle' && res.merle.name === 'Merle Firmness' && res.merle.toLight > 3 && res.merle.toPost < 0.5 && res.merle.toShop < 16, 'Merle minds the harbor store front, clear of the green light: ' + JSON.stringify(res.merle));
+  t.assert(res.cutscene.ok && res.cutscene.same && res.cutscene.during === res.cutscene.before && res.cutscene.home < 1.3, 'a cutscene casting Merle reuses him and he walks back to his post: ' + JSON.stringify(res.cutscene));
+  // the picture: Merle at the harbor store from the street, the green light beside the door
+  await p2.evaluate(() => {
+    const port = GTP.World.landmark('both_sides_port'), ms = GTP.AI.residents.list().find((s) => s.landmark === 'both_sides_port'), b = port.building;
+    const ox = ms.x - (b.x + b.w / 2), oz = ms.z - (b.z + b.d / 2), ol = Math.hypot(ox, oz) || 1;
+    GTP.game.debug.teleport(ms.x + ox / ol * 7, ms.z + oz / ol * 7); GTP.game.advance(0.6);
+    const p = GTP.game.player, R = GTP.Render.rig; R.yaw = GTP.util.dirToYaw(ms.x - p.x, ms.z - p.z); R.pitch = 0.08; R.snap(); GTP.game.advance(0.05);
+  });
+  await t.shot(p2, 'ai_residents');
+  const errs2 = await t.errors(ctx2);
+  t.assert(errs2.length === 0, 'errors:\n' + errs2.join('\n'));
 });

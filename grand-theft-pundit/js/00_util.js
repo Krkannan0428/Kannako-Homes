@@ -201,7 +201,7 @@
   };
   SpatialHash.prototype.insert = function (e) {
     var keys = this._cellsFor(e);
-    e._sh = keys;
+    e._sh = keys; e._shR = null;   // update() re-derives the cached cell range
     for (var i = 0; i < keys.length; i++) {
       var b = this.map.get(keys[i]);
       if (!b) { b = []; this.map.set(keys[i], b); }
@@ -220,15 +220,15 @@
     }
     e._sh = null;
   };
+  // called for every moving entity every step: the cell range is compared first, so an entity that stays in its cells
+  // (nearly always, with 16 m cells) costs four floors and no allocation
   SpatialHash.prototype.update = function (e) {
-    var keys = this._cellsFor(e), old = e._sh;
-    if (old && old.length === keys.length) {
-      var same = true;
-      for (var i = 0; i < keys.length; i++) if (keys[i] !== old[i]) { same = false; break; }
-      if (same) return;
-    }
+    var r = e.radius || 0.5, c = this.cell;
+    var x0 = Math.floor((e.x - r) / c), z0 = Math.floor((e.z - r) / c), x1 = Math.floor((e.x + r) / c), z1 = Math.floor((e.z + r) / c);
+    if (e._sh && e._shR === this && e._shx0 === x0 && e._shz0 === z0 && e._shx1 === x1 && e._shz1 === z1) return;
     this.remove(e);
     this.insert(e);
+    e._shR = this; e._shx0 = x0; e._shz0 = z0; e._shx1 = x1; e._shz1 = z1;
   };
   SpatialHash.prototype.query = function (x, z, r, out) {
     out = out || [];
@@ -295,12 +295,30 @@
     return this.n++;
   };
   GeoBuilder.WHITE = [1, 1, 1];
-  // quad from 4 corners (counter-clockwise seen from the front), uv list [[u,v] x4], color [r,g,b]
+  // quad from 4 corners (counter-clockwise seen from the front), uv list [[u,v] x4], color [r,g,b].
+  // The face normal comes from (b - a) x (d - a); when a corner pair coincides (a sphere's pole row, a cone's tip) the
+  // other diagonal pair is used, so a degenerate quad never carries a zero normal (NaN lighting: black facets, and the
+  // bloom chain spreads a NaN across the frame).
   GeoBuilder.prototype.quad = function (a, b, c, d, uvs, color) {
     var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     var vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
     var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    var l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; nx /= l; ny /= l; nz /= l;
+    var l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (l < 1e-9) {   // a == b or a == d: the triangle (b, c, d) still spans the face
+      ux = c[0] - b[0]; uy = c[1] - b[1]; uz = c[2] - b[2];
+      vx = d[0] - b[0]; vy = d[1] - b[1]; vz = d[2] - b[2];
+      nx = uy * vz - uz * vy; ny = uz * vx - ux * vz; nz = ux * vy - uy * vx;
+      l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (l < 1e-9) {   // b == c (or c == d): the triangle (a, c, d) or (a, b, c)
+        ux = c[0] - a[0]; uy = c[1] - a[1]; uz = c[2] - a[2];
+        vx = d[0] - a[0]; vy = d[1] - a[1]; vz = d[2] - a[2];
+        nx = uy * vz - uz * vy; ny = uz * vx - ux * vz; nz = ux * vy - uy * vx;
+        l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (l < 1e-9) { vx = b[0] - a[0]; vy = b[1] - a[1]; vz = b[2] - a[2]; nx = vy * uz - vz * uy; ny = vz * ux - vx * uz; nz = vx * uy - vy * ux; l = Math.sqrt(nx * nx + ny * ny + nz * nz); }
+      }
+    }
+    if (l < 1e-9) { nx = 0; ny = 1; nz = 0; l = 1; }
+    nx /= l; ny /= l; nz /= l;
     uvs = uvs || GeoBuilder.UV0;
     var i0 = this.vertex(a[0], a[1], a[2], nx, ny, nz, uvs[0][0], uvs[0][1], color);
     var i1 = this.vertex(b[0], b[1], b[2], nx, ny, nz, uvs[1][0], uvs[1][1], color);

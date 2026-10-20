@@ -30,10 +30,10 @@
  *   Events: weapon, hitmarker {kill, zone, target, weapon}, reload {id, phase}, scope {active, zoom}, wheel {open, index, id},
  *           shop:open {landmark, store}, shop:close, shop:buy {item, price}, shop:range
  *
- * Patches this file applies to surfaces it does not own (listed for the integration pass):
- *   Render.rig.update (recoil kick, scope fov / sway / look sensitivity), Render.fx.add/update/sync/clear ('casing'),
- *   Player.prototype.cycleWeapon (ORDER, scope zoom, wheel), Ped.prototype.syncMesh (the reload pose),
- *   Game.prototype.step (the wheel's 0.2x time scale).
+ * Surfaces other modules provide for the arsenal (no patches): Render.rig.kick and the scope read in Render.rig.update
+ * (recoil, scope fov / sway / look sensitivity), Render.fx.register('casing', ...) (the casings' InstancedMesh),
+ * Player.cycleWeapon -> Combat.cycleWeapon (ORDER, scope zoom, wheel), Ped.syncMesh's reload pose (reloadT / reloadTotal),
+ * Game.step -> Combat.wheelStep (the wheel's 0.2x time scale).
  */
 (function () {
   'use strict';
@@ -1356,7 +1356,7 @@
       if (d.after && !(done && done.has && done.has(d.after))) continue;
       var lm = W().landmark(d.landmark); if (!lm || !lm.door) continue;
       var pos = d.x != null ? { x: d.x, z: d.z } : pickupSpot(lm, i);
-      var pk = spawnPickup({ type: d.type, value: d.value || (d.type === 'health' || d.type === 'armor' ? 50 : 0), weaponId: d.weaponId, ammo: d.ammo, x: pos.x, z: pos.z, persistent: true, respawn: d.respawn || (d.type === 'weapon' ? 180 : 90), label: d.label, tag: 'world' });
+      var pk = spawnPickup({ type: d.type, value: d.value || (d.type === 'health' || d.type === 'armor' ? 50 : 0), weaponId: d.weaponId, ammo: d.ammo, x: pos.x, z: pos.z, persistent: true, respawn: d.respawn || (d.type === 'weapon' ? 180 : d.type === 'health' || d.type === 'armor' ? 60 : 90), label: d.label, tag: 'world' });
       Combat.pickups.set(key, pk);
     }
   }
@@ -1411,7 +1411,12 @@
       if (Wd.solidAt(x, z, 0.5)) { x = door.x; z = door.z; }
     }
     var fine = 0;
-    if (kind === 'police') { fine = C.ECONOMY.bustedFine; p.money = Math.max(0, p.money - fine); p.stats.busted = (p.stats.busted || 0) + 1; }
+    if (kind === 'police') {
+      // the fine by the stars at the bust (GDD_EXPANSION 6.9: $500, $800 at 3+, never over 15% of the cash)
+      var lvl = Combat.death && Combat.death.level != null ? Combat.death.level : 1;
+      fine = GTP.AI && GTP.AI.bustFine ? GTP.AI.bustFine(lvl, p.money) : C.ECONOMY.bustedFine;
+      p.money = Math.max(0, p.money - fine); p.stats.busted = (p.stats.busted || 0) + 1;
+    }
     else { fine = Math.round(p.money * C.ECONOMY.deathCashLoss); p.money = Math.round(p.money * (1 - C.ECONOMY.deathCashLoss)); p.stats.deaths = (p.stats.deaths || 0) + 1; }
     if (p.inVehicle) p.exitVehicle();
     p.weapons = { fist: Infinity }; p.weapon = 'fist';
@@ -1635,6 +1640,9 @@
     var nx = d.x - (b.x + b.w / 2), nz = d.z - (b.z + b.d / 2);
     var ax = Math.abs(nx) > Math.abs(nz) ? 0 : 1, az = ax ? 0 : 1;
     var cands = [[d.x + ax * 3.2, d.z + az * 3.2], [d.x - ax * 3.2, d.z - az * 3.2]];
+    // Merle (the store's clerk, landmark.npcs) keeps his post on one side of the door: the light goes on the other (the podium's)
+    var clerk = null; if (lm.npcs) for (var n = 0; n < lm.npcs.length; n++) if (lm.npcs[n].role === 'clerk') clerk = lm.npcs[n];
+    if (clerk && U.dist2d(cands[0][0], cands[0][1], clerk.x, clerk.z) < U.dist2d(cands[1][0], cands[1][1], clerk.x, clerk.z)) cands.reverse();
     for (var i = 0; i < cands.length; i++) {
       var t = Wd.tileAt(cands[i][0], cands[i][1]);
       if ((t === T.SIDEWALK || t === T.PLAZA || t === T.PARKING || t === T.GRASS) && !Wd.solidAt(cands[i][0], cands[i][1], (d.y || 0) + 0.5)) return { x: cands[i][0], z: cands[i][1] };
@@ -1806,7 +1814,7 @@
       if (wheel.open) closeWheel(p, false);
       if (p.inVehicle) { var v = p.inVehicle; v.setControls(0, 0, true, 1); p.exitVehicle(); }
       p.vx = p.vz = 0;
-      Combat.death = { kind: 'busted', t: 0, cop: cop || null, text: failText('busted') };
+      Combat.death = { kind: 'busted', t: 0, cop: cop || null, text: failText('busted'), level: GTP.AI && GTP.AI.wanted ? GTP.AI.wanted.level : (p.wanted | 0) };
       sfx('fail', p.x, p.z, 1);
       toast(failText('busted'));
       if (g.state !== 'busted') g.setState('busted');

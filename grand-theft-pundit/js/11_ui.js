@@ -254,22 +254,13 @@
     var s = ui.settings, out = { master: s.master, music: s.music, sfx: s.sfx, quality: s.quality, drawDistance: s.drawDistance, weather: s.weather, gamepad: s.gamepad, hints: s.hints, subtitles: s.subtitles };
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(out)); return true; } catch (e) { return false; }
   }
-  // Volumes: GTP.Audio.setVolumes({master, music, sfx}) when the audio module has it; otherwise the SFX gain is scaled on
-  // the way into Audio.play (a wrapper, once) and master 0 mutes. Audio.volumes always carries the current values.
-  var volumePatch = null;
+  // Volumes: GTP.Audio.setVolumes({master, music, sfx}) scales the master, radio and effects buses (Audio.volumes carries
+  // the current values); master 0 also mutes.
   function applyVolumes() {
     var A = GTP.Audio; if (!A) return;
     var s = ui.settings, v = { master: s.master / 100, music: s.music / 100, sfx: s.sfx / 100 };
-    A.volumes = v;
     if (typeof A.setVolumes === 'function') { try { A.setVolumes(v); } catch (e) { U.reportError(e, 'audio.setVolumes'); } }
-    else if (!volumePatch && typeof A.play === 'function') {
-      volumePatch = A.play;
-      A.play = function (name, opts) {
-        var k = (A.volumes ? A.volumes.master * A.volumes.sfx : 1);
-        var o = Object.assign({}, opts || {}); o.gain = (o.gain == null ? 1 : o.gain) * k;
-        return volumePatch.call(A, name, o);
-      };
-    }
+    else A.volumes = v;
     // master 0 mutes; master back above 0 only lifts the mute this path set (never a ?mute=1 boot or the MUTE toggle)
     if (A.setMuted) {
       try {
@@ -846,7 +837,9 @@
     var objFont = F(15, 'bold', FONT_TEXT);
     var lines = wrap(ctx, text, objFont, maxW - px(28));
     var hasTimer = !!timer, hasProg = !!(prog && prog.total);
-    var ph = px(14) + lines.length * px(19) + (hasTimer ? px(24) : 0) + (hint ? px(16) : 0) + (title ? px(14) : 0);
+    // the timer row keeps clear of the hint line, and of the progress count at the top right when a single line has no hint
+    var timerGap = hasTimer ? (hint ? px(8) : (hasProg && lines.length < 2 ? px(10) : 0)) : 0;
+    var ph = px(14) + lines.length * px(19) + (hasTimer ? px(24) + timerGap : 0) + (hint ? px(16) : 0) + (title ? px(14) : 0);
     var want = px(28) + (hasProg ? px(60) : 0);
     for (var li = 0; li < lines.length; li++) want = Math.max(want, measure(ctx, lines[li], objFont) + px(32) + (hasProg ? px(56) : 0));
     if (hint) want = Math.max(want, measure(ctx, hint, F(11)) + px(32));
@@ -865,6 +858,7 @@
     if (mission && h.replay) txt(ctx, 'REPLAY', x + pw - px(12), y + px(24), { font: F(10, 'bold'), color: COL.pink, align: 'right', outline: false });
     if (hint) { txt(ctx, hint, x + px(16), ty - px(2), { font: F(11), color: COL.muted, outline: false, maxW: pw - px(32) }); ty += px(16); }
     if (hasTimer) {
+      ty += timerGap;
       var rem = Math.max(0, timer.remaining), tot = Math.max(1, timer.total), k = rem / tot, urgent = rem < 10;
       var bw = pw - px(32), by = ty - px(4);
       ctx.fillStyle = 'rgba(255,255,255,0.12)'; rr(ctx, x + px(16), by, bw, px(6), px(3)); ctx.fill();
@@ -1246,7 +1240,7 @@
   }
 
   // ------------------------------------------------ banner, cards, toasts ----
-  function banner(title, sub) { ui.banner = { title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: 4.2 }; if (ui.card && ui.card.kind === 'passed') ui.card = null; }   // the next mission's banner replaces a lingering PASSED card
+  function banner(title, sub, dur) { var tt = String(title || ''); ui.banner = { title: tt, sub: sub ? String(sub) : '', t: 0, dur: dur || (/^(GO|\d)$/.test(tt) ? 1.4 : 4.2) }; if (ui.card && ui.card.kind === 'passed') ui.card = null; }   // the next mission's banner replaces a lingering PASSED card
   function card(kind, title, sub) {
     ui.card = { kind: kind || 'passed', title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: kind === 'failed' ? 4.2 : 4.8 };
     if (kind === 'failed') ui.retry.sel = 0;
@@ -3193,7 +3187,8 @@
     if (inCutscene) {
       // the letterbox (12% bars), the title, the HOLD TO SKIP pill (GDD_EXPANSION 4.1)
       var bar = letterboxBar(), Cs = GTP.Cutscenes, ch = Cs && Cs.hud ? Cs.hud() : null;
-      if (bar > 0) { ctx.fillStyle = 'rgba(0,0,0,0.92)'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar); }
+      if (bar > 0) { ctx.fillStyle = '#000';   // opaque: a bright facade must not show through the bars
+        ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar); }
       var Ms = GTP.Missions, h = Ms && Ms.hud ? Ms.hud() : null, title = (ch && ch.active && ch.title) ? ch.title : (h && h.title ? h.title : null);
       if (title) txt(ctx, String(title).replace(/^cs_/, '').replace(/_/g, ' ').toUpperCase(), W - safe.r, Math.max(px(16), bar - px(10)), { font: F(11, 'bold'), color: COL.gold, align: 'right', outline: false });
       if (ch && ch.active && ch.shots > 1) txt(ctx, 'SHOT ' + ((ch.shot | 0) + 1) + ' / ' + ch.shots, safe.l, Math.max(px(16), bar - px(10)), { font: F(10, 'bold'), color: COL.muted, outline: false });

@@ -43,7 +43,7 @@
     districts: [], landmarks: [], buildings: [], props: [], ramps: [], piers: [], roads: [], lots: [], stuntRamps: [], parks: [], promenades: [],
     bounds: { x0: 0, z0: 0, x1: 0, z1: 0 },
     loopName: 'The Loop', lowerLoopName: 'The Lower Loop', generateMs: 0,
-    _seed: null, _lm: {}, _roadTiles: [], _sidewalkTiles: [], _propGrid: null, _wedges: null, _stamp: 1,
+    _seed: null, _lm: {}, _roadTiles: [], _sidewalkTiles: [], _propGrid: null, _propTile: null, _wedges: null, _wedgeTile: null, _stamp: 1,
 
     // ------------------------------------------------------------ queries --
     tileIndex: function (tx, tz) { return tz * World.w + tx; },
@@ -82,7 +82,7 @@
       if (!World.inBounds(tx, tz)) return WATER_Y;
       var i = tz * World.w + tx, t = World.tiles[i];
       if (yHint == null) yHint = 0;
-      if (World._wedges && World._wedges.size) { var wy = World._wedgeAt(i, x, z, yHint); if (wy != null) return wy; }
+      if (World._wedgeTile && World._wedgeTile[i]) { var wy = World._wedgeAt(i, x, z, yHint); if (wy != null) return wy; }   // a byte test first: heightAt runs ~800 times a step
       if (World.deck[i] && yHint + 0.6 >= DECK_Y) return DECK_Y;
       if (t === T.RAMP) return World.rampHeight(x, z);
       return World.groundY(t);
@@ -293,7 +293,7 @@
             }
           }
           // solid props
-          var pl = World._propGrid.get(i);
+          var pl = World._propTile[i] ? World._propGrid.get(i) : null;   // a byte test before the Map lookup (most tiles hold no solid prop)
           if (pl) for (var k = 0; k < pl.length; k++) {
             var pr = pl[k];
             if (pr._st === stamp) continue; pr._st = stamp;
@@ -488,7 +488,7 @@
     // (bar = the absolute share of the loading bar, GDD_EXPANSION §6.1). Synchronous either way.
     generate: function (seed, onProgress) {
       seed = seed | 0;
-      var t0 = U.now ? U.now() : 0;
+      var genT0 = U.now ? U.now() : 0;
       function prog(stage, frac) {
         var s = STAGES[stage] || STAGES.done;
         if (typeof onProgress === 'function') { try { onProgress(frac, s.label); } catch (e) { U.reportError(e, 'world.progress'); } }
@@ -518,8 +518,8 @@
       World.lowerLoopName = (CW.streets && CW.streets.lowerHighway) || (L.loop && L.loop.lowerName) || 'The Lower Loop';
       World._seed = seed;
       World.bounds = { x0: 0, z0: 0, x1: w * TILE, z1: h * TILE };
-      World._propGrid = new Map();
-      World._wedges = new Map();
+      World._propGrid = new Map(); World._propTile = new Uint8Array(N);
+      World._wedges = new Map(); World._wedgeTile = new Uint8Array(N);
 
       function I(tx, tz) { return tz * w + tx; }
       function inB(tx, tz) { return tx >= 0 && tz >= 0 && tx < w && tz < h; }
@@ -535,13 +535,13 @@
       if (L.coastJitter) {
         var jit = L.coastJitter;
         for (var z = 1; z < h - 1; z++) for (var x = 1; x < w - 1; x++) {
-          var ii = I(x, z), t0 = tiles[ii];
-          if (t0 === T.WATER) continue;
+          var ii = I(x, z), tCoast = tiles[ii];   // (not `t0`: that var is the generate() timer, function-scoped)
+          if (tCoast === T.WATER) continue;
           var nw = (tiles[ii - 1] === T.WATER) + (tiles[ii + 1] === T.WATER) + (tiles[ii - w] === T.WATER) + (tiles[ii + w] === T.WATER);
           if (nw === 0) continue;
           var hv = U.hash2(x, z, seed + 1);
           if (nw >= 2 && hv < jit) tiles[ii] = T.WATER;
-          else if (hv < jit * 0.6 && t0 === T.GRASS) tiles[ii] = T.SAND;
+          else if (hv < jit * 0.6 && tCoast === T.GRASS) tiles[ii] = T.SAND;
         }
       }
       World.districts = (L.districts || []).map(function (d, i) {
@@ -769,11 +769,11 @@
         for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) {
           if (!inB(tx, tz)) continue;
           var key = I(tx, tz), arr = World._propGrid.get(key);
-          if (!arr) { arr = []; World._propGrid.set(key, arr); }
+          if (!arr) { arr = []; World._propGrid.set(key, arr); World._propTile[key] = 1; }
           arr.push(p);
         }
       });
-      World.generateMs = U.now ? U.now() - t0 : 0;
+      World.generateMs = U.now ? U.now() - genT0 : 0;
       prog('done', 1);
       GTP.Events.emit('world:generated', { seed: seed, ms: World.generateMs });
       if (GTP.Render && GTP.Render.invalidateAll) GTP.Render.invalidateAll();
@@ -806,7 +806,7 @@
         for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) {
           if (!World.inBounds(tx, tz)) continue;
           var key = tz * w + tx, arr = World._wedges.get(key);
-          if (!arr) { arr = []; World._wedges.set(key, arr); }
+          if (!arr) { arr = []; World._wedges.set(key, arr); World._wedgeTile[key] = 1; }
           arr.push(p);
         }
       });
@@ -1068,7 +1068,7 @@
               P({ kind: 'awning', x: fa.x, z: fa.z, y: 2.9, rot: fa.rot, r: 0, solid: false, h: 1, w: 4.5, d: 2.4, color: '#2c3e7a' });
               P({ kind: 'stanchion', x: fa.x + fa.rx * 1.6, z: fa.z + fa.rz * 1.6, rot: fa.rot, r: 0.2, solid: true, h: 1 });
               P({ kind: 'stanchion', x: fa.x - fa.rx * 1.6, z: fa.z - fa.rz * 1.6, rot: fa.rot, r: 0.2, solid: true, h: 1 });
-              lmk.npcs.push({ role: 'doorman', x: fa.x + fa.rx * 2.4, z: fa.z + fa.rz * 0.4, yaw: fa.rot + Math.PI, barks: 'doorman' });
+              lmk.npcs.push({ role: 'doorman', x: fa.x + fa.rx * 2.4, z: fa.z + fa.rz * 2.4, yaw: fa.rot, barks: 'doorman' });   // beside the rope, facing the street
               // three members' sports cars on the lot's east side (the spawn table parks them)
               parkStrip(lot.x + lot.w - 2, lot.z, 2, lot.d - 1);
             }
@@ -1277,7 +1277,7 @@
             var fg = face(def.door, 1.1);
             P({ kind: 'awning', x: fg.x, z: fg.z, y: 2.7, rot: fg.rot, r: 0, solid: false, h: 1, w: 4, d: 2, color: '#3fd27f' });
             P({ kind: 'podium', x: fg.x + fg.rx * 2.6, z: fg.z + fg.rz * 2.6, rot: fg.rot, r: 0.5, solid: true, h: 1.3 });
-            lmk.npcs.push({ role: 'clerk', cast: 'merle', x: fg.x - fg.rx * 2.4, z: fg.z + fg.rz * 0.2, yaw: fg.rot + Math.PI });
+            lmk.npcs.push({ role: 'clerk', cast: 'merle', x: fg.x - fg.rx * 2.4, z: fg.z - fg.rz * 2.4, yaw: fg.rot });   // the other side of the door from the podium, facing the street
             if (def.flagship) {
               // the range: a fenced 8 x 28 m lane down the lot's west side with six cardboard hecklers in a column
               var rx0 = lx + 8, rz0 = lz + 1, rz1 = lz + Math.min(ld - 1, 29);

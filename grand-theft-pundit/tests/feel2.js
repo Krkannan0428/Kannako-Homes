@@ -1,12 +1,12 @@
 /* feel2.js: the expansion's feel pass, nine looks at the bigger game (headless, seed 7), each a screenshot under tests/out/ to be
  * looked at, plus the checks that make them real: a rendered frame that is not monochrome and GTP.errors empty.
- *  1 feel2_opening.png      the opening cutscene (cs_opening) with its letterbox, Gus and Kip on the quad
+ *  1 feel2_opening.png      a new game's opening cutscene (cs_opening) with its letterbox, Gus and Kip on the quad
  *  2 feel2_runway.png       a sports car flat out down Runway 10/10 (the chase camera, speed over 25 m/s)
  *  3 feel2_port.png         on foot in the container maze at Manifest Harbor (containers, stencils, a crane)
  *  4 feel2_uptown_night.png Heirloom Heights at 22:00: the club's awning and stanchions, lit windows, lamps
  *  5 feel2_race.png         Loop Race lr_01 just after the lights: the field on the deck
  *  6 feel2_rampage.png      Ratio Rampage rr_01: the hecklers with their signs closing in, the table leg up
- *  7 feel2_sniper.png       the Fact Checker's scope on a ped across the channel (the scope vignette, 2x)
+ *  7 feel2_sniper.png       the Fact Checker's scope on a ped across the channel (the scope vignette, 2x); feel2_sniper_shot.png the hit
  *  8 feel2_rocket.png       a Ratio Launcher rocket on a parked car (the fireball)
  *  9 feel2_map.png          the map page with a waypoint and its route
  * Run: cd grand-theft-pundit && NODE_PATH=/opt/node-tools/node_modules node tests/feel2.js */
@@ -41,12 +41,14 @@ H.run('feel2', async (t) => {
     };
   });
 
-  // ---- 1. the opening ----
+  // ---- 1. the opening: a new game through the slot flow's path (newGame, then Game._maybeOpening -> Cutscenes.playOnce) ----
   let r = await page.evaluate(() => {
-    const Cs = GTP.Cutscenes;
-    const ok = Cs.play('cs_opening', () => {});
-    GTP.game.advance(1.8);
-    return { ok, state: GTP.game.state, title: Cs.hud().title, actors: Object.keys(Cs.actors()) };
+    const Cs = GTP.Cutscenes, g = GTP.game;
+    g.newGame(7); g.advance(0.2);
+    g._openingPending = true; g._maybeOpening(); g.advance(0.1);
+    const ok = Cs.active && Cs.hud().title != null;
+    g.advance(1.7);
+    return { ok, state: g.state, title: Cs.hud().title, actors: Object.keys(Cs.actors()), flag: !!GTP.Missions.state.flags.cs_cs_opening, money: g.player.money };
   });
   console.log('  opening: ' + JSON.stringify(r));
   t.assert(r.ok && r.state === 'cutscene' && r.actors.indexOf('gus') >= 0, 'the opening plays');
@@ -167,12 +169,14 @@ H.run('feel2', async (t) => {
     const p = GTP.game.player, ped = GTP.Entities.list.find((e) => e.kind === 'ped' && e.ai && e.ai.mission === 'cutscene' && !e.removed);
     const hp0 = ped ? ped.hp : 0;
     GTP.Input.set('shoot', true); GTP.game.advance(2 / 60); GTP.Input.set('shoot', false); GTP.game.advance(0.3);
-    const out = { hp0, hp: ped ? ped.hp : null, alive: ped ? ped.alive : null, ammo: p.weapons.sniper, mag: p.ammo && p.ammo.sniper ? p.ammo.sniper.mag : null };
-    T_.reset();
-    return out;
+    const hm = GTP.Combat.hud().hitmark;
+    return { hp0, hp: ped ? ped.hp : null, alive: ped ? ped.alive : null, ammo: p.weapons.sniper, mag: p.ammo && p.ammo.sniper ? p.ammo.sniper.mag : null, hitmark: hm ? { kill: !!hm.kill, zone: hm.zone || null } : null };
   });
   console.log('  sniped: ' + JSON.stringify(sniped));
   t.assert(sniped.ammo < 10, 'the Fact Checker fired: ' + JSON.stringify(sniped));
+  t.assert(sniped.hp < sniped.hp0 || sniped.alive === false, 'the Fact Checker hit the ped across the water: ' + JSON.stringify(sniped));
+  await look('feel2_sniper_shot', 60);
+  await page.evaluate(() => T_.reset());
 
   // ---- 8. a rocket ----
   r = await page.evaluate(() => {

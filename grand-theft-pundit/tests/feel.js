@@ -172,7 +172,8 @@ H.run('feel', async (t) => {
     return { state: GTP.game.state, money: p.money, wanted: p.wanted, dHQ: +Math.hypot(p.x - h.x, p.z - h.z).toFixed(1), control: p.controlEnabled };
   });
   console.log('  precinct: ' + JSON.stringify(precinct));
-  t.assert(precinct.state === 'playing' && precinct.money === 1500 && precinct.wanted === 0 && precinct.dHQ < 8 && precinct.control, 'released from the precinct, fined $500: ' + JSON.stringify(precinct));
+  // the fine (GDD_EXPANSION 6.9): $500 at one star, never over 15% of the cash: $300 of $2,000
+  t.assert(precinct.state === 'playing' && precinct.money === 2000 - Math.min(500, Math.floor(2000 * 0.15)) && precinct.wanted === 0 && precinct.dHQ < 8 && precinct.control, 'released from the precinct, fined: ' + JSON.stringify(precinct));
 
   // ---- 5. save, reload, CONTINUE ----
   const saved = await page.evaluate(() => {

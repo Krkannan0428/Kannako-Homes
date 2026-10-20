@@ -9,10 +9,13 @@ H.run('perf', async (t) => {
   const b0 = Date.now();
   const ctx = await t.boot({ seed: 7 });
   const { page } = ctx;
-  const boot = await page.evaluate(() => ({ generateMs: Math.round(GTP.World.generateMs || 0), chunks: GTP.Render.chunks.size, entities: GTP.Entities.list.length, tiles: GTP.World.w + 'x' + GTP.World.h, landmarks: GTP.World.landmarks.length, props: GTP.World.props.length, buildings: GTP.World.buildings.length }));
+  const boot = await page.evaluate(() => ({ generateMs: Math.round(GTP.World.generateMs || 0), profile: GTP.game.bootTimes || null, chunks: GTP.Render.chunks.size, entities: GTP.Entities.list.length, tiles: GTP.World.w + 'x' + GTP.World.h, landmarks: GTP.World.landmarks.length, props: GTP.World.props.length, buildings: GTP.World.buildings.length }));
   boot.wallMs = Date.now() - b0;
   console.log('  boot: ' + JSON.stringify(boot));
-  t.assert(boot.generateMs < 6000, 'World.generate stays quick on the bigger map: ' + boot.generateMs + ' ms');
+  // the profile (ms): render = Assets.init + the scene, newGame = generate + entities + the AI warm-up, loading = the nine-chunk prebuild,
+  // first = the first frame (shader compiles), atBoot = page load to the end of boot (script parse included)
+  t.assert(boot.generateMs > 0 && boot.generateMs < 1500, 'World.generate stays quick on the bigger map: ' + boot.generateMs + ' ms');
+  t.assert(boot.profile && boot.profile.newGame < 6000 && boot.profile.loading < 20000, 'the boot stages stay bounded: ' + JSON.stringify(boot.profile));
   t.assert(boot.wallMs < 120000, 'the headless boot finishes in a reasonable time: ' + boot.wallMs + ' ms');
   const sim = await page.evaluate(() => {
     GTP.Input.set('forward', true); GTP.Input.set('run', true);

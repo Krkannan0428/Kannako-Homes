@@ -157,6 +157,7 @@
         if (Render.weather) Render.weather.applyQuality();
         if (Render.sky && Render.sky.clouds) Render.sky.clouds.visible = !!Q.clouds;
         Render._envKey = null;   // the environment map follows the preset's needs
+        Render._envClock = null;   // and the lights (the night fill depends on the preset's lamp lights)
         Render.quality._lastT = 0;
       },
       // the auto mode's watchdog, fed by frame() with the wall time between rendered frames
@@ -315,6 +316,11 @@
       Render.scene.fog.near = fogNear; Render.scene.fog.far = Q.drawDistance;
       Render.renderer.setClearColor(fog, 1);
       L.hemi.color.copy(mixc('hemiSky')); L.hemi.groundColor.copy(ground); L.hemi.intensity = mixn('hemiI');
+      // moonlight fill: low and medium have no lamp lights (the street is lit by emissives and glow decals alone), so at
+      // night a cool ambient keeps the foreground readable (the player, the road at his feet); the lamp presets need less
+      L.fill.color.set(C.SKY.night.fill || '#6a7ab0');
+      var SN = C.SKY.night, fillK = (Q.pointLights | 0) > 0 ? SN.fillLit : (Q.post ? SN.fillI : SN.fillLow);   // low has no post lift either
+      L.fill.intensity = night * U.lerp(1, 0.75, overcast) * (fillK != null ? fillK : 0.3);
       // a physically plausible sun: the preset intensity shaped by elevation (a cosine-ish rise, warm and weak at the
       // horizon), dimmed by cloud cover; at night a faint cool moon from the opposite side
       var elevK = U.clamp(Math.sin(Math.max(0, elev)) * 2.2 + 0.08, 0, 1);
@@ -374,23 +380,25 @@
         var d = sm.dir, u = (Math.atan2(d.z, d.x) / (Math.PI * 2) + 0.5) * W, v = (1 - (Math.asin(U.clamp(d.y, -1, 1)) / Math.PI + 0.5)) * H;
         var k = (1 - night) * (1 - overcast * 0.7);
         ctx.globalCompositeOperation = 'lighter';
-        // the broad warm glow around the sun, wider when it is low
+        // the broad warm glow around the sun, wider when it is low. Each gradient is drawn three times, shifted a canvas
+        // width either way (the translate moves the gradient; the rect stays on the canvas), so a glow near u = 0 / 1 wraps
+        // round the dome's seam instead of being cut off there (a hard vertical edge in the sky looking west at sunset)
         var rg = ctx.createRadialGradient(u, v, 2, u, v, 60 + horizonW * 110);
         rg.addColorStop(0, 'rgba(' + sunRGB(sunC, 0.75 * k) + ')'); rg.addColorStop(0.35, 'rgba(' + sunRGB(sunC, 0.28 * k) + ')'); rg.addColorStop(1, 'rgba(' + sunRGB(sunC, 0) + ')');
         ctx.fillStyle = rg;
-        for (var ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(0, 0, W, H); ctx.restore(); }
+        for (var ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(-ox, 0, W, H); ctx.restore(); }
         // the horizon band on the sun's side at dusk / dawn
         if (horizonW > 0.02) {
           var hg = ctx.createRadialGradient(u, H * 0.5, 10, u, H * 0.5, W * 0.45);
           hg.addColorStop(0, 'rgba(' + sunRGB(hor, 0.4 * horizonW * k) + ')'); hg.addColorStop(1, 'rgba(' + sunRGB(hor, 0) + ')');
           ctx.fillStyle = hg;
-          for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(0, H * 0.3, W, H * 0.25); ctx.restore(); }
+          for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(-ox, H * 0.3, W, H * 0.25); ctx.restore(); }
         }
         // the disc itself (the env map needs a hot spot so car paint shows a sun highlight)
         var dg = ctx.createRadialGradient(u, v, 0, u, v, 7 + horizonW * 6);
         dg.addColorStop(0, 'rgba(255,255,250,' + (0.95 * k).toFixed(3) + ')'); dg.addColorStop(0.6, 'rgba(' + sunRGB(sunC, 0.6 * k) + ')'); dg.addColorStop(1, 'rgba(' + sunRGB(sunC, 0) + ')');
         ctx.fillStyle = dg;
-        for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(0, 0, W, H); ctx.restore(); }
+        for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(-ox, 0, W, H); ctx.restore(); }
         ctx.globalCompositeOperation = 'source-over';
       }
       A.sky.needsUpdate = true; A.env.needsUpdate = true;

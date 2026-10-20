@@ -429,6 +429,13 @@
         hat: ['none'], glasses: ['none'], extra: ['none'], tie: ['none'],
         scale: 0.45, mask: '#1a1a1a'
       },
+      // the Heirloom Club's doorman (GDD_EXPANSION §1.5): a dark suit, a bow tie, an earpiece and opinions about your grandfather
+      doorman: {
+        describe: 'the doorman',
+        hair: ['slick', 'short', 'bald'], hairColor: ['#9c9c9c', '#1a1a1a', '#d8d8d8', '#3a2a1a'],
+        shirt: ['#1b1f2e'], pants: ['#14161f'],
+        hat: ['none'], glasses: ['none', 'round'], extra: ['earpiece'], tie: ['bowtie']
+      },
       npc: {
         describe: 'someone with a clipboard',
         hair: ['short', 'slick', 'bob', 'bun'], hairColor: HAIR_COLORS,
@@ -440,11 +447,11 @@
     // Roll a look for a district (id string) and an optional role. Uses
     // GTP.rng; before 00_util.js has loaded it returns the first entry of each
     // pool, which is still a valid look.
-    roll: function (districtId, role) {
+    roll: function (districtId, role, rng) {
       var L = GTP.Content.looks;
       var pool = L.byDistrict[districtId] || L.byDistrict.downtown;
       var over = (role && L.roles[role]) || null;
-      var R = GTP.rng;
+      var R = rng || GTP.rng;   // a caller with its own stream (the AI's landmark residents) passes it, so the city's stream is untouched
       function pick(arr) { return (R && R.pick) ? R.pick(arr) : arr[0]; }
       function field(k) { return pick((over && over[k]) || pool[k]); }
       var skin = (R && R.int) ? R.int(1, 6) : 1;

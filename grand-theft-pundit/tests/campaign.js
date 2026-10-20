@@ -8,6 +8,7 @@
  *    boxed in, the jet truck off the runway wedge, real pay-and-spray for the four- and five-star escapes, hiding out of sight
  *    for the others, both minigames played with scripted inputs; destroy targets are wrecked with a real aimed shot or two and
  *    then applyDamage with the same weapon (ammo is finite)
+ *  - stars left over from a mission (a destroy objective's blast) are lost before the next light, lying low far from the police
  *  - the act cutscenes (cs_act2, cs_act3, cs_twist, cs_ending_a, cs_ending_b) are verified to start after MISSION PASSED and skipped
  *  - asserts per mission: completed, the reward paid (minus respray costs, plus cash picked up), onComplete flags, weapon
  *    unlocks in the GDD order (megaphone m03, table leg m03b, pistol m05, revolver m05b, rifle m08b, hottake m09, hot mic m09b,
@@ -128,8 +129,24 @@ function installDriver() {
       const s = CT.skipCutscene(8), p = CT.p();
       return { s, state: GTP.game.state, flag: M.state.flags.cs_cs_opening === true, control: p.controlEnabled, markers: M.markers().map((m) => m.id), hint: GTP.Hints && GTP.Hints.current() ? GTP.Hints.current().id : null };
     },
+    // stars left over from the last mission (a destroy objective's blast, a driver caught in it): a player loses them before
+    // walking into the next light, here by lying low at the landmark door farthest from where the police last saw him
+    loseStars() {
+      const wd = GTP.AI.wanted, p = CT.p(), W = GTP.World; if (!wd.level) return 0;
+      const lvl = wd.level, lk = wd.lastKnown; let best = null, bd = 0;
+      for (const lid of ['fish_shack', 'moon_mine', 'memo_press', 'campus_quad', 'goldplate_links', 'balloon_depot', 'afterparty_yacht', 'clarity_barn', 'hangar_row', 'heirloom_club']) {
+        const lm = W.landmark(lid); if (!lm || !lm.door) continue;
+        const d = U.dist2d(lm.door.x, lm.door.z, lk.x, lk.z); if (d > bd) { bd = d; best = lm; }
+      }
+      if (p.inVehicle) { p.exitVehicle(); CT.adv(0.3); }
+      CT.tp(best.door.x, best.door.z);
+      const s = CT.until(() => { CT.dodge(); return wd.level === 0; }, 90, 0.5);
+      CT.starsLost = (CT.starsLost || []).concat([lvl + '@' + best.id + ':' + s + 's']);
+      return s;
+    },
     // walk into a mission's blue light from the road side (real input); the direct start is the last resort
     start(id) {
+      CT.loseStars();
       const mk = M.markers().find((m) => m.id === id && m.kind === 'mission');
       if (!mk) return { ok: false, note: 'no marker for ' + id + ': ' + M.markers().map((m) => m.id).join(',') + (M.busy() ? ' (busy)' : '') };
       const p = CT.p(); if (p.inVehicle) { p.exitVehicle(); CT.adv(0.3); }
@@ -320,18 +337,19 @@ function installDriver() {
       CT.followLog = CT.followLog || [];
       while (s < 320 && CT.def() === def) {
         CT.adv(0.5); s += 0.5; CT._followT += 0.5;
-        if (CT._followT % 10 === 0) CT.followLog.push({ t: CT._followT, x: Math.round(f.x), z: Math.round(f.z), wi: c.wi, ri: f.ai.ri, rl: f.ai.route ? f.ai.route.length : null, st: f.ai.stucks, sp: +f.speed.toFixed(1), tile: GTP.World.tileAt(f.x, f.z), dWp: c.wps[c.wi] ? Math.round(U.dist2d(c.wps[c.wi].x, c.wps[c.wi].z, f.x, f.z)) : null, kd: !!f.knockedDown, alive: f.alive });
+        if (CT._followT % 5 === 0) CT.followLog.push({ t: CT._followT, x: Math.round(f.x), z: Math.round(f.z), wi: c.wi, ri: f.ai.ri, rl: f.ai.route ? f.ai.route.length : null, st: f.ai.stucks, sp: +f.speed.toFixed(1), tile: GTP.World.tileAt(f.x, f.z), dWp: c.wps[c.wi] ? Math.round(U.dist2d(c.wps[c.wi].x, c.wps[c.wi].z, f.x, f.z)) : null, kd: !!f.knockedDown, alive: f.alive });
         CT._trail.push({ x: f.x, z: f.z });
         for (let i = CT._trail.length - 1; i >= 0; i--) { const tr = CT._trail[i]; if (U.dist2d(tr.x, tr.z, f.x, f.z) >= 11) { if (U.dist2d(p.x, p.z, tr.x, tr.z) > 0.5) CT.tp(tr.x, tr.z); break; } }
         const d = U.dist2d(p.x, p.z, f.x, f.z); minD = Math.min(minD, d); maxD = Math.max(maxD, d);
         if (pauseAfter && CT._followT >= pauseAfter) return { ok: true, paused: true, note: 'tailing at ' + d.toFixed(1) + ' m' };
+        if (!M.state.active) { const log = CT.followLog; CT._trail = null; CT.followLog = null; return { ok: false, note: 'the tail failed after ' + CT._followT + 's at ' + d.toFixed(1) + ' m: ' + JSON.stringify(log) + ' last ' + JSON.stringify({ x: Math.round(f.x), z: Math.round(f.z), px: Math.round(p.x), pz: Math.round(p.z), kd: !!f.knockedDown, inVeh: !!f.inVehicle, sp: +f.speed.toFixed(1) }) }; }
       }
       const done = CT.def() !== def;
       if (!done && M.state.active) { M.completeObjective(); CT.fallbacks.push(M.state.active + ': follow forced after ' + CT._followT + 's ' + JSON.stringify(CT.followLog)); CT.adv(0.2); }
       CT._trail = null; CT.followLog = null;
       return { ok: true, note: 'tailed for ' + CT._followT + 's, dist ' + minD.toFixed(1) + '..' + maxD.toFixed(1) + ' m' + (done ? '' : ' (forced)') };
     },
-    // a beat cop closing in for the arrest: step away from him (a player would run; the bust needs 1 s at arm's reach)
+    // a beat cop closing in for the arrest: step away from him (a player would run; the bust needs 2.2 s at arm's reach)
     dodge() {
       const p = CT.p(), fl = M.state.flags || {};
       const cop = GTP.Entities.near(p.x, p.z, 3.2, 'ped').find((e) => e.alive && !e.inVehicle && !e.hostile && !e.knockedDown && (e.role === 'cop' || e.role === 'swat' || (e.role === 'hoa' && fl.hoa_enemy)));
@@ -340,6 +358,20 @@ function installDriver() {
       const r = GTP.World.resolveCapsule(p.x + dx / l * 8, p.z + dz / l * 8, p.y + 0.5, 0.45);
       CT.tp(r.x, r.z); CT.dodges = (CT.dodges || 0) + 1;
       return true;
+    },
+    // sprint away from every cop within 30 m (the test's stand-in for running): a sidewalk or road point `dist` metres off,
+    // directly away from the cops' centroid, so a car can be borrowed without a cop at the door
+    runFromCops(dist) {
+      const p = CT.p(), W = GTP.World;
+      const cops = GTP.Entities.near(p.x, p.z, 30, 'ped').filter((e) => e.alive && !e.inVehicle && (e.role === 'cop' || e.role === 'swat' || e.role === 'hoa'));
+      if (!cops.length) return 0;
+      let cx = 0, cz = 0; cops.forEach((c) => { cx += c.x; cz += c.z; }); cx /= cops.length; cz /= cops.length;
+      let dx = p.x - cx, dz = p.z - cz; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+      for (const k of [1, 0.7, 1.4]) {
+        const sp = W.nearestRoadPoint(p.x + dx * dist * k, p.z + dz * dist * k) || W.nearestSidewalkPoint(p.x + dx * dist * k, p.z + dz * dist * k);
+        if (sp && GTP.Entities.near(sp.x, sp.z, 14, 'ped').every((e) => !(e.alive && (e.role === 'cop' || e.role === 'swat')))) { CT.tp(sp.x, sp.z); CT.adv(0.1); return cops.length; }
+      }
+      return cops.length;
     },
     // a sighted shot: the rig put on the target (the scope's first-person eye or the aim rig over the shoulder), aim held, one trigger pull
     aimedShot(tx, ty, tz, scoped) {
@@ -462,7 +494,9 @@ function installDriver() {
         const garages = W.landmarks.filter((l) => l.garage);
         garages.sort((a, b) => U.dist2d(a.garage.cx, a.garage.cz, p.x, p.z) - U.dist2d(b.garage.cx, b.garage.cz, p.x, p.z));
         const g = garages[0];
-        if (!p.inVehicle) { const r = CT.car(); if (!r.ok) return r; }
+        // on foot at four or five stars a player runs before borrowing a car: out of the closing cops' reach first (a car
+        // stopped with a cop at the door is a bust), then the nearest parked car or a fresh one on the road
+        if (!p.inVehicle) { CT.runFromCops(45); const r = CT.car(); if (!r.ok) return r; }
         const v = p.inVehicle, money0 = p.money;
         CT.tp(g.garage.cx, g.garage.cz); v.vx = v.vz = 0; v.speed = 0;
         const s = CT.until(() => wd.level === 0, 4, 0.1);
@@ -686,7 +720,7 @@ function installDriver() {
       if (!pick) return { ok: false, note: 'nothing buyable: ' + items.map((it) => it.id + (it.locked ? '(locked)' : it.owned ? '(owned)' : '')).join(','), open };
       const r = CB.shop.buy(pick.id); CT.adv(0.2);
       CB.shop.close(); CT.adv(0.2);
-      return { ok: r.ok && bought && bought.id === pick.id && p.money === money0 - pick.price && !CB.shop.state.open, note: pick.id + ' for $' + pick.price + ' (' + r.reason + ')', open, bought, money: p.money - money0, page: !!GTP.UI.state.shopOpen, stats: p.stats.shopBuys };
+      return { ok: r.ok && bought && bought.id === pick.id && p.money === money0 - pick.price && !CB.shop.state.open, note: pick.id + ' for $' + pick.price + (r.reason ? ' (' + r.reason + ')' : ''), open, bought, money: p.money - money0, page: !!GTP.UI.state.shopOpen, stats: p.stats.shopBuys };
     }
   };
   GTP.Events.on('mission:fail', (e) => CT.fails.push(e.id + ':' + e.reason));
@@ -826,7 +860,7 @@ H.run('campaign', async (t) => {
     }
   }
 
-  const summary = await page.evaluate(() => ({ completed: Array.from(GTP.Missions.state.completed), flags: GTP.Missions.state.flags, endings: CT.endings, fallbacks: CT.fallbacks, how: CT.how, fails: CT.fails, skips: CT.skips, dodges: CT.dodges || 0, money: GTP.game.player.money, subs: GTP.Missions.subscribers(), tiers: CT.subsLog.map((e) => e.tier + ':' + e.name), cutscenes: CT.cutscenes.map((c) => c.id + ':' + (c.started ? 'ok' : 'MISSING')), stats: GTP.game.player.stats, day: GTP.game.time.day, clock: +GTP.game.time.clock.toFixed(2), t: +GTP.game.time.t.toFixed(0) }));
+  const summary = await page.evaluate(() => ({ completed: Array.from(GTP.Missions.state.completed), flags: GTP.Missions.state.flags, endings: CT.endings, fallbacks: CT.fallbacks, how: CT.how, fails: CT.fails, skips: CT.skips, dodges: CT.dodges || 0, starsLost: CT.starsLost || [], money: GTP.game.player.money, subs: GTP.Missions.subscribers(), tiers: CT.subsLog.map((e) => e.tier + ':' + e.name), cutscenes: CT.cutscenes.map((c) => c.id + ':' + (c.started ? 'ok' : 'MISSING')), stats: GTP.game.player.stats, day: GTP.game.time.day, clock: +GTP.game.time.clock.toFixed(2), t: +GTP.game.time.t.toFixed(0) }));
   console.log('  campaign: ' + JSON.stringify(summary));
   if (process.env.CAMPAIGN_TO) { await page.close(); return; }   // a partial debugging run: no campaign-wide assertions
   t.assert(summary.completed.length === 25, 'all 25 missions completed: ' + summary.completed.length);

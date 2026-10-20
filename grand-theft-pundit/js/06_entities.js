@@ -27,7 +27,7 @@
   var C = GTP.C, U = GTP.util;
   var nextId = 1;
   var WATER_Y = C.WATER_Y;
-  var scratch = [], scratch2 = [];
+  var scratch = [], scratch2 = [], contactBuf = [];   // contactBuf: a vehicle step's one contact query (vehicles + peds)
 
   function W() { return GTP.World; }
   function fx(o) { if (GTP.Render && GTP.Render.fx) { try { GTP.Render.fx.add(o); } catch (e) { /* fx are optional */ } } }
@@ -236,8 +236,7 @@
       var r = Wd.resolveCapsule(nx, nz, this.y, this.radius);
       this.x = r.x; this.z = r.z;
       if (r.hitX) this.vx = 0; if (r.hitZ) this.vz = 0;
-      this._pushOutOfVehicles();
-      this._separate(dt);
+      this._contacts(dt);
       // floor
       var ground = Wd.heightAt(this.x, this.z, this.onGround ? this.y : ny);
       if (this.onGround) {
@@ -316,9 +315,15 @@
       this.deadT += dt; this.corpseT += dt;
       if (this.corpseT > C.PHYS.corpseSeconds && !this.persistent) this.destroy();
     }
-    // slow or parked vehicles are walls for peds (moving ones knock peds down in Vehicle.update)
-    _pushOutOfVehicles() {
+    // the ped's contacts from one hash query: slow or parked vehicles are walls (moving ones knock peds down in
+    // Vehicle.update), then the light separation from the other peds
+    _contacts(dt) {
       var list = GTP.Entities.hash.query(this.x, this.z, this.radius + 6, scratch2);
+      this._pushOutOfVehicles(list);
+      this._separate(dt, list);
+    }
+    _pushOutOfVehicles(list) {
+      list = list || GTP.Entities.hash.query(this.x, this.z, this.radius + 6, scratch2);
       for (var i = 0; i < list.length; i++) {
         var v = list[i];
         if (v.kind !== 'vehicle' || v.removed) continue;
@@ -330,8 +335,9 @@
         if (vn < 0) { this.vx -= vn * p.nx; this.vz -= vn * p.nz; }
       }
     }
-    _separate(dt) {
-      var list = GTP.Entities.hash.query(this.x, this.z, 1.2, scratch2), sep = C.PHYS.pedSeparation;
+    _separate(dt, list) {
+      list = list || GTP.Entities.hash.query(this.x, this.z, 1.2, scratch2);
+      var sep = C.PHYS.pedSeparation;
       for (var i = 0; i < list.length; i++) {
         var o = list[i];
         if (o === this || (o.kind !== 'ped' && o.kind !== 'player') || o.inVehicle || !o.alive || o.knockedDown) continue;
@@ -642,6 +648,22 @@
       var steerIn = driver ? U.clamp(this.steer, -1, 1) : 0;
       var hb = driver ? !!this.handbrake : false;
       if (this.burning) throttle *= 0.4;
+      // at rest where the last full step left it (parked, a wreck, traffic waiting at a light): the wheels and the world
+      // collision would give the same answer again, so only the pair / ped contacts run. A push from another car, a ped,
+      // a blast or a throttle wakes it (its velocity or position changes and the next step runs in full)
+      if (this._restOk && this.onGround && !this.burning && throttle === 0 && this.vx === 0 && this.vz === 0 && this.vy === 0 && this.angVel === 0 &&
+          this.x === this._restX && this.z === this._restZ && this.y === this._restY && this.yaw === this._restYaw && Math.abs(steerIn) < 1e-6 && Math.abs(this.steer) < 1e-3) {
+        this.steer = 0; this.yawRate = 0;
+        var nearR = GTP.Entities.hash.query(this.x, this.z, this.radius + 6, contactBuf);
+        this._collideVehicles(nearR);
+        this._collidePeds(nearR);
+        this._restOk = this.vx === 0 && this.vz === 0 && this.x === this._restX && this.z === this._restZ;
+        this.speed = 0; this.lateral = 0; this.reversing = false; this.reverseTime = 0; this.braking = false;
+        this._syncOccupants();
+        this._damageFx(dt);
+        if (this.wreck) { this.wreckT += dt; if (this.wreckT > PH.wreckSeconds && !this.persistent) this.destroy(); }
+        return;
+      }
       // frame
       var f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x;
       var vf = this.vx * f.x + this.vz * f.z, vl = this.vx * rx + this.vz * rz;
@@ -700,8 +722,9 @@
       this.pitch = U.damp(this.pitch, pt, 10, dt); this.roll = U.damp(this.roll, rl - this.yawRate * spd * 0.0025, 8, dt);
       // collisions
       this._collideWorld(dt);
-      this._collideVehicles();
-      this._collidePeds();
+      var near = GTP.Entities.hash.query(this.x, this.z, this.radius + 6, contactBuf);   // one query for both contact passes
+      this._collideVehicles(near);
+      this._collidePeds(near);
       // re-derive the decomposition
       f = U.yawToDir(this.yaw); rx = -f.z; rz = f.x;
       this.speed = this.vx * f.x + this.vz * f.z; this.lateral = this.vx * rx + this.vz * rz;
@@ -716,6 +739,9 @@
       this._surfaceFx(dt, hb);
       this._damageFx(dt);
       if (this.wreck) { this.wreckT += dt; if (this.wreckT > PH.wreckSeconds && !this.persistent) this.destroy(); }
+      // remember a resting pose: the next step may skip the wheel and world sampling (above)
+      this._restOk = this.onGround && this.vx === 0 && this.vz === 0 && this.vy === 0 && this.angVel === 0;
+      if (this._restOk) { this._restX = this.x; this._restY = this.y; this._restZ = this.z; this._restYaw = this.yaw; }
       void x0; void z0;
     }
     _sampleWheels() {
@@ -819,8 +845,8 @@
     }
 
     // --- vehicle vs vehicle: front/rear circles, mass-weighted push + impulse ---
-    _collideVehicles() {
-      var list = GTP.Entities.hash.query(this.x, this.z, this.radius + 6, scratch);
+    _collideVehicles(list) {
+      list = list || GTP.Entities.hash.query(this.x, this.z, this.radius + 6, scratch);
       for (var i = 0; i < list.length; i++) {
         var o = list[i];
         if (o === this || o.kind !== 'vehicle' || o.removed || o.sinking) continue;
@@ -866,8 +892,9 @@
     }
 
     // --- vehicle vs peds: knockdown when fast, gentle push when slow ---
-    _collidePeds() {
-      var list = GTP.Entities.hash.query(this.x, this.z, this.radius + 1.5, scratch), sp = this.speed2d();
+    _collidePeds(list) {
+      list = list || GTP.Entities.hash.query(this.x, this.z, this.radius + 1.5, scratch);
+      var sp = this.speed2d();
       for (var i = 0; i < list.length; i++) {
         var p = list[i];
         if ((p.kind !== 'ped' && p.kind !== 'player') || p.inVehicle || p.removed) continue;
@@ -1119,7 +1146,7 @@
     }
     syncMesh(alpha) {
       var m = this.mesh; if (!m) return;
-      m.visible = !this.hidden && !this.removed;
+      m.visible = !this.hidden && !this.removed && !(this.drawDist && tooFar(this, this.drawDist));   // drawDist: a small pickup (a memo) hides beyond it
       m.position.set(this.x, this.y + 0.25 + Math.sin(this.bob * 2.5) * 0.12, this.z);
       m.rotation.y = this.bob * 1.6;
       void alpha;

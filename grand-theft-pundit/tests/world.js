@@ -283,7 +283,7 @@ H.run('world', async (t) => {
   t.assert(r.npcs.club.indexOf('doorman') >= 0 && r.npcs.shop.indexOf('clerk') >= 0 && r.maze && r.range, 'landmark hooks for the other modules (doorman, clerk, maze, range): ' + JSON.stringify(r.npcs));
   t.assert(r.deterministic, 'generation is deterministic');
   t.assert(r.progress.stages.join(',') === 'tiles,roads,landmarks,props,done' && r.progress.monotonic && r.progress.fracs.length === 5 && r.progress.labels.every((l) => typeof l === 'string' && l.length > 3), 'generate reports its stages: ' + JSON.stringify(r.progress));
-  t.assert(r.generateMs < 4000, 'World.generate stays quick: ' + r.generateMs + ' ms');
+  t.assert(r.generateMs > 0 && r.generateMs < 1500, 'World.generate stays quick: ' + r.generateMs + ' ms');
   t.assert(r.near.road > 200 && r.near.road < r.near.total / 2 && r.near.sidewalk > 200 && r.near.allRoad && r.near.allWalk && r.near.within, 'tilesNear buckets the spawner tiles around a point: ' + JSON.stringify(r.near));
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

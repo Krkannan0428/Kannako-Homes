@@ -277,7 +277,8 @@ H.run('combat', async (t) => {
   }, { EAST, spot });
   console.log('  busted: ' + JSON.stringify(bust));
   t.assert(bust.bustedAt > 0 && bust.state === 'busted' && bust.ev && bust.death === 'busted' && bust.text === 'DEPLATFORMED' && !bust.control, 'the AI bust went through Combat: ' + JSON.stringify(bust));
-  t.assert(bust.after.state === 'playing' && bust.after.money === 700 && bust.after.wanted === 0 && bust.after.control, 'released: -$500, stars cleared: ' + JSON.stringify(bust.after));
+  // the fine (GDD_EXPANSION 6.9): $500 at one star, never over 15% of the cash: $180 of $1,200
+  t.assert(bust.after.state === 'playing' && bust.after.money === 1200 - Math.min(500, Math.floor(1200 * 0.15)) && bust.ev.fine === 180 && bust.after.wanted === 0 && bust.after.control, 'released: fined 15% of $1,200, stars cleared: ' + JSON.stringify(bust.after));
   t.assert(bust.after.weapons.length === 1 && bust.after.weapons[0] === 'fist' && bust.after.dHQ < 8 && !bust.after.solid, 'at the precinct door with fists only: ' + JSON.stringify(bust.after));
 
   // ---- 9. pickups ----

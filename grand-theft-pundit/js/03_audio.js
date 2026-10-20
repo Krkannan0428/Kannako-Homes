@@ -52,6 +52,7 @@
   };
 
   var ctx = null, master = null, comp = null, noiseBuf = null, space = null;
+  var vol = { master: 1, music: 1, sfx: 1 };   // the Settings volumes (Audio.setVolumes)
   var bus = { sfx: null, music: null, duck: null, engine: null, siren: null, heli: null };
   var arng = GTP.makeRng ? GTP.makeRng(0xA0D10) : null;
   var voices = [], lastAt = {}, errors = 0, disabled = false, hooked = false;
@@ -106,11 +107,11 @@
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return false;
     ctx = new AC();
-    master = mkGain(Audio.muted ? 0 : 1);
+    master = mkGain(Audio.muted ? 0 : vol.master);
     comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 18; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.2;
     master.connect(comp); comp.connect(ctx.destination);
-    bus.sfx = mkGain(1, master); bus.engine = mkGain(0.5, master); bus.siren = mkGain(0.65, master); bus.heli = mkGain(0.8, master);
+    bus.sfx = mkGain(vol.sfx, master); bus.engine = mkGain(0.5 * vol.sfx, master); bus.siren = mkGain(0.65 * vol.sfx, master); bus.heli = mkGain(0.8 * vol.sfx, master);
     // the radio comes out of a car speaker: a band-limited chain with a duck gain for jingles
     var hp = mkFilter('highpass', 90, 0.7), lp = mkFilter('lowpass', 5200, 0.5);
     bus.music = mkGain(0); bus.duck = mkGain(1); bus.music.connect(bus.duck); bus.duck.connect(hp); hp.connect(lp); lp.connect(master);
@@ -589,7 +590,7 @@
     radio.level = U.damp(radio.level, radio.playing ? 1 : 0, radio.playing ? 5 : 7, dt);
     if (radio.level < 0.002 && !radio.playing) radio.level = 0;
     if (!ctx) return;
-    bus.music.gain.setTargetAtTime(Audio.muted ? 0 : radio.level * radio.level * 0.6, now, 0.05);
+    bus.music.gain.setTargetAtTime(Audio.muted ? 0 : radio.level * radio.level * 0.6 * vol.music, now, 0.05);
     if (radio.duckT > 0) radio.duckT -= dt;
     bus.duck.gain.setTargetAtTime(radio.duckT > 0 ? 0.45 : 1, now, 0.08);
     if (!radio.playing || Audio.muted || !radio.pat) { radio.live = false; return; }
@@ -687,9 +688,26 @@
       Audio.muted = !!m || Audio.headless;
       if (ctx && master) {
         var now = ctx.currentTime, cur = master.gain.value;
-        master.gain.cancelScheduledValues(now); master.gain.setValueAtTime(cur, now); master.gain.linearRampToValueAtTime(Audio.muted ? 0 : 1, now + 0.04);
+        master.gain.cancelScheduledValues(now); master.gain.setValueAtTime(cur, now); master.gain.linearRampToValueAtTime(Audio.muted ? 0 : vol.master, now + 0.04);
       }
     }, 'audio.setMuted'),
+
+    // the Settings sliders (0..1 each): master scales everything, music the radio bus, sfx the effects, engine, siren and
+    // rotor buses. Audio.volumes mirrors the values (also before the context exists; createContext reads them)
+    volumes: vol,
+    setVolumes: guarded(function (v) {
+      v = v || {};
+      ['master', 'music', 'sfx'].forEach(function (k) { if (v[k] != null && isFinite(+v[k])) vol[k] = U.clamp(+v[k], 0, 1); });
+      Audio.volumes = vol;
+      if (!ctx || !master) return true;
+      var now = ctx.currentTime;
+      master.gain.setTargetAtTime(Audio.muted ? 0 : vol.master, now, 0.03);
+      if (bus.sfx && bus.sfx.gain) bus.sfx.gain.setTargetAtTime(vol.sfx, now, 0.03);
+      if (bus.engine && bus.engine.gain) bus.engine.gain.setTargetAtTime(0.5 * vol.sfx, now, 0.03);
+      if (bus.siren && bus.siren.gain) bus.siren.gain.setTargetAtTime(0.65 * vol.sfx, now, 0.03);
+      if (bus.heli && bus.heli.gain) bus.heli.gain.setTargetAtTime(0.8 * vol.sfx, now, 0.03);
+      return true;
+    }, 'audio.setVolumes'),
 
     radio: {
       setStation: function (n) { var len = stations().length; Audio.station = len ? (((n | 0) % len) + len) % len : (n | 0); radio.stopped = false; return Audio.radio.current(); },
