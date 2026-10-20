@@ -16,6 +16,8 @@ directories:
 
 files:
   - main.js
+  - lib/**/*
+  - splash/**/*
   - app/**/*
 
 asar: true
@@ -23,9 +25,13 @@ compression: normal
 npmRebuild: false
 removePackageScripts: true
 beforePack: ./sync-game.js
-# Releases are plain downloads attached to a GitHub Release by the workflow, not electron-updater
-# feeds. null also stops electron-builder from guessing a publisher when a GH_TOKEN happens to be
-# in the environment (which makes it crash on repository detection).
+# electron-builder never uploads anything itself: the workflow attaches the files to the GitHub
+# Release. null also stops electron-builder from guessing a publisher when a GH_TOKEN happens to be
+# in the environment (which makes it crash on repository detection). The release workflow passes a
+# github publish config on the command line (with --publish never) only so electron-builder writes
+# the electron-updater metadata (latest.yml, latest-mac.yml, latest-linux.yml, *.blockmap); the app
+# itself reads its feed from "gtpUpdates" in package.json (lib/updater.js), so local builds update
+# from the same place.
 publish: null
 
 # ---------------------------------------------------------------- macOS: Apple Silicon and Intel
@@ -50,7 +56,13 @@ mac:
 
 dmg:
   sign: false
+  # updates use the zip (latest-mac.yml); the dmg is only for the first install
   writeUpdateInfo: false
+  # 560x400 artwork (+ background@2x.png for Retina), rendered by build/make-dmg-background.js;
+  # the icon positions below match the arrow and the light band in build/dmg-background.html
+  background: build/background.png
+  title: ${productName} ${version}
+  iconSize: 100
   window:
     width: 560
     height: 400
@@ -77,7 +89,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   shortcutName: Grand Theft Pundit
-  differentialPackage: false
+  # the installer's .blockmap lets electron-updater download only the changed blocks
+  differentialPackage: true
   artifactName: Grand-Theft-Pundit-${version}-${os}-${arch}-setup.${ext}
 
 portable:

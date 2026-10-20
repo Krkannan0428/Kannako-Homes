@@ -5,33 +5,55 @@
  * the default hardening (context isolation on, node integration off, sandbox on, web security on).
  *
  * Window-level behaviour:
- *   - 1280x800, minimum 960x600, dark background so there is no white flash at start
- *   - no default menu on Windows/Linux (auto-hidden menu bar); a small app menu on macOS
+ *   - a small splash window (splash/splash.html) while the game boots; the game window appears once
+ *     the game reports GTP.game.booted (or after BOOT_TIMEOUT_MS, whichever is first)
+ *   - size, position, maximized and full screen state remembered between runs (lib/window-state.js);
+ *     1280x800 the first time, minimum 960x600, dark background so there is no white flash
+ *   - macOS: a small app menu. Windows/Linux: a hidden menu bar that Alt shows (Game and Help menus)
  *   - F11 and Cmd/Ctrl+F toggle full screen; Esc is left alone for the game
+ *   - Ctrl+Shift+M (Cmd+Shift+M) opens the mods folder, Ctrl+Shift+I (Cmd+Option+I) the developer tools
  *   - pointer lock and fullscreen permission requests are granted, everything else is denied
  *   - links that leave the app open in the system browser; new windows are never created
  *   - a single instance: launching the game twice focuses the running window
  *   - a mods folder (see MODS below): *.js and *.css files there are loaded into the game after
  *     every page load, and images there are handed to those scripts as data URLs
+ *   - a crash log in the user-data folder (lib/crash-log.js), with a menu item that opens it
+ *   - automatic updates from GitHub Releases (lib/updater.js)
+ *
+ * Environment (tests and CI): GTP_USER_DATA_DIR=<dir> uses that folder instead of the normal
+ * user-data folder (window state, mods, logs); GTP_UPDATES=off|notify|install (see lib/updater.js).
  */
 'use strict';
-const { app, BrowserWindow, Menu, shell, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const PRODUCT = 'Grand Theft Pundit';
 const BG = '#06070d'; // --bg in index.html
 const APP_INDEX = path.join(__dirname, 'app', 'index.html');
+const SPLASH = path.join(__dirname, 'splash', 'splash.html');
+const ICON = path.join(__dirname, 'splash', 'icon.png');
 const IS_MAC = process.platform === 'darwin';
+const WINDOW_DEFAULTS = { width: 1280, height: 800, minWidth: 960, minHeight: 600 };
+const BOOT_TIMEOUT_MS = 30 * 1000;
+const BOOT_POLL_MS = 150;
 
 app.name = PRODUCT;
+if (process.env.GTP_USER_DATA_DIR) app.setPath('userData', path.resolve(process.env.GTP_USER_DATA_DIR));
+
+// required after the userData path is final: both write there
+const crashLog = require('./lib/crash-log');
+const windowState = require('./lib/window-state');
+const updater = require('./lib/updater');
+
+crashLog.init();
 
 // only one copy of the game at a time
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = gameWindow();
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.show();
@@ -40,58 +62,107 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(start);
 }
 
+function gameWindow() {
+  return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.gtpMain) || null;
+}
+
 function start() {
   nativeTheme.themeSource = 'dark';
-  if (IS_MAC) {
-    app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: app.getVersion(), copyright: 'A parody. No real pundits were harmed.' });
-  }
+  app.setAboutPanelOptions({
+    applicationName: PRODUCT,
+    applicationVersion: app.getVersion(),
+    version: 'Electron ' + process.versions.electron,
+    copyright: 'A parody. No real pundits were harmed.',
+    iconPath: ICON
+  });
   installMenu();
   if (!fs.existsSync(APP_INDEX)) {
+    crashLog.write('main', 'game files missing: ' + APP_INDEX);
     dialog.showErrorBox(PRODUCT + ': game files missing',
       'Could not find ' + APP_INDEX + '\n\nRun `npm run sync` (or any `npm run dist:*` script) inside desktop/ first; it copies index.html, js/ and vendor/ into desktop/app/.');
     app.quit();
     return;
   }
   createWindow();
+  updater.start().catch((err) => crashLog.write('update', 'updater did not start: ' + (err && err.stack || err)));
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!gameWindow()) createWindow();
   });
 }
 
+function createSplash() {
+  const splash = new BrowserWindow({
+    width: 420,
+    height: 300,
+    frame: false,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    center: true,
+    backgroundColor: BG,
+    title: PRODUCT,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false }
+  });
+  splash.setMenu(null);
+  splash.once('ready-to-show', () => { if (!splash.isDestroyed()) splash.show(); });
+  splash.loadFile(SPLASH, { hash: 'v=' + encodeURIComponent(app.getVersion()) }).catch(() => {});
+  return splash;
+}
+
 function createWindow() {
+  const state = windowState.load(WINDOW_DEFAULTS);
+  const splash = createSplash();
   const win = new BrowserWindow({
     title: PRODUCT,
-    width: 1280,
-    height: 800,
-    minWidth: 960,
-    minHeight: 600,
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
+    center: state.x == null,
+    minWidth: WINDOW_DEFAULTS.minWidth,
+    minHeight: WINDOW_DEFAULTS.minHeight,
     backgroundColor: BG,
     show: false,
     autoHideMenuBar: true,
     fullscreenable: true,
+    icon: IS_MAC ? undefined : ICON,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      spellcheck: false
+      spellcheck: false,
+      // the game boots while the window is still hidden behind the splash
+      backgroundThrottling: false
     }
   });
+  win.gtpMain = true;
   const wc = win.webContents;
+  crashLog.watch(wc);
 
   // pointer lock (mouse look) and fullscreen are the only permissions the game may ask for
   const allowed = new Set(['pointerLock', 'fullscreen', 'keyboardLock']);
   wc.session.setPermissionRequestHandler((_wc, permission, callback) => callback(allowed.has(permission)));
   wc.session.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 
-  // F11 and Cmd/Ctrl+F toggle fullscreen. Esc is deliberately not handled here so the game
-  // keeps it (pause menu, exiting pointer lock) and nothing else is intercepted.
+  // Window shortcuts. Esc is deliberately not handled here so the game keeps it (pause menu,
+  // exiting pointer lock). The menus show these accelerators but do not register them, so the
+  // only keys taken from the game are exactly these combinations.
   wc.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return;
     const mod = IS_MAC ? input.meta : input.control;
-    const isF = input.key === 'f' || input.key === 'F';
-    if (input.key === 'F11' || (mod && isF && !input.alt && !input.shift)) {
+    const key = String(input.key || '').toLowerCase();
+    if (input.key === 'F11' || (mod && key === 'f' && !input.alt && !input.shift)) {
       event.preventDefault();
       win.setFullScreen(!win.isFullScreen());
+    } else if (mod && input.shift && !input.alt && key === 'm') {
+      event.preventDefault();
+      openModsFolder();
+    } else if ((IS_MAC ? (input.meta && input.alt && !input.shift) : (input.control && input.shift && !input.alt)) && key === 'i') {
+      event.preventDefault();
+      wc.toggleDevTools();
     }
   });
 
@@ -112,17 +183,71 @@ function createWindow() {
 
   wc.on('render-process-gone', (_event, details) => {
     if (details.reason === 'clean-exit' || details.reason === 'killed') return;
-    dialog.showErrorBox(PRODUCT + ' stopped', 'The game process ended unexpectedly (' + details.reason + '). Please start it again.');
-    app.quit();
+    if (!splash.isDestroyed()) splash.destroy();
+    const choice = dialog.showMessageBoxSync({
+      type: 'error',
+      title: PRODUCT + ' stopped',
+      message: 'The game stopped unexpectedly (' + details.reason + ').',
+      detail: 'Your last save is safe. The details were written to the crash log:\n' + crashLog.logFile(),
+      buttons: ['Restart the Game', 'Open Crash Log', 'Quit'],
+      defaultId: 0,
+      cancelId: 2
+    });
+    if (choice === 0) {
+      wc.reload();
+    } else {
+      if (choice === 1) openCrashLog();
+      app.quit();
+    }
   });
 
-  wc.on('did-finish-load', () => { loadMods(wc); });
+  wc.on('did-finish-load', () => {
+    loadMods(wc);
+    waitForBoot(wc).then(reveal);
+  });
 
-  win.once('ready-to-show', () => win.show());
+  // Show the game window once the game has booted, close the splash, and restore maximized or
+  // full screen state. ready-to-show alone is too early: it fires before the game scripts run.
+  let revealed = false;
+  function reveal() {
+    if (revealed || win.isDestroyed()) return;
+    revealed = true;
+    if (state.maximized) win.maximize();
+    win.show();
+    if (state.fullscreen) win.setFullScreen(true);
+    win.focus();
+    if (!splash.isDestroyed()) splash.destroy();
+  }
+  // a page that never loads must not leave the player staring at the splash
+  setTimeout(reveal, BOOT_TIMEOUT_MS + 5000);
+
+  windowState.track(win);
   win.on('closed', () => {
-    if (BrowserWindow.getAllWindows().length === 0) app.quit();
+    if (!splash.isDestroyed()) splash.destroy();
+    if (!gameWindow()) app.quit();
   });
-  win.loadFile(APP_INDEX);
+  win.loadFile(APP_INDEX).catch((err) => crashLog.write('main', 'loadFile failed: ' + (err && err.message || err)));
+}
+
+/* Resolves once window.GTP.game.booted is true, or after BOOT_TIMEOUT_MS. */
+function waitForBoot(wc) {
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const poll = () => {
+      if (wc.isDestroyed()) return resolve(false);
+      wc.executeJavaScript('!!(window.GTP && GTP.game && GTP.game.booted)', true)
+        .then((booted) => {
+          if (booted) return resolve(true);
+          if (Date.now() - t0 > BOOT_TIMEOUT_MS) {
+            crashLog.write('main', 'the game did not report booted within ' + BOOT_TIMEOUT_MS / 1000 + ' s; showing the window anyway');
+            return resolve(false);
+          }
+          setTimeout(poll, BOOT_POLL_MS);
+        })
+        .catch(() => resolve(false));
+    };
+    poll();
+  });
 }
 
 /* MODS
@@ -152,7 +277,7 @@ const MODS_README = [
   '         window.GTP_MODS.images["your-file.png"] for your scripts to use',
   '',
   'Script errors are collected in window.GTP_MODS.errors and shown in the developer console',
-  '(View > Toggle Developer Tools is not in the menu; press Ctrl+Shift+I or Cmd+Option+I).',
+  '(press Ctrl+Shift+I, or Cmd+Option+I on a Mac).',
   'Delete or rename a file (for example to .js.off) to turn it off. Restart the game after changes.',
   ''
 ].join('\n');
@@ -233,6 +358,20 @@ function openModsFolder() {
   shell.openPath(ensureModsDir()).catch(() => {});
 }
 
+function openCrashLog() {
+  const file = crashLog.logFile();
+  try {
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '');
+    }
+  } catch (_err) { /* openPath reports below */ }
+  shell.openPath(file).then((err) => {
+    // no app registered for .log files: show it in the file manager instead
+    if (err) shell.showItemInFolder(file);
+  }).catch(() => shell.showItemInFolder(file));
+}
+
 function isLocal(url) {
   return /^(file|about|devtools):/i.test(url);
 }
@@ -242,14 +381,67 @@ function openExternal(url) {
 }
 
 function toggleFullScreen() {
-  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const win = gameWindow();
   if (win) win.setFullScreen(!win.isFullScreen());
 }
 
+function toggleDevTools() {
+  const win = gameWindow();
+  if (win) win.webContents.toggleDevTools();
+}
+
+function openReleasePage() {
+  const url = updater.releasesPage(app.getVersion());
+  if (url) openExternal(url);
+}
+
+/* Windows and Linux: About as a dialog (macOS has the native panel through role 'about'). */
+function showAbout() {
+  const win = gameWindow();
+  const opts = {
+    type: 'none',
+    icon: nativeImage.createFromPath(ICON),
+    title: 'About ' + PRODUCT,
+    message: PRODUCT + ' ' + app.getVersion(),
+    detail: 'A parody. No real pundits were harmed.\n\n' +
+      'Electron ' + process.versions.electron + ', Chromium ' + process.versions.chrome + '\n' +
+      'Updates: ' + ({ install: 'automatic', notify: 'you are told when a new version is out', off: 'off' }[updater.mode()] || 'off') + '\n' +
+      'Data folder: ' + app.getPath('userData'),
+    buttons: ['OK']
+  };
+  if (win) dialog.showMessageBox(win, opts); else dialog.showMessageBox(opts);
+}
+
 function installMenu() {
+  // Accelerators here are labels only (registerAccelerator: false); before-input-event in
+  // createWindow handles the keys so a hidden menu never swallows game input.
+  const accel = (a) => ({ accelerator: a, registerAccelerator: false });
+  const helpItems = [
+    { label: 'Check for Updates...', click: () => updater.checkNow() },
+    { label: 'Release Notes', click: openReleasePage },
+    { type: 'separator' },
+    { label: 'Open Mods Folder', ...accel('CmdOrCtrl+Shift+M'), click: openModsFolder },
+    { label: 'Open Crash Log', click: openCrashLog },
+    { label: 'Toggle Developer Tools', ...accel(IS_MAC ? 'Alt+Cmd+I' : 'Ctrl+Shift+I'), click: toggleDevTools }
+  ];
   if (!IS_MAC) {
-    // Windows/Linux: no menu at all (F11 / Ctrl+F still work through before-input-event)
-    Menu.setApplicationMenu(null);
+    // Windows/Linux: the bar stays hidden (autoHideMenuBar) until Alt is pressed
+    const template = [
+      {
+        label: 'Game',
+        submenu: [
+          { label: 'Toggle Full Screen', ...accel('F11'), click: toggleFullScreen },
+          { label: 'Open Mods Folder', ...accel('Ctrl+Shift+M'), click: openModsFolder },
+          { type: 'separator' },
+          { label: 'Quit', click: () => app.quit() }
+        ]
+      },
+      {
+        label: 'Help',
+        submenu: [...helpItems, { type: 'separator' }, { label: 'About ' + PRODUCT, click: showAbout }]
+      }
+    ];
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
     return;
   }
   // macOS needs an application menu for Cmd+Q, Cmd+H and friends to behave; keep it small
@@ -258,9 +450,10 @@ function installMenu() {
       label: PRODUCT,
       submenu: [
         { role: 'about', label: 'About ' + PRODUCT },
+        { label: 'Check for Updates...', click: () => updater.checkNow() },
         { type: 'separator' },
         { label: 'Toggle Full Screen', accelerator: 'Ctrl+Cmd+F', click: toggleFullScreen },
-        { label: 'Open Mods Folder', click: openModsFolder },
+        { label: 'Open Mods Folder', ...accel('Cmd+Shift+M'), click: openModsFolder },
         { type: 'separator' },
         { role: 'hide', label: 'Hide ' + PRODUCT },
         { role: 'hideOthers' },
@@ -277,10 +470,11 @@ function installMenu() {
         { type: 'separator' },
         { role: 'close' }
       ]
-    }
+    },
+    { role: 'help', submenu: helpItems }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-// quit on every platform once the last window closes: a game, not a document app
+// quit on every platform once the last game window closes: a game, not a document app
 app.on('window-all-closed', () => app.quit());
