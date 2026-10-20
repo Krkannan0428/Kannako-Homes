@@ -43,7 +43,7 @@ module.exports = function v03mock() {
     GTP.Input.set = (a, on) => {
       if (a === 'cover' && on) {
         const p = GTP.game.player;
-        for (let k = 0; k < 16; k++) { const d = U.yawToDir(k / 16 * Math.PI * 2); if (W.solidAt(p.x + d.x * 1.3, p.z + d.z * 1.3, p.y + 0.5)) { E.emit('cover:enter', {}); p.pose = Object.assign(p.pose || {}, { cover: { side: 'left', high: true } }); break; } }
+        for (let k = 0; k < 16; k++) { const d = U.yawToDir(k / 16 * Math.PI * 2); if (W.solidAt(p.x + d.x * 1.8, p.z + d.z * 1.8, p.y + 0.5)) { E.emit('cover:enter', {}); p.pose = Object.assign(p.pose || {}, { cover: { side: 'left', high: true } }); break; } }
         return;
       }
       return set(a, on);

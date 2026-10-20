@@ -469,6 +469,7 @@ function installPlayer(budget) {
   E.on('mission:start', (e) => { NP.events.start.push({ t: NP.now(), id: e && (e.id || e.missionId) }); NP.say('mission start ' + (e && (e.id || e.missionId))); });
   E.on('mission:fail', (e) => { NP.events.fail.push({ t: NP.now(), id: e && (e.id || e.missionId), why: e && (e.reason || e.why || e.text) }); NP.say('mission FAIL ' + JSON.stringify(e && { id: e.id, reason: e.reason || e.text })); });
   E.on('mission:objective', (e) => { NP.events.objective.push({ t: NP.now(), text: e && (e.text || (e.def && e.def.text)) }); });
+  E.on('shop:open', () => { NP.events.shopOpen = (NP.events.shopOpen || 0) + 1; });
   E.on('range:start', () => { NP.events.rangeStart = NP.now(); });
   E.on('range:end', (e) => { NP.events.range.push(Object.assign({ t: NP.now() }, e || {})); });
   E.on('shop:buy', (e) => { NP.events.buy.push(Object.assign({ t: NP.now() }, e && { item: e.item, price: e.price })); });
@@ -482,6 +483,8 @@ if (require.main === module) H.run('newplayer', async (t) => {
   const set = (id, ok, note, extra) => { steps[id] = Object.assign({}, steps[id], { status: ok ? 'PASS' : 'FAIL', note }, extra || {}); console.log('  ' + (ok ? 'PASS' : 'FAIL') + ' ' + id + ': ' + note); };
   const shots = [];
   let shotN = 0;
+  fs.mkdirSync(t.OUT, { recursive: true });
+  for (const f of fs.readdirSync(t.OUT)) if (/^newplayer_.*\.png$/.test(f)) fs.unlinkSync(path.join(t.OUT, f));   // no stale screenshots from an earlier run
   const page = await t.browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.setDefaultTimeout(600000);
   if (MOCK) { await page.addInitScript('(' + require('./regress/qa_b_lib_v03mock.js').toString() + ')()'); console.log('  NEWPLAYER_MOCK=1: v0.3 features are FAKED; this run only checks the test itself'); }
@@ -612,7 +615,7 @@ if (require.main === module) H.run('newplayer', async (t) => {
         if (p.inVehicle) { NP.press('enter'); NP.adv(1); }
         const r = NP.walk(() => NP.routeTo(st, 'ped', 'armory'), () => NP.inArmory() || GTP.UI.state.shopOpen || GTP.game.state !== 'playing' && !NP.cutscene(), 150, { keepGoing: true });
         let s = 0; while (s < 4 && !NP.inArmory()) { if (!NP.housekeeping()) NP.adv(0.25); s += 0.25; }
-        const shopOpen = !!GTP.UI.state.shopOpen;
+        const shopOpen = !!GTP.UI.state.shopOpen || (NP.events.shopOpen || 0) > 0;
         return { in: NP.inArmory(), api, store: st.id, walked: r.ok, shopOpen, why: r.why };
       });
     }
