@@ -742,12 +742,14 @@
   }
   VP.hud = function () { return vehicleHud(this); };
 
-  // where a visible rider sits: a moto saddle, a jet ski seat, under the canopy. null for enclosed cabins
+  // where a visible rider sits: a moto saddle, a jet ski seat, under the canopy, or the pilot's / helm seat seen
+  // through the glass (kind 'seated': [right, up, back] from the vehicle origin). Passengers stay hidden but on the moto.
+  var SEATS = { heli: [-0.38, 0.52, -1.0], plane: [-0.3, 0.72, -0.25], jet: [0, 1.02, -3.0], speedboat: [0.5, 0.3, 0.55] };
   var _e3 = null, _v3 = null;
   function riderPose(ped, a) {
     var v = ped && ped.inVehicle, f = fam(v);
     if (!v || v.wreck || v.sinking) return null;
-    var kind = f === 'moto' ? 'moto' : v.type === 'jetski' ? 'jetski' : f === 'chute' ? 'chute' : null;
+    var kind = f === 'moto' ? 'moto' : v.type === 'jetski' ? 'jetski' : f === 'chute' ? 'chute' : SEATS[v.type] ? 'seated' : null;
     if (!kind || (kind !== 'chute' && ped.seat !== 0 && kind !== 'moto')) return null;
     if (typeof THREE === 'undefined') return null;
     a = a == null ? 1 : a;
@@ -755,9 +757,10 @@
     var x = v._px + (v.x - v._px) * a, y = v._py + (v.y - v._py) * a, z = v._pz + (v.z - v._pz) * a;
     var yaw = v._pyaw + U.wrapAngle(v.yaw - v._pyaw) * a, pitch = kind === 'chute' ? 0 : v.pitch, roll = kind === 'chute' ? v.roll * 0.6 : v.roll;
     var back = kind === 'moto' ? (ped.seat === 0 ? 0.22 : 0.62) : kind === 'jetski' ? 0.35 : 0;
-    var up = kind === 'moto' ? 0.04 + (v._wheelie ? Math.sin(v._wheelie) * 0.72 : 0) : kind === 'jetski' ? 0.0 : 0;
+    var up = kind === 'moto' ? 0.04 + (v._wheelie ? Math.sin(v._wheelie) * 0.72 : 0) : kind === 'jetski' ? 0.0 : 0, right = 0;
+    if (kind === 'seated') { var st = SEATS[v.type]; right = st[0]; up = st[1]; back = st[2]; }
     _e3.set(pitch, yaw, roll, 'YXZ');
-    _v3.set(0, up, back).applyEuler(_e3);
+    _v3.set(right, up, back).applyEuler(_e3);
     return { kind: kind, x: x + _v3.x, y: y + _v3.y, z: z + _v3.z, pitch: kind === 'chute' ? (v.chute === 'open' ? 0 : v.pitch * 0.8) : pitch, yaw: yaw, roll: roll, chute: v.chute || null, seat: ped.seat };
   }
   PedP._syncRider = function (m, a) {
@@ -784,7 +787,8 @@
       parts.legL.rotation.z = 0.12; parts.legR.rotation.z = -0.12;
       parts.armL.rotation.x = 1.15; parts.armR.rotation.x = 1.15; parts.armL.rotation.z = 0.15; parts.armR.rotation.z = -0.15;
       var tuck = pose.kind === 'moto' && this.inVehicle && Math.abs(this.inVehicle.speed) > 25 ? 0.25 : 0;
-      if (parts.torso) parts.torso.rotation.x = -0.35 - tuck; if (parts.head) parts.head.rotation.x = 0.25 + tuck;
+      if (parts.torso) parts.torso.rotation.x = pose.kind === 'seated' ? 0 : -0.35 - tuck; if (parts.head) parts.head.rotation.x = pose.kind === 'seated' ? 0 : 0.25 + tuck;
+      if (pose.kind === 'seated') { parts.legL.rotation.x = 1.45; parts.legR.rotation.x = 1.45; parts.armL.rotation.x = 0.9; parts.armR.rotation.x = 0.9; }
       if (pose.seat > 0) { parts.armL.rotation.x = 0.7; parts.armR.rotation.x = 0.7; }
     }
   };
@@ -800,11 +804,11 @@
     function std(col, rough, metal, extra) { var m = new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true, color: col, roughness: rough, metalness: metal, envMapIntensity: 0.8 }, extra || {})); return m; }
     function em(r, g, b) { return A && A.emitterMaterial ? A.emitterMaterial(r, g, b) : new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color().setRGB(Math.min(1, r), Math.min(1, g), Math.min(1, b)) }); }
     MATS = {
-      dark: std(0x2a2c30, 0.6, 0.25), wood: std(0x9a6438, 0.7, 0), cushion: std(0xf4efe4, 0.8, 0), rubber: std(0x18181a, 0.92, 0), metal: std(0x9aa0a8, 0.38, 0.75), seat: std(0x2b2724, 0.85, 0),
-      chrome: A && A.chromeMaterial ? A.chromeMaterial() : std(0xffffff, 0.15, 1), white: std(0xf2f2ee, 0.45, 0.05),
+      detail: std(0xffffff, 0.6, 0.2), dark: std(0x2a2c30, 0.6, 0.25),
+      chrome: A && A.chromeMaterial ? A.chromeMaterial() : std(0xffffff, 0.15, 1),
       glass: std(0x9fb8cc, 0.06, 0.9, { transparent: true, opacity: 0.6 }),
-      canopy: std(0xffffff, 0.75, 0, { side: THREE.DoubleSide }), line: std(0xd8d4c8, 0.9, 0),
-      lightW: em(3.0, 2.9, 2.6), lightR: em(3.2, 0.25, 0.2), lightG: em(0.25, 3.0, 0.5), lightA: em(3.2, 1.8, 0.3), lightOff: std(0xcfd2d0, 0.15, 0.3),
+      canopy: std(0xffffff, 0.75, 0, { side: THREE.DoubleSide }),
+      light: em(3.0, 3.0, 3.0), lightOff: std(0xb8bab8, 0.2, 0.3),
       burner: new THREE.MeshBasicMaterial({ color: 0xff9a40, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
       wreck: std(0x1f1d1b, 0.95, 0.1), wreckGlass: std(0x15171a, 0.6, 0.2)
     };
@@ -836,10 +840,36 @@
     geo.computeBoundingSphere(); geo.userData.shared = true;
     return geo;
   }
+  // Draw calls: every vertex-coloured key folds into one 'detail' mesh (its material's base colour baked into the
+  // vertex colours), the lamps into one 'light' mesh (nav lights into 'blink'); an animated part is a single mesh.
+  // A vehicle is 6 to 9 draw calls.
+  var BAKE = { dark: 0x2a2c30, rubber: 0x18181a, metal: 0x9aa0a8, seat: 0x2b2724, white: 0xf2f2ee, wood: 0x9a6438, cushion: 0xf4efe4 };
+  var LAMP = { lightW: [1, 0.97, 0.88], lightT: [1, 0.12, 0.1], lightA: [1, 0.6, 0.12], lightR: [1, 0.12, 0.1], lightG: [0.12, 1, 0.25] };
+  var ANIM_BAKE = { chrome: 0xd0d4da, paint2: 0xd8d4c8, glass: 0x8899aa, paint: 0xe8b53a, line: 0xd8d4c8, canopy: 0xffffff };
+  function tint(geo, rgb) { var c = geo.attributes.color.array; for (var i = 0; i < c.length; i += 3) { c[i] *= rgb[0]; c[i + 1] *= rgb[1]; c[i + 2] *= rgb[2]; } }
+  function hexRgb(h) { return [((h >> 16) & 255) / 255, ((h >> 8) & 255) / 255, (h & 255) / 255]; }
+  // small vehicles (info.slim) also fold chrome, glass and the second paint into the detail mesh
+  var SLIM = { chrome: 0xd0d4da, glass: 0x6f8496, paint2: 0x2b2b2e };
+  function fold(parts, anim, slim) {
+    var out = {};
+    for (var k in parts) {
+      var target = k, rgb = null;
+      if (BAKE[k] != null) { target = 'detail'; rgb = hexRgb(BAKE[k]); }
+      else if (slim && SLIM[k] != null && slim.indexOf(k) >= 0) { target = 'detail'; rgb = hexRgb(SLIM[k]); }
+      else if (LAMP[k]) { target = (k === 'lightR' || k === 'lightG') ? 'blink' : 'light'; rgb = LAMP[k]; }
+      if (anim && target !== 'burner') {
+        if (ANIM_BAKE[k] != null) { rgb = hexRgb(ANIM_BAKE[k]); target = (k === 'paint' || k === 'line' || k === 'canopy') ? 'canopy' : 'detail'; }
+        else if (target !== 'canopy') target = 'detail';
+      }
+      for (var i = 0; i < parts[k].length; i++) { if (rgb) tint(parts[k][i], rgb); (out[target] = out[target] || []).push(parts[k][i]); }
+    }
+    var merged = {}; for (var t in out) merged[t] = mergeList(out[t]);
+    return merged;
+  }
   Builder.prototype.finish = function (info) {
-    var out = { statics: {}, anims: {}, info: info || {} }, k;
-    for (k in this.p) out.statics[k] = mergeList(this.p[k]);
-    for (var an in this.a) { var A = this.a[an], st = {}; for (k in A.p) st[k] = mergeList(A.p[k]); out.anims[an] = { pivot: A.pivot, statics: st }; }
+    info = info || {};
+    var out = { statics: fold(this.p, false, info.slim), anims: {}, info: info };
+    for (var an in this.a) out.anims[an] = { pivot: this.a[an].pivot, statics: fold(this.a[an].p, true) };
     return out;
   };
   // matrix helper: translate, rotate (XYZ radians), scale
@@ -938,12 +968,12 @@
     B.add('chrome', cyl(0.06, 0.05, 0.6, 10), WH, T(0.2, 0.42, 0.55, Math.PI / 2 - 0.25, 0, 0));                  // exhaust
     B.add('dark', cyl(0.045, 0.045, 0.06, 10), BLK, T(0.2, 0.49, 0.85, Math.PI / 2 - 0.25, 0, 0));
     B.add('lightW', side([[0.86, 0.86], [0.92, 0.88], [0.9, 0.98], [0.84, 0.95]], 0.18, 0), WH);                  // headlight
-    B.add('lightR', box(0.16, 0.05, 0.03), WH, T(0, 0.98, 1.03));
+    B.add('lightT', box(0.16, 0.05, 0.03), WH, T(0, 0.98, 1.03));
     B.add('lightA', box(0.05, 0.04, 0.05), WH, T(-0.16, 0.86, -0.82)); B.add('lightA', box(0.05, 0.04, 0.05), WH, T(0.16, 0.86, -0.82));
     B.add('dark', box(0.2, 0.04, 0.16), BLK, T(0, 0.86, 1.0, 0.4, 0, 0));                                         // plate hanger
     B.add('white', box(0.16, 0.1, 0.01), [0.95, 0.93, 0.85], T(0, 0.82, 1.06, 0.4, 0, 0));
     B.add('dark', box(0.05, 0.05, 0.3), BLK, T(-0.17, 0.38, 0.28)); B.add('dark', box(0.05, 0.05, 0.3), BLK, T(0.17, 0.38, 0.28));   // pegs
-    return B.finish({ eye: { x: 0, y: 1.45, z: 0.1 } });
+    return B.finish({ eye: { x: 0, y: 1.45, z: 0.1 }, slim: ['chrome', 'glass', 'paint2'] });
   };
   BUILD.heli = function () {
     var B = new Builder(), WH = [1, 1, 1], BLK = [0.12, 0.12, 0.13];
@@ -1086,7 +1116,7 @@
     B.add('dark', box(0.08, 0.3, 0.08), BLK, T(0, 0.8, -0.35, -0.3, 0, 0));
     B.add('glass', side([[0.25, 0.8], [0.5, 0.78], [0.38, 0.95], [0.26, 0.92]], 0.4, 0), [0.7, 0.85, 1]);
     B.add('dark', cyl(0.08, 0.1, 0.25, 10), BLK, T(0, 0.0, 1.55, Math.PI / 2, 0, 0));   // the nozzle
-    return B.finish({ eye: { x: 0, y: 1.5, z: 0.0 } });
+    return B.finish({ eye: { x: 0, y: 1.5, z: 0.0 }, slim: ['glass'] });
   };
   BUILD.parachute = function () {
     var B = new Builder(), WH = [1, 1, 1];
@@ -1128,8 +1158,8 @@
     var matFor = { paint: paint, paint2: paint2, glass: glass };
     function meshes(statics, parent, list) {
       for (var k in statics) {
-        var mat = matFor[k] || M[k] || M.dark, mesh = new THREE.Mesh(statics[k], mat);
-        mesh.castShadow = k !== 'glass' && k !== 'burner' && k !== 'line' && k.indexOf('light') !== 0; mesh.receiveShadow = false; mesh.name = k;
+        var mat = matFor[k] || (k === 'blink' ? M.light : M[k]) || M.detail, mesh = new THREE.Mesh(statics[k], mat);
+        mesh.castShadow = k === 'paint' || k === 'paint2' || k === 'detail' || k === 'canopy'; mesh.receiveShadow = false; mesh.name = k;
         mesh.userData.key = k; parent.add(mesh); list.push(mesh);
       }
     }
@@ -1181,7 +1211,7 @@
     var ud = m.userData, an = ud.anim, M = mats();
     if (v.wreck && !ud.wrecked) {
       ud.wrecked = true;
-      for (var i = 0; i < ud.meshes.length; i++) { var me = ud.meshes[i], k = me.userData.key; me.material = k === 'glass' ? M.wreckGlass : M.wreck; if (k === 'burner' || k === 'canopy' || k === 'line') me.visible = false; }
+      for (var i = 0; i < ud.meshes.length; i++) { var me = ud.meshes[i], k = me.userData.key; me.material = k === 'glass' ? M.wreckGlass : M.wreck; if (k === 'burner' || k === 'canopy') me.visible = false; }
     }
     var inner = ud.inner;
     inner.position.y = 0;
@@ -1202,7 +1232,7 @@
     }
     // nav lights blink: the wingtip / skid lights dim for a beat every second
     var blink = !v.wreck && (v.age % 1.1) < 0.12;
-    for (var j = 0; j < ud.meshes.length; j++) { var mm = ud.meshes[j], kk = mm.userData.key; if (kk === 'lightR' || kk === 'lightG') mm.visible = !v.wreck && !blink; else if (kk === 'lightW') mm.material = v.wreck ? M.wreck : (liveDriver(v) || v.lights ? M.lightW : M.lightOff); }
+    for (var j = 0; j < ud.meshes.length; j++) { var mm = ud.meshes[j], kk = mm.userData.key; if (kk === 'blink') mm.visible = !v.wreck && !blink; else if (kk === 'light') mm.material = v.wreck ? M.wreck : (liveDriver(v) || v.lights ? M.light : M.lightOff); }
   }
   VP.syncMesh = function (alpha) {
     base.syncMesh.call(this, alpha);
@@ -1472,7 +1502,8 @@
       if (out.some(function (s) { return s.type !== 'heli' && U.dist2d(s.x, s.z, lm.door.x, lm.door.z) < 40; })) return;
       add('water_' + b[0], b[1], lm.door.x, lm.door.z, 0, b[1] === 'jetski' ? 2.5 : 4);
     });
-    [['pod_garage', 6], ['strip_garage', -6], ['dorm_studio', 8]].forEach(function (b) {
+    // bikes away from the spawn (a vehicle spawned at the start would change the boot's traffic for every other system)
+    [['strip_garage', -6], ['memo_press', 6]].forEach(function (b) {
       var lm = Wd.landmark(b[0]); if (!lm || !lm.door) return; add('moto_' + b[0], 'moto', lm.door.x + b[1], lm.door.z + 4, 0, 1.2);
     });
     // resolve each to a clear spot of the right kind now (the world is fixed for this seed)
@@ -1489,7 +1520,7 @@
   }
   function fleetTick(dt) {
     var Wd = W(); if (!Wd || !Wd.landmarks) return;
-    if (fleet.lmRef !== Wd.landmarks) { fleet.lmRef = Wd.landmarks; fleet.slots = Vehicles.fleet.enabled ? buildSlots() : []; fleet.t = 0; }
+    if (fleet.lmRef !== Wd.landmarks) { fleet.lmRef = Wd.landmarks; fleet.slots = Vehicles.fleet.enabled ? buildSlots() : []; fleet.t = 0; fleet.first = true; }
     fleet.t -= dt; if (fleet.t > 0) return; fleet.t = 0.5;
     var p = player(); if (!p) return;
     var block = GTP.Interiors && GTP.Interiors.active;
@@ -1502,14 +1533,16 @@
       }
       if (s.cooldown > 0) { s.cooldown -= 0.5; continue; }
       if (block) continue;
+      // the first pass (the city as it loads) fills every slot in range; later ones never pop a vehicle in near the player
       var d = U.dist2d(p.x, p.z, s.x, s.z);
-      if (d > 170) continue;
+      if (d > 170 || (!fleet.first && d < 60)) continue;
       // never on top of something already there
       var near = E().hash.query(s.x, s.z, 8, scratch), busy = false;
       for (var k = 0; k < near.length; k++) if (near[k].kind === 'vehicle' && !near[k].removed && U.dist2d(near[k].x, near[k].z, s.x, s.z) < 6) { busy = true; break; }
       if (busy) { s.cooldown = 5; continue; }
       s.vehicle = spawn(s.type, s.x, s.z, { yaw: s.yaw, tag: 'fleet' });
     }
+    fleet.first = false;
   }
 
   // ---- Spin Doctor Customs: the drive-in bay ----

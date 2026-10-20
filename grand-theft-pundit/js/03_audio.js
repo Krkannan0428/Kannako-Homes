@@ -455,7 +455,11 @@
   }
   SFX.shot_pistol = function (out, t, g) { report(out, t, { bd: 0.11 + 0.05 * g, bg: 0.5, bf: 1750, cg: 0.32, tf: 190, td: 0.09, tg: 0.42, tail: 0.15 }); return 0.4; };
   SFX.shot_revolver = function (out, t) { report(out, t, { bd: 0.24, bg: 0.55, bf: 1050, bq: 0.6, cg: 0.4, cd: 0.05, tf: 135, tf1: 36, td: 0.2, tg: 0.48, ring: 2600, tail: 0.4 }); blip(out, t + 0.02, { type: 'triangle', f: 90, f1: 34, dur: 0.32, g: 0.22 }); return 0.7; };
-  SFX.shot_smg = function (out, t) { report(out, t, { bd: 0.06, bg: 0.45, bf: 2200, bq: 0.9, cg: 0.22, cd: 0.025, tf: 240, tf1: 70, td: 0.05, tg: 0.3 }); hiss(out, t + 0.03, { dur: 0.02, g: 0.12, bp: 3200, q: 3, a: 0.001 }); return 0.25; };
+  SFX.shot_smg = function (out, t) {   // a short, papery, darker pop with the bolt ticking behind it (it fires eleven a second)
+    report(out, t, { bd: 0.06, bg: 0.5, bf: 950, bq: 1.0, tf: 260, tf1: 90, td: 0.045, tg: 0.32 });
+    hiss(out, t + 0.025, { dur: 0.015, g: 0.14, bp: 5200, q: 4, a: 0.001 });
+    return 0.25;
+  };
   SFX.shot_rifle = function (out, t) { report(out, t, { bd: 0.16, bg: 0.5, bf: 1300, cg: 0.42, cd: 0.05, cf: 5000, tf: 125, tf1: 38, td: 0.14, tg: 0.45, tail: 0.28 }); return 0.5; };
   SFX.shot_lmg = function (out, t) { report(out, t, { bd: 0.18, bg: 0.5, bf: 980, cg: 0.36, cf: 4600, tf: 105, tf1: 34, td: 0.16, tg: 0.48, tail: 0.3 }); hiss(out, t + 0.06, { dur: 0.03, g: 0.18, bp: 2600, q: 4, a: 0.001 }); return 0.5; };
   SFX.shot_shotgun = function (out, t) {
