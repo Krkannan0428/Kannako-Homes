@@ -1882,15 +1882,19 @@
     if (!m || registry[m.id] || sideIds[m.id]) return false;
     if (m.story === true) return true;
     if (m.story === false || m.side || m.stranger || m.strand || SIDE_KINDS[m.kind] || SIDE_KINDS[m.category]) return false;
-    var X = expansion(), chain = X.chain || [];
+    // the content track appends its parity missions to expansion.missions too: those are story whatever the chain says
+    if (parityMissions().indexOf(m) >= 0) return true;
+    var X = expansion(), chain = storyChain();
     if (chain.length && chain.indexOf(m.id) < 0 && (X.missions || []).indexOf(m) >= 0) return false;
     return true;
   }
+  // the 35-mission chain of the v0.3 content (parity.chain) when it is there, else the expansion's 25
+  function storyChain() { var pc = parity().chain; return Array.isArray(pc) && pc.length ? pc : (expansion().chain || []); }
   var _order = null, _orderKey = null;
   // the story missions in play order: a topological sort over `requires`, ranked by the content's chain (new missions without
   // a rank slot in wherever their prerequisites put them)
   function storyOrder() {
-    var all = allMissions(), chain = expansion().chain || [], key = _allKey + '|' + chain.length;
+    var all = allMissions(), chain = storyChain(), key = _allKey + '|' + chain.length;
     if (_order && _orderKey === key) return _order;
     var list = all.filter(storyMission), ids = {}, i;
     for (i = 0; i < list.length; i++) ids[list[i].id] = list[i];
@@ -1909,11 +1913,21 @@
     _order = out; _orderKey = key;
     return out;
   }
-  // chapters: GTP.Content.parity.chapters as [{act, title, from?}] or {act: title}; the GDD's three acts otherwise
+  // chapters: GTP.Content.parity.actTitles {act: title}, and parity.chapters as [{act, title, subtitle?, first|from?}] or
+  // {act: title}; the GDD's three acts otherwise. The first entry of an act names it and says where it starts (later ones of
+  // the same act, the heist interlude and the finale, are not act changes). The card draws "ACT I" itself, so an "Act I: "
+  // prefix in the title is dropped.
+  function bareTitle(t) { return t ? String(t).replace(/^\s*act\s+[ivx\d]+\s*[:.\-]\s*/i, '') : t; }
   function chapterTable() {
-    var T = parity().chapters, out = { titles: {}, starts: {} };
-    if (Array.isArray(T)) T.forEach(function (c) { if (!c) return; var a = c.act | 0; if (a) { if (c.title) out.titles[a] = c.title; if (c.from || c.start) out.starts[c.from || c.start] = a; } });
-    else if (T && typeof T === 'object') for (var k in T) { var a2 = parseInt(String(k).replace(/\D/g, ''), 10); if (a2) out.titles[a2] = typeof T[k] === 'string' ? T[k] : (T[k] && T[k].title) || null; }
+    var P = parity(), T = P.chapters, AT = P.actTitles, out = { titles: {}, starts: {}, subtitles: {} };
+    if (Array.isArray(T)) T.forEach(function (c) {
+      if (!c) return; var a = c.act | 0; if (!a || out.titles[a]) return;
+      if (c.title) out.titles[a] = bareTitle(c.title);
+      if (c.subtitle) out.subtitles[a] = c.subtitle;
+      var from = c.first || c.from || c.start; if (from) out.starts[from] = a;
+    });
+    else if (T && typeof T === 'object') for (var k in T) { var a2 = parseInt(String(k).replace(/\D/g, ''), 10); if (a2) out.titles[a2] = bareTitle(typeof T[k] === 'string' ? T[k] : (T[k] && T[k].title) || null); }
+    if (AT && typeof AT === 'object') for (var k2 in AT) { var a3 = k2 | 0; if (a3 && AT[k2]) out.titles[a3] = bareTitle(AT[k2]); }
     return out;
   }
   function chapterTitle(act) { var t = chapterTable().titles[act]; return t || ACT_TITLES[act] || ('Act ' + act); }
@@ -2017,7 +2031,7 @@
     var act = actOf(m);
     if (act <= (state.flags.story_act | 0)) return null;
     state.flags.story_act = act;
-    var c = { act: act, title: chapterTitle(act), roman: ROMAN[act] || String(act), missionId: m.id };
+    var c = { act: act, title: chapterTitle(act), subtitle: chapterTable().subtitles[act] || null, roman: ROMAN[act] || String(act), missionId: m.id };
     Story.chapter = { act: act, title: c.title };
     GTP.Events.emit('chapter', c);
     if (!hasListener('chapter') && !callUI('chapter', c)) toast('ACT ' + c.roman + ': ' + c.title.toUpperCase());

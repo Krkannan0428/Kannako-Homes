@@ -67,10 +67,15 @@ H.run('missions', async (t) => {
     });
     const endings = GTP.Content.endingMissions;
     endings.forEach((id) => { if (!byId[id] || byId[id].requires.indexOf('m14_grift') < 0) errs.push('ending ' + id + ' must require m14_grift'); });
-    return { count: M.length, errs, chainLen: Object.keys(byId).filter((id) => byId[id].requires.length).length, base: GTP.Content.missions.length };
+    const story = GTP.Story.order(), side = M.filter((m) => story.indexOf(m.id) < 0).map((m) => m.id);
+    const parity = ((GTP.Content.parity || {}).missions || []).filter((m) => Array.isArray(m.objectives)).length;
+    return { count: M.length, story: story.length, side: side.length, sideNotStranger: side.filter((id) => !/^st_/.test(id) && !(GTP.Content.strangers && (GTP.Content.strangers.missions || []).some((m) => m.id === id))), parity, errs, chainLen: Object.keys(byId).filter((id) => byId[id].requires.length).length, base: GTP.Content.missions.length };
   });
   console.log('  data: ' + JSON.stringify(data));
-  t.assert(data.base === 17 && (data.count === 17 || data.count === 25), '17 base missions (25 with the expansion), got ' + data.base + ' / ' + data.count);
+  // the story: 17 base + 8 expansion + the v0.3 parity missions (m01c, six bosses, three heist missions) = 35; the strangers'
+  // side missions are listed by allMissions() but never join the story
+  t.assert(data.base === 17 && data.story === 25 + data.parity && (data.parity === 0 || data.story === 35), '17 base missions, 35 story missions with the expansion and the v0.3 missions, got ' + data.base + ' / ' + data.story + ' (parity ' + data.parity + ')');
+  t.assert(data.count === data.story + data.side && data.sideNotStranger.length === 0, 'everything outside the story is a strangers side mission: ' + data.sideNotStranger.join(','));
   t.assert(data.errs.length === 0, 'mission data problems:\n' + data.errs.join('\n'));
 
   // ---- 5a. a new game: the first marker is at the quad, the giver and Kip stand beside it ----
@@ -692,7 +697,7 @@ H.run('missions', async (t) => {
   t.assert(r.timer && ((r.timer.total === 90 && r.subs === 6) || (r.timer.total === 150 && r.subs === 5)) && r.collectedFromVan === r.subs && r.timerCleared, 'every subscriber collected from the van under the battery timer: ' + JSON.stringify({ timer: r.timer, subs: r.subs, collected: r.collectedFromVan }));
   t.assert(r.steps.every((s) => s > 0) && r.result.completed.indexOf('m01_van') >= 0 && r.result.flags.has_van === true && r.result.money === 200 && r.result.state === 'playing', 'm01 completed with its flag and $200: ' + JSON.stringify(r.result));
   // with the expansion the next light after m01 is m01b_airport at the garage; on the base chain it is m02_read at the depot
-  t.assert(r.result.stillInVan && !r.result.vanPersistent && /^mission:(m02_read|m01b_airport)$/.test(r.result.markers[0]), 'the van stays with the player and the next mission opens: ' + r.result.markers.join(','));
+  t.assert(r.result.stillInVan && !r.result.vanPersistent && /^mission:(m02_read|m01b_airport|m01c_both_sides)$/.test(r.result.markers[0]), 'the van stays with the player and the next mission opens: ' + r.result.markers.join(','));
   errs = await t.errors(c1);
   t.assert(errs.length === 0, 'errors on the m01 page:\n' + errs.join('\n'));
   await c1.page.close();

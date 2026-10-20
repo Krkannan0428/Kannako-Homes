@@ -75,7 +75,7 @@ H.run('saves', async (t) => {
   t.assert(loaded.money === 7777 && loaded.subs === 12345 && loaded.tier === 1, 'money, subscribers and the tier come back');
   t.assert(loaded.weapons.pistol === 24 && loaded.weapons.smg === 60 && loaded.weapon === 'smg' && loaded.ammo && loaded.ammo.mag + loaded.ammo.reserve === 24, 'weapons and the magazine split come back: ' + JSON.stringify(loaded.ammo));
   // the next light: m02_read on the base chain, m01b_airport once the expansion slots in after m01_van
-  t.assert(loaded.completed.length === 2 && loaded.flags.has_van === true && loaded.best.m00_intro === 61.5 && loaded.markers.length === 1 && /^(m02_read|m01b_airport)$/.test(loaded.markers[0]), 'missions, flags, best times and the next light come back: ' + loaded.markers.join(','));
+  t.assert(loaded.completed.length === 2 && loaded.flags.has_van === true && loaded.best.m00_intro === 61.5 && loaded.markers.length === 1 && /^(m02_read|m01b_airport|m01c_both_sides)$/.test(loaded.markers[0]), 'missions, flags, best times and the next light come back: ' + loaded.markers.join(','));
   t.assert(loaded.fares === 3 && loaded.hoa === 4 && loaded.stunts.join(',') === 'sj_01' && loaded.memos.length === 2 && loaded.memoPickupsLeft === 48, 'strand progress and the memo count come back (48 envelopes left in the world)');
   t.assert(Math.abs(loaded.clock - 3.25) < 0.03 && loaded.day === 2 && loaded.playTime >= 321 && loaded.playTime < 330, 'clock, day and play time come back');
   t.assert(loaded.events.indexOf('loaded:2') >= 0 && loaded.errors === 0, 'the loaded event fired without errors');
