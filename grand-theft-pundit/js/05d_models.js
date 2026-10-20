@@ -391,7 +391,7 @@
     var si = skinIndex(look.skin), skin = skinRGB(si);
     var hairC = hex3(look.hairColor, '#3a2a1a'), brow = browTone(look.hairColor);
     var top = O.top, tc = top.color, tc2 = top.color2, bot = O.bottom, pc = bot.color, shoes = O.shoes;
-    var segT = [20, 12, 8][q], segL = [12, 8, 6][q], step = q === 0 ? 1 : 2;
+    var segT = [20, 12, 7][q], segL = [12, 8, 5][q], step = [1, 2, 3][q];
     var detail = q === 0, mid = q <= 1;
     // ---- torso
     var T = [[0.845, 0.07, 0.06, 0.005], [0.875, 0.145, 0.092, 0.008], [0.94, 0.168, 0.108, 0.014], [1.0, 0.162, 0.104, 0.008], [1.07, 0.15, 0.1, 0],
@@ -522,7 +522,7 @@
       if (nz > 0 && ny > -0.2) p[2] = hz + (p[2] - hz) * 1.07;
       if (nz < -0.3 && Math.abs(ny) < 0.35 && Math.abs(nx) > 0.5) p[0] *= 1.03;   // cheekbones
     }
-    ellipsoid(sb, 0, hy, hz, rx, ry, rz, [22, 14, 9][q], [14, 9, 6][q], [1, 1, 1], HEAD, null, 0, { deform: headDeform, uvFn: faceUV });
+    ellipsoid(sb, 0, hy, hz, rx, ry, rz, [22, 14, 8][q], [14, 9, 5][q], [1, 1, 1], HEAD, null, 0, { deform: headDeform, uvFn: faceUV });
     if (mid) {
       // the nose (textured with the face cell's shading), the ears
       var nl = 0.019 + ((h >>> 11) % 3) * 0.003;
@@ -558,7 +558,7 @@
       tube(sb, rings, { segs: segL, cap0: false, cap1: 0.012 });
       // the hand: palm, fingers (slightly curled toward the body), the thumb in front
       var hx = ax;
-      if (q === 2) ellipsoid(sb, hx, 0.83, -0.004, 0.019, 0.075, 0.036, 6, 4, skin, bH);
+      if (q === 2) ellipsoid(sb, hx, 0.83, -0.004, 0.019, 0.075, 0.036, 5, 3, skin, bH);
       else {
         ellipsoid(sb, hx, 0.845, -0.004, 0.018, 0.05, 0.037, detail ? 10 : 6, detail ? 6 : 4, skin, bH);
         ellipsoid(sb, hx - s * 0.004, 0.778, -0.006, 0.015, 0.042, 0.033, detail ? 10 : 6, detail ? 5 : 3, shade(skin, -0.02), bH, null, 0, { deform: function (p) { var d = (0.8 - p[1]) / 0.04; if (d > 0) p[0] -= s * d * d * 0.008; } });
@@ -585,7 +585,7 @@
       var sole = shoes.style === 'sneakers' ? [0.93, 0.93, 0.91] : shoes.style === 'boots' ? [0.08, 0.07, 0.06] : [0.07, 0.05, 0.04];
       var sc = shoes.color, FT = [[0.075, 0.03, 0.033, 0.045], [0.055, 0.04, 0.047, 0.056], [0.0, 0.046, 0.06, 0.066], [-0.06, 0.05, 0.045, 0.05], [-0.12, 0.05, 0.033, 0.038], [-0.17, 0.044, 0.025, 0.028], [-0.2, 0.028, 0.017, 0.022]];
       if (shoes.style === 'boots') FT[2] = [0.0, 0.05, 0.1, 0.1];
-      var fr = FT.filter(function (r, i) { return q === 0 || i % 2 === 0 || i === FT.length - 1; }).map(function (r) { return { x: lx, y: r[3], z: r[0], a: r[1], b: r[2], col: sc, b0: bF }; });
+      var fr = FT.filter(function (r, i) { return q === 0 || (q === 1 ? i % 2 === 0 : (i === 0 || i === 2 || i === 4)) || i === FT.length - 1; }).map(function (r) { return { x: lx, y: r[3], z: r[0], a: r[1], b: r[2], col: sc, b0: bF }; });
       tube(sb, fr, { segs: segL, axis: 'z', p: 2.6, cap0: 0.008, cap1: 0.01, deform: function (p) { if (p[1] < 0.004) p[1] = 0.004; }, colFn: function (x, y, z) { return y < 0.02 ? sole : (shoes.style === 'sneakers' && z < -0.17 && y < 0.035 ? sole : sc); } });
     });
     var geo = sb.build(look.flat ? 0.14 : 0);
@@ -596,7 +596,7 @@
   // ------------------------------------------------------------- hair, hats --
   function hairAndHat(sb, look, O, H) {
     var style = look.hair || 'short', hat = O.hat ? O.hat.style : null, q = H.q;
-    var hc = H.hair, segs = [22, 14, 9][q], rows = [10, 6, 4][q];
+    var hc = H.hair, segs = [22, 14, 8][q], rows = [10, 6, 3][q];
     // a shell over the skull: rows from the crown down, each column stops at the hairline latitude for its azimuth
     function shell(scaleFn, lineFn, col, b0, opts) {
       opts = opts || {};
@@ -1084,11 +1084,11 @@
       return { z: z, pts: lowerHalf(hw, yb, yt, sp, q, flare), yb: yb, yt: yt, hw: hw };
     }
     // stations: a base step, the ends dense (the rounded nose and tail), dense through every arch
-    var ts = [], step = [1 / 44, 1 / 26, 1 / 14][q];
+    var ts = [], step = [1 / 44, 1 / 24, 1 / 9][q];
     for (var t = 0; t <= tEnd + 1e-6; t += step) ts.push(t);
-    [0.006, 0.015, 0.03, 0.045].forEach(function (e) { ts.push(e); if (!sp.cabT) ts.push(1 - e); });
+    (q < 2 ? [0.006, 0.015, 0.03, 0.045] : [0.012, 0.04]).forEach(function (e) { ts.push(e); if (!sp.cabT) ts.push(1 - e); });
     if (q < 2) axles.forEach(function (az) { for (var k = -6; k <= 6; k++) { var tt = (az + Ra * k / 6 - -hl) / L; if (tt > 0 && tt < tEnd) ts.push(tt); } });
-    else axles.forEach(function (az) { [-1, -0.6, 0, 0.6, 1].forEach(function (k) { var tt = (az + Ra * k - -hl) / L; if (tt > 0 && tt < tEnd) ts.push(tt); }); });
+    else axles.forEach(function (az) { [-1, -0.5, 0.5, 1].forEach(function (k) { var tt = (az + Ra * k - -hl) / L; if (tt > 0 && tt < tEnd) ts.push(tt); }); });
     var cab = sp.cab; cab.forEach(function (c) { if (c <= tEnd) ts.push(c); });
     ts.push(tEnd);
     ts = ts.filter(function (v) { return v >= 0 && v <= tEnd + 1e-9; }).sort(function (a, b) { return a - b; }).filter(function (v, k, arr) { return k === 0 || v - arr[k - 1] > 0.0015; });
@@ -1121,7 +1121,7 @@
     });
     // ---- the greenhouse
     var tA = cab[0], tR0 = cab[1], tR1 = cab[2], tC = cab[3], roofH = sp.roofH || H;
-    var cts = [], cstep = [1 / 60, 1 / 34, 1 / 16][q];
+    var cts = [], cstep = [1 / 60, 1 / 30, 1 / 10][q];
     for (t = tA; t <= tC + 1e-6; t += cstep) cts.push(t);
     var pillarB = (tR0 + tR1) / 2 + (sp.rows === 2 ? -0.02 : 0.1), pb = 0.06 / L;
     var pillars = [];
@@ -1377,55 +1377,57 @@
   // spokes per style, a brake disc and caliper behind them, a centre cap and lug nuts
   function wheelGeo(cls, wr, ww, style, q) {
     var vb = new VB(), g = 'paint';
-    var segs = [28, 16, 10][q], rimR = wr * (cls === 'bike' ? 0.62 : cls === 'truck' || cls === 'bus' ? 0.62 : style === 5 ? 0.6 : 0.68), hw = ww / 2;
+    var segs = [20, 12, 8][q], rimR = wr * (cls === 'bike' || cls === 'truck' || cls === 'bus' ? 0.62 : style === 5 ? 0.6 : 0.68), hw = ww / 2;
     var tread = [0.05, 0.05, 0.055], side = [0.1, 0.1, 0.11];
     // the tyre: a lathe of a rounded profile [r, x]
-    var prof = [[rimR, hw * 0.92], [rimR + (wr - rimR) * 0.45, hw * 1.02], [wr * 0.985, hw * 0.92], [wr, hw * 0.65], [wr, 0]];
+    var prof = q < 2 ? [[rimR, hw * 0.92], [rimR + (wr - rimR) * 0.45, hw * 1.02], [wr * 0.985, hw * 0.92], [wr, hw * 0.65], [wr, 0]] : [[rimR, hw * 0.95], [wr * 0.97, hw], [wr, 0]];
     var full = prof.concat(prof.slice(0, -1).reverse().map(function (p) { return [p[0], -p[1]]; }));
     var base = vb.g[g].cnt, n = full.length, i, j;
     for (i = 0; i <= segs; i++) {
       var a = i / segs * TAU, ca = Math.cos(a), sa = Math.sin(a);
       for (j = 0; j < n; j++) {
-        var r = full[j][0], x = full[j][1], nr, nx;
+        var r = full[j][0], x = full[j][1];
         var pj = full[Math.max(0, j - 1)], nj = full[Math.min(n - 1, j + 1)], dr = nj[0] - pj[0], dx = nj[1] - pj[1];
-        nr = -dx; nx = dr; var l = Math.sqrt(nr * nr + nx * nx) || 1; nr /= l; nx /= l;
+        var nr = -dx, nx = dr, l = Math.sqrt(nr * nr + nx * nx) || 1; nr /= l; nx /= l;
         if (nr < 0) { nr = -nr; nx = -nx; }
-        var col = Math.abs(x) < hw * 0.8 && r > wr * 0.95 ? tread : side;
-        if (q === 0 && Math.abs(x) < hw * 0.8 && r > wr * 0.95 && (i % 2)) col = [0.035, 0.035, 0.04];
+        var col = Math.abs(x) < hw * 0.8 && r > wr * 0.95 ? ((q === 0 && (i % 2)) ? [0.035, 0.035, 0.04] : tread) : side;
         vb.vert(g, x, ca * r, sa * r, nx, ca * nr, sa * nr, col);
       }
     }
     for (i = 0; i < segs; i++) for (j = 0; j < n - 1; j++) { var p0 = base + i * n + j, p1 = p0 + n; vb.g[g].ix.push(p0, p1, p1 + 1, p0, p1 + 1, p0 + 1); }
-    // the rim: a lip, a dark barrel face, spokes, a cap
+    // the rim face per side: a dark barrel disc, flat spokes (or a pressed steel disc), a centre cap
     var rimC = style === 3 ? [0.92, 0.93, 0.96] : style === 4 ? [0.18, 0.18, 0.2] : style === 5 ? [0.1, 0.1, 0.11] : (cls === 'van' || cls === 'truck' || cls === 'bus' || cls === 'taxi') && !style ? [0.62, 0.63, 0.66] : cls === 'cop' && !style ? [0.12, 0.12, 0.13] : [0.75, 0.76, 0.8];
-    var face = hw * 0.78, rs = [16, 10, 6][q];
+    var face = hw * 0.8, nsp = cls === 'bike' ? 5 : style === 1 ? 10 : style === 2 ? 14 : style === 3 ? 8 : style === 4 ? 12 : style === 5 ? 6 : (cls === 'sports' ? 10 : cls === 'suv' ? 6 : cls === 'sedan' ? 5 : 0);
+    if (q === 2) nsp = Math.min(nsp, 5);
+    function facing(a, b, c, d, col, dir) {
+      var ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2], vx = d[0] - b[0], vy = d[1] - b[1], vz = d[2] - b[2];
+      var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      if (nx * dir[0] + ny * dir[1] + nz * dir[2] >= 0) vb.quad(g, a, b, c, d, col); else vb.quad(g, a, d, c, b, col);
+    }
     [-1, 1].forEach(function (s) {
-      torus(vb, g, 'x', s * face, 0, 0, rimR * 0.97, 0.012, segs, 4, rimC);
-      cyl(vb, g, 'x', s * (face - 0.035), 0, 0, rimR * 0.96, rimR * 0.96, 0.02, segs, [0.05, 0.05, 0.06], false);   // the dark barrel behind the spokes
-      if (q < 2) { cyl(vb, g, 'x', s * (face - 0.06), 0, 0, rimR * 0.78, rimR * 0.78, 0.012, rs, [0.4, 0.4, 0.42]); if (cls === 'sports' || style === 2 || style === 3) blob(vb, g, s * (face - 0.045), rimR * 0.55, rimR * 0.3, 0.02, 0.05, 0.035, 6, 3, cls === 'sports' ? [0.8, 0.12, 0.1] : [0.85, 0.75, 0.2], 3); }
-      var nsp = cls === 'bike' ? 5 : style === 1 ? 10 : style === 2 ? 16 : style === 3 ? 8 : style === 4 ? 12 : style === 5 ? 6 : (cls === 'sports' ? 10 : cls === 'suv' ? 6 : cls === 'sedan' ? 5 : 0);
-      if (q === 2) nsp = Math.min(nsp, 5);
+      var fx = s * face, bx = s * (face - 0.03);
+      cyl(vb, g, 'x', s * (face - 0.035), 0, 0, rimR * 0.97, rimR * 0.97, 0.02, segs, [0.05, 0.05, 0.06], false);   // the barrel behind the spokes
+      if (q === 0) torus(vb, g, 'x', fx, 0, 0, rimR * 0.97, 0.011, segs, 3, rimC);                                     // the rim lip
+      if (q === 0 && (cls === 'sports' || style === 2 || style === 3)) blob(vb, g, s * (face - 0.05), rimR * 0.55, rimR * 0.3, 0.02, 0.05, 0.035, 6, 3, cls === 'sports' ? [0.8, 0.12, 0.1] : [0.85, 0.75, 0.2], 2);   // caliper
       if (nsp) {
-        var sw = style === 5 ? 0.05 : style === 2 ? 0.008 : nsp >= 10 ? 0.012 : 0.022, sx = s * (face - 0.01);
+        var ri = rimR * 0.22, ro = rimR * 0.94, w0 = style === 2 ? 0.006 : nsp >= 10 ? 0.011 : style === 5 ? 0.04 : 0.024, w1 = style === 2 ? 0.006 : nsp >= 10 ? 0.009 : style === 5 ? 0.05 : 0.016;
         for (var k = 0; k < nsp; k++) {
-          var a0 = k / nsp * TAU + (style === 4 ? 0 : 0), ca0 = Math.cos(a0), sa0 = Math.sin(a0), mid = rimR * 0.55;
-          blob(vb, g, sx, ca0 * mid, sa0 * mid, 0.012, style === 4 ? 0.018 : sw, rimR * 0.42, 4, 2, rimC, 3, (function (A0, SX) { return function (p, n) {
-            // rotate the spoke (built along z) to its angle about x, with a little dish toward the centre
-            var y = p[1] - Math.cos(A0) * mid, z = p[2] - Math.sin(A0) * mid, rr = z, tt = y;
-            var cA = Math.cos(A0), sA = Math.sin(A0);
-            p[1] = cA * (mid + rr) - sA * tt;
-            p[2] = sA * (mid + rr) + cA * tt;
-            p[0] = SX + (p[0] - SX) - Math.sign(SX) * (1 - Math.abs(rr) / (rimR * 0.42)) * 0.012;
-            if (n) { var ny = n[1], nz = n[2]; n[1] = cA * nz - sA * ny; n[2] = sA * nz + cA * ny; }
-          }; })(a0, sx));
+          var a0 = k / nsp * TAU, twist = style === 4 ? 0.45 : 0, cA = Math.cos(a0), sA = Math.sin(a0), cB = Math.cos(a0 + twist), sB = Math.sin(a0 + twist);
+          var dish = 0.012;   // the spoke sits proud at the hub, back at the rim
+          var il = [fx + s * dish, cA * ri - sA * w0, sA * ri + cA * w0], ir = [fx + s * dish, cA * ri + sA * w0, sA * ri - cA * w0];
+          var ol = [fx, cB * ro - sB * w1, sB * ro + cB * w1], or = [fx, cB * ro + sB * w1, sB * ro - cB * w1];
+          facing(il, ir, or, ol, rimC, [s, 0, 0]);
+          if (q < 2) {
+            var ilb = [bx, il[1], il[2]], olb = [bx, ol[1], ol[2]], irb = [bx, ir[1], ir[2]], orb = [bx, or[1], or[2]], sh = [rimC[0] * 0.6, rimC[1] * 0.6, rimC[2] * 0.6];
+            facing(il, ol, olb, ilb, sh, [0, -sA, cA]);
+            facing(ir, irb, orb, or, sh, [0, sA, -cA]);
+          }
         }
       } else {
-        // a steel wheel: a pressed disc with holes and a hub cap
         cyl(vb, g, 'x', s * (face - 0.012), 0, 0, rimR * 0.92, rimR * 0.92, 0.012, segs, rimC);
-        if (q < 2) for (var hk = 0; hk < 8; hk++) { var ha = hk / 8 * TAU; blob(vb, g, s * (face - 0.004), Math.cos(ha) * rimR * 0.62, Math.sin(ha) * rimR * 0.62, 0.004, 0.03, 0.03, 6, 3, [0.08, 0.08, 0.09], 2); }
+        if (q === 0) for (var hk = 0; hk < 6; hk++) { var ha = hk / 6 * TAU; blob(vb, g, s * (face - 0.004), Math.cos(ha) * rimR * 0.6, Math.sin(ha) * rimR * 0.6, 0.004, 0.032, 0.032, 6, 3, [0.08, 0.08, 0.09], 2); }
       }
-      blob(vb, g, s * (face + 0.004), 0, 0, 0.018, rimR * 0.26, rimR * 0.26, rs, 4, style === 4 ? [0.8, 0.12, 0.2] : nsp ? [0.3, 0.3, 0.33] : [0.75, 0.76, 0.8], 2);   // the centre cap
-      if (q === 0 && nsp) for (var lk = 0; lk < 5; lk++) { var la = lk / 5 * TAU; blob(vb, g, s * (face + 0.006), Math.cos(la) * rimR * 0.33, Math.sin(la) * rimR * 0.33, 0.008, 0.012, 0.012, 6, 3, CHROME, 2); }
+      blob(vb, g, s * (face + 0.006), 0, 0, 0.016, rimR * 0.24, rimR * 0.24, q ? 6 : 10, q ? 2 : 3, style === 4 ? [0.8, 0.12, 0.2] : nsp ? [0.3, 0.3, 0.33] : [0.75, 0.76, 0.8], 2);   // the centre cap
     });
     return vb.build();
   }
@@ -1519,7 +1521,7 @@
   Mo.vehicleGeometry = vehicleGeometry;
   Mo.syncVehicle = syncVehicle;
   Mo.vehicleStats = function () { return { built: stats.built }; };
-  Mo.VLOD_NEAR = 30; Mo.VLOD_MID = 80;
+  Mo.VLOD_NEAR = 22; Mo.VLOD_MID = 55;
   Mo.normMods = normMods; Mo.modsKey = modsKey;
   Mo.wheelGeometry = wheelGeo;
 })();
