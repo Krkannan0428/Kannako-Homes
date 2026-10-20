@@ -18,6 +18,11 @@
  * Ped inputs: ped.intent = {x, z, run} (world-space move direction, length <= 1), ped.wantJump,
  * ped.moveTo(x, z, run), ped.enterVehicle(v, seat), ped.exitVehicle().
  *
+ * v0.3 shooting track: Ped.update fills ped.pose every step (Combat.fillPose: the plan's pose contract), a vault over low cover
+ * runs through Combat.vaultStep, Player.control hands the on-foot input to Combat while in cover (coverControl / coverToggle) and
+ * takes the melee counter on jump, an aiming player walks at Combat.moveScale, and Entities.sync calls Combat.postSync after each
+ * ped's syncMesh (the held gun, the holsters, the arms on the gun). Ped.prototype.syncMesh itself belongs to the models track.
+ *
  * Vehicle local frame: forward = GTP.util.yawToDir(yaw), right = (-f.z, f.x).
  * doorPoints / wheelOffsets from GTP.Assets.vehicleGeometry are {x: right, z: forward} metres.
  */
@@ -177,7 +182,12 @@
     }
 
     // --------------------------------------------------------------- update --
+    // one step of the ped, then ped.pose (the v0.3 pose contract the animation reads, filled by Combat.fillPose)
     update(dt) {
+      this._step(dt);
+      if (GTP.Combat && GTP.Combat.fillPose) { try { GTP.Combat.fillPose(this, dt); } catch (e) { U.reportError(e, 'combat.fillPose'); } }
+    }
+    _step(dt) {
       this.age += dt;
       if (this.hurtT > 0) this.hurtT -= dt;
       if (this.firePoseT > 0) this.firePoseT -= dt;
@@ -204,6 +214,8 @@
         if (en.v.removed || en.v.wreck || en.v.sinking) { this.entering = null; this.state = 'idle'; this.stop(); }
         else if (dd < 0.35 || en.t >= C.PHYS.enterWalk || en.v.speed2d() > 3) { this.stop(); this._finishEnter(); return; }
       }
+      // a vault over low cover (Combat.vaultStep moves the body along the hop; no physics until it lands)
+      if (this._vault && GTP.Combat && GTP.Combat.vaultStep) { GTP.Combat.vaultStep(this, dt); this.state = 'jump'; this.animTime += dt; return; }
       if (this.swimming) { this._swim(dt); return; }
       this._walk(dt);
     }
@@ -213,6 +225,7 @@
       var ix = this.intent.x, iz = this.intent.z, l = Math.sqrt(ix * ix + iz * iz);
       if (l > 1) { ix /= l; iz /= l; l = 1; }
       var target = l > 0.01 ? (this.intent.run ? this.runSpeed() : this.walkSpeed()) * l : 0;
+      if (this.kind === 'player' && GTP.Combat && GTP.Combat.moveScale) target *= GTP.Combat.moveScale(this);   // aiming a heavy gun slows the walk
       var tvx = l > 0.01 ? ix / l * target : 0, tvz = l > 0.01 ? iz / l * target : 0;
       var accel = this.onGround ? P.accel / 2 : P.accel / 8;
       this.vx = U.damp(this.vx, tvx, accel, dt); this.vz = U.damp(this.vz, tvz, accel, dt);
@@ -1018,13 +1031,21 @@
         return;
       }
       if (this.entering) return;
+      var CBf = GTP.Combat;
+      // in cover Combat drives the input (move along it, peek, blind fire, vault, leave); the cover key toggles it
+      if (this.cover && CBf && CBf.coverControl) { CBf.coverControl(this, dt); if (A && A.engine) A.engine(0, null); return; }
+      if (In.pressed('cover') && CBf && CBf.coverToggle && CBf.coverToggle(this)) { if (A && A.engine) A.engine(0, null); return; }
       // on foot: move relative to the camera yaw; the character turns toward movement
       var camYaw = GTP.Render && GTP.Render.rig ? GTP.Render.rig.yaw : 0;
       var f = U.yawToDir(camYaw), rx = -f.z, rz = f.x;
       this.intent.x = f.x * mv.z + rx * mv.x; this.intent.z = f.z * mv.z + rz * mv.x; this.intent.run = In.down('run');
+      // a run to the next cover (cover pressed while in cover, looking away from it) keeps going until a key moves the player
+      if (this._coverRun && !(mv.x || mv.z)) { var cc = this._coverRun.cand; this.moveTo(cc.x, cc.z, true); }
       this.aiming = In.down('aim') && !this.swimming;
       if (this.aiming) this.aimYaw = camYaw;   // otherwise Combat points aimYaw at the auto-target
-      if (In.pressed('jump') && this.onGround && !this.swimming) { this.wantJump = true; this.stats.jumps++; }
+      // jump; while an attacker's swing is coming it is the melee counter instead
+      if (In.pressed('jump') && CBf && CBf.counterReady && CBf.counterReady(this)) CBf.counter(this);
+      else if (In.pressed('jump') && this.onGround && !this.swimming) { this.wantJump = true; this.stats.jumps++; }
       if (In.pressed('enter') && this.exitLock <= 0) {
         var nv = this.nearestVehicle(C.PLAYER.enterRange);
         if (nv) this.enterVehicle(nv, 0);
@@ -1207,7 +1228,13 @@
     },
     sync: function (alpha) {
       var list = E.list;
-      for (var i = 0; i < list.length; i++) { try { list[i].syncMesh(alpha); } catch (err) { U.reportError(err, 'syncMesh'); } }
+      var CB = GTP.Combat, post = CB && CB.postSync;
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        try { e.syncMesh(alpha); } catch (err) { U.reportError(err, 'syncMesh'); }
+        // after the body is posed: the held gun, the holsters and (without GTP.Anim) the arms on the gun
+        if (post && (e.kind === 'ped' || e.kind === 'player')) { try { post(e); } catch (err2) { U.reportError(err2, 'combat.postSync'); } }
+      }
     }
   };
 })();
