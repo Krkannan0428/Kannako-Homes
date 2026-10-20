@@ -1533,7 +1533,8 @@
   }
   function fleetTick(dt) {
     var Wd = W(); if (!Wd || !Wd.landmarks) return;
-    if (fleet.lmRef !== Wd.landmarks) { fleet.lmRef = Wd.landmarks; if (GTP.makeRng) vrng = GTP.makeRng(((GTP.game && GTP.game.seed) ^ 0x7EB1C) >>> 0); fleet.slots = Vehicles.fleet.enabled ? buildSlots() : []; fleet.t = 0; fleet.first = true; }
+    if (fleet.lmRef !== Wd.landmarks || fleet.builtOn !== Vehicles.fleet.enabled) {
+      fleet.builtOn = Vehicles.fleet.enabled; fleet.lmRef = Wd.landmarks; if (GTP.makeRng) vrng = GTP.makeRng(((GTP.game && GTP.game.seed) ^ 0x7EB1C) >>> 0); fleet.slots = Vehicles.fleet.enabled ? buildSlots() : []; fleet.t = 0; fleet.first = true; }
     fleet.t -= dt; if (fleet.t > 0) return; fleet.t = 0.5;
     var p = player(); if (!p) return;
     var block = GTP.Interiors && GTP.Interiors.active;
@@ -1727,6 +1728,8 @@
         if (v && data.vehicle && (fam(v) === 'chute' || (isAir(v) && !v.onGround))) data.vehicle = null;
       }, load: function (data) { loadState((data && data.vehicles) || {}); } });
       // NEW GAME empties the garages (a load restores them through the hook above)
+      // a new world (New Game, a load, the boot) rebuilds the fleet slots
+      if (GTP.Events) GTP.Events.on('load:begin', function () { fleet.lmRef = null; });
       if (GTP.Events) GTP.Events.on('load:begin', function (e) { if (e && e.reason === 'new') { garages = {}; Vehicles._garages = garages; pendingMods = null; } });
       if (GTP.Events) GTP.Events.on('vehicle:enter', function (e) {
         if (!pendingMods || !e || !e.ped || e.ped.kind !== 'player' || !e.vehicle) return;

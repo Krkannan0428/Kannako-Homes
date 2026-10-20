@@ -488,7 +488,7 @@
     blip(out, t, { type: 'sawtooth', f: 620, f1: 560, dur: 0.12, g: 0.06, a: 0.002, lp: 2000 });   // the spinning barrels
     return 0.2;
   };
-  SFX.shot_thrown = function (out, t) { hiss(out, t, { dur: 0.28, g: 0.75, bp: 900, fc1: 320, fglide: 0.26, q: 1.4, a: 0.03 }); return 0.35; };
+  SFX.shot_thrown = function (out, t) { hiss(out, t, { dur: 0.5, g: 0.75, bp: 900, fc1: 260, fglide: 0.45, q: 1.4, a: 0.06, hold: 0.1 }); return 0.6; };   // the arm's whoosh, long and airy
   SFX.shot_special = function (out, t) {   // the megaphone squeal
     blip(out, t, { type: 'sawtooth', f: 1800, f1: 2300, glide: 0.25, dur: 0.35, hold: 0.15, g: 0.26, a: 0.02, bp: 2000, q: 3 });
     blip(out, t, { type: 'square', f: 220, dur: 0.3, g: 0.24, a: 0.01, bp: 1200, q: 2 });

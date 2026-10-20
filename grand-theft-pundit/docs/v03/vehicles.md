@@ -240,6 +240,20 @@ screenshots: `veh_lineup_air`, `veh_lineup_sea`, `veh_heli_flight`, `veh_parachu
 - No QA bug in `docs/v03/qa_r1_bugs.json` has a hint pointing at `03_audio.js` or `06b_vehicles_air_sea.js`, so
   none were fixed here (CMB-07 and CMB-09 mention the police helicopter, which lives in 07_ai.js / 10_render.js).
 
+## Review fixes (an adversarial self-review of this branch)
+
+- Exits from an aircraft over or on a roof below bail height are refused with a toast (peds cannot stand on roofs:
+  `World.heightAt` has no roofs); the parachute lands on the ground (the canopy slides off roofs).
+- A plane no longer bounces back into the air after a nose-up touchdown (takeoff needs S on a takeoff roll);
+  a stale `lastImpact` no longer turns a light bump into a crash; rolling off a ledge builds the sink under gravity.
+- A save made in the air (or under the canopy) stores no vehicle: the player loads on foot below it. A pre-0.3 save
+  clears the garages. A boat leaves a garage only where there is water within 120 m (else it stays stored).
+- Cutscenes / knockouts zero a boat's throttle; a landed canopy is locked; the flight camera has the building guard;
+  the fleet rng is reseeded from the game seed; the fleet rebuilds on every `load:begin` (New Game, a load).
+- A thrown rider takes one dose of damage (not two) and a pillion comes off too.
+- Audio: per-class report ranges, `boss:phase` cues only on a phase change, the specials map seeded silently and reset
+  on a load, the Combat shop's purchase no longer double-plays, a dry-fire rate limit.
+
 ## Known issues / for other tracks
 
 - UI: the radio ticker is drawn whenever the player is in a vehicle; under the parachute the radio is silent, so the
@@ -249,4 +263,7 @@ screenshots: `veh_lineup_air`, `veh_lineup_sea`, `veh_heli_flight`, `veh_parachu
   and speedboat (seen through the glass) are drawn; other passengers are hidden as in cars.
 - AI peds may carjack a parked aircraft; an AI-driven aircraft without `autopilot` sits idle on the ground.
 - Cops do not follow the player into the air or onto the water (they drive to the nearest road point).
+- `Render.detach` disposes only `userData.paint`; the custom meshes' second paint and a tinted glass clone leak a
+  material per despawned vehicle (small; folding `paint2` / `glass` into detach at integration fixes it).
+- Players cannot land a helicopter on a roof and step out (see the review fixes); a roof-aware ped floor would allow it.
 - No touch controls for the aircraft axes beyond the move stick (collective / throttle need the keyboard or a pad).

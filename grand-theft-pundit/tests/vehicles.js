@@ -532,7 +532,7 @@ H.run('vehicles', async (t) => {
     V.store('safe_brownstone', g.debug.spawnVehicle(p.x + 20, p.z + 10, 'sedan'));
     out.saved = g.saveSlot(2, { reason: 'test' }); out.loaded = g.loadSlot(2); g.advance(1);
     out.reloaded = { inV: p.inVehicle && p.inVehicle.type, garage: V.garage('safe_brownstone').length };
-    g.newGame(7); g.advance(1);
+    V.fleet.enabled = true; g.newGame(7); g.advance(1);
     out.newGame = { garage: V.garage('safe_brownstone').length + V.garage('safe_dorm').length, fleet: V.state().fleet.length };
     return out;
   });
