@@ -132,12 +132,47 @@ GTP.Input.touch = { active, stick:{x,y}, buttons:{...} }  // filled by UI.touch
 
 ### GTP.Audio (03_audio.js)
 
-Same as the 2D contract: lazy `AudioContext` on `unlock()`, silent no-op in
-headless/muted. `play(name, {x, z, gain})` positions SFX relative to the camera
-(simple distance attenuation and stereo pan). SFX names: `shot punch hit
-explode pickup horn siren enter exit mission fail ui cash debate dunk jump land
-skid crash`. `engine(level, cls)`, `radio.setStation/next/current/stop`,
-`setMuted`. Radio plays only inside a vehicle, fades on exit.
+Same as the 2D contract: lazy `AudioContext` on `unlock()` (every keydown,
+mousedown and touch calls it; it also resumes a suspended context), silent
+no-op in headless (no context is ever created) and gain 0 with no voices when
+muted. `play(name, {x, z, gain})` positions SFX relative to the camera rig
+(the listener is the rig focus facing the rig yaw: full volume within 5 m,
+quadratic falloff to a per-sound range, stereo pan by the right vector; a sound
+beyond earshot creates nothing). SFX names: `shot punch hit explode pickup horn
+siren enter exit mission fail ui cash debate dunk jump land skid crash`, plus
+`swap` (weapon switch, from the `weapon` event) and `static` (radio tuning).
+`horn` picks its voicing by the vehicle class at `{x, z}` (or `opts.cls`);
+`crash` and `land` scale their length and metal ring with `gain`; `siren` as a
+one-shot is a whoop (the bust, the first star). All synthesis: noise bursts and
+oscillators through envelopes and filters, a feedback delay for body.
+
+```js
+GTP.Audio.init({headless, mute}); unlock(); play(name, {x, z, gain, cls?}) -> bool; setMuted(b); muted, headless, unlocked, ctx
+GTP.Audio.engine(level, cls)          // Player.control each step: speed / top speed and the vehicle type (null on foot);
+                                       // saw + sub + detuned saw through a lowpass, four or five gears, an idle lump, revs on throttle;
+                                       // forgotten after 0.25 s without a call, so menus and the title go quiet
+GTP.Audio.heli(on|level, x, z)        // AI.Heli: rotor thump (AM at the blade-pass rate) + turbine whine; forgotten after 1.6 s
+GTP.Audio.radio = { setStation(n), next(), prev(), current() -> station|null, stop(), isPlaying(), nowPlaying() -> string, level(), state() }
+GTP.Audio.station                     // the public station index (save/load and the UI write it; current() reads it)
+GTP.Audio.update(dt)                  // Game.step: radio logic + sequencer, engine, the siren scan (every 0.2 s), heli, voice GC
+GTP.Audio.state()                     // tests: {ctx, voices, counts, radio, engine, siren, heli, errors, disabled}
+GTP.Audio.counts[name]                // play() calls per name, even in headless
+GTP.Audio.render(kind, opts) -> Promise<{peak, rms, env, loudUntil}>   // tests/tuning: offline render of an SFX name
+                                       // ({gain, cls}), 'radio' ({station, seconds}), 'engine' ({cls, level}), 'sirenLoop', 'heliLoop'
+```
+
+The siren loop scans vehicles with `siren` set within 160 m of the listener
+and follows the nearest one (gain by distance, pan, the wail LFO faster with
+more cars). The radio is a sixteen-step sequencer over
+`GTP.Content.radio.stations[i].pattern` (see that file's header): bass and
+lead degrees in the station scale, a pad chord per bar from `chords`, a drum
+kit chosen by tempo (march / soft / house), swing on the off-sixteenths,
+`sustain`, `transposeBass`, `jingle` (ducks the music), `talk` (four bars of
+bumper, eight of host murmur behind phone-line static). It plays only inside a
+vehicle in `playing` / `cutscene`, fades in and out over about half a second,
+realigns to the context clock when it comes back (the station "kept playing"),
+and plays `static` on a switch. Audio randomness runs on `GTP.makeRng(0xA0D10)`.
+After six caught errors the module disables itself (`disabled`).
 
 ### GTP.World (04_world.js)
 
@@ -424,7 +459,8 @@ Camera rig rules (this is where GTA feel lives):
 ### GTP.UI (11_ui.js)
 
 2D overlay on `canvas#hud` (same size as the GL canvas, crisp at
-devicePixelRatio). Everything the 2D contract listed: title screen (attract
+devicePixelRatio; Render sets the transform and passes logical width/height
+to `draw`). Everything the 2D contract listed: title screen (attract
 camera flying over the city, logo with the folding-table T, "Press Enter /
 Tap", Continue, Controls, the "A parody. All characters are fictional." line),
 HUD (health/armor, money roll-up, wanted stars, weapon + ammo, objective text,
@@ -437,6 +473,35 @@ complete/failed cards, WASTED (“RATIO'D”) and BUSTED (“DEPLATFORMED”) ca
 pause menu, phone (missions, stats, controls), toasts, timer countdown, touch
 controls (left stick, right-side look area, buttons: Shoot, Aim, Enter, Jump,
 Weapon, Map, Pause), and both minigames exactly as specified in GDD §7.
+
+```js
+GTP.UI.init(); update(dt); draw(ctx, w, h); resize(w, h); onState(state, prev)
+GTP.UI.handleInput(state) -> bool      // Game._handleGlobalInput calls it first each step; true = the UI consumed the frame's
+                                        // menu input (title menu, pause, phone, dialogue advance). update() falls back to it
+GTP.UI.drawsBarks = true                // the AI skips its bark sprites; the HUD draws ped.line pills via Render.worldToScreen
+GTP.UI.banner(title, sub); card('passed'|'failed', title, sub); toast(text); ticker(text)   // mission hooks
+GTP.UI.showDialogue(line, next); hideDialogue(); advanceDialogue()   // typewriter box; confirm / tap / E skip, lines auto-advance after
+                                                                      // max(C.MISSIONS.lineSeconds, typing + reading time)
+GTP.UI.startMinigame('debate'|'ratio', params, done); endMinigame()  // sets state 'minigame' itself when called outside Missions
+GTP.UI.minigames.debate = { start(params, onResult), answer(id, shout), update, draw, state, active, cancel }   // id: 'SOURCE?' 'LOUDER' 'PIVOT' 'DEFINE TERMS' 'WHATABOUT'
+GTP.UI.minigames.ratio  = { start(params, onResult), post(), hottake(), zone() -> 'DUNK'|'REPLY'|'CRINGE', update, draw, state, active, cancel }
+GTP.UI.credits(id)                      // rolls the cast as ad tickers in state paused (page 'credits'); confirm / Esc skips
+GTP.UI.openPause('pause'|'phone'|'controls'|'credits'); closePause(); setMuted(b); isMuted()
+GTP.UI.drawPortrait(ctx, recipe, x, y, size, {color, shirt, voice, id, sign}); castPortrait(ctx, castId, x, y, size)
+GTP.UI.landmarkLabel(lm) (Goldplate prefixes per act flag); rozSign() (player.stats recency, else CHEESE / NO CHEESE / PARKING); currentStation()
+GTP.UI.touch = { handle(touchEvent), show(bool) }   // Input.onTouch forwards raw events; writes Input.touch.stick / look / buttons (Input.set for presses)
+GTP.UI.state                            // the live UI state for tests: toasts, banner, card, dialogue, ticker {cur, queue}, wanted {last, flashT}, touch {visible, buttons}, map {bake}, pause {page, tab}, attract, credits
+```
+
+States: the phone, pause menu, controls page and credits all live in Game
+state `paused` (`UI.state.pause.page`); the title's attract camera uses
+`Render.freeCam(true)` and is released on the first state change. The
+minimap bake (1 px per metre, landmark footprints lighter, the Loop on top) is
+rebuilt when `World._seed` changes. Layout scale `S = clamp(min(w/1280, h/720),
+0.62, 1.3)` (portrait phones: `clamp(w/560, 0.62, 1)`); with touch controls the
+minimap moves top-right (landscape) or top-left under the objective panel
+(portrait) so the buttons keep the bottom corners. Every HUD string is outlined
+or sits on a panel. Cosmetic randomness runs on forks of `GTP.rng`.
 
 ### GTP.Content (2x)
 
@@ -466,6 +531,9 @@ complete with their flags and weapons, player at the giver's door, intro
 skipped unless `intro=1`). `step()` runs the full simulation in `playing` and
 `cutscene`; in `minigame` only `Missions.update` and fx tick (the world is
 paused); in `wasted` / `busted` only Combat, the AI respawn fallback and fx.
+`_handleGlobalInput` hands each step to `GTP.UI.handleInput(state)` first (menus
+consume their keys: title, pause, phone, dialogue); Game's own title / pause
+toggles remain as the fallback when the UI does not claim the frame.
 
 ## 4. Save format
 

@@ -76,9 +76,17 @@
     return !W().raycastBuildings(ax, ay, az, dx / l, dy / l, dz / l, l);
   }
   function muzzle(ped) {
+    var v = ped.inVehicle;
+    if (v) {
+      // out of the driver's window (a scooter: over the bars), toward the aim yaw
+      var a = U.yawToDir(ped.aimYaw != null ? ped.aimYaw : v.yaw), side = v.localToWorld(v.type === 'bike' ? 0 : -(v.hw + 0.25), v.type === 'bike' ? -0.6 : -v.hl * 0.15);
+      return { x: side.x + a.x * 0.3, y: v.y + v.cls.height * (v.type === 'bike' ? 1.1 : 0.72), z: side.z + a.z * 0.3 };
+    }
     var f = U.yawToDir(ped.yaw), rx = -f.z, rz = f.x, sc = (ped.look && ped.look.scale) || 1;
     return { x: ped.x + rx * 0.28 * sc + f.x * 0.35, y: ped.y + 1.32 * sc, z: ped.z + rz * 0.28 * sc + f.z * 0.35 };
   }
+  // pistol, SMG and shotgun fire from a driver's seat; fists, the megaphone and the hottake do not
+  function driveByWeapon(id) { var w = WEAPONS[id]; return !!w && !w.melee && !w.cone && !w.lobbed; }
   function jitter(d, spread) {
     if (!spread) return { x: d.x, y: d.y, z: d.z };
     var r = R(), ax = (r.random() - 0.5) * 2 * spread, ay = (r.random() - 0.5) * 2 * spread;
@@ -328,7 +336,7 @@
     var list = E().hash.query(p.x, p.z, 32, scratch3);
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
-      if (e.kind !== 'ped' || !e.alive || !isCopRole(e) || e.inVehicle) continue;
+      if (e.kind !== 'ped' || !e.alive || !isCopRole(e) || e.inVehicle || e.hostile) continue;   // mission goons in uniform are the attackers, not witnesses
       if (!losClear(e.x, e.y + 1.5, e.z, p.x, p.y + 1.2, p.z)) continue;
       p._copHeatT = now; wd.crime('shootNearCop', 'shootNearCop'); return;
     }

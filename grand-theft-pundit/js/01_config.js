@@ -25,7 +25,7 @@
     MAX_DPR: 2,
 
     // --- quality ----------------------------------------------------------
-    QUALITY: { shadows: true, drawDistance: 260, fogStart: 120, shadowMap: 2048, shadowBox: 120, anisotropy: 4, pedDraw: 130, vehicleDraw: 230 },
+    QUALITY: { shadows: true, drawDistance: 260, fogStart: 120, shadowMap: 2048, shadowBox: 120, anisotropy: 4, pedDraw: 110, vehicleDraw: 200 },   // entity draw ranges sit inside the fog, which buys a denser street
 
     // --- camera (the GTA feel lives here) ---------------------------------
     CAMERA: {
@@ -35,7 +35,7 @@
       carPitch: 0.14, carAutoYawDelay: 0.7, carAutoYawRate: 3.2, reverseFlipDelay: 0.5,
       rollMax: 0.05, rollDamp: 4,
       closeScale: 0.5,
-      aimDist: 1.6, aimSide: 0.6, aimFov: 50,
+      aimDist: 2.0, aimSide: 0.7, aimHeight: 1.85, aimLookHeight: 1.5, aimFov: 50,   // over the right shoulder, a touch above head height so the gun hand and the target both read
       pitchMin: -20 * Math.PI / 180, pitchMax: 60 * Math.PI / 180,
       lookSens: 0.0032,         // radians per pixel of mouse delta
       autoYawDelay: 1.2,        // seconds without look input before the camera eases behind movement
@@ -78,6 +78,8 @@
       corpseSeconds: 10, wreckSeconds: 60, offroadSpeed: 0.7,
       sinkSeconds: 3, swim: 1.3, swimRun: 1.9, climbOut: 1.6,
       bailSpeed: 6,             // exiting faster than this knocks the ped down
+      knockSpeed: 5.5,          // a car this fast knocks over lamp posts, hydrants, bins, benches and tables (trees and signals stand)
+      knockSlow: 0.78,          // speed kept through a knocked prop
       enterWalk: 0.4,           // seconds of door walk before the seat
       skidLateral: 3.5,         // lateral slip (m/s) that leaves skid marks
       pedSeparation: 0.9
@@ -98,8 +100,8 @@
     },
 
     // --- AI budgets -------------------------------------------------------
-    PEDS_TARGET: 70,
-    CARS_TARGET: 35,
+    PEDS_TARGET: 80,
+    CARS_TARGET: 44,
     ACTIVE_RADIUS: 220,
     SPAWN: { pedRadius: [40, 140], vehicleRadius: [60, 180] },
 

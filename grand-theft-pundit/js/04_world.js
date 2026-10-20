@@ -206,10 +206,11 @@
     // ---------------------------------------------------------- collision --
     // XZ push-out of a capsule (circle of radius r at height y) vs building
     // volumes, ramp wedges, deck barriers, solid props and the map edge.
-    _res: { x: 0, z: 0, hitX: false, hitZ: false, normal: { x: 0, z: 0 } },
+    _res: { x: 0, z: 0, hitX: false, hitZ: false, normal: { x: 0, z: 0 }, prop: null },
     resolveCapsule: function (x, z, y, r) {
       var res = World._res, hitX = false, hitZ = false, nx = 0, nz = 0;
       var w = World.w, tiles = World.tiles, stamp = ++World._stamp;
+      res.prop = null;   // the last solid prop that pushed (vehicles knock the small ones over)
       if (y == null) y = 0;
       // map edge
       var lim = World.bounds;
@@ -246,11 +247,11 @@
           if (pl) for (var k = 0; k < pl.length; k++) {
             var pr = pl[k];
             if (pr._st === stamp) continue; pr._st = stamp;
-            if (y > pr.y + (pr.h || 3) - 0.1) continue;
+            if (pr.fallen || y > pr.y + (pr.h || 3) - 0.1) continue;
             var ddx = x - pr.x, ddz = z - pr.z, rr = r + pr.r, d2 = ddx * ddx + ddz * ddz;
             if (d2 >= rr * rr) continue;
             var d = Math.sqrt(d2) || 0.001, push = rr - d + 0.001;
-            x += ddx / d * push; z += ddz / d * push; moved = true;
+            x += ddx / d * push; z += ddz / d * push; moved = true; res.prop = pr;
             if (Math.abs(ddx) > Math.abs(ddz)) { hitX = true; nx = U.sign(ddx); nz = 0; } else { hitZ = true; nz = U.sign(ddz); nx = 0; }
           }
         }

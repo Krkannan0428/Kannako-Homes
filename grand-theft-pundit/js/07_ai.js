@@ -26,7 +26,7 @@
     spawnEvery: 0.5, spawnPedsPerTick: 6, spawnCarsPerTick: 3,
     parkedTarget: 22, parkedChance: 0.42,
     viewSkip: 50, viewSkipCar: 80,                       // never spawn inside the camera frustum closer than this (m): peds / cars
-    nearBias: 1.6, nearBiasCar: 2.0,                     // spawn distance = min + (max - min) * rng^bias: crowds the streets near the player
+    nearBias: 1.6, nearBiasCar: 2.3,                     // spawn distance = min + (max - min) * rng^bias: crowds the streets near the player
     cruise: { street: 11, avenue: 14, highway: 22, ramp: 9, bus: 9, truck: 10, bike: 13 },
     turnSpeed: { right: 5.5, left: 7, uturn: 3 },
     turnRadius: { right: 4.2, left: 5.6 },
@@ -38,6 +38,7 @@
     sight: 70, sightCar: 95, heliSight: 120,
     bustRange: 1.5, bustTime: 1.0,
     wantedGrace: 8,                                      // seconds after a crime (or a set) before heat may start to decay
+    heatEvery: 0.6, heatEveryCar: 2.5,                   // one hitPed / attackCop crime per burst, one hitCopCar per ram (seconds)
     pursuitSpeed: 0.85,                                  // fraction of the cruiser's top speed
     ramRange: 32, exitRange: 13,
     response: {                                          // per star (index 0 = one star)
@@ -256,6 +257,7 @@
       wanted.seenThisTick = false;
     }
   };
+  var heatT = { ped: -9, cop: -9, car: -9 };
   function hookHeat() {
     var Ev = GTP.Events;
     Ev.on('vehicle:hitPed', function (e) { if (e.vehicle && e.vehicle.hasPlayer && e.vehicle.hasPlayer() && e.ped && e.ped.alive) wanted.crime(isCop(e.ped) ? 'attackCop' : 'hitPed', 'vehicle'); });
@@ -263,9 +265,14 @@
       var p = player(); if (!p || !e || !e.target || e.target === p) return;
       var src = e.src;
       if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
-      // self-defence: a ped flagged hostile (mission goons that attack the player) earns no heat
-      if (e.target.kind === 'ped') { if (e.target.hostile) { /* no crime */ } else if (isCop(e.target)) wanted.crime('attackCop', 'attackCop'); else if (e.type !== 'vehicle') wanted.crime('hitPed', e.type || 'hit'); }
-      else if (e.target.kind === 'vehicle' && e.target.isPolice) wanted.addHeat(1, 'hitCopCar');
+      // self-defence: a ped flagged hostile (mission goons that attack the player) earns no heat.
+      // Heat per hit is rate-limited: an SMG burst or a ram is one crime, not eleven (kills still count in full).
+      var now = simT();
+      if (e.target.kind === 'ped') {
+        if (e.target.hostile) { /* no crime */ }
+        else if (isCop(e.target)) { if (now - (heatT.cop || -9) >= K.heatEvery) { heatT.cop = now; wanted.crime('attackCop', 'attackCop'); } }
+        else if (e.type !== 'vehicle') { if (now - (heatT.ped || -9) >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', e.type || 'hit'); } }
+      } else if (e.target.kind === 'vehicle' && e.target.isPolice) { if (now - (heatT.car || -9) >= K.heatEveryCar) { heatT.car = now; wanted.addHeat(1, 'hitCopCar'); } }
       // gunfire scares the street
       if (e.type && /pistol|smg|shotgun|hottake|megaphone/.test(String(e.type))) AI.alarm(e.target.x, e.target.z, 26, p);
     });

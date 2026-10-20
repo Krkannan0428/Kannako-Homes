@@ -33,7 +33,7 @@
     startHold: 0.5,           // seconds inside the marker before the mission starts
     lineSeconds: 2.5,         // auto-advance per dialogue line when the UI has no dialogue box
     gotoRadius: 6, driveRadius: 12,
-    followTooClose: 6, followCloseTime: 3, followFarTime: 5, followPace: 0.42,
+    followTooClose: 6, followCloseTime: 3, followFarTime: 5, followPace: 0.58,   // a brisk 3.2 m/s: the player jogs, the long Lobby Row tails stay under three minutes
     waveEvery: 10, maxHostiles: 14,
     defeatHold: 3,
     giverRange: 170,          // the giver stands at a marker this close to the player
@@ -515,23 +515,27 @@
       ai.route = W().findPath(p.x, p.z, wp.x, wp.z, { mode: 'ped', fromY: p.y, toY: wp.y, maxExpansions: 12000 }) || [{ x: wp.x, z: wp.z, y: wp.y }];
       ai.ri = 0;
     }
-    while (ai.ri < ai.route.length - 1 && U.dist2d(p.x, p.z, ai.route[ai.ri].x, ai.route[ai.ri].z) < 1.3) ai.ri++;
+    while (ai.ri < ai.route.length - 1 && U.dist2d(p.x, p.z, ai.route[ai.ri].x, ai.route[ai.ri].z) < 1.3) { ai.ri++; ai.bestD = null; }
     var pt = ai.route[ai.ri], d = p.moveTo(pt.x, pt.z, true);
     p.intent.x *= K.followPace; p.intent.z *= K.followPace;
+    // a sidestep around whatever is in the way (a car stopped on the crosswalk, a crowd)
+    if (ai.sideT > 0) { ai.sideT -= dt; var sf = U.yawToDir(p.yaw); p.intent.x = -sf.z * ai.side * 0.7; p.intent.z = sf.x * ai.side * 0.7; p.intent.run = true; }
     var last = ai.ri >= ai.route.length - 1;
     if (last && d < 1.6) {
-      c.wi++; ai.route = null; p.stop();
+      c.wi++; ai.route = null; p.stop(); ai.bestD = null;
       if (c.wi >= c.wps.length) { c.arrived = true; return; }
       ai.pauseT = R().range(1.2, 2.2); ai.glance = R().chance(0.6);
       return;
     }
-    if (p.speed < 0.25) {
-      ai.stuckT += dt;
-      if (ai.stuckT > 1.4) {
-        ai.stuckT = 0; ai.stucks++; ai.route = null;
-        if (ai.stucks % 3 === 0) { var r = W().resolveCapsule(pt.x, pt.z, p.y, p.radius); p.x = r.x; p.z = r.z; p.snap(); }   // a lamp post is not a plot point
-      }
-    } else ai.stuckT = 0;
+    // stuck = no progress toward the route point (pushing on a car counts: the legs move, the ped does not)
+    if (ai.bestD == null || d < ai.bestD - 0.4) { ai.bestD = d; ai.progT = 0; } else ai.progT = (ai.progT || 0) + dt;
+    if (p.speed < 0.25) ai.stuckT += dt; else ai.stuckT = 0;
+    if (ai.stuckT > 1.4 || ai.progT > 2.5) {
+      ai.stuckT = 0; ai.progT = 0; ai.bestD = null; ai.stucks++;
+      ai.side = ai.stucks % 2 ? 1 : -1; ai.sideT = 0.9;
+      if (ai.stucks % 2 === 0) ai.route = null;
+      if (ai.stucks % 3 === 0) { var r = W().resolveCapsule(pt.x, pt.z, p.y, p.radius); p.x = r.x; p.z = r.z; p.snap(); }   // a lamp post is not a plot point
+    }
   }
   function giverTick(p, ai, dt) {
     var pl = player();

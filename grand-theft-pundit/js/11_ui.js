@@ -49,6 +49,7 @@
     credits: null,
     touch: { visible: false, coarse: false, ids: {}, stick: null, look: null, buttons: [], btnDown: {} },
     lastStat: null, statSnap: {},
+    hudTop: 0, objBottom: 0, chipBottom: 0,
     map: { bake: null, seed: null, w: 0, h: 0 },
     captionLog: [],
     muted: false,
@@ -116,6 +117,8 @@
     return (st && m[st.id]) || COL.cyan;
   }
   function failText(kind, dflt) { var R = GTP.Content && GTP.Content.radio; return (R && R.failTexts && R.failTexts[kind]) || dflt; }
+  var ROLE_LABEL = { civ: 'CIVILIAN', cop: 'COP', swat: 'BALLOON UNIT', thug: 'GOON', protester: 'MARCHER', hoa: 'HOA PATROL', npc: 'SOMEBODY', raccoon: 'RACCOON', courier: 'COURIER' };
+  function roleLabel(role) { return ROLE_LABEL[role] || String(role || 'ped').toUpperCase(); }
 
   // Landmark label gag (GDD 9): Goldplate prefixes per act.
   function landmarkLabel(lm) {
@@ -160,11 +163,13 @@
     ui.touch.buttons = touchLayout();
     ui.touch.coarse = ui.touch.coarse || false;
   }
+  // the minimap: bottom-right; with touch controls it moves up (top-right in landscape, top-left under the
+  // objective panel in portrait) so the buttons keep the bottom corners
   function minimapRect() {
-    var size = Math.round(px(MINIMAP_PX) * (portrait ? 0.72 : 1));
-    if (ui.touch.visible && portrait) return { x: W - safe.r - size, y: safe.t + px(150), s: size, top: true };
-    if (ui.touch.visible) return { x: W - safe.r - size, y: safe.t + px(118), s: size, top: true };
-    return { x: W - safe.r - size, y: H - safe.b - size, s: size, top: false };
+    var size = Math.round(px(MINIMAP_PX) * (portrait ? 0.68 : 1));
+    if (ui.touch.visible && portrait) return { x: safe.l, y: ui.objBottom + px(6), s: size, top: true, left: true };
+    if (ui.touch.visible) return { x: W - safe.r - size, y: ui.hudTop + px(140), s: size, top: true, left: false };
+    return { x: W - safe.r - size, y: H - safe.b - size, s: size, top: false, left: false };
   }
 
   // ---------------------------------------------------------- portraits ----
@@ -426,10 +431,12 @@
     var line1 = d ? String(d.name || d.id).toUpperCase() : 'OPEN WATER', line2 = near ? landmarkLabel(near) : (street || '');
     var chipFont = F(13, 'bold'), cw = Math.max(measure(ctx, line1, F(10, 'bold')), measure(ctx, line2, chipFont)) + px(22);
     cw = Math.min(cw, portrait ? W - safe.l - safe.r : px(360));
-    var chx = m.x + size - cw, chy = m.top ? m.y + size + px(6) : m.y - px(44);
+    var chx = m.left ? m.x : m.x + size - cw, chy = m.top ? m.y + size + px(6) : m.y - px(44);
     panel(ctx, chx, chy, cw, px(38), px(8), COL.panelSoft, 'rgba(255,255,255,0.12)');
-    txt(ctx, line1, chx + cw - px(10), chy + px(14), { font: F(10, 'bold'), color: COL.cyan, align: 'right', outline: false, maxW: cw - px(20) });
-    txt(ctx, line2, chx + cw - px(10), chy + px(30), { font: chipFont, color: COL.ink, align: 'right', outline: false, maxW: cw - px(20) });
+    var tx = m.left ? chx + px(10) : chx + cw - px(10), al = m.left ? 'left' : 'right';
+    txt(ctx, line1, tx, chy + px(14), { font: F(10, 'bold'), color: COL.cyan, align: al, outline: false, maxW: cw - px(20) });
+    txt(ctx, line2, tx, chy + px(30), { font: chipFont, color: COL.ink, align: al, outline: false, maxW: cw - px(20) });
+    ui.chipBottom = chy + px(38);
   }
   function nearLandmark(p) {
     var Wd = GTP.World, lms = Wd && Wd.landmarks; if (!lms) return null;
@@ -521,10 +528,15 @@
     var Ms = GTP.Missions, h = Ms && Ms.hud ? Ms.hud() : null;
     if (!h || !h.active || h.phase !== 'play' || !h.objective) return y;
     var maxW = Math.min(px(620), W - safe.l - safe.r - (portrait ? 0 : px(20)));
-    var lines = wrap(ctx, h.objective, F(15, 'bold', FONT_TEXT), maxW - px(28));
+    var objFont = F(15, 'bold', FONT_TEXT);
+    var lines = wrap(ctx, h.objective, objFont, maxW - px(28));
     var hasTimer = !!h.timer, hasProg = !!(h.progress && h.progress.total);
     var ph = px(14) + lines.length * px(19) + (hasTimer ? px(24) : 0) + (h.hint ? px(16) : 0);
-    var pw = maxW, x = (W - pw) / 2;
+    // the panel hugs its text (a timer bar keeps the full width so the countdown has room)
+    var want = px(28) + (hasProg ? px(60) : 0);
+    for (var li = 0; li < lines.length; li++) want = Math.max(want, measure(ctx, lines[li], objFont) + px(32) + (hasProg ? px(56) : 0));
+    if (h.hint) want = Math.max(want, measure(ctx, h.hint, F(11)) + px(32));
+    var pw = hasTimer ? maxW : U.clamp(want, Math.min(px(300), maxW), maxW), x = (W - pw) / 2;
     panel(ctx, x, y, pw, ph, px(10), COL.panelSoft, 'rgba(46,230,255,0.22)');
     ctx.fillStyle = COL.amber; ctx.fillRect(x, y + px(8), px(4), ph - px(16));
     var ty = y + px(24);
@@ -595,7 +607,7 @@
       var hp = U.clamp((t.hp || 0) / (t.maxHp || 1), 0, 1);
       ctx.fillStyle = 'rgba(10,12,20,0.75)'; rr(ctx, -half, half + px(6), size, px(6), px(3)); ctx.fill();
       ctx.fillStyle = hp > 0.5 ? COL.lime : hp > 0.25 ? COL.amber : COL.red; rr(ctx, -half, half + px(6), size * hp, px(6), px(3)); ctx.fill();
-      var label = t.kind === 'vehicle' ? (t.isPolice ? 'CRUISER' : String(t.type || 'car').toUpperCase()) : (t.castId ? castName(t.castId) : String(t.role || 'ped').toUpperCase());
+      var label = t.kind === 'vehicle' ? (t.isPolice ? 'CRUISER' : String(t.type || 'car').toUpperCase()) : (t.castId ? castName(t.castId) : roleLabel(t.role));
       txt(ctx, label, 0, half + px(24), { font: F(11, 'bold'), color: COL.ink, align: 'center' });
       ctx.restore();
     }
@@ -669,6 +681,9 @@
     if (tk.forceT > 0) tk.forceT -= dt;
     var on = !!(p && p.inVehicle) || tk.forceT > 0;
     if (!on) { tk.cur = null; tk.x = 0; return; }
+    // a station switch drops the old station's line (a forced BREAKING line and the shared Nap Dynasty ad stay)
+    var sid = st ? st.id : null;
+    if (tk.stationId !== sid) { if (tk.cur && !tk.cur.nap && tk.forceT <= 0) tk.cur = null; tk.stationId = sid; }
     if (!tk.cur) {
       tk.cur = tk.queue.length ? tk.queue.shift() : tickerNext(st);
       if (!tk.cur) return;
@@ -680,7 +695,7 @@
   function drawTicker(ctx, y) {
     var tk = ui.ticker, p = player(), st = currentStation(); if (!tk.cur || !p) return;
     var m = minimapRect();
-    var x = safe.l + (ui.touch.visible ? px(210) : 0), right = m.top ? W - safe.r : m.x - px(12), w = right - x;
+    var x = safe.l + (ui.touch.visible ? px(210) : 0), right = m.top ? W - safe.r - (ui.touch.visible ? px(230) : 0) : m.x - px(12), w = right - x;
     if (portrait) { x = safe.l; w = W - safe.l - safe.r; }
     if (w < px(160)) return;
     var h = px(26);
@@ -708,10 +723,9 @@
   }
   function hideDialogue() { ui.dialogue = null; }
   function logCaption(text) { ui.captionLog.push(String(text)); if (ui.captionLog.length > 40) ui.captionLog.shift(); }
+  // Enter / E / a tap skips to the next line; a line also auto-advances once it has been typed and read
   function advanceDialogue() {
     var d = ui.dialogue; if (!d) return false;
-    var len = String(d.line.text || '').length;
-    if (d.chars < len) { d.chars = len; d.done = true; return true; }
     var tok = ui.dlgToken, next = d.next;
     sfx('ui', 0.25);
     if (next) { try { next(); } catch (e) { U.reportError(e, 'ui.dialogue.next'); } }
@@ -724,12 +738,15 @@
     d.t += dt;
     var len = String(d.line.text || '').length;
     if (d.chars < len) { d.chars = Math.min(len, d.chars + dt * TYPE_CPS); if (d.chars >= len) d.done = true; }
+    var K = GTP.C.MISSIONS || {}, lineSeconds = K.lineSeconds || 2.5;
+    var autoT = Math.max(lineSeconds, len / TYPE_CPS + Math.max(1.6, len * 0.045));
+    if (d.done && d.t >= autoT) advanceDialogue();
   }
   function drawDialogue(ctx) {
     var d = ui.dialogue; if (!d) return;
     var line = d.line, who = line.who || 'everyone', cm = cast(who), color = line.color || (cm && cm.color) || COL.ink, name = line.name || castName(who);
     var ps = px(portrait ? 76 : 96), bw = Math.min(px(780), W - safe.l - safe.r), bh = ps + px(24);
-    var bx = (W - bw) / 2, by = H - safe.b - bh - px(ui.touch.visible ? 150 : 16);
+    var bx = (W - bw) / 2, by = H - safe.b - bh - px(ui.touch.visible && game().state === 'playing' ? 150 : 16);
     var a = Math.min(1, d.t / 0.18);
     ctx.save(); ctx.globalAlpha = a;
     panel(ctx, bx, by, bw, bh, px(12), 'rgba(10,12,24,0.9)', hexA(color, 0.6), px(2));
@@ -753,7 +770,12 @@
   // ------------------------------------------------ banner, cards, toasts ----
   function banner(title, sub) { ui.banner = { title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: 4.2 }; }
   function card(kind, title, sub) { ui.card = { kind: kind || 'passed', title: String(title || ''), sub: sub ? String(sub) : '', t: 0, dur: kind === 'failed' ? 4.2 : 4.8 }; }
-  function toast(text) { ui.toasts.push({ text: String(text == null ? '' : text), t: 0, dur: 3.2 }); if (ui.toasts.length > 4) ui.toasts.shift(); }
+  function toast(text) {
+    text = String(text == null ? '' : text);
+    // the full-screen cards already say it
+    if (text === failText('wasted', 'RATIO\'D') || text === failText('busted', 'DEPLATFORMED')) return;
+    ui.toasts.push({ text: text, t: 0, dur: 3.2 }); if (ui.toasts.length > 4) ui.toasts.shift();
+  }
   function updateCards(dt) {
     if (ui.banner) { ui.banner.t += dt; if (ui.banner.t > ui.banner.dur) ui.banner = null; }
     if (ui.card) { ui.card.t += dt; if (ui.card.t > ui.card.dur) ui.card = null; }
@@ -762,9 +784,17 @@
   function drawBanner(ctx) {
     var b = ui.banner; if (!b) return;
     var k = b.t / b.dur, a = k < 0.08 ? k / 0.08 : k > 0.85 ? (1 - k) / 0.15 : 1, slide = (1 - ease(Math.min(1, b.t / 0.5))) * px(60);
-    var m = minimapRect(), y = (m.top ? H - safe.b - px(70) : m.y - px(60)) - (ui.touch.visible ? px(120) : 0), rx = (m.top ? W - safe.r : m.x - px(16)) + slide;
-    var font = F(portrait ? 26 : 36, '900', FONT_DISPLAY), maxW = Math.min(px(640), W - safe.l - safe.r - (m.top ? 0 : m.s + px(20)));
+    var font = F(portrait ? 26 : 36, '900', FONT_DISPLAY);
     ctx.save(); ctx.globalAlpha = a;
+    if (ui.touch.visible) {
+      // phones: centred over the world, clear of the buttons
+      var cy = H * 0.42, maxW2 = W - safe.l - safe.r - px(20);
+      txt(ctx, b.title, W / 2 + slide, cy, { font: font, color: COL.gold, align: 'center', lw: px(6), outline: 'rgba(0,0,0,0.85)', maxW: maxW2 });
+      if (b.sub) txt(ctx, b.sub, W / 2 + slide, cy + px(22), { font: F(13, 'bold'), color: COL.ink, align: 'center', maxW: maxW2 });
+      ctx.restore(); return;
+    }
+    var m = minimapRect(), y = m.y - px(80), rx = m.x - px(16) + slide;   // clear of the district chip above the minimap
+    var maxW = Math.min(px(640), W - safe.l - safe.r - m.s - px(20));
     txt(ctx, b.title, rx, y, { font: font, color: COL.gold, align: 'right', lw: px(6), outline: 'rgba(0,0,0,0.85)', maxW: maxW });
     if (b.sub) txt(ctx, b.sub, rx, y + px(22), { font: F(13, 'bold'), color: COL.ink, align: 'right', maxW: maxW });
     ctx.restore();
@@ -785,7 +815,7 @@
   }
   function drawToasts(ctx) {
     if (!ui.toasts.length) return;
-    var y = H - safe.b - px(ui.touch.visible ? 160 : 56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0);
+    var y = ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0);
     for (var i = ui.toasts.length - 1; i >= 0; i--) {
       var t = ui.toasts[i], k = t.t / t.dur, a = k < 0.1 ? k / 0.1 : k > 0.8 ? (1 - k) / 0.2 : 1;
       var font = F(13, 'bold'), tw = Math.min(measure(ctx, t.text, font), W - px(60)) + px(24);
@@ -811,7 +841,6 @@
     var lines = wrap(ctx, sub, F(15, 'bold', FONT_TEXT), W - px(60));
     for (var i = 0; i < lines.length; i++) txt(ctx, lines[i], W / 2, cy + px(44) + i * px(20), { font: F(15, 'bold', FONT_TEXT), color: COL.ink, align: 'center', alpha: k });
     if (t > 1.2) txt(ctx, busted ? 'Respawning at the precinct' : 'Respawning at the hospital', W / 2, cy + px(48) + lines.length * px(20) + px(10), { font: F(11), color: COL.muted, align: 'center', alpha: Math.min(1, (t - 1.2) / 0.5) });
-    txt(ctx, busted ? 'DEPLATFORMED' : 'WASTED', W / 2, H - safe.b - px(16), { font: F(9, 'bold'), color: 'rgba(143,151,179,0.5)', align: 'center', outline: false });
   }
 
   // --------------------------------------------------------------- title ----
@@ -856,15 +885,16 @@
   }
   // the folding table T: a plank on two crossed legs
   function drawTableT(ctx, x, y, h, color) {
-    var w = h * 0.78, plank = h * 0.2;
+    var w = h * 0.9, plank = h * 0.26;
     ctx.save(); ctx.translate(x, y - h);
-    ctx.fillStyle = color; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.lineWidth = Math.max(2, h * 0.06); ctx.lineJoin = 'round';
-    rr(ctx, 0, 0, w, plank, plank * 0.25); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(w * 0.06, plank * 0.55, w * 0.88, plank * 0.2);
-    // legs: an X of two thin folding legs
-    var lw = h * 0.1, ly0 = plank, ly1 = h;
+    ctx.fillStyle = color; ctx.strokeStyle = 'rgba(0,0,0,0.9)'; ctx.lineWidth = Math.max(2, h * 0.07); ctx.lineJoin = 'round';
+    rr(ctx, 0, 0, w, plank, plank * 0.2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(w * 0.05, plank * 0.58, w * 0.9, plank * 0.18);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(w * 0.05, plank * 0.12, w * 0.9, plank * 0.14);
+    // legs: an X of two folding legs under the plank
+    var lw = h * 0.12, ly0 = plank, ly1 = h;
     ctx.fillStyle = color;
-    [[w * 0.18, w * 0.72], [w * 0.72, w * 0.18]].forEach(function (leg) {
+    [[w * 0.12, w * 0.76], [w * 0.76, w * 0.12]].forEach(function (leg) {
       ctx.beginPath(); ctx.moveTo(leg[0], ly0); ctx.lineTo(leg[0] + lw, ly0); ctx.lineTo(leg[1] + lw, ly1); ctx.lineTo(leg[1], ly1); ctx.closePath(); ctx.fill(); ctx.stroke();
     });
     ctx.fillStyle = '#1b1b22'; ctx.beginPath(); ctx.arc(w * 0.5, (ly0 + ly1) / 2, lw * 0.45, 0, Math.PI * 2); ctx.fill();
@@ -877,7 +907,7 @@
     txt(ctx, 'GRAND THEFT', cx, y, { font: f1, color: COL.gold, align: 'center', lw: px(7 * scale), outline: 'rgba(0,0,0,0.95)' });
     // PUNDI + table T, measured as one word
     ctx.font = f2;
-    var left = 'PUNDI', lw = ctx.measureText(left).width, tw = px(84 * scale) * 0.78, gap = px(6 * scale), total = lw + gap + tw;
+    var left = 'PUNDI', lw = ctx.measureText(left).width, tw = px(80 * scale) * 0.9, gap = px(6 * scale), total = lw + gap + tw;
     var x0 = cx - total / 2, y2 = y + px(84 * scale);
     ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = px(14); ctx.shadowOffsetY = px(6);
     txt(ctx, left, x0, y2, { font: f2, color: COL.gold, align: 'left', lw: px(9 * scale), outline: 'rgba(0,0,0,0.95)' });
@@ -905,7 +935,8 @@
       for (var i = 0; i < items.length; i++) {
         var it = items[i], iw = px(280), ih = px(40), ix = W / 2 - iw / 2, iy = y + i * px(48), sel = i === tt.sel;
         if (hovering(ix, iy, iw, ih)) { tt.sel = i; sel = true; }
-        panel(ctx, ix, iy, iw, ih, px(8), sel ? 'rgba(255,63,164,0.22)' : 'rgba(10,12,24,0.6)', sel ? COL.pink : 'rgba(255,255,255,0.15)', sel ? 2 : 1);
+        panel(ctx, ix, iy, iw, ih, px(8), 'rgba(10,12,24,0.88)', sel ? COL.pink : 'rgba(255,255,255,0.15)', sel ? 2 : 1);
+        if (sel) panel(ctx, ix, iy, iw, ih, px(8), 'rgba(255,63,164,0.22)', null);
         txt(ctx, (sel ? '▶  ' : '') + it.label, W / 2, iy + px(27), { font: font, color: sel ? COL.ink : COL.muted, align: 'center', outline: false });
         hit(ix, iy, iw, ih, titleActivate.bind(null, it.id), it.id);
       }
@@ -915,8 +946,8 @@
   }
   function drawControlsPanel(ctx, title, onClose) {
     var pw = Math.min(px(620), W - safe.l - safe.r), rows = CONTROLS.length, rh = px(portrait ? 22 : 24), ph = px(70) + rows * rh;
-    var x = (W - pw) / 2, y = Math.max(px(20), Math.min(H * 0.34, H - ph - px(50)));
-    panel(ctx, x, y, pw, ph, px(12), 'rgba(10,12,24,0.92)', COL.line, 1.5);
+    var x = (W - pw) / 2, y = Math.max(px(20), Math.min(H * 0.4, H - ph - px(50)));
+    panel(ctx, x, y, pw, ph, px(12), 'rgba(10,12,24,0.97)', COL.line, 1.5);
     txt(ctx, title, x + px(20), y + px(32), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false });
     txt(ctx, 'Enter / Esc: back', x + pw - px(20), y + px(30), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
     var ty = y + px(60), split = x + pw * (portrait ? 0.46 : 0.42);
@@ -934,6 +965,7 @@
     sfx('ui', 0.4);
     if (id === 'controls') { ui.title.page = 'controls'; return; }
     if (id === 'continue') { if (g.load && g.load()) return; toast('No save to continue; starting new'); }
+    if (ui.sessionStarted && g.newGame) { g.newGame(g.seed); ui.money.shown = null; ui.wanted.last = 0; }   // back from "quit to title": a fresh city
     g.setState('playing');
   }
 
@@ -1057,10 +1089,10 @@
       ry += rh;
     }
     if (st && st.active) {
-      var bw = px(180), bh = px(32), bx = x + w - bw, by = y + h - bh;
+      var bw = Math.min(px(190), w * 0.5), bh = px(24), bx = x + w - bw, by = y;
       var hov = hovering(bx, by, bw, bh);
-      panel(ctx, bx, by, bw, bh, px(8), hov ? 'rgba(255,59,48,0.35)' : 'rgba(255,59,48,0.18)', COL.red, 1.5);
-      txt(ctx, 'ABORT MISSION  (Backspace)', bx + bw / 2, by + px(21), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+      panel(ctx, bx, by, bw, bh, px(6), hov ? 'rgba(255,59,48,0.35)' : 'rgba(255,59,48,0.18)', COL.red, 1.5);
+      txt(ctx, 'ABORT MISSION  (Backspace)', bx + bw / 2, by + px(16), { font: F(9, 'bold'), color: COL.ink, align: 'center', outline: false, maxW: bw - px(8) });
       hit(bx, by, bw, bh, abortMission, 'abort');
     }
   }
@@ -1351,11 +1383,12 @@
         panel(ctx, cx, cy, cw, chh, px(10), 'rgba(255,255,255,0.04)', 'rgba(255,255,255,0.15)');
         txt(ctx, st.phase === 'roundEnd' ? (st.roundResult ? 'ROUND WON' : 'ROUND LOST') : st.phase === 'summary' ? 'DONE' : 'READY', cx + cw / 2, cy + chh * 0.55, { font: F(16 * ts, '900', FONT_DISPLAY), color: st.phase === 'roundEnd' ? (st.roundResult ? COL.lime : COL.red) : COL.muted, align: 'center', outline: false });
       }
-      // player counter cards
-      var cardsY = Math.max(py + ps + px(30), cy + chh + px(10)), capH = px(58) * ts, cardsH = by + bh - capH - cardsY - px(12);
+      // player counter cards, centred in the space between the top block and the caption strip
+      var areaY = Math.max(py + ps + px(30), cy + chh + px(10)), capH = px(58) * ts, areaH = by + bh - capH - areaY - px(14);
       var n = 5, gap = px(8), cwid = (bw - pad * 2 - gap * (n - 1)) / n, twoRows = cwid < px(84);
       if (twoRows) { cwid = (bw - pad * 2 - gap * 2) / 3; }
-      var chgt = Math.min(px(72) * ts, twoRows ? (cardsH - gap) / 2 : cardsH);
+      var chgt = Math.min(px(104) * ts, (twoRows ? (areaH - gap - px(24)) / 2 : areaH - px(24)));
+      var blockH = twoRows ? chgt * 2 + gap : chgt, cardsY = areaY + Math.max(0, (areaH - px(20) - blockH) / 2);
       var items = COUNTER_KEYS.concat([{ id: 'WHATABOUT', action: 'action', glyph: 'E', key: 'Space', grey: true }]);
       for (i = 0; i < items.length; i++) {
         var it = items[i], col2 = CARD_COLOR[COUNTERS[it.id]] || COL.muted;
@@ -1364,13 +1397,14 @@
         var pressed = st.lastAnswer && st.lastAnswer.id === it.id, okc = st.result && st.result.ok;
         var fill = pressed ? (okc === true ? 'rgba(157,255,60,0.3)' : okc === false ? 'rgba(255,59,48,0.3)' : 'rgba(255,255,255,0.2)') : it.grey ? 'rgba(255,255,255,0.03)' : hexA(col2, 0.12);
         panel(ctx, cxx, cyy, cwid, chgt, px(10), fill, it.grey ? 'rgba(255,255,255,0.18)' : col2, pressed ? 3 : 1.5);
-        txt(ctx, it.glyph, cxx + cwid / 2, cyy + chgt * 0.42, { font: F(20 * ts, '900', FONT_DISPLAY), color: it.grey ? COL.muted : col2, align: 'center', outline: false });
-        txt(ctx, it.id, cxx + cwid / 2, cyy + chgt * 0.72, { font: F((it.id === 'DEFINE TERMS' ? 9 : 11) * ts, 'bold'), color: it.grey ? COL.muted : COL.ink, align: 'center', outline: false, maxW: cwid - px(8) });
-        txt(ctx, it.grey ? 'beats nothing, loses nothing' : 'beats ' + COUNTERS[it.id], cxx + cwid / 2, cyy + chgt * 0.9, { font: F(7.5 * ts, ''), color: COL.muted, align: 'center', outline: false, maxW: cwid - px(6) });
+        txt(ctx, it.glyph, cxx + cwid / 2, cyy + chgt * 0.4, { font: F(24 * ts, '900', FONT_DISPLAY), color: it.grey ? COL.muted : col2, align: 'center', outline: false });
+        txt(ctx, it.grey ? 'E / Space' : it.key + ' / arrow', cxx + cwid - px(6), cyy + px(13), { font: F(8 * ts, 'bold'), color: 'rgba(238,241,251,0.55)', align: 'right', outline: false });
+        txt(ctx, it.id, cxx + cwid / 2, cyy + chgt * 0.68, { font: F((it.id === 'DEFINE TERMS' ? 10 : 12) * ts, 'bold'), color: it.grey ? COL.muted : COL.ink, align: 'center', outline: false, maxW: cwid - px(8) });
+        txt(ctx, it.grey ? 'never wins, never loses (-5)' : 'beats ' + COUNTERS[it.id], cxx + cwid / 2, cyy + chgt * 0.86, { font: F(8 * ts, ''), color: COL.muted, align: 'center', outline: false, maxW: cwid - px(6) });
         hit(cxx, cyy, cwid, chgt, (function (id) { return function () { debate.answer(id, GTP.Input.down('run')); }; })(it.id), 'card-' + it.id);
       }
       var shoutOn = GTP.Input.down('run');
-      txt(ctx, shoutOn ? 'SHOUT ARMED (Shift)' : 'hold Shift to SHOUT', bx + bw - pad, cardsY - px(6), { font: F(10 * ts, 'bold'), color: shoutOn ? COL.pink : COL.muted, align: 'right', outline: false });
+      txt(ctx, shoutOn ? 'SHOUT ARMED (Shift): +40 on a hit, double loss on a miss' : 'hold Shift to SHOUT: +40 on a hit, double loss on a miss, heat on exit', bx + pad, cardsY + blockH + px(16), { font: F(10 * ts, 'bold'), color: shoutOn ? COL.pink : COL.muted, outline: false, maxW: bw - pad * 2 });
       // caption strip
       var capY = by + bh - capH - px(8);
       panel(ctx, bx + pad, capY, bw - pad * 2, capH, px(8), 'rgba(255,255,255,0.05)', 'rgba(255,255,255,0.1)');
@@ -1499,7 +1533,7 @@
       var postLines = wrap(ctx, st.opp.post, F(12 * ts, '', FONT_TEXT), ppw - ps - px(40));
       for (var i = 0; i < Math.min(2, postLines.length); i++) txt(ctx, postLines[i], bx + pad + ps + px(22), ppy + px(44) + i * px(15), { font: F(12 * ts, '', FONT_TEXT), color: '#bfe3ff', outline: false });
       // columns: replies (left), counters (right)
-      var colY = ppy + pph + px(12), meterH = px(74) * ts, colH = by + bh - colY - meterH - px(16);
+      var colY = ppy + pph + px(12), meterH = px(86) * ts, colH = by + bh - colY - meterH - px(16);
       var rightW = narrow ? ppw : px(200) * ts, leftW = narrow ? ppw : ppw - rightW - px(12);
       var lx = bx + pad, rx = narrow ? bx + pad : lx + leftW + px(12);
       if (narrow) { colH -= px(70); }
@@ -1548,7 +1582,7 @@
       // meter
       var mx0 = bx + pad, mw = ppw, my = by + bh - meterH - px(8), mh = px(28);
       var green = st.dogpile > 0 ? 0.05 : 0.10;
-      txt(ctx, st.dogpile > 0 ? 'DOGPILE: meter doubled, dunk zone halved' : 'METER', mx0 + mw / 2, my - px(6), { font: F(10 * ts, 'bold'), color: st.dogpile > 0 ? (Math.floor(ui.t * 6) % 2 ? COL.red : COL.ink) : COL.muted, align: 'center', outline: false });
+      txt(ctx, st.dogpile > 0 ? 'DOGPILE: meter doubled, dunk zone halved' : 'METER', mx0, my - px(18), { font: F(10 * ts, 'bold'), color: st.dogpile > 0 ? (Math.floor(ui.t * 6) % 2 ? COL.red : COL.ink) : COL.muted, outline: false });
       ctx.save(); rr(ctx, mx0, my, mw, mh, px(8)); ctx.clip();
       ctx.fillStyle = COL.red; ctx.fillRect(mx0, my, mw, mh);
       ctx.fillStyle = COL.amber; ctx.fillRect(mx0 + mw * (0.5 - green - 0.3), my, mw * (green + 0.3) * 2, mh);
@@ -1589,8 +1623,8 @@
       { id: 'jump', action: 'jump', label: 'JUMP', carLabel: 'BRAKE', carAction: 'jump', x: right - big - px(10), y: bottom - big * 2 - r - px(34), r: r, color: COL.lime },
       { id: 'enter', action: 'enter', label: 'ENTER', carLabel: 'EXIT', carAction: 'enter', x: right - big * 2 - r - px(30), y: bottom - r * 3 - px(58), r: r, color: COL.amber },
       { id: 'weapon', action: 'weaponNext', label: 'WPN', carLabel: 'CAM', carAction: 'cameraMode', x: right - big - px(10), y: bottom - big * 2 - r * 3 - px(56), r: px(24), color: COL.ink },
-      { id: 'map', action: 'map', label: 'MAP', carLabel: 'MAP', carAction: 'map', x: W / 2 + px(44), y: safe.t + px(16), r: px(16), color: COL.ink, pill: true },
-      { id: 'pause', action: 'pause', label: 'PAUSE', carLabel: 'PAUSE', carAction: 'pause', x: W / 2 - px(44), y: safe.t + px(16), r: px(16), color: COL.ink, pill: true }
+      { id: 'map', action: 'map', label: 'MAP', carLabel: 'MAP', carAction: 'map', x: W / 2 + px(portrait ? 32 : 44), y: safe.t + px(14), r: px(14), hw: px(portrait ? 28 : 40), color: COL.ink, pill: true },
+      { id: 'pause', action: 'pause', label: 'PAUSE', carLabel: 'PAUSE', carAction: 'pause', x: W / 2 - px(portrait ? 32 : 44), y: safe.t + px(14), r: px(14), hw: px(portrait ? 28 : 40), color: COL.ink, pill: true }
     ];
   }
   function canvasPoint(t) {
@@ -1600,7 +1634,7 @@
   function touchButtonAt(x, y) {
     var p = player(), inCar = !!(p && p.inVehicle), bs = ui.touch.buttons;
     for (var i = 0; i < bs.length; i++) {
-      var b = bs[i], bw = b.pill ? px(40) : b.r, dx = x - b.x, dy = y - b.y;
+      var b = bs[i], bw = b.pill ? b.hw : b.r, dx = x - b.x, dy = y - b.y;
       if (b.pill ? (Math.abs(dx) <= bw && Math.abs(dy) <= b.r) : (dx * dx + dy * dy <= (b.r + px(8)) * (b.r + px(8)))) return { b: b, action: inCar ? b.carAction : b.action };
     }
     return null;
@@ -1647,7 +1681,7 @@
     }
   }
   function drawTouch(ctx) {
-    var g = game(), T = ui.touch; if (!g || (g.state !== 'playing' && g.state !== 'cutscene')) return;
+    var g = game(), T = ui.touch; if (!g || g.state !== 'playing') return;
     var p = player(), inCar = !!(p && p.inVehicle);
     ctx.save();
     // stick
@@ -1658,13 +1692,12 @@
     var kx = T.stick ? T.stick.x : sx, ky = T.stick ? T.stick.y : sy;
     ctx.fillStyle = 'rgba(238,241,251,0.85)'; ctx.beginPath(); ctx.arc(kx, ky, px(22), 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
-    if (g.state !== 'playing') { ctx.restore(); return; }
     var bs = T.buttons;
     for (var i = 0; i < bs.length; i++) {
       var b = bs[i], down = !!T.btnDown[b.id], label = inCar ? b.carLabel : b.label;
       if (b.id === 'aim' && inCar && !label) continue;
       ctx.globalAlpha = down ? 0.95 : 0.6;
-      if (b.pill) { panel(ctx, b.x - px(40), b.y - b.r, px(80), b.r * 2, b.r, down ? hexA(b.color, 0.5) : 'rgba(10,12,24,0.6)', 'rgba(255,255,255,0.4)', 1.5); }
+      if (b.pill) { panel(ctx, b.x - b.hw, b.y - b.r, b.hw * 2, b.r * 2, b.r, down ? hexA(b.color, 0.5) : 'rgba(10,12,24,0.6)', 'rgba(255,255,255,0.4)', 1.5); }
       else { ctx.fillStyle = down ? hexA(b.color, 0.55) : 'rgba(10,12,24,0.55)'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = hexA(b.color, 0.8); ctx.stroke(); }
       txt(ctx, label, b.x, b.y + px(4), { font: F(b.r > px(32) ? 12 : 10, 'bold'), color: COL.ink, align: 'center', outline: false });
       ctx.globalAlpha = 1;
@@ -1703,6 +1736,7 @@
       case 'playing':
         if (In.pressed('map')) { openPause('phone'); return true; }
         if (In.pressed('pause')) { openPause('pause'); return true; }
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { advanceDialogue(); return true; }
         return false;
       case 'cutscene':
         if (In.pressed('pause')) { openPause('pause'); return true; }
@@ -1714,13 +1748,16 @@
         if (pg.page === 'credits') { if (In.pressed('confirm') || In.pressed('back') || In.pressed('pause')) endCredits(); else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
         if (pg.page === 'controls') { if (In.pressed('back') || In.pressed('pause') || In.pressed('confirm')) pg.page = 'pause'; else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
         if (pg.page === 'phone') {
-          if (In.pressed('map') || In.pressed('pause') || (In.pressed('back') && !In.pressed('pause'))) { closePause(); return true; }
+          if (In.pressed('back') && !In.pressed('pause')) {   // Backspace: abort from the missions tab, otherwise close
+            if (pg.tab === 1 && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active) abortMission(); else closePause();
+            return true;
+          }
+          if (In.pressed('map') || In.pressed('pause')) { closePause(); return true; }
           if (In.pressed('left')) { pg.tab = (pg.tab + PHONE_TABS.length - 1) % PHONE_TABS.length; pg.scroll = 0; }
           if (In.pressed('right')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; }
           if (In.down('forward')) pg.scroll = Math.max(0, pg.scroll - px(4));
           if (In.down('back') && !In.pressed('back')) pg.scroll += px(4);
           if (In.wheelDelta) pg.scroll = Math.max(0, pg.scroll + In.wheelDelta * 0.5);
-          if (pg.tab === 1 && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active && In.pressed('back') && !In.pressed('pause')) { /* handled above as close; Backspace aborts below */ }
           if (click) pointerTap(In.mouse.x, In.mouse.y);
           return true;
         }
@@ -1741,12 +1778,6 @@
         return false;
     }
   }
-  // Backspace in the phone's missions tab aborts the mission: a separate key read so Esc never aborts
-  function phoneAbortKey() {
-    var pg = ui.pause, g = game(); if (!g || g.state !== 'paused' || pg.page !== 'phone' || pg.tab !== 1) return;
-    if (GTP.Input.pressed('back') && !GTP.Input.pressed('pause') && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active) abortMission();
-  }
-
   // ------------------------------------------------------------ minigames ----
   function startMinigame(gameId, params, done) {
     var g = game();
@@ -1774,7 +1805,7 @@
     var In = GTP.Input;
     if (s === 'title') { ui.title.page = 'menu'; ui.title.sel = 0; ui.dialogue = null; ui.toasts.length = 0; ui.banner = null; ui.card = null; endMinigame(); startAttract(); if (In) In.pointerLockWanted = false; }
     else if (prev === 'title') { stopAttract(); ui.money.shown = null; ui.wanted.last = 0; ui.statSnap = {}; }
-    if (s === 'playing') { if (In) In.pointerLockWanted = true; if (ui.pause.page === 'credits' && ui.credits) ui.credits = null; }
+    if (s === 'playing') { ui.sessionStarted = true; if (In) In.pointerLockWanted = true; if (ui.pause.page === 'credits' && ui.credits) ui.credits = null; }
     if (s === 'paused' || s === 'minigame' || s === 'cutscene') { if (In) { In.pointerLockWanted = s === 'cutscene'; if (s !== 'cutscene') In.releasePointerLock(); } }
     if (s === 'minigame' && !ui.minigame) { /* the Missions fallback drives it; nothing to draw but the frozen world */ }
   }
@@ -1793,16 +1824,20 @@
       if (h && h.title) txt(ctx, h.title.toUpperCase(), W - safe.r, bar - px(10), { font: F(11, 'bold'), color: COL.gold, align: 'right', outline: false });
       return;
     }
+    ui.hudTop = top;
+    var stacked = ui.touch.visible && portrait;   // phone portrait: objective row first, then map left / weapon right
     drawBars(ctx, lx, top, portrait ? px(150) : px(210));
     drawMoney(ctx, rx, top + px(24));
     drawStars(ctx, rx, top + px(46));
-    drawClock(ctx, rx, top + px(76));
-    drawWeapon(ctx, rx, top + px(86));
-    var oy = top + (portrait ? px(50) : px(2));
-    drawObjective(ctx, oy);
+    var oy = top + (portrait ? px(56) : px(2));
+    ui.objBottom = drawObjective(ctx, oy);
+    if (stacked) { drawWeapon(ctx, rx, ui.objBottom + px(6)); drawClock(ctx, rx, ui.objBottom + px(68)); }
+    else { drawClock(ctx, rx, top + px(76)); drawWeapon(ctx, rx, top + px(86)); }
     drawMinimap(ctx);
-    var m = minimapRect(), ty = m.top ? H - safe.b - px(26) - (ui.touch.visible ? px(0) : 0) : m.y + m.s - px(26);
-    if (ui.touch.visible && !m.top) ty = m.y - px(60);
+    var m = minimapRect(), ty;
+    if (stacked) ty = ui.chipBottom + px(8);
+    else if (ui.touch.visible) ty = H - safe.b - px(26);
+    else ty = m.y + m.s - px(26);
     if (!ui.dialogue) drawTicker(ctx, ty);
   }
   function draw(ctx, w, h) {
@@ -1868,7 +1903,6 @@
       try {
         if (ui.inputStep !== g.steps) handleInput(g.state);
         ui.inputStep = -1;
-        phoneAbortKey();
         if (g.state === 'title') { updateAttract(dt); return; }
         trackStats();
         updateMoney(dt); updateWanted(dt); updateCards(dt); updateDialogue(dt); updateTicker(dt);

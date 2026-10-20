@@ -11,6 +11,7 @@
  * ui_wanted3, ui_ratiod, ui_credits, ui_phone_touch (look at them). */
 'use strict';
 const H = require('./_harness');
+const GTP_MAP_PX = () => 160 * 4;   // 160 tiles x 4 px per tile (1 px per metre)
 
 H.run('ui', async (t) => {
   // ---- 1. title screen (non-headless, no skipTitle) ----
@@ -50,8 +51,10 @@ H.run('ui', async (t) => {
   });
   const foot = await page.evaluate(() => { const s = GTP.game.debug.snapshot(); return { state: s.state, mission: s.mission, timer: GTP.Missions.state.timer && Math.round(GTP.Missions.state.timer.remaining), street: s.street, district: s.district, map: !!GTP.UI.state.map.bake }; });
   console.log('  foot: ' + JSON.stringify(foot));
-  t.assert(foot.mission === 't_ui' && foot.timer > 100 && foot.map, 'mission timer runs and the minimap is baked');
+  t.assert(foot.mission === 't_ui' && foot.timer > 100, 'mission timer runs');
   await t.shot(page, 'ui_hud_foot');
+  const baked = await page.evaluate(() => { const b = GTP.UI.state.map.bake; return b ? [b.width, b.height] : null; });
+  t.assert(baked && baked[0] === GTP_MAP_PX(), 'the minimap is baked from the tiles once drawn: ' + JSON.stringify(baked));
 
   // ---- 2b. in a car at night: the radio ticker ----
   const car = await page.evaluate(() => {
@@ -142,7 +145,7 @@ H.run('ui', async (t) => {
   });
   console.log('  debate: ' + JSON.stringify(debate));
   t.assert(debate.win.state0 === 'minigame' && debate.win.state1 === 'playing', 'the world pauses in state minigame and resumes after');
-  t.assert(debate.win.result === true && debate.win.perfect >= 3 && debate.win.rounds === '1-0', 'correct counters inside 40% of the timer win with perfect hits');
+  t.assert(debate.win.result === true && debate.win.perfect >= 2 && debate.win.crowd === 100 && debate.win.rounds === '1-0', 'two perfect counters (+25 each) take the crowd to 100 and end the round won');
   t.assert(/^ROUNDS 1-0 · PERFECT HITS \d+ · SHOUTS 0 · MINDS CHANGED 0$/.test(debate.win.summary), 'summary format: ' + debate.win.summary);
   t.assert(debate.lose.result === false && debate.lose.rounds === '0-1', 'wrong counters lose the round and the match');
   // a mid-match screenshot of the debate screen
@@ -167,7 +170,7 @@ H.run('ui', async (t) => {
       GTP.game.advance(1 / 60);
       if (st.phase !== 'play') continue;
       if (out.posts === 2 && st.hottake) { T_.press('shoot'); out.hottakeAt = st.hottake; out.primed = st.primed; T_.press('action'); out.primedDunk = st.lastStamp; out.posts++; continue; }
-      if (R.zone() === 'DUNK' && st.postsLeft > 0) { T_.press('action'); out.posts++; }
+      if (R.zone() === 'DUNK' && Math.abs(st.meter - 0.5) < 0.06 && st.postsLeft > 0) { T_.press('action'); out.posts++; }   // the press lands one step later
       if (out.posts === 2 && !out.shotTaken) { out.shotTaken = true; GTP.game.render(); }
     }
     out.result = result; out.summary = st.summary; out.mine = Math.round(st.mine); out.theirs = Math.round(st.theirs); out.dunks = st.dunks; out.state = GTP.game.state;
@@ -202,6 +205,20 @@ H.run('ui', async (t) => {
   await t.shot(page, 'ui_credits');
   const skipped = await page.evaluate(() => { T_.press('confirm'); return GTP.game.state; });
   t.assert(skipped === 'playing', 'confirm skips the credits');
+  // quit to the title with a save on disk: CONTINUE appears and loads
+  const cont = await page.evaluate(() => {
+    GTP.game.debug.setMoney(1234); GTP.game.save();
+    GTP.UI.openPause('pause'); GTP.UI.state.pause.sel = 4; T_.press('confirm');
+    GTP.game.advance(0.2);
+    const items = GTP.UI.state.title.items.length ? GTP.UI.state.title.items.map((i) => i.id) : null;
+    GTP.game.render();
+    return { state: GTP.game.state, free: GTP.Render.free, items: GTP.UI.state.title.items.map((i) => i.id), sel: GTP.UI.state.title.sel, ok: items };
+  });
+  console.log('  title again: ' + JSON.stringify(cont));
+  t.assert(cont.state === 'title' && cont.free && cont.items[0] === 'continue', 'quit to title shows CONTINUE when a save exists');
+  await t.shot(page, 'ui_title_continue');
+  const loaded = await page.evaluate(() => { T_.press('confirm'); GTP.game.advance(0.2); return { state: GTP.game.state, money: GTP.game.player.money, free: GTP.Render.free }; });
+  t.assert(loaded.state === 'playing' && loaded.money === 1234 && !loaded.free, 'CONTINUE loads the save: ' + JSON.stringify(loaded));
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
@@ -227,7 +244,7 @@ H.run('ui', async (t) => {
     return { visible: s.touch.visible, active: GTP.Input.touch.active, w: W, h: H, bad, buttons: s.touch.buttons.length };
   });
   console.log('  touch: ' + JSON.stringify(touch));
-  t.assert(touch.visible && touch.active && touch.w === 400 && touch.h === 800, 'touch controls appear on the first tap at 400x800');
+  t.assert(touch.visible && touch.active && touch.w >= 360 && touch.w <= 400 && touch.h === 800, 'touch controls appear on the first tap at 400x800 (the shell keeps 16 px side gutters)');
   t.assert(touch.bad.length === 0 && touch.buttons === 7, 'all seven touch buttons sit inside the screen');
   await t.shot(mp, 'ui_phone_touch');
   // the virtual stick moves the player

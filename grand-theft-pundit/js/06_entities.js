@@ -347,7 +347,7 @@
     syncMesh(alpha) {
       var m = this.mesh; if (!m) return;
       var a = alpha == null ? 1 : alpha;
-      if (this.inVehicle) { m.visible = false; return; }
+      if (this.inVehicle) { this._syncRider(m, a); return; }
       var firstPerson = this.kind === 'player' && this.cameraMode === 'first';
       m.visible = !firstPerson && !this.removed && !tooFar(this, C.QUALITY.pedDraw);
       if (!m.visible) return;
@@ -405,10 +405,34 @@
       m.rotation.set(t, yaw, 0, 'YXZ');
       void b;
     }
+    // inside a car the body is hidden; on a scooter the rider sits on the saddle, feet on the board, hands on the bars
+    _syncRider(m, a) {
+      var v = this.inVehicle;
+      var rider = v.type === 'bike' && !v.wreck && !v.sinking && this.seat === 0;
+      var firstPerson = this.kind === 'player' && this.cameraMode === 'first';
+      if (!rider || firstPerson || this.removed || tooFar(this, C.QUALITY.pedDraw)) { m.visible = false; return; }
+      m.visible = true;
+      var parts = this._parts || (this._parts = {
+        legL: m.getObjectByName('legL'), legR: m.getObjectByName('legR'), armL: m.getObjectByName('armL'), armR: m.getObjectByName('armR'),
+        torso: m.getObjectByName('torso'), head: m.getObjectByName('head'), body: m.getObjectByName('body') || m
+      });
+      var vx = v._px + (v.x - v._px) * a, vy = v._py + (v.y - v._py) * a, vz = v._pz + (v.z - v._pz) * a;
+      var yaw = v._pyaw + U.wrapAngle(v.yaw - v._pyaw) * a, f = U.yawToDir(yaw);
+      // the saddle sits 0.86 m up and 0.3 m behind the bike's centre; the hips are 0.84 m above the feet
+      m.position.set(vx - f.x * 0.3, vy + 0.03, vz - f.z * 0.3);
+      m.rotation.set(0, yaw, 0, 'YXZ');
+      if (parts.legL) {
+        parts.legL.rotation.x = 1.0; parts.legR.rotation.x = 1.0;
+        parts.armL.rotation.x = 1.1; parts.armR.rotation.x = 1.1; parts.armL.rotation.z = 0.12; parts.armR.rotation.z = -0.12;
+        if (parts.torso) parts.torso.rotation.x = -0.3;
+        if (parts.head) parts.head.rotation.x = 0.2;
+      }
+    }
   }
 
   // ================================================================= Vehicle ==
   var COLL_CACHE = {};
+  var KNOCKABLE = { lamp: 1, hydrant: 1, bin: 1, bench: 1, table: 1 };
   function collPoints(type, cls) {
     var c = COLL_CACHE[type]; if (c) return c;
     var hw = cls.width / 2, hl = cls.length / 2, r = Math.min(0.32, hw * 0.45);
@@ -721,6 +745,13 @@
         var res = Wd.resolveCapsule(px, pz, gy, p.rad);
         var dx = res.x - px, dz = res.z - pz, dl = Math.sqrt(dx * dx + dz * dz);
         if (dl < 1e-5) continue;
+        // a small prop in the way of a moving car goes over instead of stopping it dead
+        if (res.prop && KNOCKABLE[res.prop.kind] && !res.prop.fallen && this.speed2d() > PH.knockSpeed && Math.abs(res.prop.y || 0) < 1) {
+          this._knockProp(res.prop);
+          res = Wd.resolveCapsule(px, pz, gy, p.rad);   // the prop is down: see what else pushed
+          dx = res.x - px; dz = res.z - pz; dl = Math.sqrt(dx * dx + dz * dz);
+          if (dl < 1e-5) continue;
+        }
         hit = true;
         this.x += dx; this.z += dz;
         var nx = dx / dl, nz = dz / dl, vn = this.vx * nx + this.vz * nz;
@@ -737,6 +768,21 @@
       if (impactMax > PH.damageSpeed) this._impact(impactMax, ix, iz, inx, inz, 'wall');
       else if (impactMax > 1.5 && this.age - this._sparkT > 0.2) { this._sparkT = this.age; fx({ type: 'spark', x: ix, y: this.y + 0.4, z: iz, vx: inx * 2, vy: 1.5, vz: inz * 2, size: 0.4, life: 0.25 }); }
       void dt;
+    }
+    // lamp posts, hydrants, bins, benches and tables fall in the car's direction; trees and signals stand
+    _knockProp(prop) {
+      var PH = C.PHYS, R = GTP.rng, sp = this.speed2d() || 1;
+      prop.fallen = { t: GTP.game ? GTP.game.time.t : this.age, dx: this.vx / sp, dz: this.vz / sp, by: this.id };
+      prop.solid = false;
+      this.vx *= PH.knockSlow; this.vz *= PH.knockSlow;
+      this.applyDamage(2 + sp * 0.15, null, 'prop');
+      var y = (prop.y || 0) + 0.6;
+      for (var i = 0; i < 5; i++) fx({ type: 'spark', x: prop.x, y: y + R.range(0, 0.8), z: prop.z, vx: this.vx * 0.2 + R.range(-3, 3), vy: R.range(1, 4), vz: this.vz * 0.2 + R.range(-3, 3), life: R.range(0.2, 0.45), size: R.range(0.25, 0.45) });
+      fx({ type: 'puff', x: prop.x, y: y, z: prop.z, size: 1.4, life: 0.5, color: 0xd8d4cc });
+      sfx('crash', prop.x, prop.z, U.clamp(sp / 30, 0.2, 0.6));
+      if (this.hasPlayer()) { shake(0.2); var pl = player(); if (pl) pl.stats.propsKnocked = (pl.stats.propsKnocked || 0) + 1; }
+      if (GTP.Render && GTP.Render.knockProp) { try { GTP.Render.knockProp(prop); } catch (e) { /* render optional */ } }
+      GTP.Events.emit('prop:knocked', { prop: prop, vehicle: this });
     }
     _impact(impact, x, z, nx, nz, kind, other) {
       var PH = C.PHYS, R = GTP.rng;
@@ -919,6 +965,15 @@
         }
         if (In.pressed('radio') && A && A.radio && A.radio.next) { var st = A.radio.next(); if (st && GTP.UI && GTP.UI.toast) GTP.UI.toast('Radio: ' + (st.name || st)); }
         if (In.pressed('enter') && this.exitLock <= 0) { this.exitVehicle(); if (A && A.engine) A.engine(0, v.type); return; }
+        if (In.pressed('weaponNext')) this.cycleWeapon(1);
+        if (In.pressed('weaponPrev')) this.cycleWeapon(-1);
+        // drive-by: aim holds the camera where the mouse points, fire shoots a pistol / SMG / shotgun out of the window (no camera change)
+        var CB = GTP.Combat, gun = CB && CB.driveByWeapon ? CB.driveByWeapon(this.weapon) : false;
+        this.aiming = gun && In.down('aim') && !this.swimming;
+        if (this.aiming) {
+          this.aimYaw = GTP.Render && GTP.Render.rig ? GTP.Render.rig.yaw : v.yaw;
+          if (In.down('shoot') && CB.fire) { try { CB.fire(this, this.weapon); } catch (e) { U.reportError(e, 'combat.driveby'); } }
+        }
         if (A && A.engine) A.engine(U.clamp(Math.abs(v.speed) / v.cls.maxSpeed, 0, 1), v.type);
         return;
       }

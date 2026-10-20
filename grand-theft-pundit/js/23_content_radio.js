@@ -19,7 +19,8 @@
  * root for that bar. Optional hints the engine may ignore: `sustain` (note
  * length as a fraction of a step, >1 means overlapping pads), `jingle`
  * ({every seconds, notes[]}, Pennant FM only), `transposeBass` (shift bass by
- * chords[bar]).
+ * chords[bar]), `talk` (a talk station: the pattern is its bumper, played for
+ * four bars, then the host murmurs behind phone-line static for eight).
  *
  * Ads and DJ lines are never spoken: they scroll on the ticker strip. Every
  * station runs its Nap Dynasty ad at minute 20 of the game hour
@@ -72,7 +73,8 @@
           },
           swing: 0,
           wave: { bass: 'sawtooth', lead: 'square' },
-          sustain: 0.35
+          sustain: 0.35,
+          talk: true
         }
       },
 

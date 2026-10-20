@@ -11,7 +11,7 @@
   var TILE = C.TILE, CURB = C.CURB_H, DECK_Y = C.DECK_Y, THICK = C.DECK_THICK, WATER_Y = C.WATER_Y, FLOOR_H = C.FLOOR_H;
   var CH = C.CHUNK_TILES;
   var UNIT_H = { pillar: 1, flag: 1, mast: 1, stack: 1, antenna: 1, sign: 1, bin: 1, billboard: 1 };
-  var _v = null, _v2 = null, _m = null, _q = null, _col = null, _e = null;
+  var _v = null, _v2 = null, _m = null, _q = null, _q2 = null, _col = null, _e = null;
 
   var Render = GTP.Render = {
     renderer: null, scene: null, camera: null, canvas: null, hudCanvas: null, hudCtx: null,
@@ -25,7 +25,7 @@
     init: function (canvasGl) {
       var A = Render._A = GTP.Assets, W = Render._World = GTP.World;
       A.init();
-      _v = new THREE.Vector3(); _v2 = new THREE.Vector3(); _m = new THREE.Matrix4(); _q = new THREE.Quaternion(); _col = new THREE.Color(); _e = new THREE.Euler();
+      _v = new THREE.Vector3(); _v2 = new THREE.Vector3(); _m = new THREE.Matrix4(); _q = new THREE.Quaternion(); _q2 = new THREE.Quaternion(); _col = new THREE.Color(); _e = new THREE.Euler();
       Render.canvas = canvasGl;
       Render.headless = !!(GTP.game && GTP.game.headless);
       var r = Render.renderer = new THREE.WebGLRenderer({ canvas: canvasGl, antialias: !Render.headless, powerPreference: 'high-performance', alpha: false, stencil: false });
@@ -205,6 +205,7 @@
       var t = g && g.time ? g.time.t : 0;
       Render.water.material.map.offset.set(t * 0.012, t * 0.008);
       Render.ensureChunks();
+      Render._animateFallen();
       Render.fx.sync();
       Render.renderer.render(Render.scene, cam);
       // HUD overlay
@@ -651,6 +652,9 @@
           if (kind === 'sign' || kind === 'billboard') py = W.heightAt(p.x, p.z, 0);
           _q.setFromAxisAngle(_v2.set(0, 1, 0), p.rot || 0);
           _m.compose(_v.set(p.x, py, p.z), _q, _v2.set(sx, sy, sz));
+          // remembered so a knocked-over prop can be tilted in place (and stays down across a rebuild)
+          p._inst = { im: im, k: k, x: p.x, y: py, z: p.z, sx: sx, sy: sy, sz: sz, rot: p.rot || 0 };
+          if (p.fallen) Render._fallenMatrix(p, 1, _m);
           im.setMatrixAt(k, _m);
           if (p.color) { _col.set(p.color); im.setColorAt(k, _col); }
           else if (kind === 'tree' || kind === 'palm' || kind === 'hedge') { var hv = U.hash2(p.x * 10, p.z * 10, 3); _col.setRGB(0.85 + hv * 0.3, 0.85 + U.hash2(p.x, p.z, 4) * 0.3, 0.85 + hv * 0.2); im.setColorAt(k, _col); }
@@ -697,6 +701,32 @@
         var pm = new THREE.PointsMaterial({ map: A.glow, size: 3.2, sizeAttenuation: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0, color: 0xffd9a0 });
         var ptsMesh = new THREE.Points(pg, pm); ptsMesh.renderOrder = 6; ptsMesh.userData.own = true;
         ch.group.add(ptsMesh); ch.glowPts = ptsMesh;
+      }
+    },
+    // ---------------------------------------------------- knocked props --
+    // A knocked prop tips over its base in the car's direction over 0.45 s (an InstancedMesh matrix update, no new draw).
+    _fallen: [],
+    knockProp: function (p) { if (p && Render._fallen.indexOf(p) < 0) Render._fallen.push(p); },
+    _fallenMatrix: function (p, k, out) {
+      var inst = p._inst, f = p.fallen, ease = k * k * (3 - 2 * k), tilt = ease * 1.5;
+      _v2.set(f.dz, 0, -f.dx);   // up x fallDir: tipping about this axis leans the prop toward the fall direction
+      if (_v2.lengthSq() < 1e-6) _v2.set(1, 0, 0);
+      _q.setFromAxisAngle(_v2.normalize(), tilt);
+      _q2.setFromAxisAngle(_v2.set(0, 1, 0), inst.rot);
+      _q.multiply(_q2);
+      out.compose(_v.set(inst.x, inst.y, inst.z), _q, _v2.set(inst.sx, inst.sy, inst.sz));
+      return out;
+    },
+    _animateFallen: function () {
+      var list = Render._fallen; if (!list.length) return;
+      var now = GTP.game && GTP.game.time ? GTP.game.time.t : 0;
+      for (var i = list.length - 1; i >= 0; i--) {
+        var p = list[i], inst = p._inst;
+        if (!p.fallen || !inst || !inst.im.parent) { if (!p.fallen) list.splice(i, 1); continue; }   // the chunk is gone: the rebuild sets the final pose
+        var k = Math.min(1, (now - p.fallen.t) / 0.45);
+        inst.im.setMatrixAt(inst.k, Render._fallenMatrix(p, k, _m));
+        inst.im.instanceMatrix.needsUpdate = true;
+        if (k >= 1) list.splice(i, 1);
       }
     },
     _planeGeo: function (w, h) {
@@ -987,7 +1017,7 @@
         } else {
           var since = now - (input ? input.lastLookTime : -1e9);
           if (inCar) {
-            if (since > CAM.carAutoYawDelay) {
+            if (since > CAM.carAutoYawDelay && !t.aiming) {   // a drive-by holds the camera where the mouse put it
               var tgt;
               if (v.reversing) tgt = v.reverseTime > CAM.reverseFlipDelay ? v.yaw + Math.PI : v.yaw;
               else tgt = speed > 2.5 ? U.dirToYaw(t.vx, t.vz) : v.yaw;
@@ -1014,8 +1044,9 @@
           } else desired = { x: t.x + d.x * 0.15, y: t.y + C.PLAYER.eye, z: t.z + d.z * 0.15 };
           fx = desired.x + d.x * 6; fy = desired.y - Math.sin(r.pitch) * 3; fz = desired.z + d.z * 6;
         } else if (aiming) {
-          desired = { x: t.x - d.x * CAM.aimDist + rx * CAM.aimSide, y: t.y + 1.55 + Math.sin(r.pitch) * 1.2, z: t.z - d.z * CAM.aimDist + rz * CAM.aimSide };
-          fx = t.x + d.x * 8 + rx * CAM.aimSide; fy = t.y + 1.45 - Math.sin(r.pitch) * 6; fz = t.z + d.z * 8 + rz * CAM.aimSide;
+          var ah = CAM.aimHeight || 1.85, al = CAM.aimLookHeight || 1.5;
+          desired = { x: t.x - d.x * CAM.aimDist + rx * CAM.aimSide, y: t.y + ah + Math.sin(r.pitch) * 1.2, z: t.z - d.z * CAM.aimDist + rz * CAM.aimSide };
+          fx = t.x + d.x * 8 + rx * CAM.aimSide; fy = t.y + al - Math.sin(r.pitch) * 6; fz = t.z + d.z * 8 + rz * CAM.aimSide;
           desired = Render.rig._pullIn(t.x, t.y + 1.5, t.z, desired, 0.4);
         } else {
           var D = dist * Math.cos(r.pitch), Hh = dist * Math.sin(r.pitch) + (height - lookH);
