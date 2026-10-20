@@ -307,10 +307,10 @@ H.run('systems', async (t) => {
   // ---- 10. stats page, errors ----
   r = await page.evaluate(() => {
     const pg = GTP.Systems.statsPage();
-    return { sections: pg.map((s) => s.id), rows: pg.reduce((a, s) => a + s.rows.length, 0), allStrings: pg.every((s) => s.rows.every((x) => typeof x.value === 'string' && x.label)) };
+    return { sections: pg.map((s) => s.id), rows: pg.reduce((a, s) => a + s.rows.length, 0), allStrings: pg.every((s) => s.rows.every((x) => typeof x.value === 'string' && x.label)), missions: pg[0].rows[0].value };
   });
   console.log('  stats page: ' + JSON.stringify(r));
-  t.assert(r.sections.length === 6 && r.rows >= 30 && r.allStrings, 'stats page model');
+  t.assert(r.sections.length === 6 && r.rows >= 30 && r.allStrings && / \/ \d+$/.test(r.missions), 'stats page model');
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'no errors: ' + errs.join('\n'));
 });

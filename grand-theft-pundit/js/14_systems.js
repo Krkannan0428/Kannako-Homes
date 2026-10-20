@@ -825,7 +825,15 @@
 
   // ========================================================= achievements ==
   var achievements = {
-    defs: function () { return table('achievements', FB.achievements); },
+    // a content entry without a condition inherits the fallback's by id; {condition: {stat, goal|gte}} is read too
+    defs: function () {
+      var fb = {}; FB.achievements.forEach(function (d) { fb[d.id] = d; });
+      return table('achievements', FB.achievements).map(function (d) {
+        var c = d.condition || {}, stat = d.stat || c.stat, goal = d.goal != null ? d.goal : (c.goal != null ? c.goal : c.gte);
+        if (!stat && fb[d.id]) { stat = fb[d.id].stat; goal = fb[d.id].goal; }
+        return Object.assign({}, d, { stat: stat || null, goal: goal == null ? null : +goal });
+      });
+    },
     def: function (id) { var L = achievements.defs(); for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; },
     unlocked: function (id) { return !!S.achievements.unlocked[id]; },
     list: function () {
@@ -906,7 +914,7 @@
   function fmtPlay(s) { var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h + 'h ' + (m < 10 ? '0' : '') + m + 'm'; }
   function statsPage() {
     var st = stats(), M = missions(), total = 0;
-    try { total = (M && M.all ? M.all().length : 0) || 0; } catch (e) { total = 0; }
+    try { total = (M && M.allMissions ? M.allMissions().length : 0) || 0; } catch (e) { total = 0; }
     function row(label, value, raw) { return { label: label, value: String(value), raw: raw == null ? value : raw }; }
     var acc = st.shots ? Math.round(100 * (st.hits || 0) / st.shots) + '%' : '-';
     return [
@@ -937,7 +945,16 @@
   // =============================================================== cheats ==
   var cheatBuf = '';
   var cheats = {
-    defs: function () { return table('cheats', FB.cheats).map(function (d) { return Object.assign({}, d, { code: String(d.code || d.id).toUpperCase().replace(/[^A-Z0-9]/g, '') }); }); },
+    // a content cheat whose effect this file does not implement borrows the fallback's (by id, else by position), so six
+    // codes always do something
+    defs: function () {
+      var known = { clock: 1, respectfully: 1, bigheads: 1, moonjump: 1, weather: 1, slowmo: 1 }, byId = {};
+      FB.cheats.forEach(function (d) { byId[d.id] = d; });
+      return table('cheats', FB.cheats).map(function (d, i) {
+        var fb = byId[d.id] || FB.cheats[i % FB.cheats.length], eff = known[d.effect] ? d.effect : fb.effect;
+        return Object.assign({}, d, { effect: eff, toggle: eff === 'bigheads' || eff === 'moonjump' || eff === 'slowmo', code: String(d.code || d.id).toUpperCase().replace(/[^A-Z0-9]/g, '') });
+      });
+    },
     list: function () { return cheats.defs().map(function (d) { return { id: d.id, name: d.name, desc: d.desc, found: !!S.cheats.found[d.id], on: !!S.cheats.on[d.id], toggle: !!d.toggle, code: S.cheats.found[d.id] ? d.code : null }; }); },
     isOn: function (id) { return !!S.cheats.on[id]; },
     enter: function (code) {
@@ -988,22 +1005,25 @@
   }
   function applyBigHeads() {
     var E = GTP.Entities; if (!E || !E.list) return;
-    var s = S.cheats.on.bigtakes ? 2.1 : 1;
+    var s = effectOn('bigheads') ? 2.1 : 1;
     for (var i = 0; i < E.list.length; i++) {
       var e = E.list[i]; if ((e.kind !== 'ped' && e.kind !== 'player') || !e.mesh || !e.mesh.getObjectByName) continue;
       var h = e.mesh.getObjectByName('head'); if (h && h.scale.x !== s) h.scale.set(s, s, s);
     }
   }
-  var jumpWas = false;
+  var jumpWas = false, bigWas = false;
+  function effectOn(eff) { var L = cheats.defs(); for (var i = 0; i < L.length; i++) if (L[i].effect === eff && S.cheats.on[L[i].id]) return true; return false; }
   function tickCheats() {
     var p = player(); if (!p) return;
-    if (S.cheats.on.trustless) {
+    var any = bigWas; for (var k in S.cheats.on) { any = true; break; }
+    if (!any) return;
+    if (effectOn('moonjump')) {
       // the first step of a jump (Ped consumed wantJump: off the ground and rising): triple its push, once
       var rising = !p.onGround && p.vy > 2 && !p.inVehicle;
       if (rising && !jumpWas) p.vy *= 1.75;
       jumpWas = rising || (!p.onGround && p.vy > 0);
     }
-    if (S.cheats.on.bigtakes) applyBigHeads();
+    if (effectOn('bigheads') || bigWas) { applyBigHeads(); bigWas = effectOn('bigheads'); }
   }
   function onKey(e) {
     try {
@@ -1451,7 +1471,7 @@
     S.stocks.lastHour = absHour();
     var g = game(); S.properties.lastDay = g && g.time ? g.time.day : S.properties.lastDay;
     // toggles that are runtime-only are restored from the saved set
-    var g2 = game(); if (g2) g2.timeScale = S.cheats.on.slownewsday ? 0.5 : 1;
+    var g2 = game(); if (g2) g2.timeScale = effectOn('slowmo') ? 0.5 : 1;
     perkBase = null; applyPerks();
     if (Object.keys(S.wardrobe.equipped).length || S.wardrobe.hair || S.wardrobe.hairColor) applyLook();
     markersDirty = true;
@@ -1471,7 +1491,7 @@
         if (k === 'properties') { var g = game(); S.properties.lastDay = g && g.time ? g.time.day : S.properties.lastDay; markersDirty = true; }
         if (k === 'jobs') { perkBase = null; applyPerks(); }
         if (k === 'wardrobe' && (Object.keys(S.wardrobe.equipped).length || S.wardrobe.hair || S.wardrobe.hairColor)) applyLook();
-        if (k === 'cheats') { var g2 = game(); if (g2) g2.timeScale = S.cheats.on.slownewsday ? 0.5 : 1; }
+        if (k === 'cheats') { var g2 = game(); if (g2) g2.timeScale = effectOn('slowmo') ? 0.5 : 1; }
       }
     };
   });
