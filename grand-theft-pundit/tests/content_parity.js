@@ -96,7 +96,7 @@ const ENGINE = { fist: [12, 2.5, 1.7], megaphone: [0, 1.2, 6], pistol: [18, 4, 3
 for (const id in ENGINE) { const w = P.weaponById(id); ok(w.dmg === ENGINE[id][0] && w.rate === ENGINE[id][1] && w.range === ENGINE[id][2], 'weapon ' + id + ' keeps its v0.2 dmg/rate/range'); }
 ok(P.weaponById('shotgun').dmg > 60, 'CMB-15: the shotgun kills a 60 hp ped in one volley at point blank');
 ok(P.weaponById('tableleg').dmg >= 30, 'CMB-16: two table-leg hits drop a 60 hp ped');
-ok(P.weaponById('pistol').unlock.mission === 'm01c_both_sides', 'the pistol is on the wall from m01c');
+ok(P.weaponById('pistol').unlock.mission === 'm01_van', 'the pistol (and its ammo) is on the wall before m01c, whose last objective buys rounds');
 
 // ----------------------------------------------------------- attachments --
 uniqueIds(P.attachments, 'attachments');
@@ -239,7 +239,9 @@ function lines(ls, where) {
   ok(Array.isArray(ls) && ls.length > 0, where + ': has lines');
   for (const l of ls || []) {
     ok(CAST.has(l.who), where + ': speaker ' + l.who + ' is a cast id');
-    ok(typeof l.text === 'string' && l.text.length > 0 && l.text.length <= 200, where + ': line length (' + (l.text || '').slice(0, 30) + ')');
+    // QA-B-TXT-01: the two-line dialogue box drops the start of a line longer than about 114 characters at phone width
+    ok(typeof l.text === 'string' && l.text.length > 0 && l.text.length <= 114, where + ': line fits the dialogue box, ' + (l.text || '').length + ' chars (' + (l.text || '').slice(0, 40) + ')');
+    ok(!/\*/.test(l.text), where + ': no literal asterisks (QA-B-TXT-02): ' + (l.text || '').slice(0, 40));
   }
 }
 function objective(o, where) {
@@ -301,7 +303,10 @@ for (const m of P.missions) {
   const oc = m.onComplete || {};
   if (oc.unlockWeapon) ok(WIDS.has(oc.unlockWeapon), where + ': unlockWeapon ' + oc.unlockWeapon);
   if (oc.setFlag) ok(/^[a-z_]+$/.test(oc.setFlag), where + ': setFlag');
-  if (oc.unlockWeapon) { const w = P.weaponById(oc.unlockWeapon); ok(w.unlock && w.unlock.mission === m.id, where + ': the unlocked weapon goes on the shop wall from this mission'); }
+  // a mission's buy objective must be buyable while it runs: the shop locks ammo behind its weapon's unlock mission
+  const buys = m.objectives.filter((o) => o.type === 'buy' && o.item.indexOf('ammo_') === 0).map((o) => o.item.slice(5));
+  for (const wid of buys) { const u = P.weaponById(wid).unlock; ok(!u || (u.mission !== m.id && P.chain.indexOf(u.mission) >= 0 && P.chain.indexOf(u.mission) < P.chain.indexOf(m.id)), where + ': buy ammo_' + wid + ' is unlocked before the mission (' + (u && u.mission) + ')'); }
+  if (oc.unlockWeapon && buys.indexOf(oc.unlockWeapon) < 0) { const w = P.weaponById(oc.unlockWeapon); ok(w.unlock && w.unlock.mission === m.id, where + ': the unlocked weapon goes on the shop wall from this mission'); }
   if (BOSSES.indexOf(m.id) >= 0) {
     const bo = m.objectives.filter((o) => o.type === 'boss');
     ok(bo.length === 1 && bo[0].bossId === m.id && m.objectives.indexOf(bo[0]) > 0, where + ': one boss objective with its own bossId, after an approach objective');
@@ -407,8 +412,15 @@ ok(!('takeWeapon' in m03b.onComplete) && m03b.onComplete.unlockWeapon === 'table
 ok(X.cutscenes.cs_intro_m03b_range.shots[0].lines[1].text === m03b.intro[1].text, 'retune: m03b intro cutscene rebuilt from the new line');
 const m05 = X.missionById('m05_peer');
 ok(m05.onComplete.unlockWeapon === 'pocket' && /Footnote/.test(m05.outro[3].text), 'retune: m05 hands over the Footnote, not a second pistol');
+ok(P.retuneLog && P.retuneLog.every((r) => r.applied || r.path.indexOf('.text') > 0), 'every retune patch applied (a guarded text patch may skip once its owner fixed the source): ' + JSON.stringify((P.retuneLog || []).filter((r) => !r.applied)));
+ok(/^Five subscribers/.test(byId.m01_van.outro[0].text), 'QA-B-TXT-03: m01_van counts the five subscribers it asks for');
 const before = X.missions.length; P.register(); ok(X.missions.length === before, 'register() is idempotent');
 
+// QA-B-TXT-10: American spelling in every player-facing string of the tables
+(function walk(v, where) {
+  if (typeof v === 'string') { ok(!/\b(colours?|metres?|centres?|recognis\w*|greys?|neighbours?|kerbs?|\w+ised|favourite|honour)\b/i.test(v), 'American spelling at ' + where + ': ' + v.slice(0, 60)); return; }
+  if (v && typeof v === 'object') for (const k in v) walk(v[k], where + '.' + k);
+})(JSON.parse(JSON.stringify(P)), 'parity');
 // ------------------------------------------------- source hygiene --
 const SRC = fs.readFileSync(path.join(ROOT, 'js', '25_content_parity.js'), 'utf8');
 ok(!/Math\.random/.test(SRC), 'no Math.random in 25_');

@@ -11,7 +11,7 @@
  *   tints         {id, name, color, price, unlock}
  *   modshop       Spin Doctor Customs: the catalogue for GTP.Vehicles.mod(vehicle, {...})
  *   clothing      Lanyard & Co.: items by slot (top bottom shoes hat glasses) and outfits
- *   barber        the Clip Joint: hair styles (the cast `hair` enum) and colours
+ *   barber        the Clip Joint: hair styles (the cast `hair` enum) and colors
  *   properties    5 safehouses + 6 businesses {id, kind, landmark, price, income, garage}
  *   stocks        8 invented tickers with reactions to story missions
  *   golf          the 9 holes of Goldplate Links (every hole a par ten, on the card)
@@ -62,8 +62,9 @@
       melee: true, lunge: 2.6, knock: 4.5, flipWindow: 0.6, vehicleDmg: 6, flavor: "It fell off the table. It's the honest weapon." },
     { id: 'megaphone', name: 'Megaphone', class: 'special', dmg: 0, rate: 1.2, mag: 0, reserve: 40, reload: 0, spread: 0, bloom: null, recoil: 0, range: 6, projectile: 'hitscan', hold: 'one', price: 300, unlock: un('m03_ratio'), attachments: [],
       cone: true, arc: Math.PI / 3, push: 18, heat: 1, flavor: 'Pushes people. Use it on the ones who like you too.' },
-    { id: 'pistol', name: 'Pistol', class: 'pistol', dmg: 18, rate: 4, mag: 12, reserve: 120, reload: 1.2, spread: 0.012, bloom: { add: 0.008, max: 0.04, decay: 0.10 }, recoil: 1.2, range: 35, projectile: 'hitscan', hold: 'one', price: 450, unlock: un('m01c_both_sides'), attachments: PISTOL,
+    { id: 'pistol', name: 'Pistol', class: 'pistol', dmg: 18, rate: 4, mag: 12, reserve: 120, reload: 1.2, spread: 0.012, bloom: { add: 0.008, max: 0.04, decay: 0.10 }, recoil: 1.2, range: 35, projectile: 'hitscan', hold: 'one', price: 450, unlock: un('m01_van'), attachments: PISTOL,
       vehicleMul: 0.55, knock: 1.6, driveBy: true, flavor: 'The first one is free. The bullets are the business model.' },
+    // (on the wall from m01_van, not m01c: the shop locks ammo behind the weapon's unlock and m01c's last objective buys rounds)
     { id: 'revolver', name: 'The Rebuttal', class: 'pistol', dmg: 40, rate: 1.6, mag: 6, reserve: 60, reload: 2.0, spread: 0.006, bloom: { add: 0.010, max: 0.03, decay: 0.08 }, recoil: 2.4, range: 45, projectile: 'hitscan', hold: 'one', price: 900, unlock: un('m05b_provenance'), attachments: ['optic', 'light'],
       vehicleMul: 0.7, knock: 3.0, headMul: 3, floors: true, driveBy: true, flavor: 'Six points. Each one ends the conversation. The hedge has a hedge now.' },
     { id: 'smg', name: 'SMG', class: 'smg', dmg: 9, rate: 11, mag: 30, reserve: 240, reload: 1.6, spread: 0.04, bloom: { add: 0.004, max: 0.09, decay: 0.14 }, recoil: 0.35, range: 30, projectile: 'hitscan', hold: 'two', price: 1400, unlock: un('m11_trustless'), attachments: GUN,
@@ -73,7 +74,7 @@
     { id: 'shotgun', name: 'Shotgun', class: 'shotgun', dmg: 66, rate: 1.1, mag: 6, reserve: 48, reload: 0.45, spread: 0.085, bloom: null, recoil: 3.0, range: 12, projectile: 'hitscan', hold: 'two', price: 1100, unlock: un('m11_trustless'), attachments: SHOTTY,
       shellReload: true, pellets: 6, vehicleMul: 0.6, knock: 2.5, driveBy: true, flavor: 'Six opinions at once. One of them lands.' },
     { id: 'sniper', name: 'The Fact Checker', class: 'sniper', dmg: 120, rate: 0.7, mag: 5, reserve: 30, reload: 2.6, spread: 0.08, bloom: null, recoil: 4.0, range: 160, projectile: 'hitscan', hold: 'two', price: 4500, unlock: un('m12b_scope'), attachments: SCOPE,
-      scopedSpread: 0, headMul: 3, vehicleMul: 1.0, scope: true, noAuto: true, casingDelay: 0.3, flavor: 'Kept for peer review. Reads at two hundred metres.' },
+      scopedSpread: 0, headMul: 3, vehicleMul: 1.0, scope: true, noAuto: true, casingDelay: 0.3, flavor: 'Kept for peer review. Reads at two hundred meters.' },
     { id: 'hottake', name: 'Hot Take', class: 'thrown', dmg: 12, rate: 1, mag: 0, reserve: 12, reload: 0, spread: 0, bloom: null, recoil: 0, range: 20, projectile: 'lobbed', hold: 'one', price: 90, unlock: un('m09_balloon'), attachments: [],
       lobbed: true, stun: 5, speed: 21, pack: 3, flavor: "A [REDACTED] that goes off. Everyone near it stops to have an opinion." },
     { id: 'hotmic', name: 'Hot Mic', class: 'thrown', dmg: 60, rate: 0.8, mag: 0, reserve: 8, reload: 0, spread: 0, bloom: null, recoil: 0, range: 24, projectile: 'lobbed', hold: 'one', price: 120, unlock: un('m09b_hotmic'), attachments: [],
@@ -127,7 +128,7 @@
     { id: 'marksman', name: 'The Peer Review', class: 'sniper', dmg: 55, rate: 2.2, mag: 10, reserve: 60, reload: 2.4, spread: 0.03, bloom: { add: 0.008, max: 0.04, decay: 0.12 }, recoil: 1.8, range: 110, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('m12b_scope'), attachments: SCOPE,
       scope: true, zoom: 3, scopedSpread: 0.004, headMul: 2.5, vehicleMul: 0.8, flavor: "Semi-automatic review. Ten reviewers, one opinion, sent back for revisions." },
     { id: 'heavy_sniper', name: 'The Retraction', class: 'sniper', dmg: 220, rate: 0.45, mag: 4, reserve: 20, reload: 3.4, spread: 0.1, bloom: null, recoil: 5.5, range: 200, projectile: 'hitscan', hold: 'two', price: 9000, unlock: un('m14_grift'), attachments: ['muzzle', 'optic'],
-      scope: true, zoom: 6, scopedSpread: 0, headMul: 3, vehicleMul: 1.6, noAuto: true, casingDelay: 0.4, flavor: "Undoes whatever it hits, on the record, at two hundred metres." },
+      scope: true, zoom: 6, scopedSpread: 0, headMul: 3, vehicleMul: 1.6, noAuto: true, casingDelay: 0.4, flavor: "Undoes whatever it hits, on the record, at two hundred meters." },
 
     // ---- thrown ---------------------------------------------------------------------------------
     { id: 'flashbang', name: 'Breaking News', class: 'thrown', dmg: 0, rate: 1, mag: 0, reserve: 8, reload: 0, spread: 0, bloom: null, recoil: 0, range: 22, projectile: 'lobbed', hold: 'one', price: 200, unlock: un('m04_hit'), attachments: [],
@@ -238,7 +239,7 @@
       { id: 'ten', name: 'Rated a Ten', price: 350, line: 'A voice says "Ten!" every time. The President licensed it to himself.' },
       { id: 'kazoo', name: 'Kazoo of Dissent', price: 150, line: 'CAWTI-approved. Against whatever this is.' }
     ],
-    repair: { perHp: 2, min: 50, line: 'Repaired. We did not fix it, we contextualised it.' },
+    repair: { perHp: 2, min: 50, line: 'Repaired. We did not fix it, we contextualized it.' },
     barks: ['Welcome to Spin Doctor. What are we reframing today?', 'That dent? Bold choice. We can make it look intentional.', 'Gold paint is a ten. The President told us. Personally.', 'Armor? Smart. The comment section has cars now.']
   };
 
@@ -316,7 +317,7 @@
       { id: 'black', name: 'Anchor Black', hex: '#1a1a1a', price: 40 },
       { id: 'brown', name: 'Stoop Brown', hex: '#3a2a1a', price: 40 },
       { id: 'blond', name: 'Ring-Light Blond', hex: '#d8b860', price: 60 },
-      { id: 'grey', name: 'Distinguished Panel Grey', hex: '#9c9c9c', price: 60 },
+      { id: 'gray', name: 'Distinguished Panel Gray', hex: '#9c9c9c', price: 60 },
       { id: 'pink', name: 'Loud & Correct Pink', hex: '#ff3fa4', price: 90 },
       { id: 'orange', name: 'CAWTI Orange', hex: '#ff7a00', price: 90 },
       { id: 'purple', name: 'Velvetine Purple', hex: '#8e3a8e', price: 90 },
@@ -403,7 +404,7 @@
       lines: { start: ["An HOA patrol just cited a mailbox for being adjacent. It's getting away with the clipboard."], win: ["Citation voided. The mailbox thanks you. The mailbox is fine."], lose: ["The mailbox has a wanted star now. It will never be the same."] } },
     { id: 'stalled_influencer', name: 'Stalled Influencer', kind: 'ride', weight: 2, districts: ['strip', 'marina', 'airport', 'suburbs'],
       setup: { passenger: 'civ', destinations: ['tyn_tower', 'listening_room', 'clarity_barn', 'airport_terminal', 'heirloom_club'] }, reward: { money: 160, subs: 350 },
-      lines: { start: ["My car died mid-unboxing. I have to be at a launch in three minutes. You have a face I recognise. Drive."], win: ["Made it. I'll tag you. I won't tag you. I'll think about tagging you."], lose: ["Missed it. The launch launched without me. I'm the launch."] } },
+      lines: { start: ["My car died mid-unboxing. I have to be at a launch in three minutes. You have a face I recognize. Drive."], win: ["Made it. I'll tag you. I won't tag you. I'll think about tagging you."], lose: ["Missed it. The launch launched without me. I'm the launch."] } },
     { id: 'balloon_spill', name: 'Balloon Spill', kind: 'collect', weight: 1, districts: ['industrial', 'capitol', 'port'],
       setup: { vehicles: [{ type: 'van', count: 1, color: '#d9cfa6', wrecked: true }], pickups: { count: 5, label: 'MEMO', radius: 40 }, timer: 45, agents: { role: 'thug', count: 3, delay: 20 } }, reward: { money: 250, subs: 300 },
       lines: { start: ["A weather balloon van has crashed. Envelopes everywhere. No balloons. Never any balloons."], win: ["Five memos. Same memo. Mattress. Jets. Pellets."], lose: ["The agents got them. They will be read nowhere, by everyone."] } },
@@ -417,7 +418,7 @@
     damage_control: {
       id: 'damage_control', name: 'Damage Control', parody: 'paramedic',
       vehicle: { type: 'van', wrap: 'damage_control', color: '#f2f2f2', label: 'DAMAGE CONTROL', parkedAt: 'hospital' },
-      start: 'Sit in the Damage Control van and press E while stopped.', banner: 'DAMAGE CONTROL',
+      start: 'Sit in the Damage Control van and come to a stop. The shift starts when you do.', banner: 'DAMAGE CONTROL',
       dropOff: ['hospital', 'green_room'], levels: 12,
       rules: 'Level n has n patients. Each is a pundit who has just been ratio\'d. Pick them up, deliver them to Goldplate Memorial or the Green Room Motel before their take goes cold.',
       timer: { base: 40, perMetre: 1 / 9, perPatient: 10 }, pay: { perPatient: 60, perLevel: 120 },
@@ -430,7 +431,7 @@
         { id: 'pt_memo', name: 'a guest who read the wrong memo', line: "I said pellets on the jets segment. I'm ruined. Code TAKES20 me." },
         { id: 'pt_dunk', name: 'a dunk victim', line: "I got dunked on by a man who didn't read my post. Twice." },
         { id: 'pt_lanyard', name: 'a donor with a tangled lanyard', line: "My lanyard is tangled with another donor's lanyard. We're legally one donor now." },
-        { id: 'pt_hoa', name: 'an HOA board member in shock', line: "Somebody painted their door an unapproved colour. I saw it. I SAW it." },
+        { id: 'pt_hoa', name: 'an HOA board member in shock', line: "Somebody painted their door an unapproved color. I saw it. I SAW it." },
         { id: 'pt_coin', name: 'a $PUNDIT holder', line: "Down ninety percent. Up four hundred. Down ninety. I need a chair. There are no chairs." },
         { id: 'pt_caller', name: 'a radio caller who was told he was wrong', line: "He said I was wrong and hung up! I hadn't finished being wrong!" },
         { id: 'pt_kip', name: 'Kip', line: "I'm not hurt. I just wanted a ride. Is this paid?" }
@@ -441,7 +442,7 @@
     hot_take_brigade: {
       id: 'hot_take_brigade', name: 'Hot Take Brigade', parody: 'firefighter',
       vehicle: { type: 'truck', wrap: 'brigade', color: '#d23a2a', label: 'HOT TAKE BRIGADE', parkedAt: 'police_hq' },
-      start: 'Sit in the Hot Take Brigade truck and press E while stopped.', banner: 'HOT TAKE BRIGADE',
+      start: 'Sit in the Hot Take Brigade truck and come to a stop. The shift starts when you do.', banner: 'HOT TAKE BRIGADE',
       levels: 12,
       rules: 'Level n has n flame wars: billboards, cars and folding tables that have caught a take. Drive close, hold Shoot to spray the cooling foam (it is decaf), put each one out before the timer ends.',
       timer: { base: 45, perMetre: 1 / 9, perFire: 12 }, pay: { perFire: 70, perLevel: 130 }, sprayRange: 14,
@@ -506,8 +507,8 @@
 
   // ============================================================== loadingTips ==
   P.loadingTips = [
-    'Hold right mouse to aim over the shoulder. The gun is the one in your hands. Left mouse fires.',
-    'Press Q next to a wall, a car or a low wall to take cover. Peek to fire. Walls do not sue.',
+    'Hold Aim to look over the shoulder. The gun is the one in your hands. Fire fires.',
+    'Get against a wall, a car or a low wall and press Cover. Peek to fire. Walls do not sue.',
     'Both Sides Arms has three branches. Walk in through the door. Merle is the same man at all three.',
     'The back room at the Strip branch is a shooting range. Bronze, silver, gold. Gold raises the price.',
     'Your phone rings when the next mission is ready. The GPS line on the minimap goes straight to it.',
@@ -527,7 +528,7 @@
     'Street events pop up anywhere: a stolen phone, a pop-up debate, a gold truck full of hedge.',
     'Tints are cosmetic. Goldplate tint is rated a ten and costs like one.',
     'Every mission is a checkpoint chain. Failing sends you back a step, not home.',
-    'Jump out of an aircraft above 30 metres to open a parachute. It is branded. Everything is branded.',
+    'Jump out of an aircraft above 30 meters to open a parachute. It is branded. Everything is branded.',
     'Typing certain words during play does things. Respectfully, we will not say which.',
     'Minds changed so far: zero. The counter is on the stats page. It has never moved.'
   ];
@@ -535,7 +536,7 @@
   // ==================================================================== radio ==
   P.radio = {
     ticker: [
-      'GOLD HELICOPTER LANDS IN BUNKER; PRESIDENT CALLS IT A TEN-POINT LANDING',
+      'GOLD HELICOPTER LANDS ACROSS FOUR STADIUM SPACES; PRESIDENT CALLS IT A TEN-POINT LANDING',
       'SILENT YACHT PLAYS MUSIC; GUESTS ENJOY IT; BARON "BEWILDERED, THEN TOASTING"',
       'BRAVADIAN FLYOVER ENDS IN SEA; PM REQUESTS SECOND JET',
       'GIANT WEATHER BALLOON POPS OVER PRINTWORKS; OVA DENIES BALLOON, DENIES WEATHER',
@@ -583,7 +584,7 @@
     // a ticker line shown when the mission completes
     news: {
       m01c_both_sides: 'LOCAL PUNDIT ACCEPTS FREE GUN; BULLETS NOT FREE; MERLE "THRILLED"',
-      b01_goldplate: 'GOLD HELICOPTER LANDS IN BUNKER; PRESIDENT CALLS IT A TEN-POINT LANDING',
+      b01_goldplate: 'GOLD HELICOPTER LANDS ACROSS FOUR STADIUM SPACES; PRESIDENT CALLS IT A TEN-POINT LANDING',
       b02_velvetine: 'SILENT YACHT PLAYS MUSIC; GUESTS ENJOY IT; BARON "BEWILDERED, THEN TOASTING"',
       b03_warbanner: 'BRAVADIAN FLYOVER ENDS IN SEA; PM REQUESTS SECOND JET',
       b04_redacted: 'GIANT WEATHER BALLOON POPS OVER PRINTWORKS; OVA DENIES BALLOON, DENIES WEATHER',
@@ -607,7 +608,7 @@
       intro: [
         { who: 'merle', text: "Bryce Takesworth. Saw your van. Saw your face on your van. Twice. Merle Firmness, Both Sides Arms." },
         { who: 'player', text: "Firmness? Any relation to anything?" },
-        { who: 'merle', text: "Dale's cousin. Nap Dynasty. He sells sleep, I sell the other thing. First one's free. For a journalist, also free. Free." },
+        { who: 'merle', text: "Dale's cousin. He sells sleep, I sell the other thing. First one's free. For a journalist, also free. Free." },
         { who: 'sloane', text: "Ten minutes. Learn to hold it, learn to aim it, learn to pay for it. The paying is the segment." }
       ],
       objectives: [
@@ -615,7 +616,7 @@
         { type: 'interior', interior: 'armory', store: 'both_sides_strip', text: 'Step inside. Mind the podium' },
         { type: 'equip', weaponId: 'pistol', ammo: 24, text: 'Take the free pistol off the counter' },
         { type: 'dialogue', lines: [
-          { who: 'merle', text: "Hold right mouse to aim. Left to fire. The gun is the one in your hand. Q puts your back to a wall. Walls don't sue." },
+          { who: 'merle', text: "Aim, then fire. The gun is the one in your hand. Back to a wall is cover. Walls don't sue." },
           { who: 'merle', text: "Back room's the range. Sixty seconds. Bronze or better and you keep it." },
           { who: 'player', text: "And if I get gold?" },
           { who: 'merle', text: "Then I raise the price." }
@@ -641,16 +642,16 @@
         { who: 'sloane', text: "He renamed the show. Now he's flying the new name over his own stadium. On a ribbon. Behind a gold helicopter." },
         { who: 'player', text: "He has a helicopter?" },
         { who: 'sloane', text: "He has one. The roof sign says two. That's why the ticker says both." },
-        { who: 'goldplate', radio: true, text: "Takesworth! Look up! THE GOLDPLATE HOUR WITH GOLDPLATE. The ribbon's a ten. The helicopter's a ten. You're a guest." },
+        { who: 'goldplate', radio: true, text: "Takesworth! Look up! THE GOLDPLATE HOUR WITH GOLDPLATE. The ribbon's a ten. You're a guest." },
         { who: 'gus', text: "The ribbon's on four spools under the skids. Shoot the spools. I'm sound, but even I can hear that's physics." }
       ],
       objectives: [
         { type: 'goto', target: arena('b01_goldplate'), radius: 160, text: 'Get under the gold helicopter, over the stadium lots' },
         { type: 'boss', bossId: 'b01_goldplate', text: 'Shoot the four ribbon spools under the gold helicopter to ground it' },
         { type: 'dialogue', lines: [
-          { who: 'goldplate', text: "I'm landing. On purpose. It's a ten-point landing. In a bunker. On purpose." },
-          { who: 'player', text: "Respectfully, sir, you're in a sand trap." },
-          { who: 'goldplate', text: "It's a gold trap. I'm renaming it." }
+          { who: 'goldplate', text: "I'm landing. On purpose. It's a ten-point landing. In my own parking lot. On purpose." },
+          { who: 'player', text: "Respectfully, sir, you're across four spaces." },
+          { who: 'goldplate', text: "They're gold spaces. I'm renaming them." }
         ] },
         { type: 'escape_wanted', setWanted: 2, text: 'Presidential security rates you a two. Lose them' }
       ],
@@ -709,13 +710,13 @@
         { type: 'goto', target: arena('b03_warbanner'), radius: 160, text: 'Get to Runway 10/10 before the flyover. Drive; it is across the bay' },
         { type: 'boss', bossId: 'b03_warbanner', text: 'Dodge the jet flyover and wreck the Defense Scooter column' },
         { type: 'dialogue', lines: [
-          { who: 'warbanner', text: "The jet has landed. On its side. In the sea. And that's why we need the jets. Plural, now." },
+          { who: 'warbanner', text: "The jet has landed. On its side. In the sea. Plural jets, now. And that's why we need the jets." },
           { who: 'roz', text: "WE'RE NOT HERE TO CHEER! HOORAY, HOORAY, THE JET'S IN THE BAY!" }
         ] },
         { type: 'escape_wanted', setWanted: 3, text: 'Airport security rates the flyover a three. Lose them' }
       ],
       outro: [
-        { who: 'warbanner', text: "A setback. The scooters are wrecked. The invoice is still addressed to your podcast. And that's why we need the jets." },
+        { who: 'warbanner', text: "A setback. The scooters are wrecked. The invoice is still yours. And that's why we need the jets." },
         { who: 'player', text: "Respectfully, I'm not paying for scooters I wrecked." },
         { who: 'warbanner', text: "Then Bravadia gifts you a carbine. Gifts are tax-free. And that's why we need the jets." },
         { who: 'roz', text: "NO JETS TODAY, MORE JETS TOMORROW! WE'RE NOT HERE TO BE CONSISTENT, WE'RE HERE TO BORROW!" },
@@ -760,7 +761,7 @@
       id: 'h01_casing', story: true, title: 'Casing the Hedge', act: 3,
       giver: 'gus', marker: 'pod_garage', requires: ['m12b_scope'], reward: 500,
       intro: [
-        { who: 'gus', text: "Vaultwright sold your contract to the President, then kept it in his own vault. As a hedge. Vaultwright Capital, downtown." },
+        { who: 'gus', text: "Vaultwright sold your contract to the President, then kept it in his own vault. As a hedge." },
         { who: 'player', text: "We're robbing a bank?" },
         { who: 'gus', text: "We're retrieving a document. With a crew. And a board. I bought a board." },
         { who: 'sloane', text: "Case it first. Cameras, guards, the vault door. Three photos, then the board. Four minutes. Three." },
@@ -798,7 +799,7 @@
       ],
       // the default (approach 'quiet'); heists.hedge_job.variants holds the other approaches' lists
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'newsvan', at: { landmark: 'tyn_tower' }, color: '#c94040' }, text: "Borrow a Yell Network news van. They have forty. They won't count" },
+        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'newsvan', name: 'the news van', at: { landmark: 'tyn_tower' }, color: '#c94040' }, text: "Borrow a Yell Network news van. They have forty. They won't count" },
         { type: 'escape_wanted', setWanted: 2, text: "TYN noticed. They're reporting it live. Lose them" },
         { type: 'pickup', spawn: { pickupType: 'mission', count: 4, around: { landmark: 'green_room' }, radius: 160, label: 'CREW LANYARD' }, text: 'Collect four crew lanyards from the Green Room Motel' },
         { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'spawned:newsvan', text: "Park the news van at Gus's Garage" }
@@ -823,14 +824,14 @@
         { who: 'gus', text: "You're a pundit. Same skill set. Talk fast and leave before anyone checks." }
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'newsvan', at: { landmark: 'pod_garage' }, color: '#c94040' }, text: 'Get in the news van' },
+        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'newsvan', name: 'the news van', at: { landmark: 'pod_garage' }, color: '#c94040' }, text: 'Get in the news van' },
         { type: 'drive_to', target: { landmark: 'vault_bank' }, vehicle: 'spawned:newsvan', text: "Drive to Vaultwright Capital. You're live in two minutes" },
         { type: 'goto', target: { landmark: 'vault_bank' }, radius: 32, text: "Park, get out and walk in with the camera crew. Smile. You're on" },
-        { type: 'timer_wrap', seconds: 120, objectives: [
+        { type: 'timer_wrap', seconds: 120, label: 'SEGMENT ENDS IN', objectives: [
           { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'vault_bank' }, radius: 90, label: ['THE CONTRACT', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE'] }, text: 'Grab the contract and the hedge cash before the segment ends' }
         ] },
         { type: 'dialogue', lines: [
-          { who: 'vaultwright', text: "Mr. Takesworth. In my vault. On camera. I'm whispering *nine hundred thousand*. That's the alarm." },
+          { who: 'vaultwright', text: "Mr. Takesworth. In my vault. On camera. I'm whispering nine hundred thousand. That's the alarm." },
           { who: 'gus', text: "That's our cue. Out the side door. Levels." }
         ] },
         { type: 'escape_wanted', setWanted: 3, text: "Lose the bank's private security, and the public kind" },
@@ -840,7 +841,7 @@
         { who: 'gus', text: "Contract's back. Your show. Your name. Read it." },
         { who: 'player', text: "Back page: 'Monday Memo subscription, auto-renew.' Signed... Respectfuly." },
         { who: 'sloane', text: "One L. You subscribed to your own memo." },
-        { who: 'vaultwright', text: "I'm whispering *hedged*. The contract was always worth less than the cash. Keep both. I shorted you." },
+        { who: 'vaultwright', text: "I'm whispering: hedged. The contract was always worth less than the cash. Keep both. I shorted you." },
         { who: 'kip', text: "I countersigned it. Thursday's tomorrow. Is this paid?" }
       ],
       failOn: ['player_dead', 'vehicle_lost:newsvan', 'vehicle_lost:hedgetruck'],
@@ -897,7 +898,7 @@
       outro: [
         { who: 'chyron', text: "Five guests, five rounds, five waves. Ratings: yes. Tonight it's the real panel. Same guests. Same memo." },
         { who: 'player', text: "Respectfully, they all said the same thing every round." },
-        { who: 'chyron', text: "That's the format. Here: the News Cycle, from the props department. Runs all day, like us. WE'LL HAVE TO LEAVE IT THERE." },
+        { who: 'chyron', text: "That's the format. Take the News Cycle, from props. Runs all day, like us. WE'LL HAVE TO LEAVE IT THERE." },
         { who: 'kip', text: "I counted the waves. Five. Is this paid?" }
       ],
       failOn: ['player_dead'],
@@ -940,16 +941,16 @@
       variants: {
         loud: {
           h02_prep: [
-            { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'hedgetruck', at: { landmark: 'memo_press' }, color: '#e8b53a', wrap: 'hedge' }, text: "Take the Vaultwright hedge truck from the Print Works loading dock" },
+            { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'hedgetruck', name: 'the hedge truck', at: { landmark: 'memo_press' }, color: '#e8b53a', wrap: 'hedge' }, text: "Take the Vaultwright hedge truck from the Print Works loading dock" },
             { type: 'escape_wanted', setWanted: 3, text: 'The hedge truck has a tracker. The tracker has a liaison. Lose them' },
             { type: 'equip', weaponId: 'hotmic', ammo: 4, text: "Pick up Merle's breaching mics" },
             { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'spawned:hedgetruck', text: "Park the hedge truck at Gus's Garage" }
           ],
           h03_job: [
-            { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'hedgetruck', at: { landmark: 'pod_garage' }, color: '#e8b53a', wrap: 'hedge' }, text: 'Get in the hedge truck' },
+            { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'hedgetruck', name: 'the hedge truck', at: { landmark: 'pod_garage' }, color: '#e8b53a', wrap: 'hedge' }, text: 'Get in the hedge truck' },
             { type: 'drive_to', target: { landmark: 'vault_bank' }, vehicle: 'spawned:hedgetruck', text: 'Drive the hedge truck to Vaultwright Capital. Through the front' },
             { type: 'defeat', spawn: { ped: 'thug', count: 8, around: { landmark: 'vault_bank' }, radius: 140 }, text: 'Clear the lobby. The guards are interns with binders' },
-            { type: 'timer_wrap', seconds: 90, objectives: [
+            { type: 'timer_wrap', seconds: 90, label: 'SEGMENT ENDS IN', objectives: [
               { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'vault_bank' }, radius: 90, label: ['THE CONTRACT', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE'] }, text: 'Grab the contract and the hedge cash' }
             ] },
             { type: 'escape_wanted', setWanted: 4, text: 'Every cruiser in Chyron Center is coming. Lose them' },
@@ -960,14 +961,14 @@
           h02_prep: [
             { type: 'drive_to', target: { landmark: 'protest_plaza' }, vehicle: 'any', text: 'Get to Perpetual Assembly Plaza' },
             { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'protest_plaza' }, radius: 160, label: 'BOTH-SIDED SIGN' }, text: 'Collect six protest signs. Both sides of each' },
-            { type: 'enter_vehicle', spawn: { type: 'van', tag: 'drillvan', at: { landmark: 'warehouse_42' }, color: '#7fbf6a' }, text: "Take the drill van from Warehouse 42" },
+            { type: 'enter_vehicle', spawn: { type: 'van', tag: 'drillvan', name: 'the drill van', at: { landmark: 'warehouse_42' }, color: '#7fbf6a' }, text: "Take the drill van from Warehouse 42" },
             { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'spawned:drillvan', text: "Park the drill van at Gus's Garage" }
           ],
           h03_job: [
             { type: 'drive_to', target: { landmark: 'vault_bank' }, vehicle: 'any', text: 'Get to Vaultwright Capital' },
             { type: 'goto', target: { landmark: 'vault_bank' }, radius: 64, text: 'Get out on foot and start the protest' },
             { type: 'survive', seconds: 45, waves: { protester: 6, thug: 3 }, text: 'Hold the protest, both sides of it, while Gus drills' },
-            { type: 'timer_wrap', seconds: 100, objectives: [
+            { type: 'timer_wrap', seconds: 100, label: 'SEGMENT ENDS IN', objectives: [
               { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'vault_bank' }, radius: 90, label: ['THE CONTRACT', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE', 'HEDGE'] }, text: 'Through the drill hole: grab the contract and the hedge cash' }
             ] },
             { type: 'escape_wanted', setWanted: 3, text: 'Both sides are under arrest. Lose them' },
@@ -1038,7 +1039,7 @@
   // calls[missionId]: the phone call that pitches that mission, from its giver, when it becomes available
   function call(from, lines) { return { from: from, lines: lines.map(function (l) { return { who: l[0], text: l[1] }; }) }; }
   P.calls = {
-    m00_intro: call('gus', [['gus', "Table's in 4B. I'm not carrying it. Come to the Quad. Follow the blue light."], ['player', 'Respectfully, Gus, I am on my way.'], ['gus', "You're peaking already. Impressive."]]),
+    m00_intro: call('gus', [['gus', "Come to the Quad. Follow the blue light. Bring both hands."], ['player', 'On my way. Respectfully.'], ['gus', "You're peaking already. Impressive."]]),
     m01_van: call('sloane', [['sloane', 'Sloane Vexley. Producer. Yours, as of now. Gus\'s Garage has a van with your face on it.'], ['player', 'My face?'], ['sloane', 'Twice. Four minutes. Three.']]),
     m01c_both_sides: call('merle', [['merle', "Merle Firmness, Both Sides Arms, on the Strip. Dale's cousin. First gun's free."], ['player', "I don't need a gun to win an argument."], ['merle', 'Then come for the free part. Bag\'s ten dollars. For a journalist, five. Ten.']]),
     m01b_airport: call('sloane', [['sloane', 'The sponsor\'s mattress is landing at Goldplate International. We have an airport.'], ['player', 'Since when?'], ['sloane', 'Since the sponsor bought one. Garage. Four minutes. Three.']]),
@@ -1046,15 +1047,15 @@
     m03_ratio: call('sloane', [['sloane', 'Dunk is quote-posting your read on the Impression Alley boards. Both boards.'], ['player', 'Respectfully, that\'s defamation.'], ['sloane', 'It\'s engagement. Go win it. Ninety seconds.']]),
     m03b_range: call('gus', [['gus', 'You keep swinging at people who are already leaving. Meet me at Merle\'s. Range out back.'], ['player', 'I have a free pistol.'], ['gus', 'You have a free pistol and no aim. That\'s a podcast.']]),
     m04_hit: call('chyron', [['chyron', 'BREAKING. Kid. Green Room Motel. Four minutes of airtime. Tonight.'], ['player', 'Four minutes on television?'], ['chyron', 'Four minutes of waiting. WE\'LL HAVE TO LEAVE IT THERE.']]),
-    m05_peer: call('vaultwright', [['vaultwright', 'Mr. Takesworth. Fulcrum Foundation, Lobby Row. I am whispering *forty thousand*.'], ['player', 'Why are you whispering?'], ['vaultwright', 'It is rude to say numbers aloud. Come.']]),
-    m05b_provenance: call('vaultwright', [['vaultwright', 'The Museum of Takes has acquired your table. Meet me at the Heirloom Club.'], ['player', 'My table is in a museum?'], ['vaultwright', 'Attributed. I am whispering *attributed*.']]),
+    m05_peer: call('vaultwright', [['vaultwright', 'Mr. Takesworth. Fulcrum Foundation, Lobby Row. I am whispering forty thousand.'], ['player', 'Why are you whispering?'], ['vaultwright', 'It is rude to say numbers aloud. Come.']]),
+    m05b_provenance: call('vaultwright', [['vaultwright', 'The Museum of Takes has acquired your table. Meet me at the Heirloom Club.'], ['player', 'My table is in a museum?'], ['vaultwright', 'Attributed. I am whispering it. That is how you know it is true.']]),
     m06_rally: call('goldplate', [['goldplate', 'Takesworth! Big rally. The biggest. The stadium, both words. I need a young face.'], ['player', 'What do I say?'], ['goldplate', 'Whatever the memo says. Loudly. I rate your face a seven. Come.']]),
     b01_goldplate: call('sloane', [['sloane', 'Look up. Your show\'s new name is on a ribbon behind a gold helicopter.'], ['player', 'He renamed it AND flew it?'], ['sloane', 'Goldplate Tower. Ninety seconds. Bring something that hits a spool.']]),
     m07_listen: call('velvetine', [['velvetine', 'To you! To crates! The Listening Room, tonight!'], ['player', 'What is tonight?'], ['velvetine', 'Nothing! Nothing will be played! To whatever this is!']]),
     m07b_ferry: call('velvetine', [['velvetine', 'To the ferry! The mixtape must leave! The Ferry to Elsewhere, at the harbor!'], ['player', 'Didn\'t you pin a theft on me?'], ['velvetine', 'To forgiveness! To me forgiving you!']]),
     b02_velvetine: call('gus', [['gus', 'Forty speakers on that yacht and not one is on. Meet me at the pier.'], ['player', 'Is this about the Baron?'], ['gus', 'It\'s about levels. The Baron is collateral.']]),
-    m08_scooters: call('warbanner', [['warbanner', 'Mr. Takesworth. Bravadia calls. The embassy. A tourism ad. And that\'s why we need the jets.'], ['player', 'How is a tourism ad about jets?'], ['warbanner', 'Everything is about jets. Come.']]),
-    m08b_jets: call('warbanner', [['warbanner', 'The jets have arrived. Goldplate International. And that\'s why we need the jets.'], ['player', 'Plural?'], ['warbanner', 'One. In profile. Come.']]),
+    m08_scooters: call('warbanner', [['warbanner', 'Mr. Takesworth. Bravadia calls. The embassy. A tourism ad. And that\'s why we need the jets.'], ['player', 'How is a tourism ad about jets?'], ['warbanner', 'Everything is about jets. And that\'s why we need the jets.']]),
+    m08b_jets: call('warbanner', [['warbanner', 'The jets have arrived. Goldplate International. And that\'s why we need the jets.'], ['player', 'Plural?'], ['warbanner', 'One. In profile. And that\'s why we need the jets.']]),
     b03_warbanner: call('roz', [['roz', 'WE\'RE NOT HERE TO CALL YOU. The flyover is today. Embassy. Bring your loudest.'], ['player', 'Which side are we on?'], ['roz', 'Both. I brought three signs.']]),
     m09_balloon: call('redacted', [['redacted', 'This call is not happening. Office of [REDACTED]. Thirteen antennas. Come alone.'], ['player', 'Who is this?'], ['redacted', '[REDACTED]. Come anyway.']]),
     m09b_hotmic: call('redacted', [['redacted', 'The [REDACTED] goes through customs now. Customs & Disclosures, the harbor.'], ['player', 'What do I bring?'], ['redacted', 'Nothing. We have [REDACTED]. It is on.']]),
@@ -1079,12 +1080,17 @@
   // m01c gives the pistol for keeps, so m03b no longer takes its "loaner" back and m05 hands over the Footnote
   // instead of a second pistol (value null deletes the key)
   P.retune = {
+    // QA-B-TXT-03: 24_'s §3.4 retune made m01_van five subscribers, but its outro still counts six
+    m01_van: [
+      { path: 'outro.0.text', from: "Six subscribers. Five of them are the same guy. Doesn't matter, it's a number.", value: "Five subscribers. Four of them are the same guy. Doesn't matter, it's a number." },
+      { path: 'outro.1.text', from: "Respectfully, it's six numbers.", value: "Respectfully, it's five numbers." }
+    ],
     m05_peer: [
-      { path: 'outro.3.text', value: "It was. Here's the Footnote. A small pistol, for a small hedge. I'm whispering *three fifty*." },
+      { path: 'outro.3.text', value: "It was. Here's the Footnote. A small pistol, for a small hedge. I'm whispering three fifty." },
       { path: 'onComplete.unlockWeapon', value: 'pocket' }
     ],
     m03b_range: [
-      { path: 'intro.1.text', value: "Range fee: fifty. For a journalist, forty. Fifty. Bring the free one. Six hecklers out back. Cardboard. They don't sue." },
+      { path: 'intro.1.text', value: "Range fee: fifty. For a journalist, forty. Fifty. Six hecklers out back. Cardboard. They don't sue." },
       { path: 'objectives.0.text', value: 'Load the pistol Merle gave you' },
       { path: 'outro.0.text', value: "The cops rated the noise a four. Keep the pistol. You own it. I sold it to you for free." },
       { path: 'onComplete.takeWeapon', value: null }
@@ -1097,7 +1103,7 @@
     m01c_both_sides: { camA: [7, 4, 8], camB: [3, 2, 4], split: 2, extras: [{ castId: 'sloane', at: [-2.4, 3], anim: 'idle' }], look: 'merle', note: 'neon target sign on; the podium by the door' },
     b01_goldplate: { camA: [-16, 10, 14], camB: [-5, 3, 5], split: 3, tilt: 0.5, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane', note: 'camA tilts up past the stadium mast; the gold helicopter and its ribbon cross the sky' },
     b02_velvetine: { camA: [-10, 5, -9], camB: [-3, 2, -3], split: 3, extras: [{ castId: 'velvetine', at: [6, -8], anim: 'talk' }], look: 'velvetine', note: 'the yacht behind, forty silent speakers on deck' },
-    b03_warbanner: { camA: [9, 5, 9], camB: [3, 2, 4], split: 3, extras: [{ castId: 'warbanner', at: [-3, 1], anim: 'talk' }, { castId: 'sloane', at: [4, 3] }], look: 'warbanner', note: 'two embassy flags; scooters idling on the kerb' },
+    b03_warbanner: { camA: [9, 5, 9], camB: [3, 2, 4], split: 3, extras: [{ castId: 'warbanner', at: [-3, 1], anim: 'talk' }, { castId: 'sloane', at: [4, 3] }], look: 'warbanner', note: 'two embassy flags; scooters idling on the curb' },
     b04_redacted: { camA: [8, 6, 8], camB: [3, 2, 3], split: 2, tilt: 0.6, extras: [{ castId: 'redacted', at: [-2.6, 1.4], anim: 'idle' }, { castId: 'gus', at: [3.6, 3] }], look: 'redacted', note: "Kip waves from the balloon's basket at the door; the balloon of Bryce's face fills the sky" },
     h01_casing: { camA: [9, 4, 9], camB: [4, 2, 4], split: 3, extras: [{ castId: 'sloane', at: [2, 3] }], look: 'gus', note: 'the planning board leans on the van' },
     h02_prep: { camA: [-9, 4, 8], camB: [-3, 2, 4], split: 2, extras: [{ castId: 'gus', at: [-3, 2] }], look: 'sloane' },
@@ -1129,10 +1135,13 @@
   P.pendingLandmarks = ['spin_doctor_strip', 'spin_doctor_port', 'lanyard_strip', 'lanyard_uptown', 'clip_joint',
     'safe_brownstone', 'safe_marina_loft', 'safe_suburb', 'safe_penthouse'];
 
-  function setPath(obj, path, value) {
+  // a retune patch {path, value, from?}: value null deletes; with `from`, it applies only while the field still holds that
+  // text, so an owner who later fixes their own source line is never overwritten
+  function setPath(obj, path, value, from) {
     var keys = path.split('.'), o = obj;
     for (var i = 0; i < keys.length - 1; i++) { o = o[keys[i]]; if (o == null) return false; }
     var k = keys[keys.length - 1];
+    if (from !== undefined && o[k] !== from) return false;
     if (value === null) delete o[k]; else o[k] = value;
     return true;
   }
@@ -1149,10 +1158,11 @@
     // 2. retune (once; the m03b pistol handover)
     if (!P._retuned) {
       P._retuned = true;
+      P.retuneLog = [];
       for (var mid in P.retune) {
         var m = (X.missionById && X.missionById(mid)) || null;
         if (!m) continue;
-        P.retune[mid].forEach(function (r) { setPath(m, r.path, r.value); });
+        P.retune[mid].forEach(function (r) { P.retuneLog.push({ mission: mid, path: r.path, applied: setPath(m, r.path, r.value, r.from) }); });
       }
     }
     // 3. cs_intro_<id> for the new missions, through the expansion's own builder
@@ -1161,7 +1171,8 @@
         if (!X.introShots[id]) X.introShots[id] = P.introShots[id];
         X.introScript(id, true);
       }
-      if (P.retune.m03b_range && X.introShots.m03b_range) X.introScript('m03b_range', true);
+      // a retuned intro line only shows once its cs_intro script is rebuilt from the patched text
+      for (var rid in P.retune) if (X.introShots[rid] && P.retune[rid].some(function (r) { return r.path.indexOf('intro.') === 0; })) X.introScript(rid, true);
     }
     return true;
   };
