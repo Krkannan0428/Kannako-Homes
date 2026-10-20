@@ -177,5 +177,9 @@ events `cover:enter`, `cover:exit`, `interior:exit`.
 - The race fix is a wrapper; integration may want to fold the via logic into `09_missions` `races.begin`.
 - Street events and door markers have no minimap icons until the UI appends `AI.blips()`.
 - Flankers that are assigned the same side can pick nearby points (they spread as they walk).
+- Test files of other tracks that depend on the exact ambient traffic: with this branch, `tests/strands.js` "the flagged
+  car drives off (> 8 m in 4 s)" picks a different traffic car (a stopped sedan that spends the 4 s turning round, 5.7 m)
+  because the traffic tables now include motorcycles; it passes on the base commit. `tests/campaign.js` passes (it failed
+  once mid-development when cowering civilians froze in the line of fire; gunfire now breaks a cower).
 - The traffic test in tests/ai.js (>= 80% of a 20-car sample advance 30 m in 10 s) is sensitive to the ambient RNG
   stream; the street-event timer avoids drawing from it.

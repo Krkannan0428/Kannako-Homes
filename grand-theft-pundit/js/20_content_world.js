@@ -354,7 +354,7 @@
     // track) wins field by field for any id it lists ({id, name, blurb, lines:[], reward, ...}); these are the defaults.
     // reward: cash on success; heat: stars added when the player takes the illegal option.
     streetEvents: [
-      { id: 'ev_rival_table', name: 'Rival Table', blurb: 'A rival pundit set up a folding table. Change their mind.', reward: 150, lines: ['Change my mind. No, not like that.', 'I have a sign, therefore I am right.', 'Respectfully, I will be speaking now.'] },
+      { id: 'ev_rival_table', name: 'Rival Table', blurb: 'A rival pundit set up a folding table. Out-talk them at it.', reward: 150, lines: ['Step up to the table. Bring a source, any source.', 'I have a sign, therefore I am right.', 'Respectfully, I will be speaking now.'] },
       { id: 'ev_tote_snatch', name: 'Tote Snatcher', blurb: 'Someone grabbed a donor\'s tote bag. Knock the snatcher down.', reward: 120, lines: ['MY TOTE! It has my other tote in it!', 'Free merch!', 'Stop him, he has my lanyard!'] },
       { id: 'ev_getaway', name: 'Getaway Sedan', blurb: 'Two cruisers chase a getaway sedan through the district.', reward: 200, lines: ['Pull over! Or don\'t, we love a chase.', 'You\'ll never take me! Wait, which way is the Loop?'] },
       { id: 'ev_fender_bender', name: 'Fender Bender', blurb: 'Two drivers argue about who rear-ended whom, live.', reward: 60, lines: ['You hit ME. I have it on my dashcam podcast.', 'I was stationary in spirit!', 'We\'re live right now, by the way.'] },
