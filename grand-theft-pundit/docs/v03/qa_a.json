@@ -389,6 +389,146 @@
   "regress": "qa_a_trf_09.js"
  },
  {
+  "id": "QA-A-CAM-01",
+  "severity": "high",
+  "area": "camera / aim mode on foot",
+  "title": "Aiming at a building less than ~8 m away throws the camera 7.5 m forward into the building: the screen shows the street from knee height inside the wall and the player vanishes",
+  "repro": "seed=7. Stand on the pavement facing any building wall 3-6 m away (e.g. teleport(281, 208.5) facing east, wall of building #2 at x=284; or (785,252.5) / (805,36.5) facing east) and hold aim (RMB). Also: stand with the right shoulder against a wall (teleport(239.58,254.5), facing north, building #3 to the east) and aim. Scripts: scratchpad/cam/foot2.js, scratchpad/cam/foot.js",
+  "expected": "Over-the-shoulder camera 2 m behind / 0.7 m right of the player, pulled in toward the player if a wall is behind; the player and crosshair visible.",
+  "actual": "At 3 m and 6 m from the wall (3 buildings, 6 of 6 cases) the camera sits 7.54 m IN FRONT of the player at y 0.95-1.07, inside the building (e.g. player x=281 -> camera x=288.5 inside the box 284..). Shoulder-to-wall: camera at (240.26, 0.51, 246.99), 7.5 m ahead, inside building #3. At 9 m it is fine (camera 2.1 m behind). Screens: the player is gone; the view is a street seen from ground level beyond/inside the wall.",
+  "hint": "js/10_render.js rig.update: in aim mode the focus is 8 m ahead (+0.7 m right) of the player; when that point is inside a building, the final guard raycasts FROM the focus (U.rayAabb returns t=0 from inside a box) and sets gt = max(0.5, 0 - pad) -> the camera is put 0.5 m from the focus. The guard (and _pullIn) should cast from the player's shoulder/head, not from the aim focus, and the aim focus should be clamped to the first wall.",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/shots/aim_front_2_3.png",
+   "scratchpad/cam/shots/aim_front_35_3.png",
+   "scratchpad/cam/shots/foot_aim_wall_3.png",
+   "scratchpad/cam/shots/foot_aim_wall_92.png",
+   "scratchpad/cam/foot2.js",
+   "scratchpad/cam/foot.js"
+  ],
+  "regress": "qa_a_cam_01.js"
+ },
+ {
+  "id": "QA-A-CAM-02",
+  "severity": "medium",
+  "area": "camera / first person on foot",
+  "title": "First person on foot sees straight through any wall it faces: the 0.3 m near plane is deeper than the eye's 0.25 m distance to the wall, so the whole street behind the building shows",
+  "repro": "seed=7. Press V twice (first person). Walk up to any building wall, e.g. teleport(239.58, 254.5) facing east into building #3 (west face x=240), or (339.58,254.5) / (383.58,206.5) / (191.58,74.5). Script: scratchpad/cam/foot.js (case D), regress qa_a_cam_02.js",
+  "expected": "The wall fills the view (eye kept at least near-plane distance from walls, or near plane smaller).",
+  "actual": "Camera at x=239.73, 0.27 m from the wall; camera.near = 0.3; all 9 sampled near-plane points lie inside the building (5 buildings tested, all the same). The screen shows the avenue and buildings on the far side of the block as if the wall were not there.",
+  "hint": "js/10_render.js rig.update, mode 'first': desired = player + dir*0.15 at eye height with no collision (the guard is skipped for mode 'first'); PerspectiveCamera near 0.3 (Render.init). Pull the eye back from walls by >= near*(1+aspect) or use a near of ~0.05 in first person.",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/shots/foot_fp_wall_3.png",
+   "scratchpad/cam/shots/foot_fp_wall_92.png",
+   "scratchpad/cam/foot.js"
+  ],
+  "regress": "qa_a_cam_02.js"
+ },
+ {
+  "id": "QA-A-CAM-03",
+  "severity": "medium",
+  "area": "camera / render interpolation",
+  "title": "At speed the player's car bobs up and down on screen every frame: entity meshes are interpolated with the frame alpha but the camera is not",
+  "repro": "seed=7. Sports car on the avenue at z=90 from x=40 heading east (or the bike, or the Loop's west leg at x=182 y=7), full throttle 5-6 s (~44-47 m/s). Render the same sim state with game.render(alpha) for alpha 0..1, or emulate a 144 Hz display (steps of 1/60, renders every 1/144 with alpha = acc*60). Script: scratchpad/cam/jitter.js, regress qa_a_cam_03.js",
+  "expected": "At constant speed the car stays at a fixed place on screen (camera and car interpolated together).",
+  "actual": "Car screen y moves 9.6-9.8 px between alpha 0 and 1 (sports 46.7 m/s; bike 9.1 px at 40 m/s); camera-to-car distance varies 10.93..11.66 m. 144 Hz cadence (bike 40.6 m/s): per-frame car y = 329.2, 325.4, 330.7, 326.9, 332.3, 328.4, 324.7, ... a constant 4-8 px sawtooth shake. Any display rate that is not exactly 60 Hz (or uneven frame pacing) shows it.",
+  "hint": "js/10_render.js frame(): Entities.sync(alpha) interpolates meshes (06_entities syncMesh) but rig.apply(alpha) ignores alpha and uses the last fixed-step rig.pos/focus. Keep the previous rig pose and lerp pos/focus by alpha in apply (or render the rig relative to the interpolated target).",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/jitter.js"
+  ],
+  "regress": "qa_a_cam_03.js"
+ },
+ {
+  "id": "QA-A-CAM-04",
+  "severity": "low",
+  "area": "camera / first person on the bike",
+  "title": "First person on the bike puts the eye at handlebar height (0.9 m), below a standing pedestrian's chest",
+  "repro": "seed=7. spawnVehicle(120,90,'bike'), get on, press V twice (first person). Scripts: scratchpad/cam/fp.js, regress qa_a_cam_04.js",
+  "expected": "Eye at the rider's head, ~1.6 m (saddle 0.86 m + torso; the close chase shot shows the rider's head ~1.7 m up).",
+  "actual": "Camera y = v.y + 0.90 (sedan 1.19, truck 2.46, bus 2.62). Hydrants and pedestrians look huge; the view is from the handlebars.",
+  "hint": "js/05_assets.js vehicleGeometry lightPoints.eye: y = H * 0.82 uses the bike body height 1.1; for the bike use the rider's eye (saddle 0.86 + C.PLAYER.eye - 0.84).",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/shots/fp_bike.png",
+   "scratchpad/cam/shots/close_bike.png",
+   "scratchpad/cam/fp.js"
+  ],
+  "regress": "qa_a_cam_04.js"
+ },
+ {
+  "id": "QA-A-CAM-05",
+  "severity": "medium",
+  "area": "camera / collision with props",
+  "title": "The chase camera goes inside container stacks and parked airliners: the screen shows container ribs or the fuselage from inside and hides the player",
+  "repro": "seed=7, on foot. Container Yard: teleport(518.75,659) next to the stack at (515.35,659) (also (533.25,665) and (557.25,665)) and turn the camera so it looks from the stack toward the player (mouse orbit; the auto-yaw does it when walking away from a stack). Apron: teleport(131,804) or (259,804) beside the airliners at (122,804)/(250,804), camera from the plane side. Script: scratchpad/cam/props.js, regress qa_a_cam_05.js",
+  "expected": "Camera pulled in in front of the prop like it is for buildings.",
+  "actual": "Camera at (514.6, 2.53, 659), inside the stacked container box (3 of 3 stacks); for both airliners the camera (126.85/254.85, 2.53, 804) is inside the plane prop's radius and height (r 7, h 9). Screens: a cage of blue container ribs over the player, dark interior band; on the apron half the view is the inside of the fuselage/wing. (Different from QA-A-DRV-07, which is the Loop deck slab.)",
+  "hint": "js/10_render.js rig._pullIn and the final guard only call World.raycastBuildings; solid props (World.props with solid && h > 2: container, plane, ship, crane legs, ferry boats, kiosks) are ignored. Add a ray vs prop (circle/box) test for big solid props to the pull-in.",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/shots/props_container_0.png",
+   "scratchpad/cam/shots/props_plane_3.png",
+   "scratchpad/cam/props.js",
+   "scratchpad/cam/shots/props_plane_4.png",
+   "scratchpad/cam/shots/props_container_2.png"
+  ],
+  "regress": "qa_a_cam_05.js"
+ },
+ {
+  "id": "QA-A-CAM-06",
+  "severity": "low",
+  "area": "camera / bus and truck against walls",
+  "title": "Backing a bus or truck up to a wall pulls the chase camera down onto its own roof: the roof covers 60-70% of the screen and the road ahead is hidden",
+  "repro": "seed=7. Bus or truck facing west with its rear 0.35 m from the west face of building #0 (x=144, z=254.5) or building #13 (x=288, z=110.5). Script: scratchpad/cam/misc.js (PART=wall), regress qa_a_cam_06.js",
+  "expected": "The camera rises / tilts to look over the vehicle (as in the open, where the bus covers ~11% of the screen).",
+  "actual": "Camera 0.65 m above the bus roof (y 3.88, roof 3.23) and 0.44 m above the truck box; the own vehicle covers 59% (bus) and 70-72% (truck) of the screen vs 9-11% on an open road; both locations identical. Screens show a flat grey roof up to the horizon.",
+  "hint": "js/10_render.js rig.update: _pullIn/guard shorten the boom along the same line (pitch kept), so a short boom ends right over the roof; when pulled in in a vehicle, raise the camera / pitch down to keep the view over the body (or clamp min distance for tall vehicles and raise height).",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/shots/carwall_bus.png",
+   "scratchpad/cam/shots/carwall_truck.png",
+   "scratchpad/cam/misc.js"
+  ],
+  "regress": "qa_a_cam_06.js"
+ },
+ {
+  "id": "QA-A-CAM-07",
+  "severity": "low",
+  "area": "chunk streaming",
+  "title": "After a teleport into an area not built yet (and right after the boot) whole blocks pop in over 11-22 frames: chunks 37-83 m away are missing from the first frame",
+  "repro": "seed=7, live chunk budget (Render.headless=false: 3 chunks per frame once 8 exist). (a) boot like the game: invalidateAll + prebuild(spawn, 100 m) -> first frame misses 8 chunks in view, nearest 83 m, complete after 11 frames. (b) having seen only the campus (prebuild 110,270 r300), teleport to the port (560,610) -> 22 chunks missing, nearest 37 m, 22 frames to fill; uptown (760,300) -> 19 missing, nearest 48 m, 18 frames. Happens on save load, mission/cutscene moves, respawn into unvisited areas. Script: scratchpad/cam/spawnpop.js, scratchpad/cam/stream.js, regress qa_a_cam_07.js",
+  "expected": "No visible hole inside the fog after a teleport: build the chunks in view (at least within fogStart) synchronously or behind a fade.",
+  "actual": "Uptown first frame shows sky where the brick rows behind the player belong; they appear over the next 18 frames (compare spawnpop_teleport_uptown_f1.png / _done.png). While driving flat out (sports, 47-51 m/s, Loop west leg + lower leg, 6 legs across the map) no chunk was ever missing in view: the 3/frame budget keeps up; chunk builds cost 1.7 ms mean, 9 ms max.",
+  "hint": "js/10_render.js ensureChunks: budget 3 per frame once Render.chunks.size >= 8; debug.teleport / Entities respawn / load do not call Render.prebuild. Prebuild (sync) the chunks in view within fogStart on teleport/respawn/load, or raise the budget for chunks closer than fog.near.",
+  "lens": "qa-a:streaming",
+  "evidence": [
+   "scratchpad/cam/shots/spawnpop_teleport_uptown_f1.png",
+   "scratchpad/cam/shots/spawnpop_teleport_uptown_done.png",
+   "scratchpad/cam/spawnpop.js"
+  ],
+  "regress": "qa_a_cam_07.js"
+ },
+ {
+  "id": "QA-A-CAM-08",
+  "severity": "low",
+  "area": "entity draw distance vs fog",
+  "title": "Pedestrians vanish at 110 m in clear air (fog starts at 120 m) and cars at 200 m while only 56% fogged: visible pop-in/out down every long avenue",
+  "repro": "seed=7, quality medium, noon. Free camera at (40,3,90.5) looking east along the avenue; spawn a ped at x=40+108.5 then x=40+111.5; a red van at +198.5 then +201.5. Script: scratchpad/cam/pop.js, regress qa_a_cam_08.js",
+  "expected": "Entities are culled where the fog already hides them (or fade out).",
+  "actual": "QUALITY pedDraw 110, vehicleDraw 200, fog 120..260. Ped at 108.5 m: drawn, fog amount 0, ~10 px tall, removing it changes pixels by up to 47 levels; at 111.5 m gone. Van at 198.5 m drawn (fog 0.56, max change 18 levels), gone at 201.5 m. The 'far' draw setting (fog 166..360) makes it worse (peds pop with no fog at all, cars at 17% fog).",
+  "hint": "js/01_config.js QUALITY pedDraw/vehicleDraw vs fogStart/drawDistance (also 11_ui.js applySetting drawDistance changes fog but not the entity ranges); js/06_entities.js tooFar(). Tie the cull distances to the fog (e.g. near + 0.85*(far-near)) or fade.",
+  "lens": "qa-a:camera",
+  "evidence": [
+   "scratchpad/cam/shots/popcrop_ped_in.png",
+   "scratchpad/cam/shots/popcrop_ped_out.png",
+   "scratchpad/cam/shots/popcrop_car_in.png",
+   "scratchpad/cam/pop.js"
+  ],
+  "regress": "qa_a_cam_08.js"
+ },
+ {
   "id": "QA-A-VIS-01",
   "severity": "medium",
   "area": "render / building roofs",
@@ -464,7 +604,7 @@
  },
  {
   "id": "QA-A-VIS-05",
-  "severity": "medium",
+  "severity": "low",
   "area": "render / chunk LOD",
   "title": "Chunk LOD pop: beyond lodDistance whole blocks turn 20-30% darker (Lambert far materials lack the environment light)",
   "repro": "?seed=7&quality=low (also high), setClock(12), freeCam(260,40,420, 330,0,250) over downtown and freeCam(30,30,30, 120,0,200) over the suburbs; compare with GTP.C.QUALITY.lodDistance = 1e5 (all chunks near). Script: scratchpad/vday/lod.js",
@@ -480,7 +620,8 @@
    "scratchpad/vday/shots/lod_high_12_lod_suburbs_on.png",
    "scratchpad/vday/shots/lod_high_12_lod_suburbs_off.png"
   ],
-  "regress": "qa_a_vis_05.js"
+  "regress": "qa_a_vis_05.js",
+  "note": "The camera lens measured the swap changing only 0-0.8% of the screen while driving, so the pop is subtle in motion; it reads as a darker band of distant towers in still views (vday/crops/lod.png: left near, right far)."
  },
  {
   "id": "QA-A-VIS-06",
