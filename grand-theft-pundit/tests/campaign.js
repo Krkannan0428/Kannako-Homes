@@ -108,6 +108,7 @@ function installDriver() {
       while (s < maxSec) {
         if (stop()) return s;
         const d = GTP.UI.state.dialogue;
+        if (GTP.AI.wanted.level > 0 && GTP.game.state === 'playing') CT.dodge();   // a stray kill's stars: no bust during the outro
         if (d && d.t > 0.15) CT.press('confirm');
         s += CT.adv(0.15);
       }

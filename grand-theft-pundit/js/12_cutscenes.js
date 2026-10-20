@@ -345,13 +345,16 @@
     try { removeActors(); } catch (e) { U.reportError(e, 'cutscenes.actors'); }
     // a script that stood the player on a roof (the endings on Goldplate Tower) puts them back where they were (QA-C1-11)
     if (pl && c.playerOnRoof && c.playerWas) {
-      if (g && g.debug && g.debug.teleport) g.debug.teleport(c.playerWas.x, c.playerWas.z); else { pl.x = c.playerWas.x; pl.z = c.playerWas.z; pl.y = W().heightAt(pl.x, pl.z, 0); pl.snap(); }
+      var wy = W().heightAt(c.playerWas.x, c.playerWas.z, c.playerWas.y);   // the deck or roof they stood on, not the street under it
+      if (g && g.debug && g.debug.teleport) g.debug.teleport(c.playerWas.x, c.playerWas.z, wy); else { pl.x = c.playerWas.x; pl.z = c.playerWas.z; pl.y = wy; pl.snap(); }
       pl.yaw = c.playerWas.yaw;
     }
     // the clock the script asked for goes back to the game's own, moved on by the time the cutscene took (QA-C1-12)
     if (c.clockWas != null && g && g.time) {
       var hrs = (simT() - c.startedAt) / ((C.DAY && C.DAY.secondsPerHour) || 60);
-      g.time.clock = ((c.clockWas + hrs) % 24 + 24) % 24;
+      var tot = c.clockWas + hrs;
+      g.time.clock = ((tot % 24) + 24) % 24;
+      if (c.dayWas != null) g.time.day = c.dayWas + Math.floor(tot / 24);   // the override's own midnight never counts
       if (GTP.Render && GTP.Render.updateEnvironment) { try { GTP.Render.updateEnvironment(g.time.clock); } catch (e) { /* cosmetic */ } }
     }
     cur = null;
@@ -388,7 +391,7 @@
       cur.playerWas = { x: pl.x, z: pl.z, y: pl.y, yaw: pl.yaw };
       // `clock`: the script's time of day (cs_ending_b at dawn) for its duration
       if (typeof s.clock === 'number' && g.time) {
-        cur.clockWas = g.time.clock; g.time.clock = ((s.clock % 24) + 24) % 24;
+        cur.clockWas = g.time.clock; cur.dayWas = g.time.day; g.time.clock = ((s.clock % 24) + 24) % 24;
         if (GTP.Render && GTP.Render.updateEnvironment) { try { GTP.Render.updateEnvironment(g.time.clock); } catch (e) { /* cosmetic */ } }
       }
       // the world keeps simulating but nobody panics, nothing is wanted, the radio does what the script says

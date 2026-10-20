@@ -530,7 +530,9 @@
     // the car the player sat in comes back under them (the pod van is home; it respawns at the garage either way)
     if (data.vehicle && GTP.Vehicle && data.vehicle.type && C.VEHICLES[data.vehicle.type]) {
       try {
-        var sv = data.vehicle, veh = this.debug.spawnVehicle(sv.x != null ? sv.x : p.x, sv.z != null ? sv.z : p.z, sv.type, { color: sv.color || undefined, wrap: sv.wrap || undefined, yaw: sv.yaw, tag: sv.tag || undefined });
+        var sv = data.vehicle;
+        if (sv.tag === 'hoa' && sv.type === 'suv') sv.tag = 'hoasuv';   // v3 saves: the strand SUV's old tag (QA-STR-11)
+        var veh = this.debug.spawnVehicle(sv.x != null ? sv.x : p.x, sv.z != null ? sv.z : p.z, sv.type, { color: sv.color || undefined, wrap: sv.wrap || undefined, yaw: sv.yaw, tag: sv.tag || undefined });
         if (veh) { if (sv.hp) veh.hp = Math.min(veh.hp, sv.hp); if (sv.tag === 'podvan' || sv.tag === 'sponsorvan') veh.persistent = true; veh.enter(p, 0); }
       } catch (e) { U.reportError(e, 'load.vehicle'); }
     }

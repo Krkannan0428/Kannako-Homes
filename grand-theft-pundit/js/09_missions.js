@@ -1551,11 +1551,11 @@
       }
       var def = f.list[f.i];
       if (!def) { f.i++; continue; }
+      if (!Heist.objectiveRuns(def)) { f.i++; continue; }   // the other heist approach's objective (a timed block too)
       if (def.type === 'timer_wrap') {
         run.stack.push({ list: def.objectives || [], i: 0, timer: { remaining: def.seconds || 60, total: def.seconds || 60, text: def.text || null }, def: def });
         continue;
       }
-      if (!Heist.objectiveRuns(def)) { f.i++; continue; }   // the other heist approach's objective
       var h = objectiveType(def.type);
       if (!h) { U.reportError(new Error('unknown objective type ' + def.type), 'missions'); f.i++; continue; }
       try { run.checkpoint = takeSnapshot(); } catch (e) { U.reportError(e, 'missions.snapshot'); }
@@ -2084,7 +2084,7 @@
     K: K,
     state: null,
     init: function () {
-      if (run) { try { cleanupEntities(run.entities, false); } catch (e) { /* entities may be gone */ } }
+      if (run) { try { endObjective(); } catch (e) { /* the objective's own cleanup (event listeners) */ } try { cleanupEntities(run.entities, false); } catch (e) { /* entities may be gone */ } }
       run = null; lastFail = null; pendingCut = null; mrng = GTP.rng.fork(0x3155);
       dlg.active = false; dlg.queue = []; dlg.current = null; dlg.done = null; dlg.restore = null; dlg.uiDriven = false;
       mg.active = null; mg.uiDriven = false;
@@ -2389,8 +2389,10 @@
   // player's hands (QA-CMB-01: m13b's Ratio Launcher vans counted WRONG TAKE)
   GTP.Events.on('vehicle:exploded', function (e) {
     var p = player(), v = e && e.vehicle; if (!p || !v || v._igniteHit) return;
-    var s = e.src, mine = s === p || (s && (s.owner === p || s.shooter === p || s.src === p)) || v.lastDamageSrc === p;
+    // only the player's own blast or projectile is credited to the gun in hand; anything else falls back to the last hit
+    var s = e.src, mine = s === p || (s && (s.owner === p || s.shooter === p || s.src === p));
     if (mine) v._igniteHit = { type: e.type || (s && s.weapon) || 'explosion', weapon: (s && s.weapon) || p.weapon, src: s || p };
+    else if (v._lastHit) v._igniteHit = v._lastHit;
   });
   GTP.Events.on('vehicle:exploded', function (e) {
     var p = player(), v = e && e.vehicle; if (!p || !v) return;
@@ -2406,7 +2408,11 @@
     if (subsTier >= 4) p.armor = Math.max(p.armor || 0, 50);
   });
   GTP.SaveHooks = GTP.SaveHooks || [];
-  GTP.SaveHooks.push({ name: 'subs', save: function () { }, load: function () { Missions.syncSubs(); } });
+  GTP.SaveHooks.push({ name: 'subs', save: function () { }, load: function () {
+    Missions.syncSubs();
+    // a save from before chapters (v3): the act already reached counts as shown, so no ACT card mid-act
+    if (state && state.flags.story_act == null) { var a = 0; storyOrder().forEach(function (m) { if (state.completed.has(m.id)) a = Math.max(a, actOf(m)); }); if (a) state.flags.story_act = a; }
+  } });
   // the story's own save state (the heist plan); chapters and calls live in the flags (PLAN_V03 GTP.SaveRegistry)
   GTP.SaveRegistry = GTP.SaveRegistry || {};
   GTP.SaveRegistry.story = {
@@ -3489,14 +3495,13 @@
     // the vests appear when their flag is set, not only when the car is first parked (QA-STR-11, QA-STR-15): the Firmness Vest by
     // the HOA SUV after patrol level 6, the memo-20 vest by the pod garage
     if (flagHas('hoa_vest')) ensureVest('hoa', liveTagged('hoasuv'), 'FIRMNESS VEST');
-    if (flagHas('memo_vest')) { var pg = Wd.landmark('pod_garage'); ensureVest('memo', liveTagged('podvan') || (pg && pg.door ? { x: pg.door.x, z: pg.door.z } : null), 'MEMO VEST'); }
+    if (flagHas('memo_vest')) { var pg = Wd.landmark('pod_garage'); ensureVest('memo', pg && pg.door ? { x: pg.door.x, z: pg.door.z } : null, 'MEMO VEST'); }   // the garage, never the moving van
   }
   var vests = {};
   function ensureVest(id, at, label) {
     var CB = GTP.Combat, pk = vests[id];
     if (!at || !CB || !CB.spawnPickup) return;
     if (pk && !pk.removed) return;
-    if (pk && pk.removed && pk.respawn) return;   // collected: Combat respawns it a game day later
     var x = at.x + 2.2, z = at.z, r = W().resolveCapsule(x, z, W().heightAt(x, z, 0) + 0.5, 0.5);
     vests[id] = CB.spawnPickup({ type: 'armor', value: 100, x: r.x, z: r.z, persistent: true, respawn: 24 * C.DAY.secondsPerHour, label: label, tag: 'strand' });
   }
@@ -3571,7 +3576,7 @@
       if (races.cur) races.end('reset');
       drivers.list.length = 0; stunts.watchers.length = 0; stunts.air = null; stunts.prevGround = true;
       progress = freshProgress(); LOOP_PTS = null; ensureT = 0;
-      memoPickups = {};
+      memoPickups = {}; vests = {};
       try { rebuildMarkers(); } catch (e) { U.reportError(e, 'strands.markers'); }
       try { S.monday_memos.place(); } catch (e) { U.reportError(e, 'strands.memos'); }
       try { ensureVehicles(); } catch (e) { U.reportError(e, 'strands.vehicles'); }
