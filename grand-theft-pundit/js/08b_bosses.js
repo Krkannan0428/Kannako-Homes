@@ -319,7 +319,7 @@
     else mesh.scale.set(this.r, this.r, 1);
     // the outline of the full area (the ring's reach) stays faint the whole time
     if (this.shape !== 'ring') {
-      var edge = new THREE.Mesh(geo(this.shape === 'strip' ? 'plane' : 'ring'), new THREE.MeshBasicMaterial({ color: this.color, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, wireframe: this.shape === 'strip' }));
+      var edge = new THREE.Mesh(geo(this.shape === 'strip' ? 'plane' : 'ring'), new THREE.MeshBasicMaterial({ color: this.edgeColor != null ? this.edgeColor : this.color, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, wireframe: this.shape === 'strip' }));
       edge.position.z = 0.01; mesh.add(edge); this.edge = edge;
     } else {
       var reach = new THREE.Mesh(geo('ring'), new THREE.MeshBasicMaterial({ color: this.color, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
@@ -546,7 +546,10 @@
   EP.spawnAdd = function (role, x, z, o) {
     o = o || {};
     var look = o.look ? Object.assign(rollLook(o.lookRole || role, x, z), o.look) : (o.castId && castOf(o.castId) ? Object.assign({}, castOf(o.castId).look) : rollLook(o.lookRole || role, x, z));
-    var p = newPed({ x: x, z: z, look: look, role: role, weapon: o.weapon || (role === 'cop' ? 'pistol' : 'fist'), hp: o.hp, ai: hostileBrain(role), castId: o.castId, yaw: U.dirToYaw(this.center.x - x, this.center.z - z) });
+    var weapon = o.weapon || (role === 'cop' ? 'pistol' : 'fist'), WP = GTP.Combat && GTP.Combat.WEAPONS, melee = !WP || !WP[weapon] || !!WP[weapon].melee;
+    // ranged goons use the missions' hostile brain; brawlers get this file's (a wind-up before every swing, a breather after)
+    var brain = melee ? { phase: 0.5, mode: 'mission', mission: 'bossadd', ambient: false, role: role, swingT: 0, cool: this.rng.range(0.5, 1.5), barkT: this.rng.range(3, 8), stuckT: 0, side: 1, sideT: 0 } : hostileBrain(role);
+    var p = newPed({ x: x, z: z, look: look, role: role, weapon: weapon, hp: o.hp, ai: brain, castId: o.castId, yaw: U.dirToYaw(this.center.x - x, this.center.z - z) });
     p.hostile = true; p.aimTarget = player(); p.bossAdd = this.id; if (o.name) p.name = o.name;
     this.adds.push(p);
     fx({ type: 'puff', x: x, y: p.y + 0.6, z: z, size: 1.4, life: 0.5, color: 0xe0e0e0 });
@@ -556,6 +559,9 @@
     var out = [];
     for (var i = 0; i < n; i++) { var s = spotNear(this.rng, this.center.x, this.center.z, rMin || 12, rMax || 22); out.push(this.spawnAdd(role, s.x, s.z, o)); }
     return out;
+  };
+  EP.tickAdds = function (dt) {
+    for (var i = 0; i < this.adds.length; i++) { var a = this.adds[i]; if (a.ai && a.ai.mission === 'bossadd' && !a.removed) brawlerTick(this, a, a.ai, dt); }
   };
   EP.liveAdds = function () {
     var n = 0;
@@ -602,7 +608,7 @@
     }
     var d = n * (this.def.dmgScale || 1) * this.vuln;
     d = Math.min(d, this.maxHp * K.hitCap);
-    if (this.def.windowCap && this.windowDmg + d > this.def.windowCap) d = Math.max(0, this.def.windowCap - this.windowDmg);
+    if (this.def.windowCap && (!this.def.capPhases || this.def.capPhases.indexOf(this.phase) >= 0) && this.windowDmg + d > this.def.windowCap) d = Math.max(0, this.def.windowCap - this.windowDmg);
     if (d <= 0) return 0;
     this.windowDmg += d;
     return this.hurt(d);
@@ -658,6 +664,7 @@
       this.pickups.push(CB.spawnPickup({ type: 'health', value: K.supplyHp, x: s.x, z: s.z, persistent: true }));
       var s2 = spotNear(this.rng, this.center.x, this.center.z, 6, 12);
       if (!this.def.noGuns) this.pickups.push(CB.spawnPickup({ type: 'weapon', weaponId: w, ammo: K.supplyAmmo, x: s2.x, z: s2.z, persistent: true, label: 'BOSS FIGHT' }));
+      if (this.phase >= 2) { var s3 = spotNear(this.rng, this.center.x, this.center.z, 6, 12); this.pickups.push(CB.spawnPickup({ type: 'armor', value: 50, x: s3.x, z: s3.z, persistent: true })); }
     } catch (e) { U.reportError(e, 'bosses.supplies'); }
   };
   EP.start = function () {
@@ -665,6 +672,7 @@
     this.data = {};
     if (pendingResume && pendingResume.bossId === this.id) { from = Math.max(1, Math.min(this.phases, pendingResume.phase)); this.hp = from > 1 ? this.def.thresholds[from - 2] : this.maxHp; this.resumed = from; }
     pendingResume = null;
+    var wd = GTP.AI && GTP.AI.wanted; if (wd && wd.clear && wd.level > 0) { try { wd.clear(); } catch (e) { U.reportError(e, 'bosses.wanted'); } }
     try { if (this.def.setup) this.def.setup(this); } catch (e) { U.reportError(e, 'bosses.setup ' + this.id); }
     emit('boss:start', { id: this.id, name: this.name, phases: this.phases, resumed: this.resumed || 0 });
     sfx('mission', this.center.x, this.center.z, 0.8);
@@ -739,12 +747,17 @@
     this.t += dt; this.stateT += dt;
     if (this._slowmo > 0) { this._slowmo -= dt; if (this._slowmo <= 0 && GTP.game && GTP.game.timeScale < 1) GTP.game.timeScale = 1; }
     if (this._pendingEmit && simT() - this.lastEmit >= 0.1) this.emitPhase(true);
-    for (var i = this.tele.length - 1; i >= 0; i--) { var tl = this.tele[i]; tl.update(dt); if (tl.done) { tl.dispose(); this.tele.splice(i, 1); } }
+    // a strike can end the fight under this loop (the player down, the mission failed): walk a copy, stop once ended
+    var tl, list = this.tele.slice(), i;
+    for (i = 0; i < list.length && this.state !== 'ended'; i++) { tl = list[i]; tl.update(dt); if (tl.done) { tl.dispose(); var k = this.tele.indexOf(tl); if (k >= 0) this.tele.splice(k, 1); } }
+    if (this.state === 'ended') return;
     for (i = this.parts.length - 1; i >= 0; i--) if (this.parts[i].removed) this.parts.splice(i, 1);
     var p = player();
+    if (this.state === 'fight' || this.state === 'break') this.tickAdds(dt);
     if (this.state === 'fight') {
       this.phaseT += dt;
       try { if (this.def.update) this.def.update(this, dt); } catch (e) { U.reportError(e, 'bosses.update ' + this.id); }
+      if (this.state === 'ended') return;
       // the leash: walking away from a boss fight ends it
       if (p && U.dist2d(p.x, p.z, this.center.x, this.center.z) > (this.def.leash || K.leash)) {
         this.leashT += dt;
@@ -847,6 +860,33 @@
       if (d.sign) { sceneRemove(d.sign); d.sign = null; }
     }
   }
+  // a brawler add: close in, wind up (the swing reads before it lands), one punch, a breather
+  function brawlerTick(enc, a, ai, dt) {
+    var p = player(), CB = GTP.Combat;
+    if (!p || !a.alive || a.knockedDown || a.inVehicle) { if (ai.swingT > 0) ai.swingT = 0; return; }
+    var d = U.dist2d(a.x, a.z, p.x, p.z), face = U.dirToYaw(p.x - a.x, p.z - a.z);
+    a.aimTarget = p;
+    if (ai.swingT > 0) {
+      ai.swingT -= dt; a.stop(); a.yaw = U.angleDamp(a.yaw, face, 10, dt); a.aimYaw = a.yaw;
+      if (ai.swingT <= 0) { if (d < 2.1 && p.alive && !p.inVehicle && CB && CB.fire) { try { CB.fire(a, a.weapon || 'fist'); } catch (e) { U.reportError(e, 'bosses.brawler'); } } ai.cool = enc.rng.range(1.2, 1.9); }
+      return;
+    }
+    if (ai.cool > 0) ai.cool -= dt;
+    if (d > 1.5) {
+      a.moveTo(p.x, p.z, d > 3);
+      if (ai.sideT > 0) { ai.sideT -= dt; var f = U.yawToDir(a.yaw); a.intent.x = -f.z * ai.side; a.intent.z = f.x * ai.side; }
+      if (a.speed < 0.3) { ai.stuckT += dt; if (ai.stuckT > 0.8) { ai.stuckT = 0; ai.side = -ai.side; ai.sideT = 0.5; } } else ai.stuckT = 0;
+    } else {
+      a.stop(); a.yaw = U.angleDamp(a.yaw, face, 8, dt);
+      if (ai.cool <= 0 && !p.inVehicle) { ai.swingT = 0.45; a.punchT = 0.45; a.aimYaw = face; }
+    }
+    ai.barkT -= dt;
+    if (ai.barkT <= 0) {
+      ai.barkT = enc.rng.range(7, 13);
+      var Rd = GTP.Content && GTP.Content.radio, pool = Rd && Rd.barks && Rd.barks[ai.role];
+      if (pool && pool.length && d < 30 && GTP.AI && GTP.AI.say) GTP.AI.say(a, pool[enc.rng.int(0, pool.length - 1)], '#ff7a7a');
+    }
+  }
   // face the player and stand (non-hostile cast at the fight: Chyron, the panelists between rounds)
   function standFacing(p, dt) { if (!p || p.removed || p.knockedDown) return; p.stop(); var pl = player(); if (pl) p.yaw = U.angleDamp(p.yaw, U.dirToYaw(pl.x - p.x, pl.z - p.z), 4, dt); }
   // a boss ped circling a point at radius r (the vulnerable windows); returns the distance to the player
@@ -872,8 +912,8 @@
   // the helicopter sets down and the President steps out to rate the damage. Rating runs (strips) and gold rain (circles).
   DEFS.b01_goldplate = {
     id: 'b01_goldplate', name: 'President Lionel Goldplate', cast: 'goldplate', title: 'Ribbon Cutting',
-    arena: { landmark: 'stadium', offset: { x: -30, z: 0 } },
-    maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.55, shieldText: 'IN THE HELICOPTER (TEN OUT OF TEN)',
+    arena: { landmark: 'stadium', offset: { x: -40, z: 30 } },
+    maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.45, windowCap: 56, shieldText: 'IN THE HELICOPTER (TEN OUT OF TEN)',
     spools: [3, 4, 5], orbit: [0.22, 0.28, 0.34], attackEvery: [4.6, 3.8, 3.0], window: 14,
     hints: ['Aim (right mouse) at the gold ribbon spools under the helicopter and shoot them', 'Cut the spools again; his interns are on the field', 'Last ribbon. The helicopter is a ten. Make it a two'],
     ticker: 'BREAKING: PRESIDENT RATES OWN HELICOPTER LANDING A TEN; HELICOPTER DISAGREES',
@@ -913,14 +953,14 @@
       DEFS.b01_goldplate._spools(enc, def.spools[n - 1]);
       enc.shield = true;
       if (n >= 2) enc.spawnAdds('thug', n === 2 ? 3 : 2, 12, 22, { look: { shirt: '#ffd45a', sign: 'TYN' }, name: 'Intern' });
-      if (n >= 3) enc.spawnAdds('cop', 2, 14, 24, { weapon: 'pistol', name: 'Gold Detail' });
+      if (n >= 3) enc.spawnAdds('cop', 1, 14, 24, { weapon: 'pistol', name: 'Gold Detail' });
     },
     _spools: function (enc, n) {
       var d = enc.data;
       for (var i = 0; i < n; i++) {
         (function (k) {
           var off = { a: k / n * TAU, r: n > 3 ? 2.6 : 2.2, drop: 6 + (k % 2) * 1.2 };
-          var pt = enc.addPart({ kind: 'spool', label: 'RIBBON SPOOL', x: enc.heli.x, y: enc.heli.y - off.drop, z: enc.heli.z, hp: 36, mesh: Meshes.spool(), invulnText: 'GOLD-PLATED',
+          var pt = enc.addPart({ kind: 'spool', label: 'RIBBON SPOOL', x: enc.heli.x, y: enc.heli.y - off.drop, z: enc.heli.z, hp: 45, mesh: Meshes.spool(), invulnText: 'GOLD-PLATED',
             follow: function (self, dt) {
               var h = enc.heli, sw = Math.sin(self.age * 1.7 + k) * 0.6, a = off.a + h.yaw;
               self.x = h.x + Math.cos(a) * off.r + sw; self.z = h.z + Math.sin(a) * off.r; self.y = h.y - off.drop + Math.cos(self.age * 1.3 + k) * 0.3;
@@ -1025,8 +1065,8 @@
   // exposed, toasting champagne (circles) at you, until the roadies rebuild.
   DEFS.b02_velvetine = {
     id: 'b02_velvetine', name: 'Baron Velvetine', cast: 'velvetine', title: 'The Silent Yacht',
-    arena: { landmark: 'afterparty_yacht', offset: { x: 0, z: 10 } },
-    maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.5, shieldText: 'SHHH. THE BARON IS LISTENING',
+    arena: { landmark: 'afterparty_yacht', offset: { x: -10, z: 10 } },
+    maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.42, windowCap: 60, shieldText: 'SHHH. THE BARON IS LISTENING',
     speakers: [4, 4, 3], pulse: [6.2, 5.2, 4.4], window: 16, toastEvery: [2.8, 2.4, 2.0],
     hints: ['Wreck the speaker stacks (aim and shoot). Jump over the silent drops', 'The roadies rebuilt it. Speakers first, then the Baron', 'The speakers are on carts now. Jump the drops, wreck the stacks'],
     ticker: 'BREAKING: BARON VELVETINE\'S LISTENING SESSION ENDS; NOTHING WAS PLAYED, EVERYONE AGREES IT SLAPPED',
@@ -1062,7 +1102,7 @@
       for (var i = 0; i < n; i++) {
         (function (k) {
           var a0 = k / n * TAU + Math.PI / n, r = 9.5, pos = enc.at(Math.cos(a0) * r, Math.sin(a0) * r);
-          var pt = enc.addPart({ kind: 'speaker', label: 'SPEAKER', x: pos.x, y: pos.y + 1.4, z: pos.z, hp: 70, mesh: Meshes.speaker(), invulnText: 'MUFFLED',
+          var pt = enc.addPart({ kind: 'speaker', label: 'SPEAKER', x: pos.x, y: pos.y + 1.4, z: pos.z, hp: 95, mesh: Meshes.speaker(), invulnText: 'MUFFLED',
             follow: function (self, dt) {
               if (moving) { var a = a0 + enc.data.ang; self.x = c.x + Math.cos(a) * r; self.z = c.z + Math.sin(a) * r; self.y = groundY(self.x, self.z, c.y) + 1.4; }
               self.yaw = U.dirToYaw(self.x - c.x, self.z - c.z) + Math.PI;
@@ -1087,7 +1127,7 @@
       var d = enc.data, def = enc.def;
       d.window = 0; d.exposed = false;
       DEFS.b02_velvetine._speakers(enc, def.speakers[n - 1], n === 3);
-      if (n >= 2) enc.spawnAdds('thug', 3, 10, 18, { look: { shirt: '#111111', pants: '#111111', glasses: 'shades' }, name: 'Bouncer' });
+      enc.spawnAdds('thug', n === 1 ? 2 : 3, 10, 18, { look: { shirt: '#111111', pants: '#111111', glasses: 'shades' }, name: 'Bouncer' });
     },
     partBroken: function (enc) {
       if (enc.liveParts('speaker') === 0 && !enc.data.exposed) {
@@ -1101,15 +1141,16 @@
       var d = enc.data, def = enc.def, n = enc.phase, b = enc.ped, c = enc.center, p = player();
       d.ang += dt * 0.22;
       if (!b || b.removed) return;
-      if (!d.exposed) { if (!b.knockedDown) { b.moveTo(c.x + Math.cos(enc.t * 0.4) * 1.2, c.z + Math.sin(enc.t * 0.4) * 1.2, false); } enc.every('bark', 7, dt, function () { enc.randomBark('fight'); }); return; }
-      d.window -= dt;
-      circleAround(enc, b, c.x, c.z, 3.0, 0.45, dt, true);
-      if (p) enc.every('toast', def.toastEvery[n - 1], dt, function () {
+      // champagne toasts: slow while he listens behind the speakers, fast once he is exposed
+      if (p) enc.every('toast', d.exposed ? def.toastEvery[n - 1] : def.toastEvery[n - 1] * 1.9, dt, function () {
         var lead = 0.6;
         enc.addTele({ shape: 'circle', x: p.x + (p.vx || 0) * lead, z: p.z + (p.vz || 0) * lead, r: 2.3, warn: 1.3, dmg: 12, knock: 4, color: 0xff66cc, label: 'TOAST!',
           onStrike: function (t) { fx({ type: 'explosion', x: t.x, y: t.y + 0.3, z: t.z, size: 2.2, life: 0.3, color: 0xfff0b0 }); for (var q = 0; q < 6; q++) fx({ type: 'spark', x: t.x, y: t.y + 0.4, z: t.z, vx: Math.cos(q) * 4, vy: 4, vz: Math.sin(q) * 4, size: 0.3, life: 0.5, color: 0xfff6c8 }); } });
-        if (enc.rng.chance(0.4)) enc.randomBark('exposed');
+        if (d.exposed && enc.rng.chance(0.4)) enc.randomBark('exposed');
       });
+      if (!d.exposed) { if (!b.knockedDown) { b.moveTo(c.x + Math.cos(enc.t * 0.4) * 1.2, c.z + Math.sin(enc.t * 0.4) * 1.2, false); } enc.every('bark', 7, dt, function () { enc.randomBark('fight'); }); return; }
+      d.window -= dt;
+      circleAround(enc, b, c.x, c.z, 3.0, 0.45, dt, true);
       if (d.window <= 0) {
         d.exposed = false; enc.shield = true; enc.hint = def.hints[n - 1];
         enc.bark(def.barks.rebuild[0]);
@@ -1132,7 +1173,7 @@
   DEFS.b03_warbanner = {
     id: 'b03_warbanner', name: 'PM Hollis Warbanner', cast: 'warbanner', title: 'The Jets Arrive (Probably)',
     arena: { landmark: 'airport_runway', offset: { x: 0, z: 26 } },
-    maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.5, shieldText: 'PRESS PASS (WRECK THE SCOOTERS)', leash: 170,
+    maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.42, windowCap: 50, capPhases: [2], shieldText: 'PRESS PASS (WRECK THE SCOOTERS)', leash: 170,
     scooters: [3, 2, 0], jetEvery: [9, 7.5, 5.5], window: 12,
     hints: ['Wreck the Defense Scooters (shoot them, or lure them under the jets). Stay out of the flashing strips', 'He is on a scooter now: wreck his ride, then hit him while he is down', 'On foot at the podium. Dodge the crossing jets and hit him'],
     ticker: 'BREAKING: BRAVADIA\'S JETS ARRIVE, BOMB OWN PRIME MINISTER WITH PRESS RELEASES; BRAVADIA CALLS IT A SUCCESS',
@@ -1185,19 +1226,20 @@
     phase: function (enc, n) {
       var d = enc.data, def = enc.def;
       d.window = 0; d.thrown = false;
-      for (var i = 0; i < def.scooters[n - 1]; i++) DEFS.b03_warbanner._scooter(enc, null, 60);
+      for (var i = 0; i < def.scooters[n - 1]; i++) DEFS.b03_warbanner._scooter(enc, null, 90);
       if (n === 1) { enc.shield = true; enc.shieldText = 'PRESS PASS (WRECK THE SCOOTERS)'; }
       if (n === 2) { enc.shield = true; enc.shieldText = 'ON A SCOOTER (WRECK IT)'; DEFS.b03_warbanner._mount(enc); }
       if (n === 3) {
         enc.shield = false; var w = enc.ped; if (w && w.inVehicle) w.inVehicle.exit(w);
         if (w) { w.x = d.podium.x; w.z = d.podium.z - 1; w.snap(); }
-        enc.spawnAdds('swat', 2, 12, 20, { weapon: 'pistol', look: { shirt: '#3d6fcf', pants: '#1a2a5a' }, lookRole: 'swat', name: 'Bravadian Guard' });
+        enc.spawnAdds('swat', 1, 12, 20, { weapon: 'pistol', look: { shirt: '#3d6fcf', pants: '#1a2a5a' }, lookRole: 'swat', name: 'Bravadian Guard' });
+        enc.spawnAdds('thug', 2, 12, 20, { look: { shirt: '#3d6fcf', pants: '#1a2a5a' }, name: 'Bravadian Guard' });
       }
     },
     _mount: function (enc) {
       var w = enc.ped; if (!w || w.removed) return;
       if (w.knockedDown) { w.knockedDown = false; w.downT = 0; }
-      var v = DEFS.b03_warbanner._scooter(enc, 'warbanner', 110);
+      var v = DEFS.b03_warbanner._scooter(enc, 'warbanner', 150);
       v.pmRide = true; enc.data.ride = v; enc.shield = true; enc.data.thrown = false;
       fx({ type: 'puff', x: v.x, y: v.y + 0.8, z: v.z, size: 2, life: 0.5, color: 0xe0e0e0 });
       textFx('THE PM MOUNTS UP', v.x, v.y + 2.5, v.z, '#3d6fcf', 1.6);
@@ -1268,7 +1310,7 @@
           if (d.window <= 0) { enc.bark('Fresh scooter! Bill it to the podcast!'); DEFS.b03_warbanner._mount(enc); enc.hint = def.hints[1]; enc.emitPhase(true); }
         }
       } else if (n === 3) {
-        if (w && !w.removed && !w.knockedDown) { circleAround(enc, w, d.podium.x, d.podium.z + 3, 3.2, 0.35, dt, false); bossShoot(enc, w, 'pistol', 2.0, dt, 24); }
+        if (w && !w.removed && !w.knockedDown) { circleAround(enc, w, d.podium.x, d.podium.z + 3, 3.2, 0.35, dt, false); bossShoot(enc, w, 'pistol', 2.8, dt, 24); }
       }
     },
     _wrecked: function (enc, v) {
@@ -1310,7 +1352,7 @@
     id: 'b04_redacted', name: 'Agent Pat Redacted', cast: 'redacted', title: 'Weather Balloon',
     arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } },
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 1, shieldText: '[REDACTED]',
-    patches: [2, 3, 3], vans: [1, 2, 2], barEvery: [5.5, 4.6, 3.8], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
+    patches: [3, 4, 4], vans: [1, 2, 2], barEvery: [4.8, 4.0, 3.4], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
     hints: ['Shoot the black [REDACTED] patch on the balloon. Grey means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
     ticker: 'BREAKING: OVA WEATHER BALLOON POPS OVER DEPOT; OVA CONFIRMS IT WAS NEVER THERE',
     lines: {
@@ -1348,14 +1390,14 @@
     _patch: function (enc) {
       var c = enc.center, d = enc.data, b = enc.balloon;
       var a0 = enc.rng.range(0, TAU);
-      var pt = enc.addPart({ kind: 'patch', label: '[REDACTED] PATCH', x: b.x, y: b.y, z: b.z, hp: 50, mesh: Meshes.patch(), invulnText: '[CLASSIFIED]',
+      var pt = enc.addPart({ kind: 'patch', label: '[REDACTED] PATCH', x: b.x, y: b.y, z: b.z, hp: 110, mesh: Meshes.patch(), invulnText: '[CLASSIFIED]',
         follow: function (self, dt) {
           var s = b.data.scale || 1, R = 7.1 * s, a = a0 + (self.age * enc.def.orbit[enc.phase - 1]);
           self.x = b.x + Math.cos(a) * R; self.z = b.z + Math.sin(a) * R; self.y = b.y + Math.sin(self.age * 0.9) * 1.6 * s;
           self.yaw = U.dirToYaw(Math.cos(a), Math.sin(a));
-          // the classified beat: 6 s open, a 0.7 s flash, 2 s grey
-          var cyc = self.age % 8.7; self.invuln = cyc > 6.7;
-          var flash = cyc > 6.0 && cyc <= 6.7 && Math.floor(cyc * 10) % 2 === 0;
+          // the classified beat: 4.5 s open, a 0.7 s flash, 2.5 s grey
+          var cyc = self.age % 7.7; self.invuln = cyc > 5.2;
+          var flash = cyc > 4.5 && cyc <= 5.2 && Math.floor(cyc * 10) % 2 === 0;
           var ud = self.mesh && self.mesh.userData;
           if (ud) { ud.plate.material.color.setHex(self.invuln ? 0x777777 : 0xffffff); ud.halo.material = mat(self.invuln ? 0x9a9a9a : flash ? 0xffffff : 0xff3b30, { basic: true, opacity: 0.35, side: THREE.DoubleSide }); }
         } });
@@ -1390,7 +1432,7 @@
       enc.randomBark('pop');
       var share = (enc.maxHp / enc.phases) / d.need;
       enc.hurt(share + 0.01);
-      if (enc.state === 'fight' && d.popped < d.need) d.patchT = 1.6;
+      if (enc.state === 'fight' && d.popped < d.need) d.patchT = 3;
     },
     update: function (enc, dt) {
       var d = enc.data, def = enc.def, n = enc.phase, p = player(), c = enc.center, b = enc.balloon, i;
@@ -1406,7 +1448,7 @@
       if (p) enc.every('bars', def.barEvery[n - 1], dt, function () {
         for (var k = 0; k < def.bars[n - 1]; k++) {
           var yaw = enc.rng.range(0, TAU), off = k === 0 ? 0 : enc.rng.range(-6, 6);
-          enc.addTele({ shape: 'strip', x: p.x + off, z: p.z + enc.rng.range(-3, 3), yaw: yaw, len: 10, w: 3.4, warn: 1.5, dmg: 14, knock: 5, color: 0x111111, label: k === 0 ? '[REDACTED]' : null,
+          enc.addTele({ shape: 'strip', x: p.x + off, z: p.z + enc.rng.range(-3, 3), yaw: yaw, len: 10, w: 3.4, warn: 1.5, dmg: 14, knock: 5, color: 0x111111, edgeColor: 0xffffff, label: k === 0 ? '[REDACTED]' : null,
             onStrike: function (t) { textFx('[REDACTED]', t.x, t.y + 1, t.z, '#ffffff', 1); fx({ type: 'smoke', x: t.x, y: t.y + 0.5, z: t.z, size: 3, life: 0.8, color: 0x111111, vy: 0.5 }); } });
         }
         if (enc.rng.chance(0.35)) enc.randomBark('fight');
@@ -1424,12 +1466,12 @@
           vd.stopT -= dt; v.setControls(0, 0, false, 1);
           if (vd.stopT <= 0.6 && !vd.dropped) {
             vd.dropped = true;
-            if (enc.liveAdds() < 6) { var back = U.yawToDir(v.yaw + Math.PI); for (var q = 0; q < 2; q++) enc.spawnAdd('thug', v.x + back.x * 4 + (q - 0.5) * 1.6, v.z + back.z * 4, { weapon: n >= 2 ? 'pistol' : 'fist', look: { shirt: '#d9cfa6', pants: '#d9cfa6', hat: 'cap' }, name: 'OVA Agent' }); }
+            if (enc.liveAdds() < 6) { var back = U.yawToDir(v.yaw + Math.PI); for (var q = 0; q < 2; q++) enc.spawnAdd('thug', v.x + back.x * 4 + (q - 0.5) * 1.6, v.z + back.z * 4, { weapon: n >= 3 && q === 0 ? 'pistol' : 'fist', look: { shirt: '#d9cfa6', pants: '#d9cfa6', hat: 'cap' }, name: 'OVA Agent' }); }
             textFx('AGENTS DEPLOYED', v.x, v.y + 2.8, v.z, '#d9cfa6', 1.4);
           }
           continue;
         }
-        if (vd.dropT <= 0) { vd.dropT = 11; vd.stopT = 2.4; vd.dropped = false; continue; }
+        if (vd.dropT <= 0) { vd.dropT = 9; vd.stopT = 2.4; vd.dropped = false; continue; }
         vd.ang += dt * 0.3;
         steerTo(v, c.x + Math.cos(vd.ang) * 22, c.z + Math.sin(vd.ang) * 22, 11);
       }
@@ -1658,13 +1700,13 @@
   // round ratios two panelists; the last is ONE MEMO against all five.
   DEFS.b06_panel = {
     id: 'b06_panel', name: 'The Panel', cast: 'chyron', title: 'Five Guests, One Memo',
-    arena: { landmark: 'tyn_tower', offset: { x: 0, z: 80 } },
+    arena: { landmark: 'protest_plaza', offset: { x: 100, z: 40 } },
     maxHp: 500, thresholds: [400, 300, 200, 100, 0], dmgScale: 1, shieldText: 'WAIT FOR YOUR SEGMENT',
     kinds: ['debate', 'wave', 'debate', 'wave', 'debate'],
     rounds: [{ vs: ['goldplate', 'warbanner'], params: { rounds: 2, points: 3, timer: 4, bluff: 0.3, opponent: 'panel' } }, null,
       { vs: ['velvetine', 'footnote'], params: { rounds: 2, points: 3, timer: 3.5, bluff: 0.35, opponent: 'panel' } }, null,
       { vs: ['dunk', 'goldplate', 'warbanner', 'velvetine', 'footnote'], params: { rounds: 3, points: 3, timer: 3, bluff: 0.4, opponent: 'panel' } }],
-    waves: [null, { thug: 5, swat: 1 }, null, { thug: 6, swat: 2 }, null],
+    waves: [null, { thug: 6, swat: 1 }, null, { thug: 8, swat: 2 }, null],
     hints: ['Debate round: beat Goldplate and Warbanner', 'Security! Clear the studio floor; dodge the memo pages', 'Debate round: beat Velvetine and Footnote', 'More security. Clear them out', 'ONE MEMO: beat the whole panel'],
     ticker: 'BREAKING: PANEL OF FIVE LOSES TO ONE KID WITH NO MEMO; WE\'LL HAVE TO LEAVE IT THERE',
     lines: {
@@ -1895,9 +1937,9 @@
     sp.last[id] = { m: m, a: a, u: u };
     emit('special:state', { id: id, meter: m, active: a, unlocked: u, name: SK[id].name });
   }
-  function fireSpecial(id) {
+  function fireSpecial(id, quiet) {
     var p = player(); if (!p || !p.alive) return false;
-    if (!spUnlocked(id)) { if (simT() - (sp.lockToastT || -9) > 4) { sp.lockToastT = simT(); toast(SK[id].name + ' is locked'); } return false; }
+    if (!spUnlocked(id)) { if (!quiet && simT() - (sp.lockToastT || -9) > 4) { sp.lockToastT = simT(); toast(SK[id].name + ' is locked'); } return false; }
     var d = SK[id];
     if (id === 'focus') {
       if (sp.active.focus) { stopFocus(); return true; }
@@ -2005,14 +2047,15 @@
       if (!g || !p) return;
       if (g.state !== 'playing') { if (sp.active.focus && g.state !== 'paused') stopFocus(); return; }
       // input: the `special` action, or X / Shift-while-aiming without a binding
-      var down = In && In.down('special'), pressed = In && In.pressed('special');
+      var down = In && In.down('special'), pressed = In && In.pressed('special'), shiftFocus = false;
       if (!hasSpecialBinding() && In) {
         down = down || !!sp.keyDown; pressed = pressed || !!sp.keyPressed;
-        if (p.aiming && !p.inVehicle && In.pressed('run')) pressed = true;
+        if (!pressed && p.aiming && !p.inVehicle && In.pressed('run') && spUnlocked('focus')) shiftFocus = true;
       }
       sp.keyPressed = false;
       if (p.alive && p.controlEnabled !== false && !p.knockedDown) {
-        if (pressed) {
+        if (shiftFocus) fireSpecial('focus', true);
+        else if (pressed) {
           if (p.inVehicle) fireSpecial('boost');
           else if (p.aiming || sp.active.focus) fireSpecial('focus');
           else sp.holdT = 0;
@@ -2117,15 +2160,15 @@
     GTP.Events.on('mission:retry', function (e) { if (resume && e && e.id === resume.missionId) pendingResume = { bossId: resume.bossId, phase: resume.phase }; });
     GTP.Events.on('mission:abort', function () { resume = null; pendingResume = null; Bosses.endAll('abort'); });
   }
-  // shots at a boss part are not shots at the police helicopter
+  // a boss fight is a set: the police stay out of it (no heat while one runs; a stray round into the crowd is not a crime
+  // during a set piece), and shots at a boss part are never shots at the police helicopter
+  function fighting() { for (var i = 0; i < active.length; i++) { var s = active[i].state; if (s === 'intro' || s === 'fight' || s === 'break') return true; } return false; }
   function installCrime() {
     var wd = GTP.AI && GTP.AI.wanted; if (!wd || installed.crime || typeof wd.crime !== 'function') return;
     installed.crime = true;
-    var crime = wd.crime;
-    wd.crime = function (name, src) {
-      if (src === 'shootHeli' && active.length) { var pol = GTP.AI.police && GTP.AI.police.heli; if (!pol) return 0; }
-      return crime.apply(this, arguments);
-    };
+    var crime = wd.crime, addHeat = wd.addHeat;
+    wd.crime = function () { if (fighting()) return 0; return crime.apply(this, arguments); };
+    if (typeof addHeat === 'function') wd.addHeat = function () { if (fighting()) return 0; return addHeat.apply(this, arguments); };
   }
   function installSave() {
     if (installed.save) return;
@@ -2161,9 +2204,10 @@
   function drawHud(ctx, w, h) {
     var g = game(); if (!g || (g.state !== 'playing' && g.state !== 'cutscene') || (g.loading && g.loading.active)) return;
     var S = U.clamp(Math.min(w / 1280, h / 720), 0.62, 1.3), UI = GTP.UI;
-    var b = Bosses.hud();
-    if (b && !UI.drawsBossBar && b.state !== 'done') {
-      var bw = Math.min(w * 0.5, 520 * S), bx = (w - bw) / 2, by = 54 * S, bh = 12 * S;
+    var b = Bosses.hud(), M = GTP.Missions, talking = g.state === 'cutscene' || (M && M.dialogue && M.dialogue.active);
+    if (b && !UI.drawsBossBar && b.state !== 'done' && !talking) {
+      // bottom centre, above the ticker: the objective panel and the hints own the top of the screen
+      var bw = Math.min(w * 0.5, 520 * S), bx = (w - bw) / 2, by = h - 96 * S, bh = 12 * S;
       ctx.save();
       ctx.fillStyle = 'rgba(8,8,12,0.72)'; ctx.fillRect(bx - 10 * S, by - 30 * S, bw + 20 * S, bh + 58 * S);
       ctx.font = '900 ' + Math.round(17 * S) + 'px Impact, "Arial Black", sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
