@@ -137,6 +137,9 @@ H.run('actors', async (t) => {
     cands.sort((a, b) => a.d - b.d);
     const b = cands[0].b, sx = b.cx, sz = b.z - 22;
     GTP.game.debug.teleport(sx, sz); v.yaw = SOUTH; v.snap(); GTP.Render.rig.yaw = SOUTH; GTP.Render.rig.snap(); GTP.game.advance(0.1);
+    // traffic that could cross the run-up in the next two seconds is cleared: the test wants the wall, not a fender
+    GTP.Entities.near(sx, (sz + b.z) / 2, 48, 'vehicle').forEach((o) => { if (o !== v && !o.removed) o.destroy(); });
+    GTP.game.advance(0.05);
     const hp0 = v.hp;
     let peak = 0, shake = 0, inside = 0, minSpeedAfterPeak = 1e9, hitAt = -1, imp = null, sparks = 0;
     GTP.Events.on('vehicle:impact', (e) => { if (!imp) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });
@@ -181,11 +184,14 @@ H.run('actors', async (t) => {
     GTP.Input.set('forward', false); GTP.Input.set('back', false); GTP.game.advance(0.4);
     const deckPos = { x: v.x, y: v.y, z: v.z, pitch: v.pitch, street: W.streetAt(v.x, v.z, v.y) };
     GTP.game.render();
-    // a drop from deck height onto Goldplate Avenue
+    // a drop from deck height onto Goldplate Avenue: a fresh car (the deck barrier and the reverse took their toll) onto a
+    // clear patch of road, since the fall damage and the next step's explosion both want the car alive and the player in it
+    v.hp = v.maxHp; v.damage = 0;
+    GTP.Entities.near(200, 282, 16, 'vehicle').forEach((o) => { if (o !== v && !o.removed) o.destroy(); });
     GTP.game.debug.teleport(200, 282, 7.5); v.vx = 6; v.vz = 0; v.onGround = false; GTP.game.advance(0.05);
     let fell = false, airborne = 0, landedAt = -1;
     for (let i = 0; i < 60; i++) { GTP.game.advance(0.05); if (!v.onGround) airborne++; if (v.y < 3) fell = true; if (v.onGround && fell && landedAt < 0) landedAt = i * 0.05; }
-    return { maxY, onDeckAt, deckPos, fell, airborne, landedAt, yEnd: v.y, onGround: v.onGround, samples: samples.slice(0, 20) };
+    return { maxY, onDeckAt, deckPos, fell, airborne, landedAt, yEnd: v.y, onGround: v.onGround, hp: +v.hp.toFixed(1), burning: v.burning, exploded: v.exploded, inCar: p.inVehicle === v, samples: samples.slice(0, 20) };
   }, { EAST });
   console.log('  loop: ' + JSON.stringify(loop));
   t.assert(loop.onDeckAt && loop.maxY > 6.9 && loop.maxY < 7.2, 'drove up the ramp onto the deck (y ~7): ' + JSON.stringify(loop.onDeckAt));

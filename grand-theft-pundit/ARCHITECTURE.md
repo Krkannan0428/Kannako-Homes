@@ -323,13 +323,21 @@ unless the brain they carry has `ai.mission` set (a mission brain the AI leaves
 alone); a vehicle only drives itself after `GTP.AI.drive(v)`. A `persistent`
 vehicle is never recycled by the traffic brain. Hurting or killing a ped with
 `ped.hostile` set (mission goons) adds no heat, and hostile cops in a mission's
-waves are not witnesses for `shootNearCop`. Heat per hit is rate-limited
+waves are not witnesses for `shootNearCop`. A goon keeps `hostile` after
+Missions releases it (one that gives up and runs, or a survivor at the end):
+the last punch landing on a goon as he turns is never the crime that brings
+the police. Heat per hit is rate-limited
 (`C.AI.heatEvery 0.6 s` for hitPed / attackCop / ramCop, `heatEveryCar 2.5 s`
 for denting a cruiser), so an SMG burst or a roadblock ram is one crime, not
 one per bullet or contact step; kills count in full. Events:
 `wanted {level, prev}`, `heat`, `busted {player, cop, level, fine}`, `bark {ped, text}`,
 `roadblock`, `heli {on}`, `heli:down {heli, src}`, `garage {landmark, cost}`. Audio hook: `GTP.Audio.heli(on, x, z)`
 when defined (rotor loop). Long vehicles (bus, truck) never turn at street corners.
+A turn is only planned into an exit lane that runs on for at least three tiles
+(`laneRun`; a one-tile stub at the sea wall is never entered, a short one is
+weighted like a dead end). A dead end is a three-point turn: reverse with lock,
+swing forward, and another reverse leg (up to three) whenever the nose reaches
+the far kerb before the car is round, so the turn stays off the pavement.
 The helicopter (`GTP.AI.Heli`, kind `heli`, 400 hp) can be locked and shot:
 `applyDamage` smokes it under half health and at 0 sets `down` (a spin to the
 ground, a blast with area damage, `police.heli = null`); another one comes after
@@ -468,6 +476,9 @@ GTP.Render.chunks                     // 16x16-tile static chunks: ground mesh (
 GTP.Render.sky                        // gradient dome + sun/moon; fog color follows time of day
 GTP.Render.lights                     // hemisphere + directional sun with a 120 m shadow box following the player (QUALITY.shadows), vehicle headlights (spot) for the player car, emissive windows and neon at night
 GTP.Render.fx.add({type:'puff'|'spark'|'smoke'|'fire'|'explosion'|'ring'|'tracer'|'decal'|'text'|'skid', x,y,z, vx,vy,vz, size, life, color, rot, size2 ...})  // decals/skids are capped (oldest dropped)
+                                      // decals and skids share one InstancedMesh (fx._decalIM, MAX_DECALS 220 slots, per-instance colour and
+                                      // alpha, a free slot is scaled to nothing): one draw call for all of them; `rot` is a yaw, the mark lies flat.
+                                      // Skid marks come from a slide, a handbrake, or the player's car braking hard (traffic easing for a light leaves none)
 GTP.Render.syncVehicle(v)             // called by Vehicle.syncMesh: wheels (InstancedMesh), light material slots, siren, wreck look, the player's headlight SpotLight + beam quad
 GTP.Render.worldToScreen(x,y,z) -> {sx, sy, visible}
 GTP.Render.freeCam(enabled)           // tests: place camera anywhere via camera.position/lookAt
@@ -596,9 +607,14 @@ toggles remain as the fallback when the UI does not claim the frame.
   `GTP.Missions.state`, `GTP.errors`, and pixel checks on screenshots when
   useful. Every subsystem agent adds a test file and keeps `tests/all.js`
   green. Screenshots are looked at (Read tool) and judged.
-- `tests/perf.js`: 30 s advance with full AI at steps/s, and 60 rendered
+- `tests/perf.js`: 30 s advance with full AI at steps/s, and 12 rendered
   frames with the chase camera at ms/frame (SwiftShader numbers are only
-  relative; report them, target no regressions).
+  relative; report them, target no regressions); draw calls must stay under
+  500 at that frame (about 430 now).
+- `tests/campaign.js` debugging aids: `CAMPAIGN_FROM=<id>` preps the earlier
+  missions complete and starts there; `CAMPAIGN_TO=<id>` stops after that
+  mission and skips the campaign-wide assertions. Every point of heat is logged
+  per mission with its source, so an accidental crime shows up in the output.
 
 ## 6. Performance targets
 

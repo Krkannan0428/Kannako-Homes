@@ -253,6 +253,7 @@ H.run('missions', async (t) => {
   r = await page.evaluate(() => {
     T_.reset();
     GTP.game.debug.godMode(true);
+    GTP.game.player.hp = GTP.game.player.maxHp;   // the escape step may have cost a few points; this one asserts god mode holds the line
     const q = T_.door('campus_quad'); T_.tp(q.x, q.z);
     const m = T_.base('t_survive', [{ type: 'survive', seconds: 12, waves: { thug: 4, protester: 2 }, text: 'Hold the table' }]);
     T_.start(m);
@@ -260,7 +261,8 @@ H.run('missions', async (t) => {
     while (s < 14 && !T_.done()) { GTP.game.advance(0.5); s += 0.5; const live = GTP.Entities.list.filter((e) => e.kind === 'ped' && e.hostile && e.alive && !e.removed).length; maxLive = Math.max(maxLive, live); if (!prog && GTP.Missions.state.progress) prog = GTP.Missions.state.progress; }
     const roles = GTP.Entities.list.filter((e) => e.kind === 'ped' && e.missionRole === 'hostile').map((e) => e.role);
     GTP.game.advance(1);
-    const released = GTP.Entities.list.filter((e) => e.kind === 'ped' && e.hostile).length;
+    // released: no mission brain and no mission tag left on anyone (a goon keeps `hostile`, so beating him up later is no crime)
+    const released = GTP.Entities.list.filter((e) => e.kind === 'ped' && !e.removed && e.missionRole === 'hostile' && (e.mission || (e.ai && e.ai.mission))).length;
     GTP.game.debug.godMode(false);
     return { s, maxLive, prog, completed: GTP.Missions.state.completed.has('t_survive'), hp: GTP.game.player.hp, roles, released };
   });

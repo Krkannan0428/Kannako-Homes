@@ -888,7 +888,9 @@
     _surfaceFx(dt, hb) {
       var sp = this.speed2d(), R = GTP.rng;
       if (this.wreck) return;
-      var skid = this.onGround && sp > 3 && (Math.abs(this.lateral) > C.PHYS.skidLateral || (hb && sp > 6) || (this.braking && sp > 14));
+      // rubber on the road: a slide, a handbrake, or the player's car braking hard; traffic easing for a light leaves none
+      // (forty cars stopping for signals would carpet the avenues in decals, each one a draw call)
+      var skid = this.onGround && sp > 3 && (Math.abs(this.lateral) > C.PHYS.skidLateral || (hb && sp > 6) || (this.braking && sp > 14 && this.hasPlayer()));
       if (skid && !this.offroad) {
         this._skidT += sp * dt;
         if (this._skidT > 0.7) {

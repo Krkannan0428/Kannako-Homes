@@ -238,10 +238,12 @@
     if (e.destroy) e.destroy();
     E().remove(e);
   }
-  // hand a mission ped back to the city: the AI gives it a wander brain on sight; goons run off
+  // hand a mission ped back to the city: the AI gives it a wander brain on sight; goons run off.
+  // A goon keeps its `hostile` flag: the one who just swung at the player and gave up is still the goon,
+  // so finishing him off (or the last punch landing as he turns) is never a crime that brings the police
   function releasePed(p, flee) {
     if (!p || p.removed) return;
-    p.persistent = false; p.hostile = false; p.aimTarget = null; p.aiming = false; p.ai = null; p.mission = null;
+    p.persistent = false; p.aimTarget = null; p.aiming = false; p.ai = null; p.mission = null;
     if (flee && p.alive) { var pl = player(); p.fleeFrom = pl ? { x: pl.x, z: pl.z } : { x: p.x + 1, z: p.z }; p.fleeTimer = 8; }
   }
   // keepPlayerVehicle: the car the player sits in stays (untagged, released to the player)

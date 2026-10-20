@@ -414,6 +414,9 @@ function installDriver() {
   GTP.Events.on('pickup', (e) => { const pk = e && e.pickup; if (pk && pk.pickupType === 'cash') CT.cash += pk.value | 0; });
   GTP.Events.on('busted', () => CT.fails.push('BUSTED'));
   GTP.Events.on('player:wasted', () => CT.fails.push('WASTED'));
+  // every point of heat, with its source: a campaign run should never attract the police by accident
+  CT.heat = [];
+  GTP.Events.on('heat', (e) => { const s = e.src; CT.heat.push({ t: +GTP.game.time.t.toFixed(1), n: e.amount, src: typeof s === 'string' ? s : s ? (s.kind + ':' + (s.role || s.type || '') + (s.hostile ? '!' : '')) : null, heat: +e.heat.toFixed(1), mission: M.state.active, obj: M.state.objectiveText }); });
   return true;
 }
 
@@ -481,6 +484,9 @@ H.run('campaign', async (t) => {
     const fin = await page.evaluate((mid) => CT.finish(mid), id);
     console.log('  ' + id + ' done (' + ((Date.now() - t0) / 1000).toFixed(0) + ' s wall): ' + JSON.stringify(fin));
     results[id] = fin;
+    const heat = await page.evaluate(() => { const h = CT.heat.slice(); CT.heat.length = 0; return { log: h, wanted: GTP.game.player.wanted, heat: +GTP.AI.wanted.heat.toFixed(1) }; });
+    if (heat.log.length) console.log('  ' + id + ' heat: ' + JSON.stringify(heat));
+    if (process.env.CAMPAIGN_TO === id) { console.log('  CAMPAIGN_TO ' + id + ': stopping here'); break; }
     t.assert(fin.completed && fin.active === null && fin.failed === 0, id + ' completed: ' + JSON.stringify({ completed: fin.completed, active: fin.active, failed: fin.failed, state: fin.state }));
     // the reward, minus resprays, plus any cash picked up
     expectedMoney += def.reward - (fin.spent - lastSpent) + (fin.cash - lastCash); lastSpent = fin.spent; lastCash = fin.cash;
@@ -519,6 +525,7 @@ H.run('campaign', async (t) => {
 
   const summary = await page.evaluate(() => ({ completed: Array.from(GTP.Missions.state.completed), flags: GTP.Missions.state.flags, endings: CT.endings, fallbacks: CT.fallbacks, how: CT.how, fails: CT.fails, skips: CT.skips, dodges: CT.dodges || 0, money: GTP.game.player.money, stats: GTP.game.player.stats, day: GTP.game.time.day, clock: +GTP.game.time.clock.toFixed(2), t: +GTP.game.time.t.toFixed(0) }));
   console.log('  campaign: ' + JSON.stringify(summary));
+  if (process.env.CAMPAIGN_TO) { await page.close(); return; }   // a partial debugging run: no campaign-wide assertions
   t.assert(summary.completed.length === 17, 'all 17 missions completed: ' + summary.completed.length);
   t.assert(summary.endings.length === 2 && summary.endings.indexOf('m15a_primetime') >= 0 && summary.endings.indexOf('m15b_liveread') >= 0, 'both endings fired the credits hook: ' + summary.endings.join(','));
   t.assert(summary.fails.length === 0, 'no mission failed, no death, no bust during the campaign: ' + summary.fails.join(','));

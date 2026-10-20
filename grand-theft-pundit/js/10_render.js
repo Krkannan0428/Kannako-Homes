@@ -930,7 +930,50 @@
     // ------------------------------------------------------------------ fx --
     fx: {
       list: [], texts: [], _pool: [], _lines: [], decals: 0, MAX_DECALS: 220,
-      init: function () { },
+      // skid marks and decals live in one InstancedMesh (one draw call for all of them) with a per-instance colour and alpha;
+      // a free instance is scaled to nothing. Before the batch, forty cars braking for lights carpeted the avenues in
+      // 180 skid meshes, each its own draw call
+      _decalIM: null, _decalFree: [], _decalAlpha: null, _decalDirty: false,
+      init: function () {
+        var F = Render.fx, N = F.MAX_DECALS, i;
+        if (F._decalIM) return;
+        var geo = new THREE.PlaneGeometry(1, 1);
+        var alpha = new THREE.InstancedBufferAttribute(new Float32Array(N), 1); alpha.setUsage(THREE.DynamicDrawUsage);
+        geo.setAttribute('iAlpha', alpha);
+        var mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+        mat.onBeforeCompile = function (sh) {
+          sh.vertexShader = sh.vertexShader
+            .replace('#include <common>', '#include <common>\nattribute float iAlpha;\nvarying float vIAlpha;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvIAlpha = iAlpha;');
+          sh.fragmentShader = sh.fragmentShader
+            .replace('#include <common>', '#include <common>\nvarying float vIAlpha;')
+            .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse, opacity * vIAlpha );');
+        };
+        mat.customProgramCacheKey = function () { return 'gtp-decals'; };
+        var im = new THREE.InstancedMesh(geo, mat, N);
+        im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        im.frustumCulled = false; im.renderOrder = 3; im.name = 'decals';
+        var zero = new THREE.Matrix4().makeScale(0, 0, 0), white = new THREE.Color(0xffffff);
+        for (i = 0; i < N; i++) { im.setMatrixAt(i, zero); im.setColorAt(i, white); }
+        im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        F._decalIM = im; F._decalAlpha = alpha; F._decalFree = [];
+        for (i = N - 1; i >= 0; i--) F._decalFree.push(i);
+        F._decalM = new THREE.Matrix4(); F._decalP = new THREE.Vector3(); F._decalQ = new THREE.Quaternion(); F._decalS = new THREE.Vector3(); F._decalE = new THREE.Euler(); F._decalC = new THREE.Color();
+        Render.fxGroup.add(im);
+      },
+      _placeDecal: function (o, slot) {
+        var F = Render.fx;
+        F._decalP.set(o.x, (o.y || 0) + 0.025, o.z);
+        F._decalE.set(-Math.PI / 2, o.rot || 0, 0, 'YXZ');   // flat on the ground, turned to the heading
+        F._decalQ.setFromEuler(F._decalE);
+        F._decalS.set(o.size || 0.6, o.size2 || (o.size || 0.6), 1);
+        F._decalM.compose(F._decalP, F._decalQ, F._decalS);
+        F._decalIM.setMatrixAt(slot, F._decalM);
+        F._decalC.set(o.color || (o.type === 'skid' ? 0x14161a : 0x303030));
+        F._decalIM.setColorAt(slot, F._decalC);
+        F._decalAlpha.array[slot] = o.type === 'skid' ? 0.55 : 0.7;
+        F._decalIM.instanceMatrix.needsUpdate = true; F._decalIM.instanceColor.needsUpdate = true; F._decalAlpha.needsUpdate = true;
+      },
       add: function (o) {
         o = o || {}; o.t = 0;
         var type = o.type || 'puff';
@@ -940,15 +983,16 @@
           var g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([o.x, o.y, o.z, o.x2, o.y2, o.z2], 3));
           o.obj = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0.9 })); o.obj.userData.own = true;
         } else if (type === 'decal' || type === 'skid') {
-          if (Render.fx.decals >= Render.fx.MAX_DECALS) {
+          if (!Render.fx._decalIM) Render.fx.init();
+          if (!Render.fx._decalFree.length) {   // the batch is full: the oldest mark goes
             var L0 = Render.fx.list;
             for (var di = 0; di < L0.length; di++) if (L0[di].type === 'decal' || L0[di].type === 'skid') { Render.fx._release(L0[di]); L0.splice(di, 1); break; }
           }
+          var slot = Render.fx._decalFree.pop();
+          if (slot == null) return o;
           Render.fx.decals++;
-          o.obj = new THREE.Mesh(Render._planeGeo(o.size || 0.6, o.size2 || (o.size || 0.6)), new THREE.MeshBasicMaterial({ color: o.color || (type === 'skid' ? 0x14161a : 0x303030), transparent: true, opacity: type === 'skid' ? 0.55 : 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-          o.obj.rotation.set(-Math.PI / 2, 0, o.rot || 0, 'YXZ'); o.obj.position.set(o.x, (o.y || 0) + 0.025, o.z);
-          o.obj.rotation.order = 'ZXY'; o.obj.rotation.set(-Math.PI / 2, 0, o.rot || 0);
-          o.obj.renderOrder = 3;
+          o.slot = slot; o.obj = null;
+          Render.fx._placeDecal(o, slot);
         } else if (type === 'ring') {
           o.obj = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 28), new THREE.MeshBasicMaterial({ color: o.color || 0xffb060, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
           o.obj.rotation.x = -Math.PI / 2; o.obj.position.set(o.x, (o.y || 0) + 0.08, o.z); o.obj.userData.own = true; o.size = o.size || 6;
@@ -986,13 +1030,20 @@
             o.obj.scale.set(s, s, 1);
             o.obj.material.opacity = (1 - k) * (o.type === 'smoke' ? 0.55 : 1);
           } else if (o.obj && o.type === 'ring') { var rs = o.size * (0.15 + k * 0.85); o.obj.scale.set(rs, rs, 1); o.obj.material.opacity = 0.9 * (1 - k); }
-          else if (o.obj && o.obj.material && (o.type === 'decal' || o.type === 'skid')) o.obj.material.opacity = (o.type === 'skid' ? 0.55 : 0.7) * (1 - Math.max(0, k - 0.7) / 0.3);
+          else if (o.slot != null && k > 0.7) { Render.fx._decalAlpha.array[o.slot] = (o.type === 'skid' ? 0.55 : 0.7) * (1 - (k - 0.7) / 0.3); Render.fx._decalDirty = true; }
         }
+        if (Render.fx._decalDirty) { Render.fx._decalAlpha.needsUpdate = true; Render.fx._decalDirty = false; }
       },
       _release: function (o) {
+        if (o.slot != null) {   // a batched decal: its instance is scaled to nothing and the slot goes back on the free list
+          var F = Render.fx;
+          F.decals = Math.max(0, F.decals - 1);
+          F._decalM.makeScale(0, 0, 0); F._decalIM.setMatrixAt(o.slot, F._decalM); F._decalIM.instanceMatrix.needsUpdate = true;
+          F._decalFree.push(o.slot); o.slot = null;
+          return;
+        }
         if (!o.obj) return;
         Render.fxGroup.remove(o.obj);
-        if (o.type === 'decal' || o.type === 'skid') Render.fx.decals = Math.max(0, Render.fx.decals - 1);
         if (o.obj.isSprite) { o.obj.visible = false; Render.fx._pool.push(o.obj); }
         else { if (o.obj.geometry && o.obj.userData.own) o.obj.geometry.dispose(); if (o.obj.material && o.obj.material.dispose && !o.obj.isSprite) o.obj.material.dispose(); }
         o.obj = null;

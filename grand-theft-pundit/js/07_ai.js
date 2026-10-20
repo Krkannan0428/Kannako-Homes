@@ -136,6 +136,21 @@
     return null;
   }
   function onDeck(v) { var Wd = W(), tx = Math.floor(v.x / TILE), tz = Math.floor(v.z / TILE); return Wd.inBounds(tx, tz) && !!Wd.deck[tileI(tx, tz)] && Wd.tiles[tileI(tx, tz)] !== T.RAMP && v.y > DECK_Y - 2.5; }
+  // how many tiles (the first one included, up to max) lane `lane` of `axis` runs on from (tx, tz) in direction dir;
+  // a junction on the way counts as the road going on. A one-tile stub at a sea wall is no street to turn into
+  function laneRun(tx, tz, deck, axis, dir, lane, max) {
+    var n = 0, dx = axis === 'h' ? dir : 0, dz = axis === 'v' ? dir : 0, oax = axis === 'h' ? 'v' : 'h';
+    while (n < max) {
+      var b = laneByte(tx, tz, axis, deck);
+      if (!b || (b >> 4) !== lane) break;
+      n++;
+      if (laneByte(tx, tz, oax, deck)) return max;
+      var nl = stepLayer(tx, tz, deck, tx + dx, tz + dz);
+      if (!nl) break;
+      tx += dx; tz += dz; deck = nl === 'deck';
+    }
+    return n;
+  }
   function roadUnder(v) {
     var Wd = W(), tx = Math.floor(v.x / TILE), tz = Math.floor(v.z / TILE);
     if (!Wd.inBounds(tx, tz)) return false;
@@ -865,7 +880,7 @@
             var sli = laneInfo(sb, oax, sx, sz);
             var away = axis === 'h' ? (dir > 0 ? 1 : -1) : (dir > 0 ? -1 : 1);     // the side road's direction away from my road
             var lowHalf = oax === 'h' ? away < 0 : away > 0, lane2 = outerLane(sli.w, lowHalf);
-            if (laneDirOf(lane2, sli.w, oax) === away) {
+            if (laneDirOf(lane2, sli.w, oax) === away && laneRun(sx, sz, sl === 'deck', oax, away, lane2, 4) >= 3) {
               var turnAlong = (sli.lo + lane2 + 0.5) * TILE;
               ai.plan = { kind: 'right', entryAlong: (sli.lo + (dir > 0 ? 0 : sli.w)) * TILE, exitEdge: (sli.lo + (dir > 0 ? sli.w : 0)) * TILE, turnAlong: turnAlong, exitAxis: oax, exitDir: away, exitLaneC: turnAlong, signaled: false, sigTx: ctx, sigTz: ctz, box: null, turning: false, side: true, t: 0 };
               ai.sideSkip = 2;
@@ -924,7 +939,10 @@
       var eb = laneByte(exTx, exTz, oax, el === 'deck');
       if (!eb || (eb >> 4) !== lane) continue;
       if (el === 'deck' && !bdeck && tn.kind === 'left') continue;   // onto the Loop only by a right merge
-      var dead2 = !!(Wd.metaAt(exTx, exTz) & M.DEAD);
+      // the exit road must run on for the turn's arc at least: a stub shorter than three tiles is never entered
+      var run2 = laneRun(exTx, exTz, el === 'deck', oax, exitDir, lane, 6);
+      if (run2 < 3) continue;
+      var dead2 = !!(Wd.metaAt(exTx, exTz) & M.DEAD) || run2 < 5;
       opts.push({ kind: tn.kind, w: dead2 ? 0.03 : tn.w, exitDir: exitDir, lane: lane, turnAlong: (lo2 + lane + 0.5) * TILE });
     }
     var plan = { kind: 'dead', endAlong: entryAlong, t: 0, turning: false };
@@ -1032,6 +1050,13 @@
       ai.turnT += dt;
       var ex = plan.exitAxis, ed = plan.exitDir, lat2 = (ex === 'h' ? v.z : v.x) - plan.exitLaneC;
       var herr = U.angleDiff(v.yaw, U.dirToYaw(ex === 'h' ? ed : 0, ex === 'v' ? ed : 0));
+      // a three-point turn proper: when the nose reaches the far kerb before the car is round, another reverse leg
+      // with the opposite lock keeps the swing going instead of mounting the pavement
+      if (plan.kind === 'uturn' && ai.reverseT <= 0 && Math.abs(herr) > 0.5 && (plan.legs || 0) < 3) {
+        var fn = U.yawToDir(v.yaw), nose = (ex === 'h' ? v.z + fn.z * (v.hl + 0.5) : v.x + fn.x * (v.hl + 0.5));
+        var kerbLo = ai.lo * TILE + 0.35, kerbHi = (ai.lo + ai.w) * TILE - 0.35;
+        if (nose < kerbLo || nose > kerbHi) { plan.legs = (plan.legs || 0) + 1; ai.reverseT = 1.1; ai.revSteer = -U.sign(ai.lastSteer || 1) * 0.9; }
+      }
       if (Math.abs(herr) < 0.22 && Math.abs(lat2) < 1.1) {
         ai.axis = ex; ai.dir = ed; ai.laneC = plan.exitLaneC; ai.plan = null; ai.deck = onDeck(v);
         var b = laneByte(Math.floor(v.x / TILE), Math.floor(v.z / TILE), ex, ai.deck); if (b) { ai.lane = b >> 4; ai.w = b & 15; ai.lo = (ex === 'h' ? Math.floor(v.z / TILE) : Math.floor(v.x / TILE)) - ai.lane; }
