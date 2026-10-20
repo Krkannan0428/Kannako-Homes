@@ -104,7 +104,7 @@
     { id: 'pocketsmg', name: 'Pocket Pundit', class: 'smg', dmg: 7, rate: 14, mag: 24, reserve: 240, reload: 1.2, spread: 0.055, bloom: { add: 0.005, max: 0.11, decay: 0.18 }, recoil: 0.3, range: 20, projectile: 'hitscan', hold: 'one', price: 800, unlock: un('m07b_ferry'), attachments: PISTOL,
       auto: true, vehicleMul: 0.45, knock: 0.7, driveBy: true, flavor: 'Fits in a blazer. So does an opinion, and it fires just as fast.' },
     { id: 'threadpistol', name: 'Thread Pistol', class: 'smg', dmg: 8, rate: 13, mag: 20, reserve: 200, reload: 1.3, spread: 0.05, bloom: { add: 0.005, max: 0.1, decay: 0.16 }, recoil: 0.45, range: 22, projectile: 'hitscan', hold: 'one', price: 1100, unlock: un('m08_scooters'), attachments: PISTOL,
-      auto: true, vehicleMul: 0.45, knock: 0.8, driveBy: true, flavor: '1/20. 2/20. 3/20. Nobody reads past 4/20.' },
+      auto: true, vehicleMul: 0.45, knock: 0.8, driveBy: true, flavor: '1/12. 2/12. 3/12. Nobody reads past 4/12.' },
     { id: 'liveblog', name: 'The Live Blogger', class: 'smg', dmg: 10, rate: 12, mag: 32, reserve: 256, reload: 1.7, spread: 0.035, bloom: { add: 0.004, max: 0.08, decay: 0.15 }, recoil: 0.3, range: 34, projectile: 'hitscan', hold: 'two', price: 2100, unlock: un('m12_memo'), attachments: GUN,
       auto: true, vehicleMul: 0.5, knock: 1.0, driveBy: true, flavor: 'Updates every eighty milliseconds. Refresh for more.' },
     { id: 'combatmg', name: 'Comment Section', class: 'lmg', dmg: 22, rate: 8, mag: 80, reserve: 240, reload: 3.6, spread: 0.028, bloom: { add: 0.004, max: 0.08, decay: 0.1 }, recoil: 0.45, range: 55, projectile: 'hitscan', hold: 'two', price: 5200, unlock: un('m12b_scope'), attachments: ['muzzle', 'optic', 'grip'],
