@@ -43,10 +43,10 @@
     heli: { family: 'heli', name: 'Spin Cycle', accel: 0, maxSpeed: 44, reverseMax: 0, brake: 0, steerMax: 0, steerSpeedFalloff: 0, grip: 0, driftGrip: 0,
       mass: 1800, hp: 160, length: 6.2, width: 2.2, height: 3.2, seats: 4, wheelRadius: 0.1, rotorR: 5.3, rotorY: 3.05, colors: ['#1f4fa8', '#c94040', '#e8b53a', '#2b2b2b', '#f2f2f2'] },
     plane: { family: 'plane', name: 'Op-Ed', accel: 0, maxSpeed: 62, reverseMax: 0, brake: 9, steerMax: 0, steerSpeedFalloff: 0, grip: 0, driftGrip: 0,
-      mass: 1100, hp: 110, length: 8.2, width: 2.0, height: 2.8, seats: 2, wheelRadius: 0.3, span: 10.4, thrust: 7, vStall: 19, vRotate: 24, pitchRate: 1.0, rollRate: 2.1, gearFixed: true,
+      mass: 1100, hp: 110, length: 8.2, width: 2.0, height: 2.8, seats: 2, wheelRadius: 0.3, span: 10.4, thrust: 7, vStall: 19, vRotate: 24, pitchRate: 0.75, rollRate: 2.1, gearFixed: true,
       colors: ['#f2f2f2', '#e8b53a', '#c94040', '#2f6fd8'] },
     jet: { family: 'plane', name: 'Long Read', accel: 0, maxSpeed: 118, reverseMax: 0, brake: 12, steerMax: 0, steerSpeedFalloff: 0, grip: 0, driftGrip: 0,
-      mass: 9000, hp: 170, length: 13, width: 2.6, height: 3.6, seats: 1, wheelRadius: 0.35, span: 9.2, thrust: 16, vStall: 33, vRotate: 42, pitchRate: 1.45, rollRate: 3.2,
+      mass: 9000, hp: 170, length: 13, width: 2.6, height: 3.6, seats: 1, wheelRadius: 0.35, span: 9.2, thrust: 16, vStall: 33, vRotate: 42, pitchRate: 1.1, rollRate: 3.2,
       colors: ['#6f7a86', '#2b2b2b', '#e8b53a'] },
     speedboat: { family: 'boat', name: 'Hot Water', accel: 9, maxSpeed: 34, reverseMax: 5, brake: 6, steerMax: 0, steerSpeedFalloff: 0, grip: 1.5, driftGrip: 0.8,
       mass: 1400, hp: 120, length: 7.2, width: 2.5, height: 1.6, seats: 4, wheelRadius: 0.1, turn: 1.15, draft: 0.05, colors: ['#f2f2f2', '#c94040', '#1f4fa8', '#e8b53a'] },
@@ -214,9 +214,25 @@
     v._collideVehicles(near);
     v._collidePeds(near);
   }
-  // the map edge: aircraft and boats turn back instead of hitting the invisible wall
+  // the map edge. Aircraft get 260 m of open sea past it: past 140 m a growing nudge turns them home, at 260 m a wall.
+  // Boats (and the parachute) stop 8 m inside the map.
+  var AIR_SOFT = 140, AIR_HARD = 260;
+  function outside(v, pad) { var b = W().bounds; pad = pad || 0; return v.x < b.x0 + pad || v.x > b.x1 - pad || v.z < b.z0 + pad || v.z > b.z1 - pad; }
   function edgeGuard(v) {
-    var b = W().bounds, m = isAir(v) ? 30 : 8, hit = false;
+    var b = W().bounds, hit = false;
+    if (isAir(v) || fam(v) === 'chute') {
+      var ox = v.x < b.x0 ? b.x0 - v.x : v.x > b.x1 ? v.x - b.x1 : 0, oz = v.z < b.z0 ? b.z0 - v.z : v.z > b.z1 ? v.z - b.z1 : 0, out = Math.max(ox, oz);
+      if (out > AIR_SOFT) {
+        var k = U.clamp((out - AIR_SOFT) / (AIR_HARD - AIR_SOFT), 0, 1), cx0 = (b.x0 + b.x1) / 2, cz0 = (b.z0 + b.z1) / 2;
+        v.yaw = U.angleDamp(v.yaw, U.dirToYaw(cx0 - v.x, cz0 - v.z), 0.3 + 2.2 * k, C.STEP);
+        if (v.hasPlayer() && (!v._edgeT || v.age - v._edgeT > 8)) { v._edgeT = v.age; toast('Air traffic control: the map ends here. Turning you back toward the ratings.'); }
+      }
+      var X0 = b.x0 - AIR_HARD, X1 = b.x1 + AIR_HARD, Z0 = b.z0 - AIR_HARD, Z1 = b.z1 + AIR_HARD;
+      if (v.x < X0) { v.x = X0; if (v.vx < 0) v.vx = 0; } if (v.x > X1) { v.x = X1; if (v.vx > 0) v.vx = 0; }
+      if (v.z < Z0) { v.z = Z0; if (v.vz < 0) v.vz = 0; } if (v.z > Z1) { v.z = Z1; if (v.vz > 0) v.vz = 0; }
+      return;
+    }
+    var m = 8;
     if (v.x < b.x0 + m) { v.x = b.x0 + m; if (v.vx < 0) v.vx = -v.vx * 0.3; hit = true; }
     if (v.x > b.x1 - m) { v.x = b.x1 - m; if (v.vx > 0) v.vx = -v.vx * 0.3; hit = true; }
     if (v.z < b.z0 + m) { v.z = b.z0 + m; if (v.vz < 0) v.vz = -v.vz * 0.3; hit = true; }
@@ -242,6 +258,7 @@
     else v.vy -= G_AIR * 1.4 * dt;
     v.x += v.vx * dt; v.y += v.vy * dt; v.z += v.vz * dt;
     v.yaw += v.yawRate * dt; v.yawRate *= Math.exp(-1.5 * dt);
+    if (isAir(v)) edgeGuard(v);
     var g = surfaceAt(v.x, v.z, v.y + 1);
     if (v.y <= g) {
       if (waterAt(v.x, v.z) && g <= WATER_Y + 0.05) { v.y = WATER_Y; v.startSinking(); return; }
@@ -250,7 +267,7 @@
     } else if (v.y > g + 0.3) v.onGround = false;
     v.pitch = U.damp(v.pitch, v.onGround ? 0.05 : v.pitch, 2, dt);
     v.roll = U.damp(v.roll, v.onGround ? 0.25 : v.roll, 2, dt);
-    v._collideWorld(dt);
+    if (!outside(v, 8)) v._collideWorld(dt);
   }
   // downwash and wake puffs under an aircraft or behind a boat
   function surfacePuffs(v, agl, dt, rate) {
@@ -285,13 +302,13 @@
     v.yawRate = U.damp(v.yawRate, yawT, 4, dt);
     v.yaw = U.wrapAngle(v.yaw + v.yawRate * dt);
     var f = U.yawToDir(v.yaw), rx = -f.z, rz = f.x;
-    var ah = 34 * lift, af = -v.pitch * ah, ar = -v.roll * ah * 0.9;
+    var ah = 40 * lift, af = -v.pitch * ah, ar = -v.roll * ah * 0.9;
     v.vx += (f.x * af + rx * ar) * dt; v.vz += (f.z * af + rz * ar) * dt;
-    var hd = Math.exp(-0.3 * dt); v.vx *= hd; v.vz *= hd;
+    var hd = Math.exp(-0.34 * dt); v.vx *= hd; v.vz *= hd;
     // vertical: the collective sets a climb rate the rotor chases (a hover with no input); no rotor, no lift
     var vyT = c.collective > 0 ? c.collective * 9 : c.collective * 7;
     if (v.y > 320) vyT = Math.min(vyT, -1);
-    var thrust = lift * (G_AIR + 2.6 * (vyT - v.vy));
+    var thrust = lift * (G_AIR + 4.2 * (vyT - v.vy));
     if (v.burning) thrust *= 0.55;
     thrust = U.clamp(thrust, 0, G_AIR * 2.2);
     if (!onG || thrust > G_AIR * 1.02) v.vy += (thrust - G_AIR) * dt;
@@ -319,11 +336,11 @@
       var ry = v.y + S.rotorY;
       for (var k = 0; k < 8; k++) {
         var a = k * TAU / 8, px = v.x + Math.cos(a) * S.rotorR, pz = v.z + Math.sin(a) * S.rotorR;
-        if (W().solidAt(px, pz, ry)) { crash(v, 'rotor'); postStep(v, dt); return; }
+        if (W().inBounds(Math.floor(px / C.TILE), Math.floor(pz / C.TILE)) && W().solidAt(px, pz, ry)) { crash(v, 'rotor'); postStep(v, dt); return; }
       }
     }
     var c0 = v.lastCollision;
-    v._collideWorld(dt);
+    if (!outside(v, 3)) v._collideWorld(dt);
     if (v.lastCollision !== c0 && v.lastImpact > 8 && !onG) { crash(v, 'wall'); postStep(v, dt); return; }
     contacts(v);
     if (lift > 0.4 && agl < 12) surfacePuffs(v, agl, dt, 0.05 + agl * 0.01);
@@ -343,7 +360,10 @@
     // throttle: Shift / Ctrl (RT / LT) in the air; on the ground W also rolls her forward and S brakes below rotate speed
     var dthr = c.collective * 0.7 * dt;
     if (onG && c.fwd) dthr = Math.max(dthr, 0.9 * dt);
-    if (onG && c.back && v.air < S.vRotate * 0.9) { v.thr = approach(v.thr, 0, 1.5 * dt); dthr = Math.min(dthr, 0); }
+    // on the ground S is the brake, except on a takeoff roll (throttle up, near rotate speed) where it pulls the nose up
+    var rotating = onG && v.thr > 0.6 && v.air > S.vRotate * 0.85;
+    var braking = onG && c.back && !rotating;
+    if (braking) { v.thr = approach(v.thr, 0, 1.5 * dt); dthr = Math.min(dthr, 0); }
     v.thr = U.clamp(v.thr + dthr, 0, 1);
     if (!driver && onG) v.thr = approach(v.thr, 0, 0.3 * dt);
     if (v.burning) v.thr *= 0.995;
@@ -353,7 +373,7 @@
     if (onG) {
       var off = v.offroad = W().tileAt(v.x, v.z) === W().T.GRASS || W().tileAt(v.x, v.z) === W().T.SAND;
       var acc = S.thrust * v.thr - drag * s * s - (off ? 2.2 : 0.5);
-      if (c.back && s < S.vRotate * 0.9) acc -= S.brake;
+      if (braking) acc -= S.brake;
       if (c.handbrake) acc -= S.brake;
       s = Math.max(0, s + acc * dt);
       if (off) s = Math.min(s, 26);
@@ -363,7 +383,7 @@
       v.yaw = U.wrapAngle(v.yaw + v.yawRate * dt);
       // rotate: pull back (S) past the rotate speed
       var pull = -c.pitch;
-      var pt = (s > S.vRotate * 0.85 && pull > 0) ? 0.16 * pull : 0;
+      var pt = (rotating && pull > 0) ? 0.16 * pull : 0;
       v.pitch = U.damp(v.pitch, pt, 3, dt); v.roll = U.damp(v.roll, 0, 6, dt);
       f = U.yawToDir(v.yaw);
       v.vx = f.x * s; v.vz = f.z * s; v.vy = 0;
@@ -418,11 +438,11 @@
     } else v.gear = 'down';
     if (waterAt(v.x, v.z) && v.y <= WATER_Y + 0.3 && v.onGround) { v.startSinking(); v._syncOccupants(); return; }
     var c0 = v.lastCollision;
-    v._collideWorld(dt);
+    if (!outside(v, 8)) v._collideWorld(dt);
     if (v.lastCollision !== c0 && (v.lastImpact > 6 || !v.onGround)) { crash(v, 'wall'); postStep(v, dt); return; }
     if (v.lastCollision !== c0) { v.air *= 0.4; }
     contacts(v);
-    v.braking = v.onGround && c.back && s > 1;
+    v.braking = braking && s > 1;
     postStep(v, dt);
   }
 
@@ -527,9 +547,9 @@
       v.pitch = U.damp(v.pitch, 0, 3, dt); v.roll = U.damp(v.roll, -c.steer * 0.32, 2.5, dt);
     }
     v.x += v.vx * dt; v.y += v.vy * dt; v.z += v.vz * dt;
+    v.onGround = false;
     edgeGuard(v);
-    var res = W().resolveCapsule(v.x, v.z, v.y + 1, 0.6);
-    if (res.x !== v.x || res.z !== v.z) { v.x = res.x; v.z = res.z; v.vx *= 0.5; v.vz *= 0.5; }
+    if (!outside(v, 2)) { var res = W().resolveCapsule(v.x, v.z, v.y + 1, 0.6); if (res.x !== v.x || res.z !== v.z) { v.x = res.x; v.z = res.z; v.vx *= 0.5; v.vz *= 0.5; } }
     var g = surfaceAt(v.x, v.z, v.y + 0.5);
     var wet = waterAt(v.x, v.z) && g <= WATER_Y + 0.05;
     if (v.y <= g + (wet ? 0.2 : 0)) {
@@ -1566,7 +1586,7 @@
     }
   }
   // the chase camera for aircraft, boats and the parachute: further back, follows the heading and the climb
-  var CAMD = { heli: [13, 4.2], plane: [15, 3.6], jet: [19, 4.0], speedboat: [10, 3.2], jetski: [7, 2.6], parachute: [7.5, 2.0] };
+  var CAMD = { heli: [13, 4.2], plane: [15, 3.6], jet: [19, 4.0], speedboat: [10, 3.2], jetski: [7, 2.6], parachute: [12, 1.2] };
   function flightCam(r, dt, input, t, v) {
     var CAM = C.CAMERA, look = input ? input.look : null, now = GTP.game ? GTP.game.time.t : 0;
     var mode = t.cameraMode || r.mode, f = fam(v), air = isAir(v), cd = CAMD[v.type] || [10, 3];
@@ -1577,11 +1597,11 @@
         var hs = v.speed2d(), tgt = air || f === 'chute' || hs < 2 ? v.yaw : U.dirToYaw(v.vx, v.vz);
         if (v.speed < -1) tgt = v.yaw;
         r.yaw = U.angleDamp(r.yaw, tgt, air ? 3.2 : 2.6, dt);
-        var pT = f === 'plane' ? 0.2 - v.pitch * 0.55 : f === 'heli' ? 0.28 - v.pitch * 0.3 : f === 'chute' ? 0.35 : 0.2;
+        var pT = f === 'plane' ? 0.2 - v.pitch * 0.55 : f === 'heli' ? 0.28 - v.pitch * 0.3 : f === 'chute' ? (v.chute === 'open' ? 0.02 : 0.45) : 0.2;
         r.pitch = U.damp(r.pitch, U.clamp(pT, -0.6, 1.0), 1.8, dt);
       }
     }
-    var dist = cd[0] * (mode === 'close' ? 0.7 : 1), lookH = v.cls.height * (f === 'chute' ? 0.8 : 0.55), d = U.yawToDir(r.yaw);
+    var dist = cd[0] * (mode === 'close' ? 0.7 : 1), lookH = f === 'chute' ? (v.chute === 'open' ? 3.6 : 1.2) : v.cls.height * 0.55, d = U.yawToDir(r.yaw);
     var fx0 = v.x, fy0 = v.y + lookH, fz0 = v.z, desired;
     if (mode === 'first') {
       var info = v.mesh && v.mesh.userData && v.mesh.userData.info, eye = (info && info.eye) || { x: 0, y: 1.6, z: 0 };
@@ -1634,6 +1654,8 @@
       saveHooked = true;
       // the v3 slot saves: data.vehicles (skipped when a v4 registry block already carries the same entry)
       GTP.SaveHooks.push({ name: 'vehicles', save: function (data) { data.vehicles = saveState(); }, load: function (data) { if (data && data.vehicles) loadState(data.vehicles); } });
+      // NEW GAME empties the garages (a load restores them through the hook above)
+      if (GTP.Events) GTP.Events.on('load:begin', function (e) { if (e && e.reason === 'new') { garages = {}; Vehicles._garages = garages; pendingMods = null; } });
       if (GTP.Events) GTP.Events.on('vehicle:enter', function (e) {
         if (!pendingMods || !e || !e.ped || e.ped.kind !== 'player' || !e.vehicle) return;
         if (e.vehicle.type === pendingMods.type) { var pm = pendingMods; pendingMods = null; mod(e.vehicle, pm.mods); }
