@@ -11,6 +11,18 @@
   "lens": "qa:b:ui-frontend"
  },
  {
+  "id": "QA-B-NP-02",
+  "severity": "high",
+  "area": "ui/minimap: markers",
+  "title": "The minimap's Home icon is drawn on top of m01_van's blue light (and the 'Bring the van back to Gus' objective dot): after MISSION PASSED on Table Stakes a new player sees no next mission anywhere",
+  "repro": "Fresh New Game, complete m00_intro on the Quad. Look at the minimap: Gus's Garage (about 80 m away) shows only the white house icon, no blue M. Same in m01_van's last objective 'Bring the van back to Gus': no yellow dot, only the house. Reproduced in the play-through (shots after MISSION PASSED and at the h_arrow hint) and in tests/regress/qa_b_np_02.js (2/2 runs: 0 mission-blue pixels on the minimap 50 m from the light; 18 with the home marker filtered out).",
+  "expected": "The blue mission blip (and the yellow objective blip) stays visible over the home icon. On today's base there is no GPS or phone call yet, so the minimap blip is the only way to find mission 2.",
+  "actual": "m01_van's marker and the home marker are both at pod_garage (0.0 m apart). GTP.Missions.allMarkers() appends the strand markers (home last) after the mission and objective markers, and drawMinimap draws in list order, so the opaque home icon covers the M. The full map has the same order.",
+  "hint": "js/09_missions.js:1796 allMarkers: return Strands.markers() first and Missions.markers() last (or sort kind 'mission' / 'objective' to the end); alternatively js/11_ui.js drawMinimap (~line 657) / map page (~line 2038) draw mission and objective markers in a second pass, or offset / skip the home icon when one sits within 3 m. Regression: tests/regress/qa_b_np_02.js",
+  "lens": "qa:b:onboarding",
+  "test": "tests/regress/qa_b_np_02.js"
+ },
+ {
   "id": "QA-B-TCH-01",
   "severity": "high",
   "area": "touch / phone + map page",
@@ -141,6 +153,42 @@
   "actual": "minimapRect() puts the touch minimap at ui.hudTop + 140 px while drawWeapon draws the 44 px panel at top + 102 px (+30 px touch offset), so they overlap by about 6 px at 1280 and more at S = 1.3.",
   "hint": "js/11_ui.js:213 (y: ui.hudTop + px(140)) vs js/11_ui.js:3215 (drawWeapon at top + px(102), panel height px(44)): use top + px(152) or compute from the weapon panel's bottom. (Also found independently as QA-B-TCH-15 by another lens; merged.)",
   "lens": "qa:b:ui-hud"
+ },
+ {
+  "id": "QA-B-NP-01",
+  "severity": "medium",
+  "area": "ui/hud: objective timer",
+  "title": "Every mission timer is labelled 'CODE EXPIRES IN' (m02_read's sponsor-code joke), so m01_van's battery timer reads CODE EXPIRES IN under 'before the battery dies'",
+  "repro": "Fresh New Game (seed 7, headless=0, skipTitle=0), play m00_intro, walk into the blue light at Gus's Garage, get in the pod van. The objective panel shows 'Collect 5 subscribers before the battery dies (0/5)' and under it the bar labelled 'CODE EXPIRES IN 2:30'. Gus's intro line one screen earlier: 'The battery lasts two and a half minutes.' Seen in the play-through screenshot and in tests/regress/qa_b_np_01.js (2/2 runs).",
+  "expected": "The timer label matches the mission: BATTERY for m01_van, CODE EXPIRES IN only for m02_read, a neutral TIME LEFT otherwise.",
+  "actual": "drawObjective prints 'CODE EXPIRES IN' for every mission timer (8 timer_wrap missions in 22_content_missions.js and 5 in 24_content_expansion.js). The first timed mission a new player sees mislabels its timer with a joke from the next mission.",
+  "hint": "js/11_ui.js:867 hard-codes the label; js/09_missions.js:1288 drops the timer_wrap def's text when building state.timer. Carry a label (state.timer = {remaining, total, label: tf.text || tf.def.label}), add label:'BATTERY' to m01_van's timer_wrap (js/22_content_missions.js:72) and 'CODE EXPIRES IN' to m02_read's (line 99), and fall back to 'TIME LEFT' in 11_ui.js. Regression: tests/regress/qa_b_np_01.js",
+  "lens": "qa:b:onboarding",
+  "test": "tests/regress/qa_b_np_01.js"
+ },
+ {
+  "id": "QA-B-NP-03",
+  "severity": "medium",
+  "area": "missions/ui: pickup objectives",
+  "title": "Pickup objectives show nothing on the minimap: the five subscribers of m01_van's 150 s timer (and m00's table parts) have no blips, only the HUD chevron to the nearest one",
+  "repro": "New Game, play to m01_van, get in the pod van. Objective 'Collect 5 subscribers before the battery dies (0/5)', timer running. The minimap shows no yellow dots at all (play-through shots during the collect objective; GTP.Missions.allMarkers() has 0 objective entries for 5 open pickups in tests/regress/qa_b_np_03.js, 2/2 runs). Same in m00 'Grab the table legs, top and sign'.",
+  "expected": "Each open pickup has a yellow objective blip on the minimap and the map (ARCHITECTURE: markers on the minimap), so a new driver can plan a route against the clock.",
+  "actual": "H.pickup never calls addObjMarker, so Missions.markers() lists nothing; the only guide is the edge chevron to the nearest pickup, which flips as soon as another becomes nearer.",
+  "hint": "js/09_missions.js:762 H.pickup.start: after spawnPickups, addObjMarker({x,z,y}, pk) for each pickup (follow = the pickup) and drop a pickup's marker when pk.removed (in check or animateMarkers); clearObjMarkers already runs on objective end. Regression: tests/regress/qa_b_np_03.js",
+  "lens": "qa:b:onboarding",
+  "test": "tests/regress/qa_b_np_03.js"
+ },
+ {
+  "id": "QA-B-NP-04",
+  "severity": "medium",
+  "area": "hints/onboarding: entering a vehicle",
+  "title": "The enter-vehicle key is taught only by a one-shot proximity hint that fires during m00 next to a random parked car; when m01 says 'Get in the pod van' nothing on screen says F / Enter",
+  "repro": "Fresh New Game (seed 7). In m00, while walking to the table parts, the player passes a parked car: 'F or Enter gets in. The same key gets out.' shows for 6 s at 26 s (objective: 'Grab the table legs, top and sign (1/3)'), with no car to get into. In m01_van the objective 'Get in the pod van' has no hint line, no hint fires and the van door has no prompt. Play-through log: HINT h_enter at 26.4 s, nothing at 105.5 s when 'Get in the pod van' appears; tests/regress/qa_b_np_04.js (2/2 runs).",
+  "expected": "The first time an enter_vehicle objective is on screen, the HUD shows the key (F / Enter, Y on a pad), as an objective hint line or by firing h_enter then; a random parked car in a walking mission is not the moment.",
+  "actual": "h_enter is spent out of context; afterwards the game never shows the enter key again (CONTROLS page aside).",
+  "hint": "js/09_missions.js:729 H.enter_vehicle: add hint: function (o, c, p) { return p.inVehicle ? null : glyph-aware 'Press F (or Enter) at a door to get in'; } (the UI already draws h.hint under the objective); and/or js/12_cutscenes.js:499 fire h_enter only when the near vehicle is the objective's (or no mission is running). Regression: tests/regress/qa_b_np_04.js",
+  "lens": "qa:b:onboarding",
+  "test": "tests/regress/qa_b_np_04.js"
  },
  {
   "id": "QA-B-TCH-02",
@@ -515,6 +563,42 @@
   "actual": "panelSoft is rgba(13,16,32,0.62) and these labels are COL.muted (#8f97b3) or 80%-alpha muted with outline:false, so a white background behind the panel lifts it to mid-grey and the label disappears.",
   "hint": "js/11_ui.js:44 COL.panelSoft (0.62); drawWeapon js/11_ui.js:803-820 and drawRace js/11_ui.js:913-918 draw muted text with outline:false. Raise panelSoft to ~0.8 behind text or give muted labels an outline.",
   "lens": "qa:b:ui-hud"
+ },
+ {
+  "id": "QA-B-NP-05",
+  "severity": "low",
+  "area": "ui/hud: objective panel",
+  "title": "Pickup objectives print their count twice: 'Grab the table legs, top and sign (0/3)   0/3'",
+  "repro": "New Game, start m00_intro, reach Dorm 4B. The objective panel reads 'Grab the table legs, top and sign (0/3)' with an amber '0/3' at the right edge. Same in m01_van ('... before the battery dies (0/5)   0/5'). Play-through screenshots; tests/regress/qa_b_np_05.js (2/2 runs).",
+  "expected": "One count.",
+  "actual": "The mission runtime appends ' (n/total)' to the objective text and drawObjective draws state.progress again at the right.",
+  "hint": "js/09_missions.js:1282 stop appending ' (' + pr.n + '/' + pr.total + ')' (the panel already draws progress, js/11_ui.js:839/855), or skip the right-hand count when the text carries it. Regression: tests/regress/qa_b_np_05.js",
+  "lens": "qa:b:onboarding",
+  "test": "tests/regress/qa_b_np_05.js"
+ },
+ {
+  "id": "QA-B-NP-06",
+  "severity": "low",
+  "area": "hints/content: h_arrow",
+  "title": "The h_arrow hint misdescribes the HUD: 'The arrow on the minimap and the top of the screen points at the objective' while the arrow sits at the bottom edge and the minimap shows no arrow (only a dot, here hidden under the Home icon)",
+  "repro": "New Game, play m00 and m01_van until 'Bring the van back to Gus' (first drive_to). The hint fires at once. In the play-through screenshot the objective chevron is at the bottom edge ('81 m'), the minimap shows a house icon and no arrow or dot, and the target is 80 m away while the hint adds 'The Loop is the fast way across town'. Seen in both play-throughs (deterministic, seed 7).",
+  "expected": "Text that matches the HUD: a yellow chevron over the target or at the screen edge toward it, a yellow dot on the minimap (a rim triangle when far). The Loop tip belongs to a long drive (for example h_map's 250 m trigger or m01b).",
+  "actual": "drawObjectiveArrow places the arrow over the target or on any screen edge (js/11_ui.js:963-985); the minimap draws a dot inside range and a rim triangle only beyond it.",
+  "hint": "js/24_content_expansion.js:704 and js/12_cutscenes.js:432: reword, e.g. 'The yellow arrow on screen and the yellow dot on the minimap point at the objective.'; move 'The Loop is the fast way across town.' to a hint that fires on a long drive.",
+  "lens": "qa:b:onboarding",
+  "test": null
+ },
+ {
+  "id": "QA-B-NP-07",
+  "severity": "low",
+  "area": "content/tone: opening and m00 intro",
+  "title": "The opening cutscene and m00's intro tell the same jokes back to back ('I'm not carrying. I'm levels.', 'Respectfully, Gus, a journalist...', 'parts are in 4B'); Gus also promises 'Three trips' for a one-run pickup",
+  "repro": "New Game with a save already present (or ?opening=1, the flow the title's NEW GAME is meant to run: js/30_game.js:303). cs_opening ends with Gus: 'The parts are in 4B. Go get the table. I'm not carrying. I'm levels.' after Bryce's 'Respectfully, Gus, a journalist warms up.' Walking into the light then plays m00's intro: Gus 'Table's in 4B. Legs, top, sign. Three trips. I'm not carrying, I'm levels.' / Bryce 'Respectfully, Gus, a journalist doesn't carry furniture.' (intro shots captured with ?mission=m00_intro&intro=1). The objective is a single pickup run of three items, not three trips.",
+  "expected": "Each beat lands once (CONTENT_RULES 5: punchy, two or three lines); the second scene escalates instead of repeating.",
+  "actual": "The first minute repeats the punchline and the 'Respectfully, Gus' setup, and 'Three trips' does not match the pickup objective.",
+  "hint": "js/24_content_expansion.js:333 and :339 (cs_opening shot 2) vs js/22_content_missions.js:39-40 (m00 intro): drop the 'I'm levels' / 4B lines from one of them (e.g. opening ends on 'Go get the table.' and m00 keeps the levels joke), give Bryce a different retort, and say 'Legs, top, sign. One trip, three hands.' or similar.",
+  "lens": "qa:b:onboarding",
+  "test": null
  },
  {
   "id": "QA-B-TCH-13",
