@@ -62,12 +62,21 @@ function unlockOk(u, where) {
 
 // --------------------------------------------------------------- weapons --
 const EXISTING = ['fist', 'tableleg', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'shotgun', 'sniper', 'hottake', 'hotmic', 'ratio'];
-const CLASSES = new Set(['melee', 'pistol', 'smg', 'rifle', 'shotgun', 'sniper', 'thrown', 'launcher', 'special']);
+const CLASSES = new Set(['melee', 'pistol', 'smg', 'lmg', 'rifle', 'shotgun', 'sniper', 'thrown', 'launcher', 'special']);
 const SLOTS = new Set(P.attachmentSlots);
 const W = P.weapons;
 const WIDS = uniqueIds(W, 'weapons');
 ok(W.length >= 32, 'at least 32 weapons (' + W.length + ')');
 for (const id of EXISTING) ok(WIDS.has(id), 'the existing weapon ' + id + ' is in the table');
+// one arsenal: 08_combat.js merges this table over its own fallback by id and never removes an id, so every fallback id is
+// covered here (no duplicate concepts in the shop) and every id has a mesh builder in 05b_assets_weapons.js
+const COMBAT_SRC = fs.readFileSync(path.join(ROOT, 'js', '08_combat.js'), 'utf8');
+const FALLBACK = (COMBAT_SRC.slice(COMBAT_SRC.indexOf('var WEAPONS = {'), COMBAT_SRC.indexOf('var SLOTS =')).match(/^ {4}([a-z_]+): +\{ name:/gm) || []).map((l) => l.trim().split(':')[0]);
+ok(FALLBACK.length >= 30, 'read the combat fallback table (' + FALLBACK.length + ' ids)');
+for (const id of FALLBACK) ok(WIDS.has(id), 'combat fallback id ' + id + ' is covered by the parity table (no stray duplicate)');
+for (const w of W) ok(FALLBACK.indexOf(w.id) >= 0, 'parity weapon ' + w.id + ' exists in the combat table, so it has a slot and a mesh');
+const MESH_SRC = fs.readFileSync(path.join(ROOT, 'js', '05b_assets_weapons.js'), 'utf8');
+for (const w of W) if (w.id !== 'fist' && w.class !== 'melee' && w.id !== 'tableleg') ok(new RegExp('^ {4}' + w.id + ': function', 'm').test(MESH_SRC), 'weapon ' + w.id + ' has a mesh builder in 05b');
 ok(new Set(W.map((w) => w.name)).size === W.length, 'weapon names are unique');
 for (const w of W) {
   const where = 'weapon ' + w.id;
@@ -312,6 +321,11 @@ for (const m of P.missions) {
     ok(bo.length === 1 && bo[0].bossId === m.id && m.objectives.indexOf(bo[0]) > 0, where + ': one boss objective with its own bossId, after an approach objective');
   }
 }
+// 09 equips an unlocked weapon on the spot: a boss mission's reward must be a gun when the next boss fight is shot at
+for (const id of BOSSES) {
+  const w = P.weaponById(P.missionById(id).onComplete.unlockWeapon || '');
+  ok(w && w.class !== 'melee', id + ': the reward (' + (w && w.id) + ') is not a melee weapon, since it is equipped going into the next mission');
+}
 for (const id of BOSSES) {
   const g = P.missionById(id).objectives[0];
   ok(g.type === 'goto' && g.target.metres === true && g.target.offset && LANDMARKS.has(g.target.landmark) && g.radius >= 120, id + ': the approach goes to the boss arena (landmark + metres offset): ' + JSON.stringify(g.target));
@@ -411,7 +425,7 @@ const m03b = X.missionById('m03b_range');
 ok(!('takeWeapon' in m03b.onComplete) && m03b.onComplete.unlockWeapon === 'tableleg', 'retune: m03b keeps the m01c pistol');
 ok(X.cutscenes.cs_intro_m03b_range.shots[0].lines[1].text === m03b.intro[1].text, 'retune: m03b intro cutscene rebuilt from the new line');
 const m05 = X.missionById('m05_peer');
-ok(m05.onComplete.unlockWeapon === 'pocket' && /Footnote/.test(m05.outro[3].text), 'retune: m05 hands over the Footnote, not a second pistol');
+ok(m05.onComplete.unlockWeapon === 'oped' && /Op-Ed/.test(m05.outro[3].text), 'retune: m05 hands over the Op-Ed Compact, not a second pistol');
 ok(P.retuneLog && P.retuneLog.every((r) => r.applied || r.path.indexOf('.text') > 0), 'every retune patch applied (a guarded text patch may skip once its owner fixed the source): ' + JSON.stringify((P.retuneLog || []).filter((r) => !r.applied)));
 ok(/^Five subscribers/.test(byId.m01_van.outro[0].text), 'QA-B-TXT-03: m01_van counts the five subscribers it asks for');
 const before = X.missions.length; P.register(); ok(X.missions.length === before, 'register() is idempotent');
@@ -449,7 +463,10 @@ if (H2) {
         parity: !!P, weapons: P && P.weapons.length, calls: P && Object.keys(P.calls).length,
         inGame: ids.filter((id) => all.indexOf(id) >= 0), total: all.length,
         intros: ids.filter((id) => GTP.Content.expansion.cutscenes['cs_intro_' + id]).length,
-        story: (GTP.Story && GTP.Story.order ? GTP.Story.order() : []).filter((id) => ids.indexOf(id) >= 0).length,
+        story: (GTP.Story && GTP.Story.order ? GTP.Story.order() : []).map((m) => m.id || m).filter((id) => ids.indexOf(id) >= 0).length,
+        arsenal: (() => { const cw = Object.keys(GTP.Combat.WEAPONS), pw = P.weapons.map((w) => w.id), A = GTP.Assets;
+          return { extra: cw.filter((id) => pw.indexOf(id) < 0), missing: pw.filter((id) => cw.indexOf(id) < 0),
+            noMesh: pw.filter((id) => { if (id === 'fist') return false; try { return !(A.weaponMesh && A.weaponMesh(id)); } catch (e) { return true; } }) }; })(),
         arenas: ['b01_goldplate', 'b02_velvetine', 'b03_warbanner', 'b04_redacted', 'b05_dunk', 'b06_panel'].map((id) => {
           const m = P.missionById(id), B = GTP.Bosses, a = B && B.arena ? B.arena(id) : null, lm = GTP.World.landmark(m.marker), d = lm && (lm.door || lm);
           const t = m.objectives[0].target, at = GTP.Missions.resolvePoint ? GTP.Missions.resolvePoint(t) : null;
@@ -461,6 +478,8 @@ if (H2) {
     t.assert(live.parity && live.weapons >= 32 && live.calls === 35, 'parity tables reach the game: ' + JSON.stringify(live));
     t.assert(live.inGame.length === NEW_IDS.length && live.total >= 35, 'Missions.allMissions sees all 35 story missions: ' + JSON.stringify(live));
     t.assert(live.intros === NEW_IDS.length, 'every new mission has its intro cutscene in the live game');
+    t.assert(live.arsenal.extra.length === 0 && live.arsenal.missing.length === 0, 'Combat.WEAPONS is exactly the parity table: ' + JSON.stringify(live.arsenal));
+    t.assert(live.arsenal.noMesh.length === 0, 'every weapon builds a mesh: ' + live.arsenal.noMesh.join(','));
     t.assert(live.story === NEW_IDS.length, 'GTP.Story.order() counts all ten new missions as story: ' + live.story);
     for (const a of live.arenas) {
       t.assert(a.arena, a.id + ': GTP.Bosses knows the arena');

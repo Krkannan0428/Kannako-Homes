@@ -2,11 +2,12 @@
  * GTP.Content.parity: every v0.3 content table (PLAN_V03.md, "content"). Pure data plus tiny
  * helpers; loads after 20..24 and needs only window (24_ is used when present).
  *
- *   weapons       37 guns, blades and props in the plan's schema {id, name, class, dmg, rate, mag, reserve,
+ *   weapons       37 weapons in the plan's schema {id, name, class, dmg, rate, mag, reserve,
  *                 reload, spread, bloom:{add,max,decay}, recoil, range, projectile, hold, price,
  *                 unlock:{mission}|null, attachments:[slotIds], flavor} plus the optional engine extras the
  *                 existing WEAPONS table uses (melee, knock, pellets, driveBy, auto, headMul, vehicleMul, ...).
- *                 The first 12 are the existing ids with the existing numbers (two balance fixes, see notes).
+ *                 The first 12 are the existing ids with the existing numbers (two balance fixes, see notes); the other
+ *                 25 use the shooting track's ids and numbers (meshes, wheel slots) with our names, lines and unlocks.
  *   attachments   {id, slot, name, price, mods, fits, flavor}; slots: muzzle mag optic grip light
  *   tints         {id, name, color, price, unlock}
  *   modshop       Spin Doctor Customs: the catalogue for GTP.Vehicles.mod(vehicle, {...})
@@ -82,71 +83,67 @@
     { id: 'ratio', name: 'Ratio Launcher', class: 'launcher', dmg: 200, rate: 0.5, mag: 1, reserve: 6, reload: 3.0, spread: 0, bloom: null, recoil: 6.0, range: 120, projectile: 'rocket', hold: 'two', price: 7500, unlock: un('m13_thursday'), attachments: ['optic'],
       rocket: true, speed: 40, blast: 8, noAuto: true, flavor: 'Trustless. You point it, it ratios. The warranty is the token.' },
 
-    // ---- melee ----------------------------------------------------------------------------------
-    { id: 'clipboard', name: 'The Run of Show', class: 'melee', dmg: 16, rate: 2.2, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 1.9, projectile: 'hitscan', hold: 'one', price: 120, unlock: un('m01c_both_sides'), attachments: [],
-      melee: true, lunge: 2.4, knock: 2.6, flavor: "Sloane's spare clipboard. Every hit lasts exactly four minutes. Three." },
-    { id: 'selfie_stick', name: 'Selfie Stick', class: 'melee', dmg: 14, rate: 2.6, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 2.6, projectile: 'hitscan', hold: 'one', price: 60, unlock: null, attachments: [],
-      melee: true, lunge: 2.8, knock: 2.0, flavor: "Extends to the length of your reach. Your reach is mostly the stick." },
-    { id: 'golf_club', name: 'Par Ten Putter', class: 'melee', dmg: 32, rate: 1.2, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 2.3, projectile: 'hitscan', hold: 'two', price: 1000, unlock: un('b01_goldplate'), attachments: [],
-      melee: true, lunge: 2.4, knock: 6.0, launch: 1.4, flavor: "Fell out of a gold helicopter. Every swing is a ten. On the card." },
-    { id: 'mic_stand', name: 'The Mic Stand', class: 'melee', dmg: 34, rate: 1.1, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 2.4, projectile: 'hitscan', hold: 'two', price: 400, unlock: un('b02_velvetine'), attachments: [],
-      melee: true, lunge: 2.6, knock: 5.0, vehicleDmg: 8, flavor: "Off the Baron's yacht. Nobody ever stood at it. Now somebody stands near it, briefly." },
-
-    // ---- pistols --------------------------------------------------------------------------------
-    { id: 'pocket', name: 'The Footnote', class: 'pistol', dmg: 22, rate: 2.5, mag: 2, reserve: 40, reload: 1.4, spread: 0.02, bloom: { add: 0.012, max: 0.05, decay: 0.12 }, recoil: 1.6, range: 18, projectile: 'hitscan', hold: 'one', price: 350, unlock: un('m05_peer'), attachments: ['light'],
-      headMul: 3, vehicleMul: 0.4, knock: 1.4, driveBy: true, flavor: "Tiny. Fits under anything you said. [citation pending]" },
-    { id: 'heavy_pistol', name: 'The Closing Statement', class: 'pistol', dmg: 32, rate: 2.6, mag: 9, reserve: 90, reload: 1.5, spread: 0.01, bloom: { add: 0.012, max: 0.045, decay: 0.10 }, recoil: 2.0, range: 40, projectile: 'hitscan', hold: 'one', price: 1200, unlock: un('m06_rally'), attachments: PISTOL,
-      vehicleMul: 0.65, knock: 2.4, driveBy: true, flavor: "Heavy, final, and somehow still interrupted." },
-    { id: 'machine_pistol', name: 'The Interruption', class: 'pistol', dmg: 8, rate: 13, mag: 20, reserve: 200, reload: 1.3, spread: 0.05, bloom: { add: 0.005, max: 0.10, decay: 0.16 }, recoil: 0.4, range: 22, projectile: 'hitscan', hold: 'one', price: 1100, unlock: un('m07_listen'), attachments: PISTOL,
-      auto: true, vehicleMul: 0.45, knock: 0.8, driveBy: true, flavor: "Talks over everyone in the room, twenty times a magazine." },
-    { id: 'flare_gun', name: 'The Signal Boost', class: 'special', dmg: 20, rate: 0.6, mag: 1, reserve: 10, reload: 1.8, spread: 0.01, bloom: null, recoil: 2.2, range: 40, projectile: 'lobbed', hold: 'one', price: 500, unlock: un('m09_balloon'), attachments: [],
-      lobbed: true, speed: 30, stun: 2, glow: '#ff3fa4', flavor: "Puts a pink light on whatever you just said. Everyone looks. Nobody reads it." },
-
-    // ---- SMGs -----------------------------------------------------------------------------------
-    { id: 'micro_smg', name: 'The Thread', class: 'smg', dmg: 7, rate: 15, mag: 32, reserve: 256, reload: 1.4, spread: 0.055, bloom: { add: 0.004, max: 0.11, decay: 0.16 }, recoil: 0.3, range: 24, projectile: 'hitscan', hold: 'one', price: 1300, unlock: un('m10_pellets'), attachments: PISTOL,
-      auto: true, vehicleMul: 0.45, knock: 0.7, driveBy: true, flavor: "1/32. 2/32. 3/32. Nobody reads past 4/32." },
-    { id: 'pdw', name: 'The Live Blog', class: 'smg', dmg: 11, rate: 10, mag: 35, reserve: 245, reload: 1.8, spread: 0.032, bloom: { add: 0.004, max: 0.08, decay: 0.14 }, recoil: 0.32, range: 34, projectile: 'hitscan', hold: 'two', price: 1900, unlock: un('m12_memo'), attachments: GUN,
-      auto: true, vehicleMul: 0.55, knock: 1.0, driveBy: true, flavor: "Updates every few seconds. Refresh for more." },
-
-    // ---- rifles ---------------------------------------------------------------------------------
-    { id: 'carbine', name: 'The Talking Point', class: 'rifle', dmg: 21, rate: 6, mag: 30, reserve: 180, reload: 1.9, spread: 0.02, bloom: { add: 0.006, max: 0.05, decay: 0.12 }, recoil: 0.45, range: 55, projectile: 'hitscan', hold: 'two', price: 2000, unlock: un('b03_warbanner'), attachments: GUN,
-      aimSpread: 0.01, auto: true, vehicleMul: 0.6, knock: 1.1, flavor: "A gift from Bravadia. Gifts are tax-free, and that's why we need the jets." },
-    { id: 'battle_rifle', name: 'The Op-Ed', class: 'rifle', dmg: 36, rate: 3.5, mag: 20, reserve: 120, reload: 2.2, spread: 0.014, bloom: { add: 0.010, max: 0.05, decay: 0.10 }, recoil: 1.1, range: 75, projectile: 'hitscan', hold: 'two', price: 3200, unlock: un('m09b_hotmic'), attachments: GUN,
-      aimSpread: 0.007, vehicleMul: 0.75, knock: 1.8, flavor: "Eight hundred words, all of them aimed. The editor cut the rest." },
-    { id: 'bullpup', name: 'The Hot Seat', class: 'rifle', dmg: 23, rate: 6.5, mag: 30, reserve: 180, reload: 2.4, spread: 0.016, bloom: { add: 0.005, max: 0.05, decay: 0.13 }, recoil: 0.42, range: 58, projectile: 'hitscan', hold: 'two', price: 2900, unlock: un('m12b_scope'), attachments: GUN,
-      aimSpread: 0.008, auto: true, vehicleMul: 0.65, knock: 1.2, flavor: "Short, loud, and always the one being asked the follow-up." },
-    { id: 'lmg', name: 'The Filibuster', class: 'rifle', dmg: 26, rate: 8, mag: 100, reserve: 300, reload: 4.5, spread: 0.04, bloom: { add: 0.004, max: 0.08, decay: 0.10 }, recoil: 0.6, range: 60, projectile: 'hitscan', hold: 'two', price: 5500, unlock: un('h03_job'), attachments: ['muzzle', 'optic', 'grip'],
-      auto: true, heavy: true, mobility: 0.75, vehicleMul: 0.7, knock: 1.4, flavor: "A hundred rounds and no intention of yielding the floor." },
-
-    // ---- shotguns -------------------------------------------------------------------------------
-    { id: 'both_barrels', name: 'Both Barrels', class: 'shotgun', dmg: 90, rate: 1.6, mag: 2, reserve: 40, reload: 2.0, spread: 0.1, bloom: null, recoil: 4.0, range: 10, projectile: 'hitscan', hold: 'two', price: 1300, unlock: un('m10_pellets'), attachments: ['light'],
-      pellets: 8, vehicleMul: 0.7, knock: 3.4, driveBy: true, flavor: "One barrel for each side. That's balance." },
-    { id: 'auto_shotgun', name: 'The Pile-On', class: 'shotgun', dmg: 50, rate: 3, mag: 8, reserve: 64, reload: 2.6, spread: 0.095, bloom: { add: 0.01, max: 0.04, decay: 0.12 }, recoil: 2.4, range: 11, projectile: 'hitscan', hold: 'two', price: 3800, unlock: un('b05_dunk'), attachments: SHOTTY,
-      auto: true, pellets: 6, vehicleMul: 0.6, knock: 2.2, flavor: "Dunk's chat in a box. Nobody read the post. Everybody fires." },
-
-    // ---- snipers --------------------------------------------------------------------------------
-    { id: 'marksman', name: 'The Peer Review', class: 'sniper', dmg: 55, rate: 2.2, mag: 10, reserve: 60, reload: 2.4, spread: 0.03, bloom: { add: 0.008, max: 0.04, decay: 0.12 }, recoil: 1.8, range: 110, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('m12b_scope'), attachments: SCOPE,
-      scope: true, zoom: 3, scopedSpread: 0.004, headMul: 2.5, vehicleMul: 0.8, flavor: "Semi-automatic review. Ten reviewers, one opinion, sent back for revisions." },
-    { id: 'heavy_sniper', name: 'The Retraction', class: 'sniper', dmg: 220, rate: 0.45, mag: 4, reserve: 20, reload: 3.4, spread: 0.1, bloom: null, recoil: 5.5, range: 200, projectile: 'hitscan', hold: 'two', price: 9000, unlock: un('m14_grift'), attachments: ['muzzle', 'optic'],
-      scope: true, zoom: 6, scopedSpread: 0, headMul: 3, vehicleMul: 1.6, noAuto: true, casingDelay: 0.4, flavor: "Undoes whatever it hits, on the record, at two hundred meters." },
-
-    // ---- thrown ---------------------------------------------------------------------------------
-    { id: 'flashbang', name: 'Breaking News', class: 'thrown', dmg: 0, rate: 1, mag: 0, reserve: 8, reload: 0, spread: 0, bloom: null, recoil: 0, range: 22, projectile: 'lobbed', hold: 'one', price: 200, unlock: un('m04_hit'), attachments: [],
-      lobbed: true, speed: 20, fuse: 1.5, stun: 4, ring: 7, pack: 2, flavor: "A white flash and a chyron. Everyone in range forgets what they were doing, briefly, like viewers." },
-    { id: 'sticky', name: 'The Sticky Take', class: 'thrown', dmg: 140, rate: 1, mag: 0, reserve: 6, reload: 0, spread: 0, bloom: null, recoil: 0, range: 18, projectile: 'lobbed', hold: 'one', price: 300, unlock: un('b04_redacted'), attachments: [],
-      lobbed: true, speed: 16, sticks: true, remote: true, blast: 5, vehicleDmg: 260, pack: 1, flavor: "Sticks to whatever it touches, like everything you have ever said. Press again to set it off." },
-    { id: 'spin_smoke', name: 'The Spin', class: 'thrown', dmg: 0, rate: 1, mag: 0, reserve: 10, reload: 0, spread: 0, bloom: null, recoil: 0, range: 22, projectile: 'lobbed', hold: 'one', price: 150, unlock: un('h02_prep'), attachments: [],
-      lobbed: true, speed: 18, smoke: 8, smokeSeconds: 12, breaksSight: true, pack: 3, flavor: "A cloud of context. Nobody can see what happened, which is the point." },
-
-    // ---- launchers and specials -----------------------------------------------------------------
-    { id: 'grenade_launcher', name: 'The Follow-Up Question', class: 'launcher', dmg: 120, rate: 1.2, mag: 6, reserve: 24, reload: 3.2, spread: 0.01, bloom: null, recoil: 3.5, range: 60, projectile: 'lobbed', hold: 'two', price: 6000, unlock: un('m13b_ratio'), attachments: ['optic'],
-      lobbed: true, speed: 26, fuse: 0, blast: 5, vehicleDmg: 200, noAuto: true, flavor: "Six follow-up questions in six seconds. Every one of them lands, none of them gets answered." },
-    { id: 'minigun', name: 'The News Cycle', class: 'special', dmg: 14, rate: 20, mag: 300, reserve: 600, reload: 5.0, spread: 0.06, bloom: { add: 0.002, max: 0.08, decay: 0.08 }, recoil: 0.25, range: 50, projectile: 'hitscan', hold: 'two', price: 12000, unlock: un('b06_panel'), attachments: [],
-      auto: true, heavy: true, spinUp: 0.8, mobility: 0.6, vehicleMul: 0.6, knock: 1.0, flavor: "From the props department. Runs twenty-four hours a day and covers everything badly." },
-    { id: 'merch_cannon', name: 'The Merch Cannon', class: 'special', dmg: 6, rate: 1.5, mag: 5, reserve: 40, reload: 2.0, spread: 0.02, bloom: null, recoil: 2.0, range: 30, projectile: 'lobbed', hold: 'two', price: 800, unlock: un('m07_listen'), attachments: [],
-      lobbed: true, speed: 24, knock: 7.0, flavor: "Fires rolled-up LOUD & CORRECT shirts. Knocks people over. They keep the shirt. Reach." },
-    { id: 'mute_button', name: 'The Mute Button', class: 'special', dmg: 4, rate: 1, mag: 1, reserve: 20, reload: 1.0, spread: 0.01, bloom: null, recoil: 0.5, range: 8, projectile: 'hitscan', hold: 'one', price: 650, unlock: un('m09_balloon'), attachments: [],
-      stun: 3, vehicleMul: 0, flavor: "Point, press, and they stop talking for three seconds. The most powerful weapon in media." }
+    // ---- the v0.3 additions: the shooting track's ids (each has a mesh in 05b_assets_weapons.js and a wheel slot), so the
+    // merged arsenal is these 37 with no duplicates; numbers match 08_combat.js's fallback table, names and lines are ours,
+    // unlocks follow the story (each boss and heist reward is one of these) --------------------------------------------
+    // ---- melee
+    { id: 'knuckles', name: 'Brass Talking Points', class: 'melee', dmg: 18, rate: 2.8, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 1.75, projectile: 'hitscan', hold: 'one', price: 200, unlock: un('m03_ratio'), attachments: [],
+      melee: true, lunge: 2.4, knock: 3.4, flavor: 'Four talking points, one on each finger. All of them land.' },
+    { id: 'selfie', name: 'Selfie Stick', class: 'melee', dmg: 16, rate: 2.0, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 2.6, projectile: 'hitscan', hold: 'one', price: 120, unlock: un('m02_read'), attachments: [],
+      melee: true, lunge: 2.2, knock: 2.6, flavor: 'Extends to the length of your reach. Your reach is mostly the stick.' },
+    { id: 'gavel', name: 'The Gavel of Order', class: 'melee', dmg: 34, rate: 1.3, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 1.9, projectile: 'hitscan', hold: 'one', price: 260, unlock: un('m06_rally'), attachments: [],
+      melee: true, lunge: 2.5, knock: 4.2, vehicleDmg: 5, flavor: 'Order, order. The President rated it a ten before anyone used it.' },
+    { id: 'bat', name: 'The Closing Argument', class: 'melee', dmg: 40, rate: 1.1, mag: 0, reserve: 0, reload: 0, spread: 0, bloom: null, recoil: 0, range: 2.3, projectile: 'hitscan', hold: 'two', price: 380, unlock: un('m06_rally'), attachments: [],
+      melee: true, lunge: 2.7, knock: 5.2, vehicleDmg: 8, flavor: 'Settles the debate, and the furniture. Nobody gets a rebuttal.' },
+    // ---- pistols
+    { id: 'oped', name: 'Op-Ed Compact', class: 'pistol', dmg: 14, rate: 5, mag: 15, reserve: 150, reload: 1.0, spread: 0.014, bloom: { add: 0.007, max: 0.04, decay: 0.12 }, recoil: 0.9, range: 30, projectile: 'hitscan', hold: 'one', price: 300, unlock: un('m05_peer'), attachments: PISTOL,
+      quiet: true, vehicleMul: 0.5, knock: 1.2, driveBy: true, flavor: 'Short, quiet, nobody reads it. A small pistol for a small hedge.' },
+    { id: 'filibuster', name: 'The Filibuster', class: 'pistol', dmg: 32, rate: 2.4, mag: 9, reserve: 90, reload: 1.6, spread: 0.01, bloom: { add: 0.012, max: 0.045, decay: 0.1 }, recoil: 2.0, range: 40, projectile: 'hitscan', hold: 'one', price: 1250, unlock: un('m07_listen'), attachments: PISTOL,
+      headMul: 2.5, vehicleMul: 0.65, knock: 2.4, driveBy: true, flavor: 'Heavy, final, and it keeps talking until the other side leaves.' },
+    // ---- SMGs and machine guns
+    { id: 'pocketsmg', name: 'Pocket Pundit', class: 'smg', dmg: 7, rate: 14, mag: 24, reserve: 240, reload: 1.2, spread: 0.055, bloom: { add: 0.005, max: 0.11, decay: 0.18 }, recoil: 0.3, range: 20, projectile: 'hitscan', hold: 'one', price: 800, unlock: un('m07b_ferry'), attachments: PISTOL,
+      auto: true, vehicleMul: 0.45, knock: 0.7, driveBy: true, flavor: 'Fits in a blazer. So does an opinion, and it fires just as fast.' },
+    { id: 'threadpistol', name: 'Thread Pistol', class: 'smg', dmg: 8, rate: 13, mag: 20, reserve: 200, reload: 1.3, spread: 0.05, bloom: { add: 0.005, max: 0.1, decay: 0.16 }, recoil: 0.45, range: 22, projectile: 'hitscan', hold: 'one', price: 1100, unlock: un('m08_scooters'), attachments: PISTOL,
+      auto: true, vehicleMul: 0.45, knock: 0.8, driveBy: true, flavor: '1/20. 2/20. 3/20. Nobody reads past 4/20.' },
+    { id: 'liveblog', name: 'The Live Blogger', class: 'smg', dmg: 10, rate: 12, mag: 32, reserve: 256, reload: 1.7, spread: 0.035, bloom: { add: 0.004, max: 0.08, decay: 0.15 }, recoil: 0.3, range: 34, projectile: 'hitscan', hold: 'two', price: 2100, unlock: un('m12_memo'), attachments: GUN,
+      auto: true, vehicleMul: 0.5, knock: 1.0, driveBy: true, flavor: 'Updates every eighty milliseconds. Refresh for more.' },
+    { id: 'combatmg', name: 'Comment Section', class: 'lmg', dmg: 22, rate: 8, mag: 80, reserve: 240, reload: 3.6, spread: 0.028, bloom: { add: 0.004, max: 0.08, decay: 0.1 }, recoil: 0.45, range: 55, projectile: 'hitscan', hold: 'two', price: 5200, unlock: un('m12b_scope'), attachments: ['muzzle', 'optic', 'grip'],
+      auto: true, vehicleMul: 0.7, knock: 1.4, flavor: 'Below the line. Endless. Mostly wrong. It is where the memo comes from.' },
+    { id: 'lmg', name: 'The Endless Segment', class: 'lmg', dmg: 20, rate: 9, mag: 100, reserve: 300, reload: 4.2, spread: 0.03, bloom: { add: 0.004, max: 0.08, decay: 0.1 }, recoil: 0.45, range: 55, projectile: 'hitscan', hold: 'two', price: 6200, unlock: un('h03_job'), attachments: ['muzzle', 'optic', 'grip'],
+      auto: true, vehicleMul: 0.7, knock: 1.3, flavor: 'From the Vaultwright vault. A hundred rounds and no intention of yielding the floor.' },
+    // ---- rifles
+    { id: 'carbine', name: 'The Panel', class: 'rifle', dmg: 22, rate: 6.5, mag: 30, reserve: 210, reload: 1.9, spread: 0.016, bloom: { add: 0.005, max: 0.05, decay: 0.13 }, recoil: 0.45, range: 58, projectile: 'hitscan', hold: 'two', price: 3200, unlock: un('b03_warbanner'), attachments: GUN,
+      aimSpread: 0.008, auto: true, pointShots: 3, vehicleMul: 0.65, knock: 1.2, flavor: "A gift from Bravadia. Four voices, one opinion, thirty rounds. And that's why we need the jets." },
+    { id: 'bullpup', name: 'Bullet Points', class: 'rifle', dmg: 21, rate: 7, mag: 30, reserve: 210, reload: 1.8, spread: 0.018, bloom: { add: 0.005, max: 0.055, decay: 0.13 }, recoil: 0.4, range: 55, projectile: 'hitscan', hold: 'two', price: 2900, unlock: un('m11_trustless'), attachments: GUN,
+      aimSpread: 0.009, auto: true, pointShots: 3, vehicleMul: 0.6, knock: 1.1, flavor: 'Short. Punchy. Three of them. Like a slide deck.' },
+    { id: 'battlerifle', name: 'The Long Read', class: 'rifle', dmg: 38, rate: 3.2, mag: 20, reserve: 140, reload: 2.2, spread: 0.012, bloom: { add: 0.01, max: 0.05, decay: 0.1 }, recoil: 1.3, range: 75, projectile: 'hitscan', hold: 'two', price: 3800, unlock: un('m10_pellets'), attachments: GUN,
+      aimSpread: 0.005, headMul: 2.5, vehicleMul: 0.75, knock: 1.8, flavor: 'Eight thousand words, all of them aimed. The editor cut the rest.' },
+    // ---- shotguns
+    { id: 'sawnoff', name: 'Sawed-Off Soundbite', class: 'shotgun', dmg: 80, rate: 2.2, mag: 2, reserve: 40, reload: 1.6, spread: 0.13, bloom: null, recoil: 3.4, range: 7, projectile: 'hitscan', hold: 'one', price: 700, unlock: un('m04_hit'), attachments: ['light'],
+      pellets: 7, vehicleMul: 0.6, knock: 3, driveBy: true, flavor: 'Cut for time. Still loud.' },
+    { id: 'doublebarrel', name: 'The Both-Sider', class: 'shotgun', dmg: 105, rate: 2.4, mag: 2, reserve: 40, reload: 1.8, spread: 0.1, bloom: null, recoil: 4.0, range: 9, projectile: 'hitscan', hold: 'two', price: 900, unlock: un('b01_goldplate'), attachments: ['light'],
+      pellets: 8, vehicleMul: 0.65, knock: 3.5, flavor: "Fell out of a gold helicopter. One barrel for each side. Both rated a ten." },
+    { id: 'autoshotgun', name: 'Town Hall', class: 'shotgun', dmg: 50, rate: 3, mag: 12, reserve: 72, reload: 2.4, spread: 0.09, bloom: null, recoil: 2.0, range: 12, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('b05_dunk'), attachments: SHOTTY,
+      auto: true, pellets: 6, vehicleMul: 0.6, knock: 2.2, flavor: "Dunk's favorite. Everyone gets a question, very fast. Nobody read the questions." },
+    // ---- snipers
+    { id: 'marksman', name: 'The Peer Reviewer', class: 'sniper', dmg: 70, rate: 2.0, mag: 10, reserve: 60, reload: 2.4, spread: 0.05, bloom: null, recoil: 2.4, range: 120, projectile: 'hitscan', hold: 'two', price: 5200, unlock: un('m13_thursday'), attachments: SCOPE,
+      scope: true, scopedSpread: 0.004, headMul: 2.5, vehicleMul: 0.9, noAuto: true, flavor: 'Semi-automatic review. Accepted with revisions. Ten of them.' },
+    { id: 'heavysniper', name: 'The Long Form', class: 'sniper', dmg: 220, rate: 0.5, mag: 6, reserve: 24, reload: 3.2, spread: 0.1, bloom: null, recoil: 6.0, range: 200, projectile: 'hitscan', hold: 'two', price: 9000, unlock: un('m13b_ratio'), attachments: ['muzzle', 'optic'],
+      scope: true, scopedSpread: 0, headMul: 3, vehicleMul: 1.6, noAuto: true, casingDelay: 0.35, flavor: 'Goes through the car and the argument, on the record, at two hundred meters.' },
+    // ---- thrown
+    { id: 'coffee', name: 'Scalding Latte', class: 'thrown', dmg: 5, rate: 1, mag: 0, reserve: 10, reload: 0, spread: 0, bloom: null, recoil: 0, range: 18, projectile: 'lobbed', hold: 'one', price: 80, unlock: un('m04_hit'), attachments: [],
+      lobbed: true, speed: 17, splash: 3.5, burn: 4, pack: 3, flavor: 'Green Room coffee. Oat milk, extra hot, four hours old. Everyone near it stops talking.' },
+    { id: 'smoke', name: 'Smoke & Mirrors', class: 'thrown', dmg: 0, rate: 1, mag: 0, reserve: 10, reload: 0, spread: 0, bloom: null, recoil: 0, range: 20, projectile: 'lobbed', hold: 'one', price: 150, unlock: un('h02_prep'), attachments: [],
+      lobbed: true, speed: 18, fuse: 1.2, smoke: 12, bounces: 2, restitution: 0.35, pack: 3, flavor: 'Twelve seconds of nobody seeing anything. A press office in a can.' },
+    { id: 'stickynote', name: 'Sticky Note', class: 'thrown', dmg: 80, rate: 0.9, mag: 0, reserve: 10, reload: 0, spread: 0, bloom: null, recoil: 0, range: 18, projectile: 'lobbed', hold: 'one', price: 300, unlock: un('b04_redacted'), attachments: [],
+      lobbed: true, speed: 16, fuse: 3, blast: 5, ring: 3, vehicleDmg: 220, stick: true, pack: 2, flavor: 'A reminder. It sticks to whatever it touches, like everything you have ever said. Then it goes off.' },
+    // ---- launchers and heavy
+    { id: 'firework', name: 'Viral Loop', class: 'launcher', dmg: 140, rate: 0.6, mag: 1, reserve: 10, reload: 2.6, spread: 0, bloom: null, recoil: 5.0, range: 90, projectile: 'rocket', hold: 'two', price: 4800, unlock: un('m12_memo'), attachments: ['optic'],
+      rocket: true, speed: 28, blast: 6, vehicleDmg: 160, noAuto: true, flavor: 'It goes up, it goes everywhere, it gets shared.' },
+    { id: 'confetti', name: 'Confetti Cannon', class: 'launcher', dmg: 90, rate: 1.2, mag: 6, reserve: 24, reload: 3.4, spread: 0.01, bloom: null, recoil: 3.0, range: 40, projectile: 'lobbed', hold: 'two', price: 6500, unlock: un('b02_velvetine'), attachments: ['optic'],
+      lobbed: true, impact: true, speed: 26, blast: 4, vehicleDmg: 110, noAuto: true, flavor: "Off the Baron's yacht. Six chambers of celebration. To whatever this is!" },
+    { id: 'spin', name: 'The Spin Machine', class: 'launcher', dmg: 14, rate: 18, mag: 300, reserve: 600, reload: 5, spread: 0.06, bloom: { add: 0.002, max: 0.08, decay: 0.2 }, recoil: 0.25, range: 45, projectile: 'hitscan', hold: 'two', price: 15000, unlock: un('b06_panel'), attachments: [],
+      auto: true, spinUp: 0.6, vehicleMul: 0.6, knock: 1.0, noAuto: true, flavor: "From TYN's props department. Two thousand rounds a minute, every one of them on message." }
   ];
   P.weaponOrder = P.weapons.map(function (w) { return w.id; });
 
@@ -154,17 +151,17 @@
   // mods multiply the weapon's numbers (dmg, spread, recoil, range, reload, mag) or add (noise -1 = suppressed)
   P.attachmentSlots = ['muzzle', 'mag', 'optic', 'grip', 'light'];
   P.attachments = [
-    { id: 'suppressor', slot: 'muzzle', name: 'The Quiet Part', price: 900, mods: { noise: -1, range: 0.9, dmg: 0.95 }, fits: ['pistol', 'smg', 'rifle', 'sniper', 'shotgun'], flavor: 'Says the quiet part quietly. Cops hear less; everyone else hears nothing new.' },
+    { id: 'suppressor', slot: 'muzzle', name: 'The Quiet Part', price: 900, mods: { noise: -1, range: 0.9, dmg: 0.95 }, fits: ['pistol', 'smg', 'lmg', 'rifle', 'sniper', 'shotgun'], flavor: 'Says the quiet part quietly. Cops hear less; everyone else hears nothing new.' },
     { id: 'compensator', slot: 'muzzle', name: 'The Both-Sides Brake', price: 450, mods: { recoil: 0.7 }, fits: ['pistol', 'smg', 'rifle', 'shotgun'], flavor: 'Pushes the muzzle down as hard as it goes up. Balanced, technically.' },
-    { id: 'flash_hider', slot: 'muzzle', name: 'Off the Record', price: 300, mods: { spread: 0.95, flash: 0.3 }, fits: ['rifle', 'smg', 'sniper'], flavor: 'Hides the flash. The bang is still on the record.' },
+    { id: 'flash_hider', slot: 'muzzle', name: 'Off the Record', price: 300, mods: { spread: 0.95, flash: 0.3 }, fits: ['rifle', 'smg', 'lmg', 'sniper'], flavor: 'Hides the flash. The bang is still on the record.' },
     { id: 'ext_mag', slot: 'mag', name: 'Extended Remarks', price: 600, mods: { mag: 1.5, reload: 1.1 }, fits: ['pistol', 'smg', 'rifle', 'shotgun', 'sniper'], flavor: 'Half again as many rounds. Twice as long to wrap up.' },
-    { id: 'drum_mag', slot: 'mag', name: 'The Drum Circle', price: 1500, mods: { mag: 2.5, reload: 1.35, mobility: 0.9 }, fits: ['smg', 'rifle', 'shotgun'], flavor: 'Goes on and on. Everyone in it thinks it is going somewhere.' },
+    { id: 'drum_mag', slot: 'mag', name: 'The Drum Circle', price: 1500, mods: { mag: 2.5, reload: 1.35, mobility: 0.9 }, fits: ['smg', 'lmg', 'rifle', 'shotgun'], flavor: 'Goes on and on. Everyone in it thinks it is going somewhere.' },
     { id: 'red_dot', slot: 'optic', name: 'Laser Focus Dot', price: 500, mods: { spread: 0.85, adsZoom: 1.2 }, fits: ['pistol', 'smg', 'rifle', 'shotgun', 'launcher'], flavor: 'A red dot that never moves. The only thing in the city that never moves.' },
-    { id: 'holo', slot: 'optic', name: 'The Hologram', price: 800, mods: { spread: 0.8, adsZoom: 1.4 }, fits: ['smg', 'rifle', 'launcher'], flavor: 'A sight that is not really there. Like most guests.' },
+    { id: 'holo', slot: 'optic', name: 'The Hologram', price: 800, mods: { spread: 0.8, adsZoom: 1.4 }, fits: ['smg', 'lmg', 'rifle', 'launcher'], flavor: 'A sight that is not really there. Like most guests.' },
     { id: 'scope_4x', slot: 'optic', name: 'Close Reading', price: 1200, mods: { spread: 0.7, adsZoom: 4 }, fits: ['rifle', 'sniper'], flavor: 'For people who read past the headline. Rare. Collectible.' },
     { id: 'scope_8x', slot: 'optic', name: 'The Deep Dive', price: 2200, mods: { spread: 0.6, adsZoom: 8, sway: 1.2 }, fits: ['sniper'], flavor: 'Zooms all the way into the footnotes. Wobbles when you breathe, like a pundit.' },
-    { id: 'fore_grip', slot: 'grip', name: 'The Firm Handshake', price: 400, mods: { recoil: 0.8, spread: 0.92 }, fits: ['smg', 'rifle', 'shotgun', 'sniper'], flavor: 'Nap Dynasty approved. Firmness level nine. Code GRIP20 does nothing.' },
-    { id: 'angled_grip', slot: 'grip', name: 'The Angle', price: 450, mods: { adsSpeed: 1.25, recoil: 0.9 }, fits: ['smg', 'rifle', 'shotgun'], flavor: 'Everyone has one. This one is ergonomic.' },
+    { id: 'fore_grip', slot: 'grip', name: 'The Firm Handshake', price: 400, mods: { recoil: 0.8, spread: 0.92 }, fits: ['smg', 'lmg', 'rifle', 'shotgun', 'sniper'], flavor: 'Nap Dynasty approved. Firmness level nine. Code GRIP20 does nothing.' },
+    { id: 'angled_grip', slot: 'grip', name: 'The Angle', price: 450, mods: { adsSpeed: 1.25, recoil: 0.9 }, fits: ['smg', 'lmg', 'rifle', 'shotgun'], flavor: 'Everyone has one. This one is ergonomic.' },
     { id: 'flashlight', slot: 'light', name: 'The Spotlight', price: 250, mods: { light: 1 }, fits: ['pistol', 'smg', 'rifle', 'shotgun'], flavor: 'Lights up whoever is in front of you. They love it. Most of them.' },
     { id: 'laser', slot: 'light', name: 'Laser Pointer of Blame', price: 350, mods: { hipSpread: 0.75, laser: 1 }, fits: ['pistol', 'smg', 'rifle', 'shotgun'], flavor: 'Points at someone so you do not have to. It is always them.' }
   ];
@@ -657,13 +654,13 @@
       ],
       outro: [
         { who: 'sloane', text: "The ribbon's down. The show is Loud & Correct again. For now. He's already ordering more ribbon." },
-        { who: 'goldplate', text: "Takesworth. Tough guy. I rate you an eight. Keep the putter, it fell out of the helicopter. It's a ten." },
-        { who: 'player', text: "Why is there a putter in a helicopter?" },
-        { who: 'goldplate', text: "I rate everything. The helicopter's a ten. The putter's a ten. You're an eight." },
+        { who: 'goldplate', text: "Takesworth. Tough guy. An eight. Keep the shotgun, it fell out of the helicopter. Two barrels. Both tens." },
+        { who: 'player', text: "Why is there a shotgun in a helicopter?" },
+        { who: 'goldplate', text: "Balance. Both sides of everything. The helicopter's a ten. You're an eight." },
         { who: 'kip', text: "I was holding the other end of the ribbon. Is this paid?" }
       ],
       failOn: ['player_dead'],
-      onComplete: { unlockWeapon: 'golf_club', setFlag: 'ribbon_cut' }
+      onComplete: { unlockWeapon: 'doublebarrel', setFlag: 'ribbon_cut' }
     },
 
     {
@@ -688,12 +685,12 @@
       outro: [
         { who: 'velvetine', text: "To you! You played something! Out loud! On my yacht! The guests LIKED it! To... liking!" },
         { who: 'player', text: "Respectfully, that's what music is." },
-        { who: 'velvetine', text: "To music, I suppose. Take the mic stand. Nobody here ever stood at one." },
+        { who: 'velvetine', text: "To music, I suppose. Take the confetti cannon. Nobody here ever had a reason to fire it." },
         { who: 'gus', text: "Levels were perfect. First time in my life." },
         { who: 'kip', text: "I DJ'd. I read the spreadsheet over the music. Nobody noticed. Is this paid?" }
       ],
       failOn: ['player_dead'],
-      onComplete: { unlockWeapon: 'mic_stand', setFlag: 'yacht_played' }
+      onComplete: { unlockWeapon: 'confetti', setFlag: 'yacht_played' }
     },
 
     {
@@ -753,7 +750,7 @@
         { who: 'kip', text: "I came down with the balloon. Slowly. It was nice. Is this paid?" }
       ],
       failOn: ['player_dead'],
-      onComplete: { unlockWeapon: 'sticky', setFlag: 'balloon_popped' }
+      onComplete: { unlockWeapon: 'stickynote', setFlag: 'balloon_popped' }
     },
 
     // ----------------------------------------------------------- Act III --
@@ -811,7 +808,7 @@
         { who: 'kip', text: "I laminated the plan. Is this paid?" }
       ],
       failOn: ['player_dead', 'vehicle_lost:newsvan', 'vehicle_lost:hedgetruck', 'vehicle_lost:drillvan'],
-      onComplete: { unlockWeapon: 'spin_smoke', setFlag: 'heist_prepped' }
+      onComplete: { unlockWeapon: 'smoke', setFlag: 'heist_prepped' }
     },
 
     {
@@ -870,11 +867,11 @@
       outro: [
         { who: 'dunk', text: "Ratio'd. By a folding table. My chat is clipping it. My chat is clipping me losing. Engagement's up." },
         { who: 'player', text: "Respectfully, you were the content." },
-        { who: 'dunk', text: "Everyone's the content. Take the Pile-On. It's what my chat does to people. Didn't read the manual." },
+        { who: 'dunk', text: "Everyone's the content. Take the Town Hall. Everyone gets a question. Didn't read the questions." },
         { who: 'kip', text: "I sold nine tickets. Standing room. Is this paid?" }
       ],
       failOn: ['player_dead'],
-      onComplete: { unlockWeapon: 'auto_shotgun', setFlag: 'dunk_ratiod' }
+      onComplete: { unlockWeapon: 'autoshotgun', setFlag: 'dunk_ratiod' }
     },
 
     {
@@ -898,11 +895,11 @@
       outro: [
         { who: 'chyron', text: "Five guests, five rounds, five waves. Ratings: yes. Tonight it's the real panel. Same guests. Same memo." },
         { who: 'player', text: "Respectfully, they all said the same thing every round." },
-        { who: 'chyron', text: "That's the format. Take the News Cycle, from props. Runs all day, like us. WE'LL HAVE TO LEAVE IT THERE." },
+        { who: 'chyron', text: "That's the format. Take the Spin Machine, from props. Always on message. WE'LL HAVE TO LEAVE IT THERE." },
         { who: 'kip', text: "I counted the waves. Five. Is this paid?" }
       ],
       failOn: ['player_dead'],
-      onComplete: { unlockWeapon: 'minigun', setFlag: 'undercard_won' }
+      onComplete: { unlockWeapon: 'spin', setFlag: 'undercard_won' }
     }
   ];
 
@@ -1078,7 +1075,7 @@
 
   // =================================================================== retune ==
   // m01c gives the pistol for keeps, so m03b no longer takes its "loaner" back and m05 hands over the Footnote
-  // instead of a second pistol (value null deletes the key)
+  // instead of a second pistol, the Op-Ed Compact (value null deletes the key)
   P.retune = {
     // QA-B-TXT-03: 24_'s §3.4 retune made m01_van five subscribers, but its outro still counts six
     m01_van: [
@@ -1086,8 +1083,8 @@
       { path: 'outro.1.text', from: "Respectfully, it's six numbers.", value: "Respectfully, it's five numbers." }
     ],
     m05_peer: [
-      { path: 'outro.3.text', value: "It was. Here's the Footnote. A small pistol, for a small hedge. I'm whispering three fifty." },
-      { path: 'onComplete.unlockWeapon', value: 'pocket' }
+      { path: 'outro.3.text', value: "It was. Here's an Op-Ed. Compact. A small pistol, for a small hedge. I'm whispering three hundred." },
+      { path: 'onComplete.unlockWeapon', value: 'oped' }
     ],
     m03b_range: [
       { path: 'intro.1.text', value: "Range fee: fifty. For a journalist, forty. Fifty. Six hecklers out back. Cardboard. They don't sue." },
