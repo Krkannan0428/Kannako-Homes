@@ -373,6 +373,8 @@ ok(NEW_IDS.every((id) => X.cutscenes['cs_intro_' + id] && X.cutscenes['cs_intro_
 const m03b = X.missionById('m03b_range');
 ok(!('takeWeapon' in m03b.onComplete) && m03b.onComplete.unlockWeapon === 'tableleg', 'retune: m03b keeps the m01c pistol');
 ok(X.cutscenes.cs_intro_m03b_range.shots[0].lines[1].text === m03b.intro[1].text, 'retune: m03b intro cutscene rebuilt from the new line');
+const m05 = X.missionById('m05_peer');
+ok(m05.onComplete.unlockWeapon === 'pocket' && /Footnote/.test(m05.outro[3].text), 'retune: m05 hands over the Footnote, not a second pistol');
 const before = X.missions.length; P.register(); ok(X.missions.length === before, 'register() is idempotent');
 
 // ------------------------------------------------- source hygiene --
