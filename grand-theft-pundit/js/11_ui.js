@@ -3888,7 +3888,7 @@
   function drawPrompts(ctx) {
     var list = promptList(); ui.prompts = list.map(function (l) { return l.label; });
     if (!list.length) return;
-    var y = ui.touch.visible ? H - safe.b - px(portrait ? 250 : 150) : H - safe.b - px(ui.boss ? 118 : 96) - (ui.dialogue ? px(130) : 0);
+    var y = ui.touch.visible ? H - safe.b - px(portrait ? 250 : 150) : H - safe.b - px(ui.boss ? 118 : 96) - (ui.dialogue ? px(130) : 0) - ui.toasts.length * px(34);   // above the toast stack
     var font = F(11, 'bold'), total = 0, ws = [], i;
     for (i = 0; i < list.length; i++) { var kw = 0; for (var k = 0; k < list[i].keys.length; k++) kw += measure(ctx, list[i].keys[k], F(10, 'bold')) + px(18); ws.push(kw + measure(ctx, list[i].label, font) + px(18)); total += ws[i] + px(8); }
     var rows = total > W - px(30) ? list.length : 1, x = (W - (total - px(8))) / 2;

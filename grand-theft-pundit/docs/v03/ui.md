@@ -145,13 +145,16 @@ armory_card, armory_attach, armory_tints, armory_ammo, armory_locked, range_hud,
 wardrobe, barber, property, property_owned, heist, golf, golf_end, prompts_cover, cross_aim, cross_gallery, cook_fuse,
 parachute_open, parachute_freefall, veh_moto, veh_heli, veh_jet, veh_speedboat, boss_specials, boss_down, achievement,
 stocks, stats, touch_foot, phone_armory, phone_modshop, phone_heist, phone_wardrobe, phone_story, phone_golf,
-phone_call).
+phone_call, night_hud).
 
 ## Known issues / for integration
 
-- With the opening now on the fast NEW GAME path, `tests/feel.js` and `tests/campaign.js` (other tracks / shared) may
-  see a cutscene right after the title's Enter; they should clear `GTP.game._openingPending` or skip the opening the
-  way `tests/ui.js` does. The story track's New Game flow is expected to own this anyway.
+- With the opening now on the fast NEW GAME path (QA-C1-07), `tests/audio.js`, `tests/feel.js` and
+  `tests/campaign.js` (not this track's) fail on this branch: each presses Enter on the title and then drives or
+  replays the opening itself, but the opening cutscene now starts on its own. Verified: with `FAST_START_OPENING`
+  set back to false all three pass. Fix at integration in those tests (clear `GTP.game._openingPending` after the
+  title's Enter, as `tests/ui.js` does, or expect the cutscene); the story track owns the New Game flow.
+  `tests/all.js` on this branch: 17 of 20 files pass, those three are the only failures.
 - `24_content_expansion.js` hint `h_aim` still says "(or Q)" and lists Q; the UI strips both at draw time.
 - The wardrobe and mod shop cameras pull in for buildings only (props such as signs can block the view outdoors; the
   shops open inside interiors in the real flow).

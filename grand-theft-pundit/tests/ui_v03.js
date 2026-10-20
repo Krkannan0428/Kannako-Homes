@@ -361,6 +361,11 @@ H.run('ui_v03', async (t) => {
   console.log('  stocks: ' + JSON.stringify(stocks));
   t.assert(stocks.rows === 6 && stocks.trades.length === 1 && stocks.trades[0][0] === 'buy' && stocks.trades[0][1] === 'TAKE' && stocks.trades[0][2] === 10, 'STOCKS lists six tickers and Enter buys 10 of the selected one: ' + JSON.stringify(stocks.trades));
 
+  // night readability: the GPS chip, labels, specials and the call card over a night street
+  await page.evaluate(() => { const g = GTP.game; g.debug.setClock(23.2); GTP.Events.emit('phone:call', { from: 'gus', lines: ['The van makes a new noise. I think it is a podcast.'] }); T_.adv(2); g.render(); });
+  await shot('night_hud');
+  await page.evaluate(() => { GTP.game.debug.setClock(17.5); T_.adv(6); });
+
   // ---- 14. input ----
   const input = await page.evaluate(() => {
     const In = GTP.Input, a = {};
