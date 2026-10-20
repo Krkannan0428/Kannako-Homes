@@ -60,6 +60,7 @@ grand-theft-pundit/
   js/08_combat.js            GTP.Combat: weapons, lock-on, damage, death, respawn, pickups
   js/09_missions.js          GTP.Missions: objective interpreter, markers, dialogue queue, flags, minigame hooks
   js/10_render.js            GTP.Render: three scene, chunked static meshes, lighting, sky, fog, day/night, camera rig, fx
+  js/10b_postfx.js           GTP.PostFX: post-processing (SSAO, bloom, tonemapping, grading, FXAA) and quality presets; graphics track
   js/11_ui.js                GTP.UI: HUD overlay (2D canvas), minimap, dialogue, title, pause, phone, cards, touch controls, minigames
   js/12_cutscenes.js         GTP.Cutscenes: data-driven cutscene player (letterbox, camera keyframes, actors, dialogue, skip); see GDD_EXPANSION.md §4
   js/20_content_world.js     GTP.Content.world: district layout, landmark placements, spawn tables, street names, billboards
