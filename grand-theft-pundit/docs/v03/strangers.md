@@ -15,7 +15,7 @@ bonus), an unlock tied to a story progress flag, and an epilogue ticker line whe
 | `ghostwriter` | Ghost Notes | Marisol Echo-Venn, ghostwriter for podcasts that do not exist (`marisol`) | `green_room` (downtown) | `m04_hit` (`a_voice`) | `st_ghost_1..3` | timed pickups + drive, on-foot tail of the only listener, a fight, an inline race to the Listening Room |
 | `reaction_face` | Mouth Open | Gasp Haverly, professional thumbnail reaction face (`gasp`) | `strip_gas` (strip) | `m03b_range` (`range_trained`) | `st_gasp_1..3` | timed three-stop drive, stunt jump `sj_02`, two stars, wreck three vans, ratio war |
 | `daylight` | Daylight Savings | Thaddeus Wainscot, think-tank intern who has never seen daylight (`thaddeus`) | `fulcrum` (capitol) | `m05_peer` (`contract_sold`) | `st_day_1..3` | passenger ride to the sky, `collect_any` 5 of 7 under a timer, a fight, a long timed drive to the runway, two ramming SUVs |
-| `caddie` | Put Me Down for a Ten | Lyle Bunkerton, the President's caddie (`lyle`) | `goldplate_links` (hills) | `m06_rally` (`show_renamed`) | `st_caddie_1..3` | tail the rogue scorekeeper, pickup, scooter race (podium place 3), table-leg-only fight (`equip` + `weapon`), pickup, drive |
+| `caddie` | Put Me Down for a Ten | Lyle Bunkerton, the President's caddie (`lyle`) | `goldplate_links` (hills) | `m06_rally` (`show_renamed`) | `st_caddie_1..3` | tail the rogue scorekeeper to the bridge dead drop, pickup, scooter race (podium place 3), table-leg-only fight (`equip` + `weapon`), pickup, drive |
 | `hoa_appeals` | Appeal Pending | Dewey Varnum-Pleat, live-streams his HOA appeals (`dewey`) | `hoa_hall` (suburbs) | `m10_pellets` (`hoa_enemy`) | `st_hoa_1..3` | timed pickups + goto, one star, `stop_vehicle` on a fleeing HOA SUV, pickup at the tag, passenger to the Capitol, debate vs the Board, survive HOA patrol waves |
 | `proofreader` | The Second L | Ottoline Kerning, Monday Memo proofreader (`ottoline`) | `memo_press` (industrial) | `m12_memo` (`knows_memo`) | `st_proof_1..2` | truck pickups in the port container maze, drive back, timed wreck of four driving vans, ratio war vs House Style, three stars |
 | `fresh_takes` | Catch of the Day | Captain Mortimer Brine, fishmonger of takes (`brine`) | `fish_shack` (marina) | `m07b_ferry` (`ferry_friend`) | `st_brine_1..2` | timed van pickups on Manifest Quay (port) + drive back, the revolver (`equip`), wreck three trucks, two stars |
@@ -93,10 +93,32 @@ stunts (a held throttle from a run-up through the real launch and landing), esca
 respray at 3+ stars), and both minigames with scripted inputs. It asserts completion, flags, the reward, the giver,
 the epilogue, that no objective had to be forced or retried, the phone list, a replay, the save, and `GTP.errors` empty.
 
+## Test results (this branch, on top of 3a5252c)
+
+- `tests/strangers.js`: PASS, all 26 missions by marker walk-in, 0 retries, 0 forced objectives, `GTP.errors` empty
+  (about 160 s).
+- `tests/content_audit.js`: PASS.
+- Same results as the 3a5252c baseline (run side by side in a separate worktree): `saves.js`, `ui.js`, `strands.js`,
+  `smoke.js`, `cutscenes.js` PASS on both.
+- `tests/missions.js`: FAIL only on its hard-coded count (below). A copy with that one comparison allowing 51 passes in
+  full, and its own data check reports zero problems across all 51 missions (landmarks, givers, cast, vehicle types,
+  speakers, `player_dead` in every failOn, DAG).
+- `tests/campaign.js`: FAIL on its hard-coded count at line 758 (below). A copy with that count relaxed plays all 25
+  story missions and every expansion strand, then fails the last step (Both Sides Arms): the player is WASTED by "bail"
+  damage. The stunt step before it leaves the player at 9 hp in a truck still rolling on the sj_07 beach, and the
+  shop step's `strandSetup` exits the moving vehicle. The baseline passes the same step only because the random
+  sequence differs: the stranger givers standing at their markers each draw a bark timer from the missions RNG stream,
+  which shifts every later roll. The fix belongs in campaign.js (stop the car or turn god mode on before stepping
+  out after the stunt); it is not a strangers bug.
+
 ## Known issues / for integration
 
 - `tests/missions.js` asserts `allMissions().length` is 17 or 25; with the strands it is 51 (and with the content
   track's ten new story missions it will be 61). The count check should count `m.kind !== 'stranger'` (story track).
+  `tests/campaign.js:758` has the same `allMissions().length === 25` assertion.
+- AI (story / world): a `follow` target walking from the `stadium` door toward `vaultwright_manor` can wedge at the
+  stadium door (route point 0 unreachable; 600 sidestep attempts in 320 s). The caddie tail was rerouted
+  (`goldplate_links` → `vaultwright_manor` → `bridge_main`) and passes repeatably.
 - Anything that counts `allMissions()` as "the story" (the phone's MISSIONS header `n / total`, the save summary's
   `missionsTotal`, a future `GTP.Story.next()`) now includes the 26 side missions; filter on `kind === 'stranger'` /
   `side` where the story alone is meant.
