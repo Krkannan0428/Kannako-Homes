@@ -7,6 +7,9 @@
  *  7 (a fresh page) no bust while sprinting with a cop at the shoulder; the landmark residents: the doorman (post, facing the
  *    street, turns and greets, removed far away and back, flees when hurt) and Merle at the harbor store (clear of the green
  *    light; a cutscene casting Merle reuses him)
+ *  8 (v0.3, a fresh page) civilians cower at an aimed gun and run when it leaves; cops flank a player in cover; the
+ *    helicopter's gunner shoots at five stars; race legs through a building get road corners; motorcycles in traffic;
+ *    the HOA patrols keep off the strand's 'hoa' tag
  * Screenshots in tests/out: ai_avenue.png, ai_chase.png, ai_heli_night.png, ai_residents.png (look at them). */
 'use strict';
 const H = require('./_harness');
@@ -311,4 +314,93 @@ H.run('ai', async (t) => {
   await t.shot(p2, 'ai_residents');
   const errs2 = await t.errors(ctx2);
   t.assert(errs2.length === 0, 'errors:\n' + errs2.join('\n'));
+
+  // ---- 8. v0.3: cowering, flanking, the heli gunner, race routes, motorcycles, the HOA patrol tag (a fresh page) ----
+  const ctx3 = await t.boot({ seed: 7 });
+  const p3 = ctx3.page;
+  const v3 = await p3.evaluate(() => {
+    const AI = GTP.AI, W = GTP.World, E = GTP.Entities, g = GTP.game, p = g.player, U = GTP.util, out = {};
+    // a gun aimed at a civilian: hands up (cowering), then a run once the aim leaves
+    p.weapons.pistol = 60; p.weapon = 'pistol';
+    const f = U.yawToDir(p.yaw), civ = g.debug.spawnPed(p.x + f.x * 9, p.z + f.z * 9, null, 'civ');
+    const side = g.debug.spawnPed(p.x - f.z * 9, p.z + f.x * 9, null, 'civ');
+    // aim the way a player does: the aim button held, the camera rig turned at the civilian (the player reads both every step)
+    const keep = () => { GTP.Input.set('aim', true); GTP.Render.rig.yaw = U.dirToYaw(civ.x - p.x, civ.z - p.z); };
+    for (let i = 0; i < 12; i++) { keep(); g.advance(1 / 12); }
+    out.cower = { mode: civ.ai.mode, cowering: !!civ.cowering, speed: +civ.speed.toFixed(2), side: side.ai.mode, sideCower: !!side.cowering, aimed: AI.isAimedAt(civ) };
+    for (let i = 0; i < 24; i++) { keep(); g.advance(1 / 12); }
+    out.cower.held = civ.ai.mode;
+    GTP.Input.set('aim', false); g.advance(2.5);
+    out.cower.after = civ.ai.mode; out.cower.afterCowering = !!civ.cowering;
+    civ.destroy(); side.destroy();
+    // fists never frighten anyone
+    p.weapon = 'fist'; const civ2 = g.debug.spawnPed(p.x + f.x * 6, p.z + f.z * 6, null, 'civ'); GTP.Input.set('aim', true); GTP.Render.rig.yaw = U.dirToYaw(civ2.x - p.x, civ2.z - p.z); g.advance(1);
+    out.fistCower = civ2.ai.mode === 'cower'; GTP.Input.set('aim', false); civ2.destroy();
+    // cops flank a player in cover: one pins, the others swing round to points with a line on the player
+    const lot = W.landmark('nap_depot'); g.debug.teleport(lot.door.x, lot.door.z); g.advance(0.5);
+    AI.wanted.set(2);
+    const cops = [];
+    for (let i = 0; i < 4; i++) cops.push(g.debug.spawnPed(p.x + 14 + i * 2, p.z + (i % 2 ? 3 : -3), null, 'cop'));
+    g.advance(0.1); cops.forEach((c) => { c.ai.mode = 'chase'; c.ai.seen = true; });
+    p.hp = p.maxHp = 5000; g.advance(0.3);
+    let flankEv = null; GTP.Events.on('ai:flank', (e) => { flankEv = e; });
+    const n = AI.coverAlert(p.x, p.z);
+    const pts = cops.filter((c) => c.ai.flank).map((c) => ({ x: c.ai.flank.x, z: c.ai.flank.z, side: c.ai.flank.side, los: !W.raycastBuildings(c.ai.flank.x, 1.5, c.ai.flank.z, p.x - c.ai.flank.x, -0.3, p.z - c.ai.flank.z, Math.hypot(p.x - c.ai.flank.x, p.z - c.ai.flank.z)) }));
+    const a0 = cops.map((c) => Math.atan2(c.z - p.z, c.x - p.x));
+    for (let i = 0; i < 40; i++) { p.hp = p.maxHp; g.advance(0.1); }
+    const a1 = cops.map((c) => Math.atan2(c.z - p.z, c.x - p.x));
+    out.flank = { n, ev: !!flankEv, pts, sides: Array.from(new Set(pts.map((q) => q.side))).length, swung: a0.map((a, i) => +Math.abs(U.wrapAngle(a1[i] - a)).toFixed(2)), pin: cops[0].ai.flank == null };
+    GTP.Events.emit('cover:exit', {}); out.flank.offAfterExit = !AI.cover.active;
+    cops.forEach((c) => c.destroy()); AI.wanted.clear(); g.advance(0.5);
+    // the police helicopter's door gunner shoots a player it can see at five stars (CMB-09)
+    const pk = W.landmark('protest_plaza'); g.debug.teleport(pk.x, pk.z); g.advance(0.5);
+    AI.wanted.set(5); p.hp = p.maxHp = 100000;
+    let heliHits = 0, heliShots = 0;
+    GTP.Events.on('damage', (e) => { if (e.target === p && e.src && e.src.kind === 'heli') heliHits++; });
+    GTP.Events.on('heli:fire', () => { heliShots++; });
+    for (let i = 0; i < 60; i++) {
+      p.hp = p.maxHp; AI.wanted.set(5); g.advance(0.5);
+      E.list.forEach((e) => { if (!e.removed && (e.kind === 'ped' || e.kind === 'vehicle') && e !== p && Math.hypot(e.x - p.x, e.z - p.z) < 120) e.destroy(); });
+    }
+    out.heli = { shots: heliShots, hits: heliHits, heli: !!AI.police.heli };
+    AI.wanted.clear(); g.advance(1);
+    // race routes path round the tower on The Figure Eight's cp5 -> cp6 leg (QA-STR-04)
+    const cps = [{ x: 492, z: 280 }, { x: 400, z: 280 }, { x: 376, z: 328 }, { x: 396, z: 328 }];
+    const via = AI.routeVias(cps.map((c) => Object.assign({ r: 12, direct: true }, c)), false, () => {});
+    out.race = { vias: via.route ? via.route.filter((q) => q.via).length : 0, blockedBefore: !W.segmentClear(400, 280, 376, 328, 0.6) };
+    if (via.route) out.race.blockedAfter = via.route.filter((q, i) => i > 0 && !W.segmentClear(via.route[i - 1].x, via.route[i - 1].z, q.x, q.z, 0.6)).length;
+    const D = GTP.Strands && GTP.Strands.drivers;
+    if (D) {
+      g.debug.teleport(410, 300); g.advance(0.3);
+      const rv = new GTP.Vehicle({ x: 400, z: 281, type: 'sports', persistent: true }); rv.y = W.heightAt(400, 281, 0); rv.yaw = U.dirToYaw(-1, 0); rv.snap(); E.add(rv);
+      const hit = [];
+      const route = cps.slice(1).map((c) => ({ x: c.x, z: c.z, r: 12, direct: true }));
+      D.take(rv, 'route', { role: 'civ', speedMul: 0.6, route, loop: false, track: false, onCheckpoint: (ci) => hit.push(ci) });
+      for (let i = 0; i < 60 && hit.length < 2; i++) g.advance(0.5);
+      out.race.hit = hit; out.race.at = [Math.round(rv.x), Math.round(rv.z)];
+      D.release(rv); rv.destroy();
+    }
+    // motorcycles in traffic (a 'bike' stands in until the vehicles track registers 'moto'), taxis wear the pod wrap after cab_livery
+    out.moto = { type: AI.spawner.vehicleType('moto'), has: !!GTP.C.VEHICLES.moto, inTables: Object.values(GTP.Content.world.spawn.vehicles.byDistrict).filter((l) => l.indexOf('moto') >= 0).length };
+    // the HOA patrol: suburb traffic never carries the strand's 'hoa' tag (QA-STR-11)
+    const hoa = W.landmark('hoa_hall'); g.debug.teleport(hoa.door.x, hoa.door.z + 20);
+    for (let i = 0; i < 12; i++) g.advance(1);
+    out.hoa = { patrols: E.list.filter((e) => e.kind === 'vehicle' && !e.removed && e.ai && e.ai.hoa).length, tagged: E.list.filter((e) => e.kind === 'vehicle' && !e.removed && e.ai && e.ai.hoa && e.tag === 'hoa').length, patrolTag: (E.list.find((e) => e.kind === 'vehicle' && !e.removed && e.ai && e.ai.hoa) || {}).tag || null };
+    out.errors = GTP.errors.map((e) => e.where + ': ' + e.message);
+    return out;
+  });
+  console.log('  v0.3: ' + JSON.stringify(v3));
+  t.assert(v3.cower.mode === 'cower' && v3.cower.cowering && v3.cower.speed < 0.5 && v3.cower.side !== 'cower' && v3.cower.held === 'cower', 'a civilian in the line of an aimed gun cowers, one beside it does not: ' + JSON.stringify(v3.cower));
+  t.assert(v3.cower.after === 'flee' && !v3.cower.afterCowering, 'the aim leaves: they run: ' + JSON.stringify(v3.cower));
+  t.assert(!v3.fistCower, 'fists frighten no one');
+  t.assert(v3.flank.n >= 2 && v3.flank.ev && v3.flank.sides === 2 && v3.flank.pts.every((q) => q.los), 'cops flank both sides with a line on the player: ' + JSON.stringify(v3.flank));
+  t.assert(v3.flank.swung.filter((a) => a > 0.35).length >= 2 && v3.flank.offAfterExit, 'flankers swing round the cover: ' + JSON.stringify(v3.flank.swung));
+  t.assert(v3.heli.shots >= 10 && v3.heli.hits >= 2, 'the helicopter gunner shoots and hits: ' + JSON.stringify(v3.heli));
+  t.assert(v3.race.blockedBefore && v3.race.vias >= 1, 'race legs through a building get road corners: ' + JSON.stringify(v3.race));
+  t.assert(v3.race.hit && v3.race.hit.join(',') === '0,1', 'a racer drives round the tower to cp6 and cp7: ' + JSON.stringify(v3.race));
+  t.assert(v3.moto.inTables >= 6 && (v3.moto.has ? v3.moto.type === 'moto' : v3.moto.type === 'bike'), 'motorcycles in the traffic tables: ' + JSON.stringify(v3.moto));
+  t.assert(v3.hoa.patrols >= 1 && v3.hoa.tagged === 0 && v3.hoa.patrolTag === 'hoapatrol', 'HOA patrols keep off the strand tag: ' + JSON.stringify(v3.hoa));
+  t.assert(v3.errors.length === 0, 'no game errors: ' + v3.errors.join('; '));
+  const errs3 = await t.errors(ctx3);
+  t.assert(errs3.length === 0, 'errors:\n' + errs3.join('\n'));
 });

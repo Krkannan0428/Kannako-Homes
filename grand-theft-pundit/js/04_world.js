@@ -1060,8 +1060,11 @@
             }
             World.piers.push({ tx: px, tz: shoreZ, tw: 2, len: len });
             for (var bz2 = 1; bz2 < len - 1; bz2 += 3) {
-              var sd = (bz2 % 2) ? 1 : -1;
-              P({ kind: 'boat', x: (px + 1 + sd * 2.6) * TILE, z: (shoreZ + bz2 + 1) * TILE, y: WATER_Y + 0.35, rot: sd > 0 ? 0 : Math.PI, r: 1.8, solid: true, h: 2.2, color: R.pick(['#f4f4f4', '#e8e2c8', '#2b4c7e', '#c94040', '#f0c050']) });
+              var sd = (bz2 % 2) ? 1 : -1, bcol = R.pick(['#f4f4f4', '#e8e2c8', '#2b4c7e', '#c94040', '#f0c050']);
+              var bxm = (px + 1 + sd * 2.6) * TILE, bzm = (shoreZ + bz2 + 1) * TILE;
+              // only on open water: the Sponsor Span runs past the second pier, and two boats used to sit in its lanes
+              // (a 1.8 m collision circle on the bridge deck). The colour is drawn either way so the stream stays put.
+              if (World.tileAt(bxm, bzm) === T.WATER) P({ kind: 'boat', x: bxm, z: bzm, y: WATER_Y + 0.35, rot: sd > 0 ? 0 : Math.PI, r: 1.8, solid: true, h: 2.2, color: bcol });
               P({ kind: 'bollard', x: (px + 2) * TILE - 0.4, z: (shoreZ + bz2 + 0.5) * TILE, r: 0.2, solid: true, h: 0.7 });
             }
           }
@@ -1114,7 +1117,7 @@
           if (b) {
             // the hedge maze (also a hedge) and a pool
             var mx = b.x + b.w + 4, mz = b.z;
-            for (k = 0; k < 5; k++) P({ kind: 'hedge', x: mx + k * 2.4, z: mz + b.d / 2 + ((k % 2) ? 1.5 : -1.5), rot: 0, r: 1, solid: true, h: 1.8, sx: 1, sz: b.d - 3 - ((k % 2) ? 3 : 0) });
+            for (k = 0; k < 5; k++) P({ kind: 'hedge', x: mx + k * 2.4, z: mz + b.d / 2 + ((k % 2) ? 1.5 : -1.5), rot: 0, r: 1, solid: true, h: 1.8, sx: 1, sz: b.d - 3 - ((k % 2) ? 3 : 0), jumpOver: 'sj_05' });   // the Hedge Fund jump clears the maze
             P({ kind: 'pool', x: b.cx, z: b.z + b.d + 5, rot: 0, r: 0, solid: false, h: 0.1, w: 9, d: 5 });
             for (k = 0; k < 8; k++) P({ kind: 'tree', x: lx + TILE * 1.5 + R.random() * (lw - 3 * TILE), z: lz + TILE * 1.5 + R.random() * (ld - 3 * TILE), r: 0.5, solid: true, scale: R.range(0.9, 1.4), h: 7 });
             P({ kind: 'hedge', x: b.x - 2, z: b.cz, rot: 0, r: 1, solid: true, h: 1.2, sx: 1, sz: b.d + 2 });
@@ -1215,7 +1218,7 @@
             // the cutout jet, parked diagonally on the south apron (sj_08 jumps it)
             // collision only 1 m high: a car on the ground bumps it, a car in the air clears it (QA-STR-03: prop collision
             // honours h, and the 5.5 m it had stopped every Hangar Hop dead)
-            P({ kind: 'plane', x: cxm + 2, z: lz + ld - 11, y: 0, rot: 0.35, r: 4.2, solid: true, h: 1.0, scale: 0.6, cutout: true });
+            P({ kind: 'plane', x: cxm + 2, z: lz + ld - 11, y: 0, rot: 0.35, r: 4.2, solid: true, h: 1.0, scale: 0.6, cutout: true, jumpOver: 'sj_08' });
           }
           break;
         }
@@ -1241,7 +1244,7 @@
             P({ kind: 'sign', text: 'MERCH', x: (lot.x + 2 + 3 * mk) * TILE + 2 + 2.57, z: (lot.z + 1) * TILE + 6 * mrow + 3, y: 1.4, rot: -Math.PI / 2, w: 2.2, h: 0.8, neon: false, solid: false });
           }
           // the Container Clear jump's single-high box across its lane
-          P({ kind: 'container', x: (lot.x + 2 + 3 * 3) * TILE + 2 + 6, z: lz + ld - 20, y: CURB, rot: Math.PI / 2, r: 1.3, solid: true, h: 2.6, color: cols[2] });
+          P({ kind: 'container', x: (lot.x + 2 + 3 * 3) * TILE + 2 + 6, z: lz + ld - 20, y: CURB, rot: Math.PI / 2, r: 1.3, solid: true, h: 2.6, color: cols[2], jumpOver: 'sj_09' });
           // two gantry cranes straddling the east lanes (the legs are the solid part), a kiosk at the gate, the sign
           for (k = 0; k < 2; k++) {
             var crx = (lot.x + 2 + 3 * 4) * TILE + 2 + 6, crz = lz + 16 + k * 34;
@@ -1357,7 +1360,7 @@
         case 'modshop': {
           if (b) {
             facadeSign(def.sign, !!def.neon, true);
-            var fs = face(def.door, 0.2), half = Math.max(1.2, fs.len / 2 - 0.9);
+            var fs = face(def.door, 0.2), half = Math.max(1.2, Math.min(4.2, fs.len / 2 - 0.9));
             P({ kind: 'rolldoor', x: fs.x, z: fs.z, y: b.y, rot: fs.rot, r: 0, solid: false, h: 1, sx: Math.min(1, (fs.len - 1.6) / 9), w: 9, d: 6.5 });
             var ft = face(def.door, 0.7);
             P({ kind: 'tirestack', x: ft.x + ft.rx * half, z: ft.z + ft.rz * half, rot: 0, r: 0.45, solid: true, h: 1 });
@@ -1370,7 +1373,7 @@
             facadeSign(def.sign, !!def.neon, def.kind === 'clothing');
             var fc = face(def.door, 1.1);
             P({ kind: 'awning', x: fc.x, z: fc.z, y: 2.7, rot: fc.rot, r: 0, solid: false, h: 1, w: Math.min(4.5, fc.len - 0.8), d: 2, color: def.kind === 'clothing' ? '#d94f8a' : '#2fb3b3' });
-            var off = Math.max(1.4, fc.len / 2 - 0.9), fw = face(def.door, 0.45);
+            var off = Math.max(1.4, Math.min(3, fc.len / 2 - 0.9)), fw = face(def.door, 0.45);   // the shop window either side of the door
             if (def.kind === 'clothing') {
               P({ kind: 'mannequin', x: fw.x + fw.rx * off, z: fw.z + fw.rz * off, rot: fw.rot, r: 0, solid: false, h: 1.8 });
               P({ kind: 'mannequin', x: fw.x - fw.rx * off, z: fw.z - fw.rz * off, rot: fw.rot, r: 0, solid: false, h: 1.8 });
@@ -1480,7 +1483,11 @@
         var lmk = { id: def.id, name: def.name, kind: def.kind, label: def.label || def.name, lot: lot, building: b2, district: def.district || b2.district,
           x: b2.cx, z: b2.cz, y: CURB, w: lot.w * TILE, d: lot.d * TILE, door: null, sign: def.sign || null, gag: def.gag || null, def: d2, points: {}, npcs: [], adopted: true };
         b2.landmark = def.id; b2.kind = def.kind; b2.sign = def.sign || null; b2.neon = !!def.neon; b2.adopted = true;
+        if (def.height && b2.h < def.height) { b2.h = def.height; b2.floors = Math.max(1, Math.round(def.height / C.FLOOR_H)); }   // a hangar is no shed
         World.landmarks.push(lmk); World._lm[def.id] = lmk;
+        // the shop front stays readable: no street tree or lamp right in front of the door and its sign
+        var fx = best.door.side === 'e' ? b2.x + b2.w : best.door.side === 'w' ? b2.x : b2.cx, fz = best.door.side === 's' ? b2.z + b2.d : best.door.side === 'n' ? b2.z : b2.cz;
+        World._removeProps(function (p) { return (p.kind === 'tree' || p.kind === 'palm' || p.kind === 'lamp' || p.kind === 'bin' || p.kind === 'hydrant') && U.dist2d(p.x, p.z, fx, fz) < 7.5; });
         World._landmarkProps(lmk, d2, lot, R, parkTile);
       });
     },

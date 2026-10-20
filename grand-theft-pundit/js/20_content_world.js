@@ -304,7 +304,7 @@
       { id: 'safe_suburb', name: 'Culdesac Split-Level', kind: 'safehouse', district: 'suburbs', near: { tx: 28, tz: 52 }, sign: 'THE TAKESWORTHS (PENDING)', property: 'safe_suburb', gag: 'The HOA has already written you up.' },
       { id: 'safe_penthouse', name: 'Chyron Center Penthouse', kind: 'safehouse', district: 'downtown', near: { tx: 73, tz: 65 }, tall: true, sign: 'THE PENTHOUSE', neon: true, property: 'safe_penthouse', gag: 'The view is mostly other penthouses.' },
       // the second hangar on the airport's south row, across Final Boarding Boulevard from the apron where the plane and jet wait
-      { id: 'hangar_two', name: 'Hangar 2 of 1', kind: 'hangar2', district: 'airport', near: { tx: 76, tz: 191 }, sign: 'HANGAR 2 OF 1', gag: 'Built to house the jet. The jet lives outside.' }
+      { id: 'hangar_two', name: 'Hangar 2 of 1', kind: 'hangar2', district: 'airport', near: { tx: 76, tz: 191 }, height: 10, sign: 'HANGAR 2 OF 1', gag: 'Built to house the jet. The jet lives outside.' }
     ],
     // podcast-van safehouse (the dorm) is v0.2's save point; the four new ones are bought through GTP.Systems
     safehouses: ['safe_dorm', 'safe_brownstone', 'safe_marina_loft', 'safe_suburb', 'safe_penthouse'],
@@ -318,6 +318,7 @@
       { id: 'heli_port', name: 'Manifest Harbor Helipad', near: { tx: 160, tz: 205 }, district: 'port' },
       { id: 'heli_uptown', name: 'Heirloom Heights Helipad', near: { tx: 188, tz: 100 }, district: 'uptown' }
     ],
+    // (`height`: a minimum height in metres for the claimed building)
     // where the vehicles track spawns its aircraft: the apron north of the runway strip (tiles; yaw faces east down the apron)
     aircraft: [
       { id: 'plane_apron', type: 'plane', at: { tx: 74, tz: 200 }, heading: 'e', landmark: 'hangar_two' },
@@ -339,7 +340,7 @@
         { n: 2, par: 3, tee: { tx: 137, tz: 32 }, pin: { tx: 131, tz: 36 } },
         { n: 3, par: 3, tee: { tx: 130, tz: 38 }, pin: { tx: 136, tz: 41 } },
         { n: 4, par: 3, tee: { tx: 137, tz: 43 }, pin: { tx: 131, tz: 26 } },
-        { n: 5, par: 3, tee: { tx: 130, tz: 49 }, pin: { tx: 136, tz: 53 } },
+        { n: 5, par: 3, tee: { tx: 130, tz: 49 }, pin: { tx: 137, tz: 51 } },
         { n: 6, par: 3, tee: { tx: 137, tz: 55 }, pin: { tx: 131, tz: 58 } },
         { n: 7, par: 3, tee: { tx: 130, tz: 60 }, pin: { tx: 136, tz: 63 } },
         { n: 8, par: 4, tee: { tx: 137, tz: 66 }, pin: { tx: 131, tz: 51 } },

@@ -4,7 +4,11 @@
  * the figure-eight Loop deck is connected to the ground through its six ramps, the runway strip is never in the
  * traffic lane field, the viaduct stands over water, both bridges and the extended Loop have the right heights,
  * the stunt wedges have real height, heightAt/solidAt behave per the contract, pathing works, generation is
- * deterministic and reports its progress. */
+ * deterministic and reports its progress.
+ * v0.3: the ten places (mod shops, clothing, barber, safehouses, the second hangar) claim buildings with doors on a kerb
+ * the road graph reaches, door markers per kind, five clear ground-level helipads, the aircraft apron, boat slips on open
+ * water, nine golf holes, stunt lines cleared of furniture with every wedge on its run-up surface, deterministic for two
+ * seeds; screenshots tests/out/world_*.png of the new places (look at them). */
 'use strict';
 const H = require('./_harness');
 
@@ -285,6 +289,121 @@ H.run('world', async (t) => {
   t.assert(r.progress.stages.join(',') === 'tiles,roads,landmarks,props,done' && r.progress.monotonic && r.progress.fracs.length === 5 && r.progress.labels.every((l) => typeof l === 'string' && l.length > 3), 'generate reports its stages: ' + JSON.stringify(r.progress));
   t.assert(r.generateMs > 0 && r.generateMs < 1500, 'World.generate stays quick: ' + r.generateMs + ' ms');
   t.assert(r.near.road > 200 && r.near.road < r.near.total / 2 && r.near.sidewalk > 200 && r.near.allRoad && r.near.allWalk && r.near.within, 'tilesNear buckets the spawner tiles around a point: ' + JSON.stringify(r.near));
+
+  // ---- v0.3 (PLAN_V03 "world"): places, doors, helipads, the apron, boat slips, golf, stunt corridors ----
+  const v3 = await page.evaluate(() => {
+    const W = GTP.World, T = W.T, M = W.M, TILE = GTP.C.TILE, U = GTP.util, CW = GTP.Content.world, out = {};
+    const N = W.w * W.h, ROADISH = (tt) => tt === T.ROAD || tt === T.BRIDGE;
+    // the road graph from the campus quad (both layers), as above
+    const drivable = (node) => { if (node >= N) return !!W.deck[node - N]; const tt = W.tiles[node]; return tt === T.ROAD || tt === T.BRIDGE || tt === T.RAMP; };
+    const q0 = W.landmark('campus_quad').door, tx0 = Math.floor(q0.x / TILE), tz0 = Math.floor(q0.z / TILE);
+    let start = -1; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (ROADISH(W.tile(tx0 + dx, tz0 + dz))) start = (tz0 + dz) * W.w + tx0 + dx;
+    const seen = new Uint8Array(2 * N), q = [start], nb = []; seen[start] = 1;
+    while (q.length) { const cur = q.pop(); W._neighbors(cur, nb); for (const n of nb) if (!seen[n] && drivable(n)) { seen[n] = 1; q.push(n); } }
+    out.places = (CW.places || []).map((pl) => { const l = W.landmark(pl.id); return l ? { id: pl.id, kind: l.kind, district: l.district, b: !!l.building && l.building.landmark === pl.id, h: Math.round(l.building.h), door: !!l.door } : { id: pl.id, missing: true }; });
+    // every door marker stands on a kerb tile next to a road the quad's road graph reaches
+    out.doorBad = [];
+    W.doors.forEach((d) => {
+      const tx = Math.floor(d.x / TILE), tz = Math.floor(d.z / TILE);
+      if (W.tile(tx, tz) !== T.SIDEWALK) { out.doorBad.push(d.id + ': tile ' + W.tile(tx, tz)); return; }
+      let ok = false; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const i = (tz + dz) * W.w + tx + dx; if (ROADISH(W.tiles[i]) && seen[i]) ok = true; }
+      if (!ok) out.doorBad.push(d.id + ': no reachable road');
+      if (W.solidAt(d.x, d.z, 0.5)) out.doorBad.push(d.id + ': solid');
+    });
+    out.doorKinds = {}; W.doors.forEach((d) => { out.doorKinds[d.kind] = (out.doorKinds[d.kind] || 0) + 1; });
+    out.shopDoors = ['both_sides_strip', 'both_sides_port', 'both_sides_uptown', 'spin_doctor_strip', 'spin_doctor_port', 'lanyard_downtown', 'lanyard_uptown', 'clip_joint', 'safe_brownstone', 'safe_marina_loft', 'safe_suburb', 'safe_penthouse'].filter((id) => !W.doors.some((d) => d.id === id));
+    // a new place never sits on a landmark of v0.2, and claims a building of its own
+    const owners = {}; W.buildings.forEach((b) => { if (b.landmark) owners[b.landmark] = (owners[b.landmark] || 0) + 1; });
+    out.multiOwned = Object.keys(owners).filter((k) => owners[k] > 1);
+    // helipads: clear, flat, off the road, nothing solid on the pad, no parking on it
+    out.pads = W.helipads.map((h) => {
+      const tiles = []; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) tiles.push(W.tile(h.tx + dx, h.tz + dz));
+      const solid = W.props.filter((p) => p.solid && Math.hypot(p.x - h.x, p.z - h.z) < 5.5 + (p.r || 0)).map((p) => p.kind);
+      const park = (GTP.AI.spawner.parkTiles || []).filter((ti) => Math.abs((ti % W.w) - h.tx) <= 1 && Math.abs(((ti / W.w) | 0) - h.tz) <= 1).length;
+      return { id: h.id, flat: tiles.every((tt) => tt === T.PLAZA || tt === T.PARKING || tt === T.GRASS), solid, park, prop: W.props.some((p) => p.kind === 'helipad' && p.helipad === h.id) };
+    });
+    out.padIds = W.helipads.map((h) => h.id);
+    // the aircraft apron: the plane and the jet on the apron (parking, off the strip), 8 m clear
+    out.aircraft = W.aircraft.map((a) => ({ id: a.id, type: a.type, tile: W.tileAt(a.x, a.z), runway: !!(W.metaAt(Math.floor(a.x / TILE), Math.floor(a.z / TILE)) & M.RUNWAY), solid: W.props.filter((p) => p.solid && Math.hypot(p.x - a.x, p.z - a.z) < 8 + (p.r || 0)).map((p) => p.kind) }));
+    out.spots = { heli: W.vehicleSpots('heli').length, plane: W.vehicleSpots('plane').length, jet: W.vehicleSpots('jet').length, boat: W.vehicleSpots('boat').length };
+    // boat slips on open water (3 x 3 tiles), clear of moored boats, the yacht and the ship
+    out.slips = W.boatSlips.map((s2) => { const tx = Math.floor(s2.x / TILE), tz = Math.floor(s2.z / TILE); let water = true; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (W.tile(tx + dx, tz + dz) !== T.WATER) water = false; return { id: s2.id, water, clear: !W.props.some((p) => p.solid && Math.hypot(p.x - s2.x, p.z - s2.z) < (p.r || 0.4) + 3.9) }; });
+    out.slipLandmarks = Array.from(new Set(W.boatSlips.map((s2) => s2.landmark)));
+    // golf: nine holes on the links' lawn, tees and pins clear of trees, landmark points tee1..pin9
+    const gl = W.landmark('goldplate_links');
+    out.golf = W.golf ? W.golf.holes.map((h) => ({ n: h.n, par: h.par, len: h.length, tee: W.tileAt(h.tee.x, h.tee.z), pin: W.tileAt(h.pin.x, h.pin.z), inLot: [h.tee, h.pin].every((pt) => { const tx = Math.floor(pt.x / TILE), tz = Math.floor(pt.z / TILE); return tx >= gl.lot.x && tx < gl.lot.x + gl.lot.w && tz >= gl.lot.z && tz < gl.lot.z + gl.lot.d; }), trees: W.props.filter((p) => (p.kind === 'tree' || p.kind === 'palm') && (Math.hypot(p.x - h.tee.x, p.z - h.tee.z) < 3.9 || Math.hypot(p.x - h.pin.x, p.z - h.pin.z) < 3.9)).length, pts: !!(gl.points['tee' + h.n] && gl.points['pin' + h.n]) })) : [];
+    // QA-STR-03: each stunt line is clear of furniture within 3 m; anything solid left near it is under 1.2 m or structure
+    // out of the flight line (reported)
+    out.corridors = W.stuntCorridors.map((c) => {
+      // props alongside the line (projection inside the segment), at the jump's level
+      const dx = c.x1 - c.x0, dz = c.z1 - c.z0, l2 = dx * dx + dz * dz;
+      const near = W.props.filter((p) => { const tt = ((p.x - c.x0) * dx + (p.z - c.z0) * dz) / l2; return tt > 0 && tt < 1 && p.solid && W._segDist(p.x, p.z, c.x0, c.z0, c.x1, c.z1) < 3 + (p.r || 0.4) && (c.y > 3 ? p.y > c.y - 3 : p.y < 3); });
+      // the jump's own obstacle (the maze, the container, the cutout jet: p.jumpOver) is what the car flies over
+      return { id: c.id, furniture: near.filter((p) => W._clearable[p.kind]).map((p) => p.kind), tall: near.filter((p) => !W._clearable[p.kind] && (p.h || 3) > 1.2 && p.jumpOver !== c.id).map((p) => p.kind + '@' + Math.round(p.x) + ',' + Math.round(p.z)) };
+    });
+    // nothing solid stands in a bridge's lanes (two marina boats did, on the Sponsor Span)
+    out.onBridge = W.props.filter((p) => p.solid && W.tileAt(p.x, p.z) === T.BRIDGE && !p.hidden && p.y < 1).map((p) => p.kind + '@' + Math.round(p.x) + ',' + Math.round(p.z));
+    const parkOnLines = (GTP.AI.spawner.parkTiles || []).filter((ti) => W._noPark[ti]).length;
+    out.parkOnLines = parkOnLines;
+    // the wedges sit on their run-up surface (sj_10: road level, not the kerb)
+    out.wedgeBase = W.stuntRamps.map((s2) => { const f = U.yawToDir(s2.yaw); return { id: s2.id, base: +s2.y.toFixed(2), runup: +W.heightAt(s2.x - f.x * 3.4, s2.z - f.z * 3.4, s2.y).toFixed(2) }; });
+    // determinism of the v0.3 layer: regenerate and compare
+    const sig = () => JSON.stringify([W.doors.map((d) => [d.id, d.x, d.z]), W.helipads.map((h) => [h.x, h.z]), W.boatSlips.map((b) => [b.x, b.z]), W.golf && W.golf.holes.map((h) => [h.tee.x, h.pin.z]), W.props.length]);
+    const s1 = sig(); W._seed = null; W.generate(7); out.deterministic = s1 === sig();
+    // another seed still finds every place, helipad and door
+    W._seed = null; W.generate(11);
+    out.seed11 = { places: (CW.places || []).filter((pl) => W.landmark(pl.id)).length, pads: W.helipads.length, doors: W.doors.length, slips: W.boatSlips.length, holes: W.golf ? W.golf.holes.length : 0 };
+    W._seed = null; W.generate(7);
+    return out;
+  });
+  console.log('  v0.3: ' + JSON.stringify(v3));
+  t.assert(v3.places.length === 10 && v3.places.every((pl) => !pl.missing && pl.b && pl.door), 'the v0.3 places claim buildings with doors: ' + JSON.stringify(v3.places));
+  t.assert(v3.places.find((pl) => pl.id === 'safe_penthouse').h >= 50, 'the penthouse tops a tower: ' + JSON.stringify(v3.places.find((pl) => pl.id === 'safe_penthouse')));
+  t.assert(v3.multiOwned.length === 0, 'one building per landmark: ' + v3.multiOwned.join(','));
+  t.assert(v3.doorBad.length === 0, 'every door marker on a kerb by a reachable road: ' + v3.doorBad.join('; '));
+  t.assert(v3.shopDoors.length === 0, 'shop and safehouse door markers: missing ' + v3.shopDoors.join(','));
+  t.assert(v3.doorKinds.armory === 3 && v3.doorKinds.modshop === 2 && v3.doorKinds.clothing === 2 && v3.doorKinds.barber === 1 && v3.doorKinds.safehouse === 4 && v3.doorKinds.garage === 4, 'door kinds: ' + JSON.stringify(v3.doorKinds));
+  t.assert(v3.pads.length === 5 && v3.padIds.indexOf('heli_airport') >= 0 && v3.padIds.indexOf('heli_tower') >= 0 && v3.pads.every((h) => h.flat && h.solid.length === 0 && h.park === 0 && h.prop), 'ground-level helipads, clear: ' + JSON.stringify(v3.pads));
+  t.assert(v3.aircraft.length === 2 && v3.aircraft.every((a) => a.tile === 7 && !a.runway && a.solid.length === 0), 'the plane and jet wait on the apron: ' + JSON.stringify(v3.aircraft));
+  t.assert(v3.spots.heli === 5 && v3.spots.plane === 1 && v3.spots.jet === 1 && v3.spots.boat >= 6, 'World.vehicleSpots: ' + JSON.stringify(v3.spots));
+  t.assert(v3.slips.length >= 6 && v3.slips.every((s2) => s2.water && s2.clear) && v3.slipLandmarks.indexOf('velvetine_pier') >= 0 && v3.slipLandmarks.indexOf('manifest_quay') >= 0, 'boat slips at the marina and the port: ' + JSON.stringify(v3.slips));
+  t.assert(v3.golf.length === 9 && v3.golf.every((h) => h.tee === 4 && h.pin === 4 && h.inLot && h.trees === 0 && h.pts && h.len > 20), 'nine golf holes on the links: ' + JSON.stringify(v3.golf));
+  t.assert(v3.corridors.length === 10 && v3.corridors.every((c) => c.furniture.length === 0), 'stunt lines cleared of furniture: ' + JSON.stringify(v3.corridors));
+  t.assert(v3.corridors.every((c) => c.tall.length === 0), 'no tall structure on a stunt line: ' + JSON.stringify(v3.corridors.filter((c) => c.tall.length)));
+  t.assert(v3.onBridge.length === 0, 'nothing solid in the bridge lanes: ' + v3.onBridge.join(', '));
+  t.assert(v3.parkOnLines === 0, 'no parking bays on the stunt lines, pads, apron or links: ' + v3.parkOnLines);
+  t.assert(v3.wedgeBase.every((w2) => Math.abs(w2.base - w2.runup) < 0.05), 'every wedge sits on its run-up surface: ' + JSON.stringify(v3.wedgeBase));
+  t.assert(v3.deterministic, 'the v0.3 layer is deterministic');
+  t.assert(v3.seed11.places === 10 && v3.seed11.pads === 5 && v3.seed11.doors === 16 && v3.seed11.holes === 9 && v3.seed11.slips >= 6, 'seed 11 places everything too: ' + JSON.stringify(v3.seed11));
+
+  // ---- screenshots of the new places (look at them) ----
+  const views = await page.evaluate(() => {
+    const W = GTP.World, U = GTP.util, out = [];
+    function door(id) { return W.doors.find((d) => d.id === id); }
+    function face(id) { const l = W.landmark(id), d = l.door, b = l.building; return { x: d.x, z: d.z, tx: b ? b.x + b.w / 2 : l.x, tz: b ? b.z + b.d / 2 : l.z }; }
+    ['spin_doctor_strip', 'lanyard_downtown', 'clip_joint', 'safe_brownstone', 'safe_penthouse', 'hangar_two'].forEach((id) => { const f = face(id); out.push({ name: id, x: f.x, z: f.z, tx: f.tx, tz: f.tz, back: 9 }); });
+    const h = W.helipads.find((p) => p.id === 'heli_airport'); out.push({ name: 'heli_airport', x: h.x + 14, z: h.z + 10, tx: h.x, tz: h.z, back: 0 });
+    const ht = W.helipads.find((p) => p.id === 'heli_tower'); out.push({ name: 'heli_tower', x: ht.x + 12, z: ht.z + 9, tx: ht.x, tz: ht.z, back: 0 });
+    const g1 = W.golf.holes[0]; out.push({ name: 'golf_hole1', x: g1.tee.x - 3, z: g1.tee.z - 3, tx: g1.pin.x, tz: g1.pin.z, back: 0 });
+    // a slip from the shore behind it (its yaw points out to sea)
+    const sl = W.boatSlips[0], sf = U.yawToDir(sl.yaw); let bx = sl.x, bz = sl.z; for (let k = 0; k < 40 && W.tileAt(bx, bz) === W.T.WATER; k++) { bx -= sf.x; bz -= sf.z; }
+    out.push({ name: 'boat_slip', x: bx - sf.x * 3, z: bz - sf.z * 3, tx: sl.x, tz: sl.z, back: 0 });
+    const ap = W.aircraft[0]; out.push({ name: 'apron', x: ap.x - 16, z: ap.z - 14, tx: ap.x + 10, tz: ap.z, back: 0 });
+    const sj = W.stuntRamps.find((s) => s.id === 'sj_10'); const f10 = U.yawToDir(sj.yaw); out.push({ name: 'stunt_sj10', x: sj.x - f10.x * 14, z: sj.z - f10.z * 14, tx: sj.landing.x, tz: sj.landing.z, back: 0 });
+    void door;
+    return out;
+  });
+  for (const v of views) {
+    await page.evaluate((v) => {
+      const W = GTP.World, U = GTP.util, p = GTP.game.player;
+      let x = v.x, z = v.z;
+      if (v.back) { const dx = v.x - v.tx, dz = v.z - v.tz, l = Math.hypot(dx, dz) || 1; x = v.x + dx / l * v.back; z = v.z + dz / l * v.back; if (W.solidAt(x, z, 0.5)) { x = v.x; z = v.z; } }
+      GTP.game.debug.teleport(x, z); GTP.game.advance(0.4);
+      const R = GTP.Render.rig; R.yaw = U.dirToYaw(v.tx - p.x, v.tz - p.z); R.pitch = 0.12; R.snap(); GTP.game.advance(0.6);
+    }, v);
+    await t.shot(page, 'world_' + v.name);
+  }
+  console.log('  screenshots: ' + views.map((v) => 'tests/out/world_' + v.name + '.png').join(' '));
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
 });
