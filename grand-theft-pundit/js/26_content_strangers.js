@@ -81,14 +81,14 @@
       'Has appealed every HOA violation he has ever received, live, in eleven-hour streams. The streams got violations. He is appealing those live.',
       '#f4ead8', '#5a4a3a'),
     ottoline: member('ottoline', 'Ottoline Kerning', 'Proofreader, Monday Memo Print Works', 'academic',
-      'Spells the important word out loud. Then the unimportant ones.',
+      'Counts the letters out loud. Then counts them again.',
       portrait(2, 'bob', '#9c9c9c', 'thick', 'none', 'lanyard', 'none'), '#9b59b6',
       'Noticed "Respectfuly" in week one and was told it was house style. Keeps every missing L in a jar on her desk. The jar is full.',
       '#6a4a7a', '#2a2a3a'),
     brine: member('brine', 'Captain Mortimer Brine', 'Fishmonger, Fresh Takes Fish Shack', 'gruff',
       'Grades every take by its temperature ("Lukewarm, son.").',
       portrait(3, 'bald', '#d8d8d8', 'none', 'beanie', 'cigar', 'none'), '#1abc9c',
-      'Reheats yesterday\'s takes hourly. Once caught a fresh one off the Listening Pier and panicked. Calls himself Captain; owns a cooler.',
+      'Catches takes daily and reheats them hourly; every one he catches is already yesterday\'s. Once caught a fresh one off the Listening Pier, panicked and threw it back. Calls himself Captain; owns a cooler.',
       '#2a4a6a', '#3a3a3a'),
     rutherford: member('rutherford', 'Rutherford Standby', 'On standby for Flight 10 (six years running)', 'hopeful',
       'Everything is "now boarding."',
@@ -110,7 +110,7 @@
     scorer: member('scorer', 'Dot Tallymark', 'Rogue scorekeeper', 'mute',
       'Writes down what actually happened. Nobody can stop her. Many have tried at the clubhouse.',
       portrait(5, 'bun', '#1a1a1a', 'round', 'cap', 'none', 'none'), '#27ae60',
-      'Kept the true score of every round at Goldplate Links for a decade. One of the cards says a six.',
+      'Has kept the true score of every round the President never played, for a decade. One of the cards says a six.',
       '#f2f2f2', '#3a5a3a'),
     clause: member('clause', 'Prudence Clause', 'Head of Talent Relations, The Yell Network', 'retail',
       'Bills by the clause; reads the fine print as if it were large.',
@@ -207,10 +207,10 @@
       blurb: 'The face on every thumbnail has not been surprised since the age of nine. She would like to be.',
       unlock: { mission: 'm03b_range', flag: 'range_trained' },
       epilogue: 'THUMBNAIL FACE GENUINELY SURPRISED FOR FIRST TIME IN DECADES; SURPRISE WAS "WINNING"; EYEBROWS RE-INSURED' },
-    { id: 'daylight', name: 'Seasonal Affective Discourse', giver: 'thaddeus', home: 'fulcrum', district: 'capitol',
+    { id: 'daylight', name: 'Daylight Savings', giver: 'thaddeus', home: 'fulcrum', district: 'capitol',
       blurb: 'A think-tank intern has never seen daylight. Fulcrum has a white paper on why he should not start.',
       unlock: { mission: 'm05_peer', flag: 'contract_sold' },
-      epilogue: 'FULCRUM INTERN SEES SUN, CITES IT; SUN DECLINES TO COMMENT; TAN RATED "PRELIMINARY"' },
+      epilogue: 'FULCRUM INTERN SEES SUN, CITES IT; SUN DECLINES TO COMMENT; SUNBURN RATED "PRELIMINARY"' },
     { id: 'caddie', name: 'Put Me Down for a Ten', giver: 'lyle', home: 'goldplate_links', district: 'hills',
       blurb: 'The President\'s caddie pre-fills every scorecard with tens. Someone has been writing down the truth.',
       unlock: { mission: 'm06_rally', flag: 'show_renamed' },
@@ -245,7 +245,7 @@
       unlock: { mission: 'm02_read', flag: 'sponsored' },
       intro: [
         L('moira', 'Point of order. You\'re the pundit with the table. Moira Cutoff, Amalgamated Hecklers Local 404.'),
-        L('player', 'Respectfully, I\'ve never been heckled by a union.'),
+        L('player', 'Respectfully, I heckle for free too. It\'s called a podcast.'),
         L('moira', 'Then you\'ve been heckled by scabs. Four of them on your lawn, heckling for free. Free is a race to the bottom.'),
         L('moira', 'Union rules: bare hands. No props. We\'re not animals, we\'re interrupters.'),
         L('kip', 'I heckle for free. Is that... is this paid?')
@@ -259,7 +259,7 @@
         L('moira', 'Four scabs down, one group chat ratio\'d. The Quad is a closed shop again.'),
         L('player', 'Do I get a union card?'),
         L('moira', 'You get heckled at scale. That\'s the card.'),
-        L('kip', 'I joined. Dues are forty dollars. Is this paid? It\'s the opposite.')
+        L('kip', 'I joined. Dues are forty dollars. Am I paying? Is this paid?')
       ],
       failOn: ['player_dead'], onComplete: { setFlag: 'st_heckle_1' } },
 
@@ -268,7 +268,7 @@
         L('moira', 'Point of order. The Yell Network replaced its studio audience with a laugh track that heckles.'),
         L('player', 'A heckle track?'),
         L('moira', 'Pre-recorded jeers. Non-union. We picket Impression Alley. Hold the line, then the scab bus goes nowhere.'),
-        L('gus', 'I\'ve heard the heckle track. It\'s just audio. It\'s peaking.')
+        L('gus', 'Heckle track\'s mixed hot. Every jeer clips. You\'re peaking. It\'s worse.')
       ],
       objectives: [
         { type: 'goto', target: { landmark: 'impression_alley' }, radius: 48, text: 'Join the picket at Impression Alley' },
@@ -278,7 +278,7 @@
       ],
       outro: [
         L('moira', 'The heckle track walked out in solidarity. It\'s a tape. It walked.'),
-        L('player', 'Respectfully, I set a bus on fire.'),
+        L('player', 'Respectfully, your picket set a bus on fire. I was just nearby, holding the match.'),
         L('moira', 'That\'s a strong opening statement. Point of order: management wants to talk.')
       ],
       failOn: ['player_dead'], onComplete: { setFlag: 'st_heckle_2' } },
@@ -299,7 +299,7 @@
       outro: [
         L('clause', 'Fine. Heckling is now a protected interruption. Thirty seconds per segment.'),
         L('moira', 'Thirty-one. Point of order.'),
-        L('player', 'Respectfully, that\'s one second.'),
+        L('player', 'Respectfully, I risked a debate for one second?'),
         L('moira', 'That\'s a victory. Sign here. Don\'t finish the signature.')
       ],
       failOn: ['player_dead', 'vehicle_lost:unioncar'], onComplete: { setFlags: ['st_heckle_3', 'stranger_heckle_union'], subs: 2000 } },
@@ -354,7 +354,7 @@
         L('marisol', 'Disaster. Three of my shows became real. Someone recorded them. They\'re racing to the launch party at the Listening Room.'),
         L('player', 'Why is a launch a race?'),
         L('marisol', 'Whoever gets there first is the real show. Beat them and mine stays unreleased. Perfect forever.'),
-        L('gus', 'I heard one of them. Forty minutes of a man breathing into a mattress. You\'re right to worry.')
+        L('gus', 'I heard one. Forty minutes of room tone. You\'re peaking. They\'re not.')
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'ghostcar', at: { landmark: 'green_room' }, color: '#7d5fff' }, text: 'Get in the ghostwriter\'s car' },
@@ -432,7 +432,7 @@
       ],
       failOn: ['player_dead'], onComplete: { setFlags: ['st_gasp_3', 'stranger_reaction_face'], subs: 2500 } },
 
-    // ====================================================== Seasonal Affective Discourse (capitol) ==
+    // ====================================================== Daylight Savings (capitol) ==
     { id: 'st_day_1', title: 'First Light', strand: 'daylight', giver: 'thaddeus', marker: 'fulcrum', requires: ['m05_peer'], reward: 700, act: 2,
       unlock: { mission: 'm05_peer', flag: 'contract_sold' },
       intro: [
@@ -463,7 +463,7 @@
         L('thaddeus', 'The board says touching grass needs a sample size. Five blades, independently sourced.'),
         L('player', 'There\'s grass right there.'),
         L('thaddeus', 'That\'s Lobby Row grass. It\'s been lobbied. Old Money Common grass has had the same opinion since the founding. Controlled conditions.'),
-        L('kip', 'I ate a blade once. Is this... no, that one was free.')
+        L('kip', 'I ate a blade once. For the cafeteria. Is this paid?')
       ],
       objectives: [
         { type: 'timer_wrap', seconds: 180, objectives: [
@@ -497,7 +497,7 @@
         { type: 'destroy', spawn: { vehicle: 'suv', count: 2, tag: 'fulcrumhr', around: { landmark: 'airport_runway', point: 'west' }, radius: 300, driven: 'cop', color: '#8a94c8' }, text: 'Two Fulcrum HR SUVs are coming to re-file Thaddeus. Wreck them' }
       ],
       outro: [
-        L('thaddeus', 'I have a tan. The tan is a citation. I\'m staying out. I\'ll write my next paper on a bench.'),
+        L('thaddeus', 'I have a sunburn. The sunburn is a citation. I\'m staying out. I\'ll write my next paper on a bench.'),
         L('player', 'What\'s it about?'),
         L('thaddeus', 'Benches. Primary research. My first.')
       ],
@@ -510,11 +510,11 @@
         L('lyle', 'Lyle Bunkerton, caddie. Four hundred rounds with the President. Zero holes played. Put me down for a ten.'),
         L('player', 'How do you caddie zero holes?'),
         L('lyle', 'You carry the tens. Somebody\'s been keeping the real score. Dot Tallymark. One of her cards says a six.'),
-        L('lyle', 'She\'s walking it to the press. Follow her. Get the card. Put it down for a ten.')
+        L('lyle', 'She\'s walking it past Vaultwright\'s manor to the dead drop under the bridge. Follow her. Get the card. Put it down for a ten.')
       ],
       objectives: [
-        { type: 'follow', spawn: { ped: 'scorer', at: { landmark: 'goldplate_links' }, path: [{ landmark: 'stadium' }, { landmark: 'vaultwright_manor' }] }, maxDist: 320, text: 'Tail Dot Tallymark. She writes down everything, including you' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'vaultwright_manor' }, radius: 60, label: 'THE SIX' }, text: 'Lift the real scorecard' }
+        { type: 'follow', spawn: { ped: 'scorer', at: { landmark: 'goldplate_links' }, path: [{ landmark: 'vaultwright_manor' }, { landmark: 'bridge_main' }] }, maxDist: 320, text: 'Tail Dot Tallymark. She writes down everything, including you' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'bridge_main' }, radius: 60, label: 'THE SIX' }, text: 'Lift the real scorecard from the dead drop' }
       ],
       outro: [
         L('lyle', 'A six. In pencil. On hole five. Do you know what this would do to the brand?'),
@@ -544,8 +544,8 @@
       intro: [
         L('lyle', 'The President hit one ball, ever. It\'s in Vaultwright\'s hedge maze. The hedge is a hedge.'),
         L('player', 'And you want it back.'),
-        L('lyle', 'I want it found in the cup. Take a club. It\'s a table leg. Clubs are for golfers. Hedge security is for table legs.'),
-        L('vaultwright', 'I\'m whispering *trespass*. Also *eighteen hundred*, if the ball comes back as a hole-in-one.')
+        L('lyle', 'I want it found in the cup. Take the club. It\'s a table leg. The President\'s never noticed.'),
+        L('vaultwright', 'I\'m whispering *eighteen hundred*. For a hole-in-one. *Nine hundred* for a par ten.')
       ],
       objectives: [
         { type: 'equip', weaponId: 'tableleg', text: 'Take the club. It\'s a table leg' },
@@ -581,7 +581,7 @@
       outro: [
         L('dewey', 'Exhibits filed. The board rejected them for being exhibits. Chat, note the time.'),
         L('player', 'So you lost.'),
-        L('dewey', 'I\'m appealing the rejection. Live. Hour four. Chat says hi. Chat says you\'re peaking.')
+        L('dewey', 'I\'m appealing the rejection. Live. Hour four. Chat says hi. Chat, note the time.')
       ],
       failOn: ['player_dead'], onComplete: { setFlag: 'st_hoa_1' } },
 
@@ -626,7 +626,7 @@
     { id: 'st_proof_1', title: 'The Missing L', strand: 'proofreader', giver: 'ottoline', marker: 'memo_press', requires: ['m12_memo'], reward: 1500, act: 3,
       unlock: { mission: 'm12_memo', flag: 'knows_memo' },
       intro: [
-        L('ottoline', 'R-E-S-P-E-C-T-F-U-L-Y. One L. I flagged it in week one. They said house style.'),
+        L('ottoline', 'Respectfuly. Eleven letters. One L. I counted it in week one and flagged it. They said house style.'),
         L('player', 'You knew? The whole time?'),
         L('ottoline', 'Ottoline Kerning, proofreader. I keep every missing L in a jar. Someone stole the jar and shipped the L\'s to the container yard. As merch.'),
         L('ottoline', 'Four crates. Take the truck. An L is the most important letter. In this one word. Today.')
@@ -639,7 +639,7 @@
         { type: 'drive_to', target: { landmark: 'memo_press' }, vehicle: 'spawned:ltruck', text: 'Get the L\'s back to the Print Works' }
       ],
       outro: [
-        L('ottoline', 'Four crates. Eleven thousand L\'s. Every one I ever took out. L-L-L-L.'),
+        L('ottoline', 'Four crates. Eleven thousand L\'s. Every one house style ever took out. I counted. Twice.'),
         L('player', 'What are you going to do with them?'),
         L('ottoline', 'Print an erratum. With two. The house will hate it. House style can come and take it.')
       ],
@@ -649,7 +649,7 @@
       intro: [
         L('ottoline', 'The erratum is printed. Two L\'s. But the uncorrected Memo is already in four vans. They have to not arrive.'),
         L('player', 'You want me to stop the news.'),
-        L('ottoline', 'I want you to stop a typo. Then argue with the style guide. It\'s forty pages and they all say one L. C-O-R-R-E-C-T. Go.')
+        L('ottoline', 'I want you to stop a typo. Then argue with the style guide. It\'s forty pages and they all say one L. Correct has seven letters and none of them are optional. Go.')
       ],
       objectives: [
         { type: 'timer_wrap', seconds: 180, objectives: [
@@ -659,10 +659,10 @@
         { type: 'escape_wanted', setWanted: 3, text: 'The balloons noticed the erratum. Lose them' }
       ],
       outro: [
-        L('ottoline', 'R-E-S-P-E-C-T-F-U-L-L-Y. Two L\'s. The press printed it. Nobody read it. It\'s correct now.'),
+        L('ottoline', 'Respectfully. Twelve letters. Two L\'s. The press printed it. Nobody read it. It\'s correct now.'),
         L('player', 'Nobody read it?'),
         L('ottoline', 'Correct is not the same as read. Respectfully. With both of them.'),
-        L('kip', 'I formatted it. I left the L\'s in. Is this... I\'d like this one to be paid.')
+        L('kip', 'I formatted it with both L\'s. Twice the letters. Is this paid?')
       ],
       failOn: ['player_dead'], onComplete: { setFlags: ['st_proof_2', 'stranger_proofreader'], subs: 4000 } },
 
@@ -670,9 +670,9 @@
     { id: 'st_brine_1', title: 'Catch of the Day', strand: 'fresh_takes', giver: 'brine', marker: 'fish_shack', requires: ['m07b_ferry'], reward: 1000, act: 2,
       unlock: { mission: 'm07b_ferry', flag: 'ferry_friend' },
       intro: [
-        L('brine', 'Captain Mortimer Brine. Fresh Takes Fish Shack. Forty years. Never sold a fresh take. Reheated, son. Hourly.'),
+        L('brine', 'Captain Mortimer Brine. Fresh Takes Fish Shack. Forty years. Takes caught daily, reheated hourly. Never sold a fresh one, son.'),
         L('player', 'Why not sell a fresh one?'),
-        L('brine', 'Never caught one. But they\'re running off Manifest Quay this week. Five of them. Warm. You can smell the hot.'),
+        L('brine', 'Caught one once. Panicked. Threw it back. But they\'re running off Manifest Quay this week. Five of them. Warm. You can smell the hot.'),
         L('brine', 'Take the van. Bring them back before they cool. A cold take is just an opinion.')
       ],
       objectives: [
@@ -726,7 +726,7 @@
         { type: 'dialogue', lines: [
           L('rutherford', 'Now boarding! ...It changed again. The gate is a ferry now. Gate Ferry.'),
           L('player', 'That\'s not an airport gate.'),
-          L('rutherford', 'It\'s an airport with ambition.')
+          L('rutherford', 'It floats. That\'s basically flying, slower.')
         ] }
       ],
       outro: [

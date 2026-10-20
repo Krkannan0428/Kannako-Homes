@@ -228,9 +228,19 @@ function installDriver() {
         ST.adv(0.5); s += 0.5;
         trail.push({ x: f.x, z: f.z });
         for (let i = trail.length - 1; i >= 0; i--) { const tr = trail[i]; if (U.dist2d(tr.x, tr.z, f.x, f.z) >= 11) { if (U.dist2d(p.x, p.z, tr.x, tr.z) > 0.5) ST.tp(tr.x, tr.z); break; } }
+        // a route that doubles back walks the target into the tail: a player steps away to keep the gap
+        if (U.dist2d(p.x, p.z, f.x, f.z) < 8) {
+          let ax = p.x - f.x, az = p.z - f.z; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
+          for (const rot of [0, 0.6, -0.6, 1.2, -1.2, Math.PI]) {
+            const c = Math.cos(rot), sn = Math.sin(rot), bx = ax * c - az * sn, bz = ax * sn + az * c;
+            const r = GTP.World.resolveCapsule(f.x + bx * 12, f.z + bz * 12, f.y + 0.5, 0.45);
+            if (ST.walkable(r.x, r.z) && U.dist2d(r.x, r.z, f.x, f.z) > 9) { ST.tp(r.x, r.z); trail.length = 0; break; }
+          }
+        }
         const d = U.dist2d(p.x, p.z, f.x, f.z); minD = Math.min(minD, d); maxD = Math.max(maxD, d);
       }
-      return 'tailed ' + f.castId + ' for ' + s + 's at ' + minD.toFixed(1) + '..' + maxD.toFixed(1) + ' m';
+      const diag = ST.def() === def ? ' STALLED ' + JSON.stringify({ x: Math.round(f.x), z: Math.round(f.z), wi: c.wi, wps: c.wps.length, wp: c.wps[c.wi] ? [Math.round(c.wps[c.wi].x), Math.round(c.wps[c.wi].z)] : null, ri: f.ai && f.ai.ri, rl: f.ai && f.ai.route ? f.ai.route.length : null, stucks: f.ai && f.ai.stucks, sp: +f.speed.toFixed(2), kd: !!f.knockedDown, brain: f.ai && f.ai.mission, tile: GTP.World.tileAt(f.x, f.z), px: Math.round(p.x), pz: Math.round(p.z) }) : '';
+      return 'tailed ' + f.castId + ' for ' + s + 's at ' + minD.toFixed(1) + '..' + maxD.toFixed(1) + ' m' + diag;
     },
     fightOne(h, w) {
       const p = ST.p(), W = GTP.World, wd = GTP.Combat.WEAPONS[w], melee = wd.melee, range = melee ? 1.2 : 6;
