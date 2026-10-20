@@ -73,6 +73,17 @@
     var f = U.yawToDir(e.yaw || 0), rx = -f.z, rz = f.x;
     return { x: e.x + rx * (off.x || 0) - f.x * (off.z || 0), y: e.y + (off.y || 0), z: e.z + rz * (off.x || 0) - f.z * (off.z || 0) };
   }
+  // an over-the-shoulder camera: {entity, offset} with the look-at on another entity. The scripts disagree on the sign of z
+  // (GDD_EXPANSION 4.1 says +z is back, 4.3 wrote -1.8 for 'behind'); whichever sign, the camera goes on the far side of its
+  // entity from the target, so shot 2 of an intro frames the giver over the player's shoulder (QA-C1-04)
+  function shoulderFrom(spec, toSpec) {
+    if (!spec || !spec.entity || !spec.offset || !toSpec || !toSpec.entity) return null;
+    var e = entityOf(spec.entity), t = entityOf(toSpec.entity); if (!e || !t || e === t) return null;
+    var p = fromEntity(e, spec.offset), dz = spec.offset.z || 0;
+    if (Math.abs(dz) < 0.5) return null;
+    if (U.dist2d(p.x, p.z, t.x, t.z) >= U.dist2d(e.x, e.z, t.x, t.z)) return null;   // already behind
+    return fromEntity(e, { x: spec.offset.x, y: spec.offset.y, z: -dz });
+  }
   // a camera or actor spot -> {x, y, z} (actors: y from the ground, or the roof)
   function spot(spec, actor) {
     if (!spec) return null;
@@ -170,7 +181,7 @@
     var pt = a.at ? spot(a.at, true) : null;
     if (pt) {
       var r = W().resolveCapsule(pt.x, pt.z, pt.y + 0.5, 0.4);
-      if (a.at.roof) { ped.x = pt.x; ped.z = pt.z; } else { ped.x = r.x; ped.z = r.z; }
+      if (a.at.roof) { ped.x = pt.x; ped.z = pt.z; if (ped === player()) cur.playerOnRoof = true; } else { ped.x = r.x; ped.z = r.z; }
       ped.y = pt.y; ped.vx = ped.vz = ped.vy = 0; ped.snap();
       if (ped._sh) E().hash.update(ped);
     }
@@ -257,7 +268,10 @@
     // actors first: the camera may frame them
     var acts = shot.actors || [];
     for (var i = 0; i < acts.length; i++) { var ped = actorFor(acts[i]); if (ped) placeActor(ped, acts[i]); }
-    cur.from = pushOut(spot(cam.from, false) || cur.lastFrom || fallbackFrom(), lookAt(cam.to));
+    // a later shot of a mission intro: whoever has no facing of their own turns to the player, and the player to the giver,
+    // so the reverse shot sees faces, not the backs the first shot left them with (QA-C1-04)
+    if (index > 0 && s.mission) faceForShot(acts, cam.to);
+    cur.from = pushOut(shoulderFrom(cam.from, cam.to) || spot(cam.from, false) || cur.lastFrom || fallbackFrom(), lookAt(cam.to));
     cur.moveTo = cam.move && cam.move.to ? pushOut(spot(cam.move.to, false) || cur.from, lookAt(cam.to)) : null;
     cur.toSpec = cam.to || null;
     cur.seconds = cam.seconds != null ? cam.seconds : 4;
@@ -286,6 +300,15 @@
       Ms.say(lines, function () { if (cur && cur.lineToken === token) cur.linesDone = true; });
     } else cur.linesDone = true;
     GTP.Events.emit('cutscene:shot', { id: s.id, shot: index, shots: s.shots.length });
+  }
+  function faceForShot(acts, toSpec) {
+    var pl = player(), look = toSpec && toSpec.entity ? entityOf(toSpec.entity) : null;
+    for (var i = 0; i < acts.length; i++) {
+      var a = acts[i], id = a.castId || a.id, ped = cur.actors[id]; if (!ped || a.face != null || a.at) continue;
+      var tgt = id === 'player' ? (look && look !== pl ? look : null) : pl;
+      if (!tgt || tgt === ped) continue;
+      ped.yaw = U.dirToYaw(tgt.x - ped.x, tgt.z - ped.z); ped.moveYaw = ped.yaw; ped.aimYaw = ped.yaw;
+    }
   }
   function fallbackFrom() { var pl = player(); return pl ? { x: pl.x - 3, y: pl.y + 2.2, z: pl.z + 4 } : { x: 0, y: 2, z: 5 }; }
   function taggedEntity(tag) { var list = E().list; for (var i = 0; i < list.length; i++) if (list[i].tag === tag && !list[i].removed) return list[i]; return null; }
@@ -320,6 +343,20 @@
     c.lineToken++;   // a line callback arriving late changes nothing
     try { if (Ms && Ms.dialogue && Ms.dialogue.active && Ms.skipDialogue) Ms.skipDialogue(); } catch (e) { /* queue may be empty */ }
     try { removeActors(); } catch (e) { U.reportError(e, 'cutscenes.actors'); }
+    // a script that stood the player on a roof (the endings on Goldplate Tower) puts them back where they were (QA-C1-11)
+    if (pl && c.playerOnRoof && c.playerWas) {
+      var wy = W().heightAt(c.playerWas.x, c.playerWas.z, c.playerWas.y);   // the deck or roof they stood on, not the street under it
+      if (g && g.debug && g.debug.teleport) g.debug.teleport(c.playerWas.x, c.playerWas.z, wy); else { pl.x = c.playerWas.x; pl.z = c.playerWas.z; pl.y = wy; pl.snap(); }
+      pl.yaw = c.playerWas.yaw;
+    }
+    // the clock the script asked for goes back to the game's own, moved on by the time the cutscene took (QA-C1-12)
+    if (c.clockWas != null && g && g.time) {
+      var hrs = (simT() - c.startedAt) / ((C.DAY && C.DAY.secondsPerHour) || 60);
+      var tot = c.clockWas + hrs;
+      g.time.clock = ((tot % 24) + 24) % 24;
+      if (c.dayWas != null) g.time.day = c.dayWas + Math.floor(tot / 24);   // the override's own midnight never counts
+      if (GTP.Render && GTP.Render.updateEnvironment) { try { GTP.Render.updateEnvironment(g.time.clock); } catch (e) { /* cosmetic */ } }
+    }
     cur = null;
     if (GTP.AI) GTP.AI.alarmMuted = !!c.alarmWas;
     if (c.wantedWas && GTP.AI && GTP.AI.wanted && GTP.AI.wanted.set) { try { GTP.AI.wanted.set(c.wantedWas); } catch (e) { /* ai optional */ } }
@@ -351,6 +388,12 @@
         from: null, moveTo: null, toSpec: null, seconds: 4, ease: 'inout', camSnap: true, lastFrom: null, look: null, startedAt: simT()
       };
       Cutscenes.active = true; Cutscenes.letterbox = s.letterbox !== false; Cutscenes.current = cur;
+      cur.playerWas = { x: pl.x, z: pl.z, y: pl.y, yaw: pl.yaw };
+      // `clock`: the script's time of day (cs_ending_b at dawn) for its duration
+      if (typeof s.clock === 'number' && g.time) {
+        cur.clockWas = g.time.clock; cur.dayWas = g.time.day; g.time.clock = ((s.clock % 24) + 24) % 24;
+        if (GTP.Render && GTP.Render.updateEnvironment) { try { GTP.Render.updateEnvironment(g.time.clock); } catch (e) { /* cosmetic */ } }
+      }
       // the world keeps simulating but nobody panics, nothing is wanted, the radio does what the script says
       if (GTP.AI) { cur.alarmWas = !!GTP.AI.alarmMuted; GTP.AI.alarmMuted = true; if (GTP.AI.wanted && GTP.AI.wanted.level > 0) { cur.wantedWas = GTP.AI.wanted.level; GTP.AI.wanted.clear(); } }
       musicStart(s.music);
@@ -500,7 +543,7 @@
       if (v && v.driver === p) {
         Hints.fire('h_drive');
         if (v.type === 'taxi') Hints.fire('h_taxi');
-        if ((v.type === 'cop' || (v.type === 'suv' && v.tag === 'hoa')) && Ms && Ms.state.completed.has('m10_pellets')) Hints.fire('h_patrol');
+        if ((v.type === 'cop' || (v.type === 'suv' && v.tag === 'hoasuv')) && Ms && Ms.state.completed.has('m10_pellets')) Hints.fire('h_patrol');
       }
       var o = Ms && Ms.current ? Ms.current() : null;
       if (o && o.def && o.def.type === 'drive_to') Hints.fire('h_arrow');

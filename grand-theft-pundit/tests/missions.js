@@ -733,6 +733,7 @@ H.run('missions', async (t) => {
     const g = GTP.World.landmark('pod_garage').door; GTP.game.debug.teleport(g.x + 2, g.z + 2);
     out.steps.push(until(() => cur() && cur().def.type === 'dialogue', 4));
     out.steps.push(until(() => st.active === null, 30));   // one line of dialogue and a four-line outro (~19 s)
+    out.subsPer = M.K.subsPerReward;
     out.result = { completed: st.completed.has('m01b_airport'), flag: st.flags.seen_airport === true, money: p.money - money0, state: GTP.game.state, kipOut: !kip.inVehicle, best: M.bestTime('m01b_airport'), subs: p.subs, markers: M.markers().map((k) => k.kind + ':' + k.id) };
     return out;
   });
@@ -740,7 +741,7 @@ H.run('missions', async (t) => {
   t.assert(r.boot.active === 'm01b_airport' && r.boot.prereq && r.boot.flag && r.boot.type === 'enter_vehicle', '?mission=m01b_airport boots into Baggage Claim with m01 done' + (r.fallback ? ' (test data)' : ''));
   t.assert(r.van.tag === 'podvan' && r.van.wrap === 'pod' && r.van.dist < 50 && r.inVan, 'the pod van waits at the garage');
   t.assert(r.timer === 300 && r.kip.cast === 'kip' && r.kip.wave === 'wave' && r.kip.dist < 12 && r.aboard, 'the five-minute drive, Kip waving at Arrivals, and he boards: ' + JSON.stringify(r.kip));
-  t.assert(r.steps.every((s) => s > 0) && r.result.completed && r.result.flag && r.result.money === 250 && r.result.state === 'playing' && r.result.kipOut && r.result.best > 0 && r.result.subs >= 1250, 'Baggage Claim completes with its flag, $250, a best time and the subscribers: ' + JSON.stringify(r.result));
+  t.assert(r.steps.every((s) => s > 0) && r.result.completed && r.result.flag && r.result.money === 250 && r.result.state === 'playing' && r.result.kipOut && r.result.best > 0 && r.result.subs >= 250 * r.subsPer, 'Baggage Claim completes with its flag, $250, a best time and the subscribers: ' + JSON.stringify(r.result));
   errs = await t.errors(c2);
   t.assert(errs.length === 0, 'errors on the m01b page:\n' + errs.join('\n'));
 });

@@ -1,19 +1,27 @@
 /* Grand Theft Pundit: 30_game.js
  * GTP.Game: boot, URL params, state machine, fixed-step loop with accumulator
- * and max-steps guard, headless advance, render, time/clock, the v3 save
- * system (three slots, autosave, the v2 migration), the staged loading flow
+ * and max-steps guard, headless advance, render, time/clock, the v4 save
+ * system (three slots, autosave, GTP.SaveRegistry, the v3 and v2 migrations), the staged loading flow
  * (GTP.game.loading for the UI loading screen), slow motion (timeScale) and
  * the debug API. The player is a GTP.Player (06_entities) spawned at the
  * GTP.Content.world.playerSpawn landmark door with the cast "player" look.
  *
- * Saves (GDD_EXPANSION §6.3): localStorage['gtp.save.v3.slot' + n] (n 1..3) is
- * JSON {version:3, slot, seed, savedAt, playTime, money, subs, x, z, yaw, hp,
+ * Saves (GDD_EXPANSION §6.3, PLAN_V03): localStorage['gtp.save.v4.slot' + n] (n 1..3)
+ * is JSON {version:4, slot, seed, savedAt, playTime, money, subs, x, z, yaw, hp,
  * armor, weapon, weapons, ammo, completed, flags, stats, failed, bestTimes,
  * clock, day, radioStation, cameraMode, memos, strands, waypoint, vehicle,
- * summary}. Modules add their own fields through GTP.SaveHooks
- * ([{name, save(data), load(data)}]); the strands runtime registers one.
- * The old single save ('gtp.save.v2') is migrated into slot 1 once at boot
- * when slot 1 is empty; the old key is left alone.
+ * registry, summary}. Modules add their own fields through GTP.SaveHooks
+ * ([{name, save(data), load(data)}]; the strands runtime registers one) or, new in
+ * v4, through GTP.SaveRegistry ({key: {get() -> json, set(json)}}): every entry's
+ * get() lands in data.registry[key] and comes back through set() on load (only keys
+ * the save has). A v3 slot ('gtp.save.v3.slot' + n) is migrated into the v4 key at
+ * boot when the v4 slot is empty (registry {}); the old key is left alone. The old
+ * single save ('gtp.save.v2') goes to slot 1 the same way.
+ *
+ * New Game (PLAN_V03 story): the title's NEW GAME (any newGame while on the title, or
+ * {opening: true}) plays cs_opening after the loading screen and then hands over to
+ * GTP.Story.begin(), which starts the first mission with its objective on screen.
+ * ?opening=0 / ?story=0 turn that off; ?story=1 turns it on in headless.
  *
  * Loading: every boot, New Game and Load runs World.generate (synchronous,
  * it reports 'load:progress' stages) and then the chunk prebuild around the
@@ -28,16 +36,18 @@
   var C = GTP.C, U = GTP.util;
   var LEGACY_KEY = 'gtp.save.v2';
   var SLOTS = 3;
-  var SAVE_VERSION = 3;
+  var SAVE_VERSION = 4;
   var SIM_STATES = { playing: 1, cutscene: 1 };   // the world keeps running through dialogue; it pauses for a minigame
   var RESPAWN_STATES = { wasted: 1, busted: 1 };
   var PREBUILD_RADIUS = 100;                      // the nine chunks around the spawn (GDD_EXPANSION §6.1); the rest build lazily
   var LOADING_HOLD = 0.3;                         // seconds at 100% before the screen fades
 
   GTP.SaveHooks = GTP.SaveHooks || [];
+  GTP.SaveRegistry = GTP.SaveRegistry || {};
 
-  function slotKey(n) { return 'gtp.save.v3.slot' + n; }
-  function altSlotKey(n) { return 'gtp.slot.' + n + '.v3'; }   // the task brief's spelling: read as a fallback
+  function slotKey(n) { return 'gtp.save.v4.slot' + n; }
+  function v3Key(n) { return 'gtp.save.v3.slot' + n; }
+  function altSlotKey(n) { return 'gtp.slot.' + n + '.v3'; }   // the v0.2 task brief's spelling of a v3 slot: read as a fallback
   function parseParams() {
     var out = {};
     try {
@@ -82,6 +92,8 @@
     this.autosaveDisabled = false;      // one failed autosave per session, then silence
     this._autosavePending = null;
     this._openingPending = false;
+    this._storyPending = false;         // after the opening: GTP.Story.begin() starts the first mission
+    this._fireLatch = false;            // shoot / action held across a state change into play stay dead until released (QA-CMB-06)
     this._loadT = 0;
     this.debug = this._makeDebug();
   }
@@ -111,6 +123,7 @@
       GTP.Render.init(gl); lap('render');
       this._bindEvents();
       this.migrateLegacySave();
+      this.migrateV3Saves();
       this.newGame(this.seed); lap('newGame');
       bt.generate = Math.round(GTP.World.generateMs || 0);
       if (opts.clock != null && opts.clock !== '') this.debug.setClock(parseFloat(opts.clock));
@@ -118,8 +131,9 @@
       this.setState(skipTitle ? 'playing' : 'title');
       // ?mission=<id> starts that mission right away (prerequisites complete, flags and weapons applied, intro skipped unless &intro=1)
       if (opts.mission && GTP.Missions.start) { try { this._prepMission(String(opts.mission), truthy(opts.intro)); } catch (e) { U.reportError(e, 'boot.mission'); } }
-      // the opening cutscene belongs to the title's NEW GAME flow (newGame(seed, {opening: true})); ?opening=1 plays it on this boot
-      this._openingPending = truthy(opts.opening) && !this.headless && !opts.mission;
+      // the opening cutscene belongs to the title's NEW GAME flow; ?opening=1 plays it (and the hand-off into m00) on this boot
+      this._openingPending = truthy(opts.opening) && (!this.headless || truthy(opts.story)) && !opts.mission;
+      this._storyPending = this._openingPending;
       this._beginLoading('boot'); lap('loading');
       if (this.headless) { try { GTP.Render.frame(1); } catch (e) { U.reportError(e, 'boot.render'); } lap('first'); }
     } catch (e) { U.reportError(e, 'boot'); }
@@ -152,7 +166,8 @@
     GTP.Events.on('vehicle:enter', function (e) {
       if (!e || !e.ped || e.ped.kind !== 'player' || !e.vehicle || e.vehicle.tag !== 'podvan') return;
       if (!self.atHome(e.vehicle)) return;
-      if (GTP.Hints && GTP.Hints.fire && GTP.Missions && GTP.Missions.state && GTP.Missions.state.completed.has('m01_van')) GTP.Hints.fire('h_save');
+      // the hint only when sitting here really saves: no mission, strand, stars or cutscene (QA-C1-14)
+      if (GTP.Hints && GTP.Hints.fire && GTP.Missions && GTP.Missions.state && GTP.Missions.state.completed.has('m01_van') && !self._autosaveBlocked('home')) GTP.Hints.fire('h_save');
       self.autosave('home');
     });
   };
@@ -194,13 +209,20 @@
     this.player = null;
     var sp = this._spawnPoint();
     this.player = this._makePlayer(sp);
+    this._spawnAt = { x: sp.x, z: sp.z };
     this.time = { t: 0, clock: C.DAY.startClock, day: 1 };
     this.steps = 0;
     this.playTime = 0;
     this.timeScale = 1;
     this.fresh = true;
     this._autosavePending = null;
-    this._openingPending = !!(opts && opts.opening) && !this.headless;
+    // the title's NEW GAME (the UI's fast path calls the bare newGame(seed) while still on the title) plays the opening and
+    // then the first mission; a restart from the pause menu or a load does not. ?opening=0 / ?story=0 opt out
+    var o = this.opts || {}, onTitle = this.booted && this.state === 'title';
+    var want = opts && opts.opening != null ? !!opts.opening : onTitle;
+    if (falsy(o.opening) || falsy(o.story)) want = false;
+    this._openingPending = want && (!this.headless || truthy(o.story));
+    this._storyPending = this._openingPending;
     if (GTP.AI.reset) GTP.AI.reset();
     if (GTP.Combat && GTP.Combat.reset) GTP.Combat.reset();
     if (GTP.AI.spawner && GTP.AI.spawner.warmup) { try { GTP.AI.spawner.warmup(); } catch (e) { U.reportError(e, 'spawner.warmup'); } }
@@ -271,6 +293,7 @@
     if (s === this.state) return;
     this.prevState = this.state;
     this.state = s;
+    if (s === 'playing') this._fireLatch = true;   // the click / E that closed a line, a card or a menu is not a shot
     if (GTP.UI && GTP.UI.onState) { try { GTP.UI.onState(s, this.prevState); } catch (e) { U.reportError(e, 'ui.onState'); } }
     GTP.Events.emit('state', { state: s, prev: this.prevState });
   };
@@ -293,14 +316,33 @@
   };
 
   // the opening cutscene (GDD_EXPANSION §4.2) once play begins on a fresh game, after the loading screen
+  // and then the story begins: the first mission starts with its intro and objective (PLAN_V03: within a minute of New Game)
   Game.prototype._maybeOpening = function () {
     if (!this._openingPending || this.state !== 'playing' || this.loading.active) return;
-    var Cs = GTP.Cutscenes, Ms = GTP.Missions;
-    if (!Cs || !Cs.playOnce || !Cs.scriptFor || !Cs.scriptFor('cs_opening')) { this._openingPending = false; return; }
-    if (Ms && Ms.state && Ms.state.active) { this._openingPending = false; return; }
+    var Cs = GTP.Cutscenes, Ms = GTP.Missions, self = this, p = this.player;
     this._openingPending = false;
-    var self = this;
-    Cs.playOnce('cs_opening', function () { if (GTP.Hints && GTP.Hints.fire) GTP.Hints.fire('h_move'); self._autosavePending = null; });
+    if (Ms && Ms.state && Ms.state.active) { this._storyPending = false; return; }
+    // already off and playing (in a car, or far from the spawn): no cutscene yanks them out; the GPS and Gus's call point at
+    // the first mission instead
+    var sp = this._spawnAt;
+    if (p && (p.inVehicle || (sp && U.dist2d(p.x, p.z, sp.x, sp.z) > 30))) {
+      this._storyPending = false;
+      if (GTP.Story) { try { GTP.Story.gps(true); if (Cs && Cs.scriptFor && Cs.scriptFor('cs_opening') && Ms.state) Ms.state.flags.cs_cs_opening = true; GTP.Story.call(); } catch (e) { U.reportError(e, 'story.gps'); } }
+      return;
+    }
+    var played = !!(Cs && Cs.playOnce && Cs.scriptFor && Cs.scriptFor('cs_opening')) && Cs.playOnce('cs_opening', function () {
+      if (GTP.Hints && GTP.Hints.fire) GTP.Hints.fire('h_move');
+      self._autosavePending = null;
+      self._beginStory();
+    });
+    if (!played) this._beginStory();
+  };
+  Game.prototype._beginStory = function () {
+    if (!this._storyPending) return false;
+    this._storyPending = false;
+    var St = GTP.Story;
+    if (!St || !St.begin) return false;
+    try { return St.begin(); } catch (e) { U.reportError(e, 'story.begin'); return false; }
   };
 
   // one fixed step: Input -> player -> Missions -> AI -> entities -> Combat -> fx -> clock -> UI -> camera
@@ -313,7 +355,7 @@
       this._tickLoading(dt);
       this._handleGlobalInput();
       this._maybeOpening();
-      if (this.state === 'playing' && this.player && this.player.control) this.player.control(dt);
+      if (this.state === 'playing' && this.player && this.player.control) this._controlPlayer(dt);
       if (SIM_STATES[this.state]) {
         if (GTP.Cutscenes && GTP.Cutscenes.active && GTP.Cutscenes.update) GTP.Cutscenes.update(dt);
         GTP.Missions.update(dt);
@@ -348,6 +390,19 @@
     } finally {
       try { GTP.Input.endFrame(); } catch (e2) { U.reportError(e2, 'input.endFrame'); }
     }
+  };
+
+  // player.control with the fire latch: after a state change into play, shoot and action read as up until both are released
+  // (the press that dismissed the last dialogue line fired the gun on the same step; QA-CMB-06)
+  var LATCHED = { shoot: 1, action: 1 };
+  Game.prototype._controlPlayer = function (dt) {
+    var In = GTP.Input, p = this.player;
+    if (this._fireLatch && In && !In.down('shoot') && !In.down('action')) this._fireLatch = false;
+    if (!this._fireLatch || !In) { p.control(dt); return; }
+    var down = In.down, pressed = In.pressed;
+    In.down = function (a) { return LATCHED[a] ? false : down.call(In, a); };
+    In.pressed = function (a) { return LATCHED[a] ? false : pressed.call(In, a); };
+    try { p.control(dt); } finally { In.down = down; In.pressed = pressed; }
   };
 
   Game.prototype.advance = function (seconds) {
@@ -417,9 +472,27 @@
       reason: extra && extra.reason ? extra.reason : 'manual', auto: !!(extra && extra.auto)
     };
     for (var i = 0; i < GTP.SaveHooks.length; i++) { var h = GTP.SaveHooks[i]; if (h && typeof h.save === 'function') { try { h.save(data); } catch (e) { U.reportError(e, 'save.hook ' + (h.name || i)); } } }
+    data.registry = this._registryGet();
     data.summary = this._summary(data);
     void W;
     return data;
+  };
+  // GTP.SaveRegistry: {key: {get() -> json, set(json)}} filled by any module (properties, garages, achievements, the story...)
+  Game.prototype._registryGet = function () {
+    var R = GTP.SaveRegistry || {}, out = {};
+    for (var k in R) {
+      var e = R[k]; if (!e || typeof e.get !== 'function') continue;
+      try { var v = e.get(); if (v !== undefined) out[k] = decode(encode(v)); } catch (err) { U.reportError(err, 'save.registry ' + k); }
+    }
+    return out;
+  };
+  Game.prototype._registrySet = function (reg) {
+    var R = GTP.SaveRegistry || {};
+    if (!reg || typeof reg !== 'object') return;
+    for (var k in reg) {
+      var e = R[k]; if (!e || typeof e.set !== 'function') continue;   // a module that is not loaded keeps nothing; the save keeps it
+      try { e.set(reg[k]); } catch (err) { U.reportError(err, 'load.registry ' + k); }
+    }
   };
   Game.prototype._summary = function (data) {
     var Ms = GTP.Missions, W = GTP.World, p = this.player;
@@ -453,10 +526,13 @@
     this.waypoint = data.waypoint || null;
     if (GTP.Audio.radio && GTP.Audio.radio.setStation) GTP.Audio.radio.setStation(data.radioStation | 0);
     for (var i = 0; i < GTP.SaveHooks.length; i++) { var h = GTP.SaveHooks[i]; if (h && typeof h.load === 'function') { try { h.load(data); } catch (e) { U.reportError(e, 'load.hook ' + (h.name || i)); } } }
+    this._registrySet(data.registry);
     // the car the player sat in comes back under them (the pod van is home; it respawns at the garage either way)
     if (data.vehicle && GTP.Vehicle && data.vehicle.type && C.VEHICLES[data.vehicle.type]) {
       try {
-        var sv = data.vehicle, veh = this.debug.spawnVehicle(sv.x != null ? sv.x : p.x, sv.z != null ? sv.z : p.z, sv.type, { color: sv.color || undefined, wrap: sv.wrap || undefined, yaw: sv.yaw, tag: sv.tag || undefined });
+        var sv = data.vehicle;
+        if (sv.tag === 'hoa' && sv.type === 'suv') sv.tag = 'hoasuv';   // v3 saves: the strand SUV's old tag (QA-STR-11)
+        var veh = this.debug.spawnVehicle(sv.x != null ? sv.x : p.x, sv.z != null ? sv.z : p.z, sv.type, { color: sv.color || undefined, wrap: sv.wrap || undefined, yaw: sv.yaw, tag: sv.tag || undefined });
         if (veh) { if (sv.hp) veh.hp = Math.min(veh.hp, sv.hp); if (sv.tag === 'podvan' || sv.tag === 'sponsorvan') veh.persistent = true; veh.enter(p, 0); }
       } catch (e) { U.reportError(e, 'load.vehicle'); }
     }
@@ -464,15 +540,28 @@
     GTP.Render.updateEnvironment(this.time.clock);
     GTP.Render.rig.snap();
     this.fresh = false;
-    this._openingPending = false;
+    this._openingPending = false; this._storyPending = false;
+    // the GPS points at the next story mission again (PLAN_V03: you cannot miss it)
+    if (GTP.Story && GTP.Story.gps) { try { GTP.Story.refresh(); GTP.Story.gps(true); } catch (e) { U.reportError(e, 'load.story'); } }
   };
 
+  // the slot's save as v4 data (a v3 slot not migrated yet is upgraded in memory), or {corrupt} / null
+  Game.prototype._readSlot = function (n) {
+    var raw = storeGet(slotKey(n)), old = false;
+    if (!raw) { raw = storeGet(v3Key(n)) || storeGet(altSlotKey(n)); old = !!raw; }
+    if (!raw) return null;
+    var d;
+    try { d = decode(raw); } catch (e) { return { corrupt: true }; }
+    if (!d || typeof d !== 'object') return { corrupt: true };
+    if (d.version === 3) return { data: this.upgradeV3(d), migrated: true };
+    if (d.version === SAVE_VERSION && !old) return { data: d };
+    return { corrupt: true, version: d.version };
+  };
   Game.prototype.slots = function () {
     var out = [];
     for (var n = 1; n <= SLOTS; n++) {
-      var raw = storeGet(slotKey(n)) || storeGet(altSlotKey(n)), meta = null, corrupt = false;
-      if (raw) { try { var d = decode(raw); if (d && d.version === SAVE_VERSION) meta = d.summary || this._summary(d); else corrupt = true; } catch (e) { corrupt = true; } }
-      out.push({ slot: n, empty: !meta, corrupt: corrupt, meta: meta });
+      var r = this._readSlot(n), meta = r && r.data ? (r.data.summary || this._summary(r.data)) : null;
+      out.push({ slot: n, empty: !meta, corrupt: !!(r && r.corrupt), meta: meta, version: r && r.data ? r.data.version : (r && r.version) || null });
     }
     return out;
   };
@@ -504,12 +593,10 @@
   };
   Game.prototype.loadSlot = function (n) {
     n = n | 0;
-    var raw = storeGet(slotKey(n)) || storeGet(altSlotKey(n));
-    if (!raw) return false;
-    var data;
-    try { data = decode(raw); } catch (e) { toast('Save file is corrupt'); return false; }
-    if (!data || data.version !== SAVE_VERSION) { toast('Save file is from another version'); return false; }
-    return this._loadData(data, n);
+    var r = this._readSlot(n);
+    if (!r) return false;
+    if (r.corrupt) { toast(r.version != null ? 'Save file is from another version' : 'Save file is corrupt'); return false; }
+    return this._loadData(r.data, n);
   };
   Game.prototype._loadData = function (data, slot) {
     try {
@@ -530,15 +617,15 @@
   };
   Game.prototype.deleteSlot = function (n) {
     n = n | 0; if (n < 1 || n > SLOTS) return false;
-    var had = !!(storeGet(slotKey(n)) || storeGet(altSlotKey(n)));
-    storeDel(slotKey(n)); storeDel(altSlotKey(n));
+    var had = !!(storeGet(slotKey(n)) || storeGet(v3Key(n)) || storeGet(altSlotKey(n)));
+    storeDel(slotKey(n)); storeDel(v3Key(n)); storeDel(altSlotKey(n));   // the v3 copy too, or the migration would bring it back
     if (had) GTP.Events.emit('save:deleted', { slot: n });
     return had;
   };
   // the old single save becomes slot 1 once (play time unknown, the summary rebuilt); the old key stays
   Game.prototype.migrateLegacySave = function () {
     var raw = storeGet(LEGACY_KEY); if (!raw) return false;
-    if (storeGet(slotKey(1)) || storeGet(altSlotKey(1))) return false;
+    if (storeGet(slotKey(1)) || storeGet(v3Key(1)) || storeGet(altSlotKey(1))) return false;
     var old;
     try { old = decode(raw); } catch (e) { return false; }
     if (!old || old.version !== 2) return false;
@@ -547,13 +634,33 @@
     if (ok) GTP.Events.emit('save:migrated', { slot: 1 });
     return ok;
   };
+  // v3 -> v4 (PLAN_V03): every slot whose v4 key is empty gets its v3 save upgraded; the v3 key is left alone
+  Game.prototype.migrateV3Saves = function () {
+    var n, moved = 0;
+    for (n = 1; n <= SLOTS; n++) {
+      if (storeGet(slotKey(n))) continue;
+      var raw = storeGet(v3Key(n)) || storeGet(altSlotKey(n)); if (!raw) continue;
+      var old; try { old = decode(raw); } catch (e) { continue; }
+      if (!old || old.version !== 3) continue;
+      if (storeSet(slotKey(n), encode(this.upgradeV3(old)))) { moved++; GTP.Events.emit('save:migrated', { slot: n, from: 3 }); }
+    }
+    return moved;
+  };
+  Game.prototype.upgradeV3 = function (old) {
+    var data = Object.assign({}, old);
+    data.version = SAVE_VERSION;
+    data.registry = old.registry && typeof old.registry === 'object' ? old.registry : {};
+    data.migratedFrom = 3;
+    data.summary = Object.assign({}, old.summary || this._summary(data), { migrated: true });
+    return data;
+  };
   Game.prototype.upgradeLegacy = function (old) {
     var data = {
       version: SAVE_VERSION, slot: 1, seed: old.seed | 0, savedAt: Date.now(), playTime: 0, money: old.money | 0, subs: 0,
       x: old.x, z: old.z, yaw: old.yaw || 0, hp: old.hp || 100, armor: old.armor || 0, weapon: old.weapon || 'fist', weapons: old.weapons || { fist: Infinity }, ammo: {},
       completed: old.completed || [], flags: old.flags || {}, stats: old.stats || {}, failed: {}, bestTimes: {},
       clock: typeof old.clock === 'number' ? old.clock : C.DAY.startClock, day: old.day || 1, radioStation: old.radioStation | 0, cameraMode: old.cameraMode || 'chase',
-      memos: [], strands: {}, waypoint: null, vehicle: null, settingsSnapshot: null, reason: 'migrated', auto: false
+      memos: [], strands: {}, waypoint: null, vehicle: null, settingsSnapshot: null, registry: {}, reason: 'migrated', auto: false, migratedFrom: 2
     };
     data.summary = this._summary(data);
     data.summary.migrated = true;
@@ -654,6 +761,7 @@
   Game.SLOTS = SLOTS;
   Game.SAVE_VERSION = SAVE_VERSION;
   Game.slotKey = slotKey;
+  Game.v3Key = v3Key;
   Game.LEGACY_KEY = LEGACY_KEY;
   GTP.Game = Game;
 
