@@ -94,6 +94,28 @@ H.run('missions', async (t) => {
   const shot1 = await t.shot(page, 'missions_marker_quad');
   console.log('  shot: ' + shot1);
 
+  // ---- 5b. walking into the light starts the mission after 0.5 s; a teleport into it does not ----
+  const trigger = await page.evaluate(() => {
+    const mk = GTP.Missions.markers()[0], p = GTP.game.player, st = GTP.Missions.state;
+    T_.tp(mk.x, mk.z); GTP.game.advance(1.5);
+    const byTeleport = st.active;
+    T_.tp(mk.x, mk.z + 7); GTP.game.advance(0.3);
+    GTP.Render.rig.yaw = 0; GTP.Render.rig.snap();
+    GTP.Input.set('forward', true);
+    let s = 0, enteredAt = -1;
+    while (s < 8 && !st.active) { GTP.game.advance(0.1); s += 0.1; if (enteredAt < 0 && Math.hypot(p.x - mk.x, p.z - mk.z) <= GTP.Missions.K.markerRadius) enteredAt = s; }
+    GTP.Input.set('forward', false);
+    const out = { byTeleport, active: st.active, state: GTP.game.state, hold: +(s - enteredAt).toFixed(2), line: st.dialogue[0] && st.dialogue[0].who, camTarget: GTP.Render.rig._target && GTP.Render.rig._target.castId, events: T_.events.slice() };
+    GTP.Missions.abort(); GTP.game.advance(0.2);
+    out.afterAbort = { state: GTP.game.state, markers: GTP.Missions.markers().length };
+    return out;
+  });
+  console.log('  trigger: ' + JSON.stringify(trigger));
+  t.assert(trigger.byTeleport === null, 'a teleport into the light does not start the mission');
+  t.assert(trigger.active === 'm00_intro' && trigger.state === 'cutscene' && trigger.hold > 0.3 && trigger.hold < 1.2 && trigger.line === 'gus', 'walking into the light starts m00 after about 0.5 s with the intro: ' + JSON.stringify(trigger));
+  t.assert(trigger.camTarget === 'gus' && trigger.events[0] === 'start:m00_intro', 'the camera eases to the giver for the intro');
+  t.assert(trigger.afterAbort.state === 'playing' && trigger.afterAbort.markers === 1, 'abort during the intro restores play and the marker');
+
   // ---- 1. one synthetic mission per objective type ----
   // goto
   let r = await page.evaluate(() => {

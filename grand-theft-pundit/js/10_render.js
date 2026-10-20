@@ -835,23 +835,41 @@
       Render._mtex = tex;
       return tex;
     },
+    // one shared geometry per size: the tube, a brighter core, the ground ring and a dim disc merged into a single draw;
+    // the ring and disc sample fixed rows of the gradient (bright near the bottom, dim higher up)
+    _markerGeo: function (r, h) {
+      Render._mgeo = Render._mgeo || {};
+      var key = r.toFixed(2) + 'x' + h.toFixed(2);
+      if (Render._mgeo[key]) return Render._mgeo[key];
+      var parts = [], m = new THREE.Matrix4();
+      function add(g, mat, u, v) {
+        if (g.index) g = g.toNonIndexed();
+        if (u != null) { var a = g.attributes.uv.array; for (var i = 0; i < a.length; i += 2) { a[i] = u; a[i + 1] = v; } }
+        g.applyMatrix4(mat); parts.push(g);
+      }
+      add(new THREE.CylinderGeometry(r, r, h, 28, 1, true), m.makeTranslation(0, h / 2, 0));
+      add(new THREE.CylinderGeometry(r * 0.45, r * 0.45, h * 0.8, 16, 1, true), m.makeTranslation(0, h * 0.4, 0));
+      add(new THREE.RingGeometry(r * 0.78, r * 1.18, 40), m.makeRotationX(-Math.PI / 2).setPosition(0, 0.07, 0), 0.5, 0.04);
+      add(new THREE.CircleGeometry(r * 0.8, 32), m.makeRotationX(-Math.PI / 2).setPosition(0, 0.06, 0), 0.5, 0.45);
+      var n = 0, i;
+      for (i = 0; i < parts.length; i++) n += parts[i].attributes.position.count;
+      var pos = new Float32Array(n * 3), uv = new Float32Array(n * 2), o = 0;
+      for (i = 0; i < parts.length; i++) { var g = parts[i]; pos.set(g.attributes.position.array, o * 3); uv.set(g.attributes.uv.array, o * 2); o += g.attributes.position.count; g.dispose(); }
+      var geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      geo.userData.shared = true;
+      Render._mgeo[key] = geo;
+      return geo;
+    },
     markerMesh: function (color, opts) {
       opts = opts || {};
-      var r = opts.radius || 1.6, h = opts.height || 7.5, tex = Render._markerTex();
-      function mat(op) { return new THREE.MeshBasicMaterial({ map: tex, color: color, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }); }
-      var cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 28, 1, true), mat(0.5)); cyl.position.y = h / 2; cyl.name = 'cyl';
-      var core = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.45, r * 0.45, h * 0.8, 16, 1, true), mat(0.35)); core.position.y = h * 0.4; core.name = 'core';
-      var ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.78, r * 1.18, 40), new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }));
-      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.07; ring.name = 'ring';
-      var disc = new THREE.Mesh(new THREE.CircleGeometry(r * 0.8, 32), new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
-      disc.rotation.x = -Math.PI / 2; disc.position.y = 0.06; disc.name = 'disc';
+      var r = opts.radius || 1.6, h = opts.height || 7.5;
+      var mat = new THREE.MeshBasicMaterial({ map: Render._markerTex(), color: color, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false });
+      var mesh = new THREE.Mesh(Render._markerGeo(r, h), mat);
+      mesh.renderOrder = 8; mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false; mesh.name = 'light';
       var grp = new THREE.Group();
-      grp.add(cyl); grp.add(core); grp.add(ring); grp.add(disc);
-      [cyl, core, ring, disc].forEach(function (m) { m.renderOrder = 8; m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; });
-      grp.userData = {
-        color: color, cyl: cyl, core: core, ring: ring, disc: disc,
-        pulse: function (k) { cyl.material.opacity = 0.4 + 0.22 * k; core.material.opacity = 0.25 + 0.25 * k; ring.material.opacity = 0.6 + 0.4 * k; var s = 1 + 0.06 * k; ring.scale.set(s, s, 1); }
-      };
+      grp.add(mesh);
+      grp.userData = { color: color, mesh: mesh, pulse: function (k) { mat.opacity = 0.42 + 0.26 * k; } };
       grp.name = 'marker';
       return grp;
     },
@@ -863,7 +881,7 @@
     removeMarker: function (mesh) {
       if (!mesh) return;
       if (mesh.parent) mesh.parent.remove(mesh);
-      mesh.traverse(function (o) { if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.dispose) o.material.dispose(); } });
+      mesh.traverse(function (o) { if (o.isMesh) { if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); if (o.material && o.material.dispose) o.material.dispose(); } });
     },
 
     // ------------------------------------------------------------------ fx --

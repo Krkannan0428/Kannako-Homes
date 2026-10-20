@@ -190,7 +190,17 @@ H.run('ai', async (t) => {
     GTP.game.advance(6);
     const h = GTP.AI.police.heli;
     const out = { heli: !!h, y: h ? +h.y.toFixed(1) : null, d: h ? +Math.hypot(h.x - p.x, h.z - p.z).toFixed(1) : null, sees: h ? h.sees : null, counts: GTP.AI.debug.counts() };
-    if (h) { const dx = p.x - h.x, dz = p.z - h.z, l = Math.hypot(dx, dz) || 1; GTP.game.debug.freeCam(p.x - dx / l * 26 + dz / l * 14, p.y + 9, p.z - dz / l * 26 - dx / l * 14, (p.x + h.x) / 2, (p.y + h.y) / 2 - 4, (p.z + h.z) / 2); }
+    if (h) {
+      // a camera 26 m off the player toward the heli's side; where the chase ends depends on the whole city's state,
+      // so when a building blocks that line of sight the shot is taken from high above the player instead
+      // (the spotlight pool on the street is the point of the picture, and the air above a road is always clear)
+      const dx = p.x - h.x, dz = p.z - h.z, l = Math.hypot(dx, dz) || 1;
+      const cx = p.x - dx / l * 26 + dz / l * 14, cy = p.y + 9, cz = p.z - dz / l * 26 - dx / l * 14;
+      const ox = p.x, oy = p.y + 1.5, oz = p.z, vx = cx - ox, vy = cy - oy, vz = cz - oz, vl = Math.hypot(vx, vy, vz) || 1;
+      const hit = GTP.World.raycastBuildings(ox, oy, oz, vx / vl, vy / vl, vz / vl, vl + 1);
+      if (hit) GTP.game.debug.freeCam(p.x - dx / l * 7, p.y + 26, p.z - dz / l * 7, p.x, p.y, p.z);
+      else GTP.game.debug.freeCam(cx, cy, cz, (p.x + h.x) / 2, (p.y + h.y) / 2 - 4, (p.z + h.z) / 2);
+    }
     return out;
   });
   console.log('  heli: ' + JSON.stringify(heli));

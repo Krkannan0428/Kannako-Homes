@@ -341,7 +341,7 @@ GTP.Missions._resolveMinigame(win)          // the UI minigame (or a test) repor
 GTP.Missions.registerTest(mission)          // tests: a mission startable by id but never listed
 GTP.Missions.current() -> {def, ctx, index, depth} | null   // the running objective (ctx holds its spawned pickups / peds / vehicles / ped)
 GTP.Missions.on(ev, fn)                     // sugar for GTP.Events.on('mission:' + ev)
-GTP.C.MISSIONS                               // knobs: unit, markerRadius 1.9, startHold 0.5, lineSeconds 2.5, gotoRadius 6, driveRadius 12, followTooClose 6 / followCloseTime 3 / followFarTime 5, waveEvery 10, maxHostiles 14, defeatHold 3, giverRange, minigameFallback 2, weaponAmmo, colors
+GTP.C.MISSIONS                               // knobs: unit, markerRadius 1.9, startHold 0.5, lineSeconds 2.5, gotoRadius 6, driveRadius 12, followTooClose 6 / followCloseTime 3 / followFarTime 5, waveEvery 10, maxHostiles 14, defeatHold 3, giverRange 170 / kipRange 40 (the cast at a marker: six draw calls per ped), minigameFallback 2, weaponAmmo, colors
 ```
 
 Flow: an available mission's blue light stands at its giver landmark door with

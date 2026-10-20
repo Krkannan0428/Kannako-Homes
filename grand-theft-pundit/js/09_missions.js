@@ -36,7 +36,8 @@
     followTooClose: 6, followCloseTime: 3, followFarTime: 5, followPace: 0.42,
     waveEvery: 10, maxHostiles: 14,
     defeatHold: 3,
-    giverRange: 170,          // the giver (and Kip) stand at a marker this close to the player
+    giverRange: 170,          // the giver stands at a marker this close to the player
+    kipRange: 40,             // Kip turns up (six draw calls) once the player is this close
     minigameFallback: 2,      // seconds until a minigame auto-resolves as a win when the UI has none (0 = never)
     brainTick: 3,             // mission brains run every n fixed steps
     weaponAmmo: { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16 },
@@ -333,28 +334,38 @@
     while (out.length < 2) out.push({ x: mk.x + sx * 2 * (out.length ? -1 : 1), z: mk.z + sz * 2 * (out.length ? -1 : 1) });
     return out;
   }
-  function placeGivers(mk) {
+  function placeGiver(mk) {
     var spots = giverSpots(mk), giverId = mk.m.giver || 'sloane';
     mk.giver = spawnCastPed(giverId, spots[0].x, spots[0].z, 'npc', { brain: 'giver', yaw: U.dirToYaw(mk.x - spots[0].x, mk.z - spots[0].z) });
     mk.giver.ai.marker = mk; mk.giver.ai.homeYaw = mk.giver.yaw; mk.giver.tag = 'giver';
-    if (giverId !== 'kip' && castOf('kip')) {
-      mk.kip = spawnCastPed('kip', spots[1].x, spots[1].z, 'npc', { brain: 'giver', yaw: U.dirToYaw(mk.x - spots[1].x, mk.z - spots[1].z) });
-      mk.kip.ai.marker = mk; mk.kip.ai.kip = true; mk.kip.ai.homeYaw = mk.kip.yaw; mk.kip.tag = 'kip';
-    }
   }
+  // Kip is at every mission location (GDD 9); he appears once the player is close enough to notice
+  function placeKip(mk) {
+    if ((mk.m.giver || 'sloane') === 'kip' || !castOf('kip')) return;
+    var spots = giverSpots(mk);
+    mk.kip = spawnCastPed('kip', spots[1].x, spots[1].z, 'npc', { brain: 'giver', yaw: U.dirToYaw(mk.x - spots[1].x, mk.z - spots[1].z) });
+    mk.kip.ai.marker = mk; mk.kip.ai.kip = true; mk.kip.ai.homeYaw = mk.kip.yaw; mk.kip.tag = 'kip';
+  }
+  var lastPos = { x: 0, z: 0, set: false };
   function updateAvailable(dt) {
     var pl = player(), g = game(); if (!pl) return;
     var canStart = !run && g && g.state === 'playing' && pl.alive && !pl.inVehicle && !pl.knockedDown && !pl.swimming;
+    // a jump no vehicle could make in one step is a teleport / respawn: landing inside a light does not count as walking in
+    var jumped = lastPos.set && U.dist2d(pl.x, pl.z, lastPos.x, lastPos.z) > 5;
+    lastPos.x = pl.x; lastPos.z = pl.z; lastPos.set = true;
     for (var i = 0; i < avail.length; i++) {
       var mk = avail[i], d = U.dist2d(pl.x, pl.z, mk.x, mk.z);
       // the cast at the door
-      if (d < K.giverRange && !mk.giver) placeGivers(mk);
-      else if (d > K.giverRange + 60 && mk.giver) { if (mk.giver) { removeEntity(mk.giver); mk.giver = null; } if (mk.kip) { removeEntity(mk.kip); mk.kip = null; } }
       if (mk.giver && mk.giver.removed) mk.giver = null;
       if (mk.kip && mk.kip.removed) mk.kip = null;
+      if (d < K.giverRange && !mk.giver) placeGiver(mk);
+      else if (d > K.giverRange + 60 && mk.giver) { removeEntity(mk.giver); mk.giver = null; }
+      if (d < K.kipRange && mk.giver && !mk.kip) placeKip(mk);
+      else if (d > K.kipRange + 30 && mk.kip) { removeEntity(mk.kip); mk.kip = null; }
       // the trigger arms once the player has been outside the light (a new game spawns inside the first one)
       var inside = d <= K.markerRadius && Math.abs(pl.y - mk.y) < 2.5;
       if (!inside) { mk.holdT = 0; if (d > K.markerRadius + 0.6) mk.armed = true; continue; }
+      if (jumped) { mk.armed = false; mk.holdT = 0; continue; }
       if (!canStart || !mk.armed) { mk.holdT = 0; continue; }
       mk.holdT += dt;
       if (mk.holdT >= K.startHold) { Missions.start(mk.id); return; }
@@ -921,7 +932,8 @@
     var yaw = U.dirToYaw(giver.x - pl.x, giver.z - pl.z);
     pl.yaw = yaw; pl.aimYaw = yaw; pl.moveYaw = yaw;
     giver.yaw = U.dirToYaw(pl.x - giver.x, pl.z - giver.z);
-    Rd.rig.yaw = yaw; Rd.rig.pitch = 0.12;
+    // the rig orbits the giver; swinging it 30 degrees off the player's line puts the player's shoulder at the frame edge
+    Rd.rig.yaw = yaw + 0.52; Rd.rig.pitch = 0.1;
     if (Rd.rig.target) Rd.rig.target(giver, true);
   }
   function beginPlay() {
@@ -944,7 +956,7 @@
       dlg.active = false; dlg.queue = []; dlg.current = null; dlg.done = null; dlg.restore = null; dlg.uiDriven = false;
       mg.active = null; mg.uiDriven = false;
       for (var i = 0; i < avail.length; i++) { dropMesh(avail[i].mesh); avail[i].giver = null; avail[i].kip = null; }
-      avail.length = 0; availKey = null; availT = 0;
+      avail.length = 0; availKey = null; availT = 0; lastPos.set = false;
       clearObjMarkers();
       state = Missions.state = freshState();
       stepN = 0;

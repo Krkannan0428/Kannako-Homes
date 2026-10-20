@@ -150,6 +150,8 @@
 
   Game.prototype._handleGlobalInput = function () {
     var In = GTP.Input;
+    // the UI gets the frame first: title / pause / phone / dialogue menus consume their keys and return true
+    if (GTP.UI && GTP.UI.handleInput) { try { if (GTP.UI.handleInput(this.state)) return; } catch (e) { U.reportError(e, 'ui.handleInput'); } }
     if (this.state === 'title') {
       if (In.pressed('confirm') || In.pressed('enter')) this.setState('playing');
     } else if (this.state === 'playing') {
