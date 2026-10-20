@@ -58,6 +58,15 @@ Exposed on `GTP.Content.radio` (all existing fields are kept: `napMinute`, `defa
 - `news`, `bulletin(...)`, and the `radio:news` event (payload = the bulletin).
 - `errors`: authoring problems found while compiling the songs. It is always empty, and the tests assert that.
 - Stations carry `color` (the UI may use it instead of its own id → colour map) and `district` (campus / loop) as hints.
+- **UI ticker feed (integration round 1, the shapes `docs/v03/ui.md` reads).** All are non-enumerable getters on
+  each station:
+  - `station.nowPlaying`: `{kind:'song', id, title, artist, section}` on music stations, `{kind:'show', id, title:
+    'Uproar at Large: <segment>', text, host}` on WAIL 101 (`RADIO.onAir(id)`).
+  - `station.bulletins`: `[{text, headline, stage, hour}]`, the story-reactive bulletin for this game hour in the
+    station's voice. The UI shows it as `NEWS hh:00` in the first 3 minutes of the hour.
+  - `station.callers` (WAIL 101 only): `[{caller, text}]` from the segment on air (`RADIO.callers(hourKey?)`). WAIL's
+    `dj` now carries only the host's lines for the segment, because the calls arrive as CALLER lines.
+  - The Nap Dynasty ad is on all six stations (`napAd`, minute `napMinute` = 20).
 
 Consumed:
 
@@ -65,16 +74,21 @@ Consumed:
   a wall-clock bar count stands in.
 - `GTP.Audio.radio.isPlaying()` and `current()`, `GTP.game.time`, `GTP.game.player.inVehicle`, and
   `GTP.Missions.state.flags` / `.completed`, used by the news.
-- `GTP.UI.ticker(text)` shows the bulletin. If the UI sets `GTP.UI.radioNews = true`, the runner stands down and the UI
-  calls `bulletin()` itself.
+- `GTP.UI.ticker(text)` is called only when the UI declares it has no bulletin support (`GTP.UI.radioNews === false`).
+  The v0.3 UI reads `station.bulletins` itself.
 
-## Wrapper installed on another module
+## Wrappers installed on another module
 
 - **`GTP.Audio.update`** is wrapped at load time, guarded by `GTP.Audio._radioNewsWrapped`. After the original runs,
   `newsTick()` checks for a game-hour turnover. When the hour turns while the player is in a vehicle with the radio on,
-  it calls `GTP.UI.ticker(bulletin.text)` once and emits `radio:news`. Clock jumps (loads, `setClock` to mid-hour)
-  are ignored. Integration can fold this into the UI ticker (slot the bulletin at minute 0, the way the Nap Dynasty ad
-  sits at minute 20) and delete the wrapper.
+  it emits `radio:news` (the bulletin) once, for an engine news sting. Clock jumps (loads, `setClock` to mid-hour) are
+  ignored. Since integration round 1 the UI shows the bulletin from `station.bulletins`, so the wrapper no longer pushes
+  ticker lines (unless `GTP.UI.radioNews === false`).
+- **`GTP.Audio.radio.nowPlaying`** is wrapped, guarded by `GTP.Audio.radio._radioWrapped`. The UI asks it before
+  `station.nowPlaying`, and the engine returns only a station string. While a station plays, the wrapper returns
+  `RADIO.onAir(id)` with `toString()` set to the engine's text, so string users (`tests/audio.js`' `/Pennant/` check,
+  concatenation) keep working. When nothing plays, it returns `''` as before. Integration can move this into
+  `03_audio.js` (return `GTP.Content.radio.onAir(st.id)`) and drop the wrapper.
 
 ## Decisions
 
@@ -152,8 +166,10 @@ NODE_PATH=/opt/node-tools/node_modules node tests/audio.js   # the engine's own 
 1. Data, in node with no browser: schema, songs, monotony metrics, the live view against a simulated engine counter,
    news stages, call-in rotation, and every runtime string run through `tests/content_audit.js` (its own patterns,
    on a virtual file).
-2. A headless game boot: R cycles through all six stations, and the news runner fires in a car at the top of the hour
-   but not on foot.
+2. A headless game boot. R cycles through all six stations. At the top of the hour in a car, `radio:news` fires
+   once, and never on foot. The real UI ticker then shows `NOW PLAYING: title  ·  artist`, `NEWS 14:00: <station
+   voice>…` and, on WAIL, `ON AIR: Uproar at Large: …` plus `CALLER: … on the line: …`.
+   `Audio.radio.nowPlaying()` returns the song object, and `String()` of it is still the station text.
 3. A live page (`headless=0`, a click unlocks audio): each station plays in a car for 6 to 10 real seconds through
    the current engine.
 4. Offline renders of all 26 songs.
@@ -170,4 +186,7 @@ NODE_PATH=/opt/node-tools/node_modules node tests/audio.js   # the engine's own 
   section boundary.
 - **No real semitone key changes and no per-song tempo** in today's engine: one bpm per station. Songs vary feel
   through half-time drums, shuffle and bossa instead.
-- **The news runner is a wrapper on `GTP.Audio.update`**; fold it into the UI ticker at integration.
+- **Two wrappers to fold in at integration:** `GTP.Audio.update` (the `radio:news` event) and
+  `GTP.Audio.radio.nowPlaying` (the song or show object). See "Wrappers" above.
+- **Integration round 1** (merged `game/grand-theft-pundit` at 65dc2b7): every station plays on the merged engine in
+  `tests/radio.js` parts 3 and 4, and `tests/audio.js` passes. The full-suite triage is in `docs/v03/triage_radio.md`.
