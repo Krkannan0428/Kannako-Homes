@@ -44,7 +44,7 @@
   "title": "Two of the Velvetine Pier's moored boats sit on the Sponsor Span's west lane: cars crash into them and are shoved off the bridge into the bay",
   "repro": "seed 7 and 11. World.props boat at (322.4,528) and (322.4,552): kind 'boat', solid, r 1.8, y -0.85, h 2.2 (top +1.35), on BRIDGE tiles x 80 (the dock case in _landmarkProps puts boats at pier x + 2.6 tiles, the bridge starts 1 tile east of the pier). Spawn a sedan at (322,500) yaw PI, enter, hold forward: stops at z 524 hp 100 -> 68. Northbound from (322,580) yaw 0: stops at z 557 and is pushed to (309.9,562.2) y -2.37 - into the water. Script geo/drive.js (span_south_player_x322 / span_north_player_x322). Screenshot freeCam(332,6,505, 322,0,528): white and blue boats standing on the asphalt.",
   "expected": "Boats are moored in the water beside the pier, clear of the bridge deck.",
-  "actual": "Boat hulls stand on the bridge's west lane, visible on the asphalt; a car hits them at 19 m/s (31.8 hp lost) and northbound traffic is pushed sideways off the 0 m deck into the bay (y -2.37).",
+  "actual": "Boat hulls stand on the bridge's west lane, visible on the asphalt; a car hits them at 19 m/s (31.8 hp lost) and northbound traffic is pushed sideways off the 0 m deck into the bay (y -2.37). (Also found by the traffic lens as QA-A-TRF-05: the player car stops dead and bounces back at the first boat; AI cars are pushed onto the walkway. Scripts: trf/props.js.)",
   "hint": "js/04_world.js _landmarkProps case 'dock': boats at (px + 1 + sd*2.6) tiles with sd = +1 land on the Sponsor Span (x 80..83) because velvetine_pier's second pier is at lot.x+2..; skip boats whose circle touches a non-water tile, or flip them to the west side.",
   "lens": "qa-a:geo",
   "evidence": [
@@ -52,9 +52,16 @@
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed7.json",
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed11.json",
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed7.json",
-   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json"
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/span_boats.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/span.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/props.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_05.js"
   ],
-  "regress": "qa_a_geo_03.js"
+  "regress": "qa_a_geo_03.js",
+  "duplicates": [
+   "QA-A-TRF-05"
+  ]
  },
  {
   "id": "QA-A-GEO-04",
@@ -63,16 +70,24 @@
   "title": "A Goldplate Links flag pole (and on seed 11 a tree) stands in the westbound lane of the road through the course, and the PAR 10 sign's post stands in the lane too",
   "repro": "seed 7: World.props flag at (528,182) (solid, r 0.2, h 3) and sign 'GOLDPLATE LINKS: PAR 10' (standing, post) at (551.4,182), both on ROAD tiles of the road at z tiles 45..46 that crosses the goldplate_links lot. Seed 11 adds a lot tree at (523.9,183.86) on the same lane. Spawn a sedan at (580,182) yaw PI/2 (west), hold forward 4 s: at 24 m/s it hits the pole at x 531 and stops (hp 100 -> 54). The sign's post is non-solid, so cars drive through it. Scripts geo/audit1.js (propOnRoad), geo/drive.js (clubhouse_west_player). Screenshot freeCam(548,3,184, 528,1.5,182): yellow pole in the middle of the lane.",
   "expected": "Course flags, trees and the course sign stand on the grass, never on the road through the lot.",
-  "actual": "Solid flag pole in the lane (car stopped from 25.2 to 2.6 m/s, 46 hp lost); sign post in the lane with no collision; seed 11 also has a solid tree on the road.",
+  "actual": "Solid flag pole in the lane (car stopped from 25.2 to 2.6 m/s, 46 hp lost); sign post in the lane with no collision; seed 11 also has a solid tree on the road. (Also found by the traffic lens as QA-A-TRF-06: AI cars hit the flag on Clubhouse Drive, mount the pavement and stay stuck there; seed 11 adds a tree in the same street.)",
   "hint": "js/04_world.js _landmarkProps case 'park' goldplate_links: flags at cxm +-8, z = lz + 12 + k*..., the sign at lx+lw-TILE-0.6, czm and the random trees ignore that the lot includes road tiles (the lot loop skips them); place only on GRASS tiles.",
   "lens": "qa-a:geo",
   "evidence": [
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/shots/s7_links_flag.png",
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed7.json",
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/drive_seed11.json",
-   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json"
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/geo/audit1_seed11.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/deadend_hills.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/deadend.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/uturn.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/props.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_06.js"
   ],
-  "regress": "qa_a_geo_04.js"
+  "regress": "qa_a_geo_04.js",
+  "duplicates": [
+   "QA-A-TRF-06"
+  ]
  },
  {
   "id": "QA-A-GEO-05",
@@ -239,5 +254,138 @@
    "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/drv/wedge.js"
   ],
   "regress": "qa_a_drv_08.js"
+ },
+ {
+  "id": "QA-A-TRF-01",
+  "severity": "high",
+  "area": "ai/traffic",
+  "title": "City traffic gridlocks for good within 3-4 minutes: nearly every AI car ends up standing still, head-on against another car or queued behind one, and no new traffic spawns",
+  "repro": "?seed=7&headless=1&skipTitle=1. GTP.game.debug.teleport(318,250) (Chyron Center), then advance 240 s in 20 s steps and count driven traffic cars with |speed|>1. Script: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/jam.js (node jam.js 7 318,250 240 jam_downtown). The same happens at every location tried: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/sim.js 7 240 suburbs campus industrial capitol downtown strip marina hills uptown airport port 490,282 330,556 628,282 and sim.js 11 240 campus downtown hills airport 330,556.",
+  "expected": "Traffic keeps flowing indefinitely: queues clear on green, no car waits more than one signal cycle (20 s).",
+  "actual": "Seed 7 at (318,250): moving cars 31/40 at t=20 s, 20/39 at 60 s, 11/40 at 160 s, 4/40 at 180 s, 1/40 at 240 s. Every one of the 14 locations ended with 17-40 cars stationary for over 40 s (most 100-240 s). Seed 11 at (94,298): 35/40 moving at 20 s, 4/40 at 240 s. The stuck cars stand in head-on pairs (e.g. #118 dir +1 and #98 dir -1 both in lane x 234 at z 170/176, blocked by each other, blockedT 218 s) with queues behind them. They are never recycled, because stuckT only counts while there is no capReason and recycle needs the car out of view, so they keep the 40-car budget (avgCars 39.7-40) and no fresh traffic spawns.",
+  "hint": "js/07_ai.js carStep(): the unstick and recycle path (ai.stuckT) is skipped whenever ai.capReason is set, so two cars blocking each other (or a queue behind them) wait forever. aheadCaps() only swerves. Needs a give-up for long blockedT, such as reversing or recycling after N s. Feeds on QA-A-TRF-02/03, which put cars on the wrong side in the first place.",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/out/jam_dt.txt",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/out/sim_7_suburbs_campus_industrial_capitol_downtown_strip_marina_hills_uptown_airport_por.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/out/sim_11_campus_downtown_hills_airport_330-556.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/jam.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/jam_downtown.png"
+  ],
+  "regress": "qa_a_trf_01.js"
+ },
+ {
+  "id": "QA-A-TRF-02",
+  "severity": "high",
+  "area": "ai/traffic",
+  "title": "A car queued behind another at a red light swerves into the oncoming lane after 3 s, then drives up the wrong side into the junction on green",
+  "repro": "seed 7: clear traffic (C.CARS_TARGET=0), wait for the start of the 'ew' phase at junction tiles (57..58,45..46), AI.spawner.placeTraffic two sedans northbound in lane x 234 (dir -1) at z 199 and z 208. Advance 16 s. Script: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_02.js; screenshot /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/swerveshot.js.",
+  "expected": "The follower waits in its lane behind the lead car and follows it through on green.",
+  "actual": "At t=7.8 s, still on red with the lead car waiting at the stop line (stopAlong set), the follower sets ai.swerve=-3.2. When the light turns green it pulls 3.23 m left to x 230.8, the southbound lane centre, and enters the junction on the oncoming side (shots/swerve_green.png: yellow taxi left of the double yellow line beside the red lead car). In free traffic, 64 of 158 swerves in 120 s (seed 7, 318,250) and 21 of 371 (seed 11, 542,270) were behind a car waiting at a signal (lanemis.js).",
+  "hint": "js/07_ai.js aheadCaps(): the 'stationary obstacle ahead' swerve fires for any vehicle reason with cap<0.5 after K.stuckTime (3 s). It ignores that the blocker is waiting at a light (reason.ai.stopAlong != null) or queued behind one, and the 3.2 m offset puts the car into the opposing lane.",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/swerve_green.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/swerveshot.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/lanemis.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_02.js"
+  ],
+  "regress": "qa_a_trf_02.js"
+ },
+ {
+  "id": "QA-A-TRF-03",
+  "severity": "high",
+  "area": "ai/traffic",
+  "title": "A traffic car on the oncoming side takes that lane as its own and keeps driving the wrong way: planAhead copies the lane under the car without checking its direction",
+  "repro": "seed 7: clear traffic, AI.spawner.placeTraffic a sedan with axis 'v', dir -1 (northbound), laneC 234 but standing at x 230 (southbound lane), z 262. Advance 3 s and read v.ai.laneC / v.x. Script: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_03.js. In free traffic (seed 7, 318,250) traced with /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/trace.js 7 318,250 118 9 17: car #118 does a three-point turn that does not finish in 7 s, adoptLane picks dir +1, then planAhead resets laneC to 234 (lane 1, which runs northbound).",
+  "expected": "The car steers back to a lane that runs in its direction (x 234 here).",
+  "actual": "After 0.5 s ai.laneC becomes 230 (a southbound lane) while ai.dir stays -1. The car drives north along x 230.0 for the whole 3 s. In traffic this produces wrong-way cars: lanemis.js counted 5 lane/direction mismatches in 120 s (seed 7), and every gridlock cluster in QA-A-TRF-01 starts with one. Seed 11 also showed a wrong-way car on the Loop deck at (405->366, 377), lane 2 dir +1, travelling west at speed (loop.js 11).",
+  "hint": "js/07_ai.js planAhead(): `ai.lane = li.l; ai.w = li.w; ai.lo = li.lo; ai.laneC = li.center` uses laneInfo of the tile under the car with no check that li.dir === ai.dir (adoptLane checks it, planAhead overrides it). It should keep or pick the nearest lane with laneDirOf()===dir.",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/trace.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/lanemis.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/loop.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_03.js"
+  ],
+  "regress": "qa_a_trf_03.js"
+ },
+ {
+  "id": "QA-A-TRF-04",
+  "severity": "medium",
+  "area": "ai/traffic",
+  "title": "Buses and trucks drive off the west end of the city into the sea: junctions leave long vehicles only 'straight' into a one-tile road stub",
+  "repro": "seed 7: clear traffic, AI.spawner.placeTraffic a bus westbound on the campus avenue, lane z 278 (tile 69, dir -1), at x 140. Advance 40 s. Script: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_04.js and /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/stub.js. Free traffic: sim.js 7 (bus #152 at (20.5,276.7) y -1.3, sedan at (23.2,178.9), SUV at (375.8,23.5) on the capitol north edge) and sim.js 11 (bus #363 at (22.7,277.7), truck #411 at (23.9,452.9)).",
+  "expected": "A long vehicle that cannot turn at the last junction stops or turns before the stub. Nothing leaves the roadway or enters the water.",
+  "actual": "The bus keeps plan 'straight' into the one-tile stub at x 32..36 at 8.8 m/s, overruns the kerb, gets ai.recover, arcs into the water and sinks (y -4.4, removed). It did this 2 of 2 times. In free traffic it happened 3 times in seed 7 (bus, sedan, SUV) and 2 times in seed 11 (bus 75 m from the player, truck). The sinking car is removed in view (popOut events at 79-140 m).",
+  "hint": "js/07_ai.js junctionPlan(): 'straight' stays an option (w 0.15) when the lane beyond the box runs only 1 tile (run=1) to the sea wall; for long vehicles (no rights, lefts only avenue to avenue) it is the only option. Also deadPlan braking starts too late, and the recover mode (carStep, ts 4, forward only) drives toward a road point behind the car.",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/stub.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/out/sim_7_suburbs_campus_industrial_capitol_downtown_strip_marina_hills_uptown_airport_por.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/out/sim_11_campus_downtown_hills_airport_330-556.json",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_04.js"
+  ],
+  "regress": "qa_a_trf_04.js"
+ },
+ {
+  "id": "QA-A-TRF-07",
+  "severity": "medium",
+  "area": "ai/spawner",
+  "title": "Long parked vehicles (vans 5.4 m, trucks 7.5 m) are placed on 4 m parking tiles with no footprint check: their bodies stick into building walls (14 of 435 parked cars in a city sweep, e.g. a truck box inside a port warehouse at (610, 676))",
+  "repro": "seed 7: teleport near (590,160) and advance 8 s. A parked car spawns at (610,174) around the 'mast' prop at (609.5,173.5). Teleport (640,700) and advance 8 s: a parked truck at (610,676.25) has its box inside a warehouse. Scripts: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/parked.js 7 parked_mast, /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/parkshot.js 7 640 700 park_wall_port, /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/parkwall.js 7, /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_07.js.",
+  "expected": "Parked cars sit inside their bay, clear of props and walls.",
+  "actual": "shots/parked_mast.png: a dark SUV with the light mast through its roof. shots/park_wall_port.png: a truck's box sunk into the warehouse wall. Seed 7 has 22 eligible bays overlapping a solid prop (mast, jet bridges, pallets, windsocks, planes, crates, a billboard pole) and seed 11 has similar ones (crates, luggage, jet bridge). A city sweep (parkwall.js) found 14 of 435 parked cars with their body in a building (vans 5.4 m and trucks 7.5 m long on 4 m tiles, at the suburbs, port and airport). In free traffic: SUV in the mast and taxi on the pallet at (106,670) in sim.js.",
+  "hint": "js/07_ai.js spawner.spawnParked(): it never tests the car's footprint (type length vs the 4 m tile, yaw 0/PI) against World.solidAt or the solid prop grid; it only checks the building pattern of the neighbouring tiles. AI.spawner.reset's parkTiles also include bays with props.",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/parked_mast.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/park_wall_port.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/parked.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/parkwall.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_07.js"
+  ],
+  "regress": "qa_a_trf_07.js",
+  "related": [
+   "QA-A-GEO-05 (the same spawner also ignores solid props)"
+  ]
+ },
+ {
+  "id": "QA-A-TRF-08",
+  "severity": "medium",
+  "area": "world/lanes + ai",
+  "title": "Manifest Ramp (Lower Loop) shares lanes with the ground street under the Loop: AI cars climbing it crash across the deck into the barrier, and street cars ram the ramp's 7 m end wall",
+  "repro": "seed 7: clear traffic. (a) placeTraffic a sedan westbound at the ramp foot (464,630), lane tile 157 dir -1. (b) placeTraffic a sedan eastbound on the street under the deck at (404,634), tile 158 dir +1. Advance 12-14 s. Scripts: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/manifest.js 7 manifest, /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/area.js 100 150 120 165, /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_08.js. Free traffic: loop.js 7 at 376,690 and 450,640, loop.js 11 at 450,640, jam.js 7 450,640.",
+  "expected": "The ramp leads onto the Lower Loop deck with a right merge, and the street under the deck ends (or turns) before the ramp wall.",
+  "actual": "(a) The car reaches the deck at 11.6 m/s still on plan 'cruise' along the ground street (axis h), hits the far barrier at x 418.6 (speed 1.1, then -0.4), and only turns onto the leg after reversing. (b) The car drives into the ramp's high end at x 429.7 (nose at x 432.1) and rams it, reverses and rams again for the whole 14 s (shots/manifest.png: taxi nose against the ramp end under the deck). In free traffic, cars on the Lower Loop near this ramp were moving only 24-29% of the time (loop.js, both seeds), with head-on standoffs on the ramp top.",
+  "hint": "Ground tiles (100..107, 157..158) under the Lower Loop's leg carry the same laneH bytes as the Manifest Ramp, and js/07_ai.js stepLayer() returns 'ground' for a ROAD neighbour before it checks the ramp-to-deck case. The other five ramps' top ends border non-road ground. Fix in js/04_world.js (do not run the street into the ramp end) and/or in stepLayer (prefer 'deck' when rampY > DECK_Y-1.2).",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/shots/manifest.png",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/manifest.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/loop.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_08.js"
+  ],
+  "regress": "qa_a_trf_08.js",
+  "related": [
+   "QA-A-GEO-02 (same spot: the ground street feeding the ramp's high end)"
+  ]
+ },
+ {
+  "id": "QA-A-TRF-09",
+  "severity": "medium",
+  "area": "world/lanes",
+  "title": "Two signalled junctions are only half in the lane field: northbound cars in Heirloom Heights (724,420) and westbound cars at the Jet Ramp foot on the Strip (276,420) drive through on red at full speed",
+  "repro": "seed 7: static scan of all 149 junction boxes (/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/boxes.js). Then clear traffic and wait for phase 'ew' at tile (181,105). placeTraffic a sedan northbound in lane x 730 (tile 182, dir -1) at z 462. Do the same westbound in lane z 422 (tile 105) at x 304 with phase 'ns' at (69,105). Scripts: /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/halfbox.js, /tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_09.js.",
+  "expected": "Every junction box is a full rectangle of tiles with both laneH and laneV, so every approach lane sees the junction, its signal and its yield.",
+  "actual": "Tiles (182,105),(182,106) have no laneH and (69,105),(70,105) have no laneV. The northbound car stays on plan 'cruise' and passes the box (z 420..428) at 11.1 m/s on red, while a southbound car in the other half stops at z 413. The westbound car at z 422 passes x 276..284 at 10.4 m/s on red, while the eastbound car in lane z 426 stops at x 262.3. These lanes never yield to crossing traffic either.",
+  "hint": "js/04_world.js road stamping (laneH/laneV around line 571) or js/20_content_world.js road extents: the uptown east-west street stops one tile short of the far half of the north-south street (to=181 instead of 182), and the Jet Ramp's north-south lanes stop at its foot (tile row 104) instead of running through the box row 105.",
+  "lens": "qa-a:traffic",
+  "evidence": [
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/boxes.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/trf/halfbox.js",
+   "/tmp/claude-0/-home-user-Kannako-Homes/8c40c50e-ed24-5937-b2f5-8349bcfe786c/scratchpad/regress/qa_a_trf_09.js"
+  ],
+  "regress": "qa_a_trf_09.js"
  }
 ]
