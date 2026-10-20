@@ -449,7 +449,8 @@
   // ------------------------------------------------------------ boats --
   function updateBoat(v, dt) {
     if (!preStep(v, dt)) return;
-    var S = v.cls, driver = liveDriver(v), c = (driver && v.ctl) || CTL0;
+    // the player and the autopilot fill v.ctl; an AI ped at the helm drives it like a car (v.throttle / v.steer)
+    var S = v.cls, driver = liveDriver(v), c = (driver && v.ctl) || (driver ? { throttle: v.throttle || 0, steer: v.steer || 0, handbrake: !!v.handbrake } : CTL0);
     if (v.wreck) {
       if (waterAt(v.x, v.z)) { v.startSinking(); v._syncOccupants(); return; }
       v.vx *= Math.exp(-4 * dt); v.vz *= Math.exp(-4 * dt); v.x += v.vx * dt; v.z += v.vz * dt; postStep(v, dt); return;
@@ -996,7 +997,7 @@
       B.add('metal', cyl(0.05, 0.05, 0.95, 8), [0.8, 0.8, 0.82], T(s * 0.85, 0.55, -0.9, 0, 0, s * 0.45));
       B.add('metal', cyl(0.05, 0.05, 0.95, 8), [0.8, 0.8, 0.82], T(s * 0.85, 0.55, 0.9, 0, 0, s * 0.45));
     }
-    B.add('lightR', sph(0.08, 8, 6), WH, T(-1.08, 1.6, -0.3)); B.add('lightG', sph(0.08, 8, 6), WH, T(1.08, 1.6, -0.3));
+    B.add('lightR', sph(0.13, 8, 6), WH, T(-1.08, 1.6, -0.3)); B.add('lightG', sph(0.13, 8, 6), WH, T(1.08, 1.6, -0.3)); B.add('lightR', sph(0.12, 8, 6), WH, T(0, 1.98, 1.2));
     B.add('lightW', cyl(0.14, 0.18, 0.2, 10), WH, T(0, 0.75, -1.9, 0.3, 0, 0));                          // searchlight
     B.add('dark', box(0.08, 0.5, 0.08), BLK, T(0, 0.85, -2.5));                                          // nose probe
     B.add('seat', box(1.5, 0.55, 0.5), WH, T(0, 1.15, -0.3));
@@ -1020,7 +1021,7 @@
     B.add('paint2', box(span * 0.98, 0.04, 0.3), WH, T(0, 2.4, 0.95));
     for (var s = -1; s <= 1; s += 2) {
       B.add('metal', cyl(0.04, 0.04, 2.1, 6), [0.8, 0.8, 0.82], T(s * 1.6, 1.55, 0.1, 0, 0, s * 0.95));
-      B.add(s < 0 ? 'lightR' : 'lightG', sph(0.08, 8, 6), WH, T(s * span / 2, 2.32, 0.2));
+      B.add(s < 0 ? 'lightR' : 'lightG', sph(0.14, 8, 6), WH, T(s * span / 2, 2.32, 0.2));
     }
     // tail: the fin and the stabiliser
     B.add('paint', side([[0, 0], [1.4, 0], [0.5, 1.45], [-0.15, 1.45]], 0.1, 0.03), WH, T(0, 1.6, 4.55, 0, Math.PI, 0));
@@ -1056,7 +1057,7 @@
       B.add('paint', side([[0, 0], [1.9, 0], [0.9, 1.7], [0.2, 1.7]], 0.1, 0.03), WH, T(s * 0.9, 2.2, 6.0, 0, Math.PI, s * 0.32));
       B.add('dark', box(0.55, 0.62, 2.2), GREY, T(s * 0.95, 1.55, -0.5));                       // intakes
       B.add('dark', box(0.45, 0.5, 0.05), BLK, T(s * 0.95, 1.55, -1.62));
-      B.add(s < 0 ? 'lightR' : 'lightG', sph(0.08, 8, 6), WH, T(s * half, 1.62, 3.6));
+      B.add(s < 0 ? 'lightR' : 'lightG', sph(0.14, 8, 6), WH, T(s * half, 1.62, 3.6));
     }
     B.add('paint', plan([[-2.3, 0], [2.3, 0], [1.6, 1.2], [-1.6, 1.2]], 0.1, 0.03), WH, T(0, 1.75, 6.2));
     B.add('dark', cyl(0.62, 0.55, 0.9, 16), [0.35, 0.35, 0.38], T(0, 1.75, 6.65, Math.PI / 2, 0, 0));   // nozzle
@@ -1573,11 +1574,26 @@
     }
   }
 
+  // ---- an AI-flown heli (a boss on autopilot, an empty one spinning down) drives the shared rotor loop when the police
+  // helicopter is not up (Audio.heli has one voice; the police heli owns it while it flies)
+  var ambT = 0;
+  function ambientTick(dt) {
+    ambT -= dt; if (ambT > 0) return; ambT = 0.5;
+    var A = GTP.Audio, p = player(); if (!A || !A.heli || !p) return;
+    var pol = GTP.AI && GTP.AI.police && GTP.AI.police.heli; if (pol && !pol.removed) return;
+    var list = E().list, best = null, bd = 340;
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i]; if (v.kind !== 'vehicle' || v.removed || fam(v) !== 'heli' || (v.rotor || 0) < 0.2 || v.hasPlayer()) continue;
+      var d = U.dist2d(v.x, v.z, p.x, p.z); if (d < bd) { bd = d; best = v; }
+    }
+    if (best) A.heli(U.clamp(best.rotor, 0, 1), best.x, best.z);
+  }
+
   // ============================================================ the step hook ==
   var baseEUpdate = E().update, baseEAdd = E().add;
   E().update = function (dt) {
     if (!installed) install();
-    try { fleetTick(dt); modshopTick(); } catch (e) { report(e, 'vehicles.tick'); }
+    try { fleetTick(dt); modshopTick(); ambientTick(dt); } catch (e) { report(e, 'vehicles.tick'); }
     return baseEUpdate.call(this, dt);
   };
   E().add = function (e) {

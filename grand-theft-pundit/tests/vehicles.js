@@ -13,6 +13,8 @@
  *    at a waterline target, the moto
  *  6 the mod shop and garages: GTP.Vehicles.mod changes stats and rebuilds the mesh, modCatalog / buyMod charge money,
  *    a Spin Doctor drive-in bay emits modshop:open, store / retrieve, GTP.SaveRegistry.vehicles and a slot save keep them
+ *  7 edge rules: inverted pitch, a burning heli comes down, the parachute cut-away, a wrecked boat sinks, an AI helmsman,
+ *    a jet ski beached on sand, a save in a heli loads back in it, New Game empties the garages
  * Screenshots in tests/out (look at them): veh_heli_flight, veh_parachute, veh_plane_flight, veh_jet_flight,
  * veh_speedboat, veh_jetski, veh_moto, veh_lineup_air, veh_lineup_sea, veh_mods */
 'use strict';
@@ -149,13 +151,14 @@ H.run('vehicles', async (t) => {
     // an empty news heli on autopilot, at half the tower's height, told to fly through it
     const h = V.spawn('heli', b.x - 30, b.z + b.d / 2, { y: b.y + b.h * 0.5, yaw: GTP.util.dirToYaw(1, 0) });
     h.rotor = 1; h.onGround = false; h.autopilot = { x: b.x + b.w / 2, z: b.z + b.d / 2, alt: b.h * 0.5 };
-    let n = 0; while (!h.wreck && n < 60) { g.advance(0.25); n++; }
+    let n = 0; while (!h.wreck && n < 60) { g.advance(0.25); n++; if (n === 3) out.rotorSound = GTP.Audio.state().heli; }
     out.wreck = h.wreck; out.cause = crashes; out.t = n * 0.25; out.alt = Math.round(h.y);
     GTP.Events.off('vehicle:crash', fn);
     return out;
   });
   console.log('  rotor strike: ' + JSON.stringify(strike));
   t.assert(strike.wreck && strike.cause.length >= 1, 'flying into a tower is a crash: ' + JSON.stringify(strike));
+  t.assert(strike.rotorSound && strike.rotorSound.on, 'an AI-flown heli drives the rotor loop: ' + JSON.stringify(strike.rotorSound));
 
   const pad = await page.evaluate(() => {
     const V = GTP.Vehicles, g = GTP.game, p = g.player, out = {}, rw = T_.rw();
@@ -481,6 +484,67 @@ H.run('vehicles', async (t) => {
   t.assert(shop.retrieve && shop.retrieve.type === 'sedan' && shop.retrieve.engine === 2 && shop.retrieve.color === '#d22f2f' && shop.retrieve.left === 3, 'retrieve() brings it back modded: ' + JSON.stringify(shop.retrieve));
   t.assert(shop.registry.count === 3 && shop.cleared === 0 && shop.restored === 3, 'the SaveRegistry entry round-trips the garages');
   t.assert(shop.saved && shop.loaded && shop.afterLoad === 3, 'a slot save and load keeps the garage: ' + JSON.stringify([shop.saved, shop.loaded, shop.afterLoad]));
+
+  // ---- 7. edge rules: inverted pitch, the cut-away, a burning heli, a wrecked boat, sand, an AI helmsman, save / load in a heli, New Game ----
+  const edges = await page.evaluate(() => {
+    const V = GTP.Vehicles, W = GTP.World, g = GTP.game, p = g.player, out = {}, rw = T_.rw();
+    if (p.inVehicle) { p.inVehicle.vx = p.inVehicle.vz = 0; p.inVehicle.speed = 0; p.inVehicle.exit(p); }
+    p.hp = p.maxHp; p.knockedDown = false;
+    const hx = rw.x + 120, hz = rw.z;
+    g.debug.teleport(hx + 8, hz); g.advance(0.3); T_.clearAround(hx, hz, 40);
+    // inverted pitch: W lifts the nose
+    const h = V.spawn('heli', hx, hz, {}); h.enter(p, 0); h.rotor = 1; h.y += 30; h.onGround = false; h.snap();
+    V.controls.invertPitch = true; T_.hold('forward', 0.8); out.inverted = +h.pitch.toFixed(2); V.controls.invertPitch = false; g.advance(1);
+    // a burning heli loses lift and comes down (crash or wreck), it never hovers on
+    p.godMode = true; h.applyDamage(h.hp + 5, null, 'test'); out.burning = h.burning;
+    let n = 0; while (!h.wreck && n < 60) { g.advance(0.25); n++; }
+    out.burnDown = { wreck: h.wreck, t: n * 0.25 }; p.godMode = false;
+    g.advance(3); p.hp = p.maxHp; p.knockedDown = false; if (p.inVehicle) p.inVehicle.exit(p);
+    while (g.state !== 'playing' && n++ < 400) { GTP.Input.press('confirm'); g.advance(0.2); }
+    // the cut-away: F under an open canopy drops the rider (a tracked fall); the empty canopy goes away
+    g.debug.teleport(hx, hz); g.advance(0.2);
+    const ch = V.spawn('parachute', hx, hz, { y: 40 }); ch.chute = 'open'; ch.openT = 2; ch.enter(p, 0); g.advance(0.5);
+    T_.press('enter'); g.advance(0.1); out.cut = { inV: !!p.inVehicle, falling: !p.onGround, tracked: !!p._fall, chute: ch.chute };
+    p.godMode = true; g.advance(4); p.godMode = false; out.cutGone = ch.removed; p.hp = p.maxHp; p.knockedDown = false;
+    // a wrecked boat on the water sinks; an AI helmsman drives a boat with the car controls
+    const lm = W.landmark('velvetine_pier'); let sp = null;
+    for (let dx = 40; dx < 400 && !sp; dx += 16) { const c = V.findClear(lm.door.x - dx, 562, 'water', 12, 6); if (c) sp = c; }
+    g.debug.teleport(sp.x, sp.z - 40); g.advance(0.3);
+    const wb = V.spawn('speedboat', sp.x, sp.z, {}); g.advance(0.2); wb.applyDamage(wb.hp + 10, null, 'test'); n = 0; while (!wb.sinking && !wb.removed && n < 40) { g.advance(0.25); n++; }
+    out.boatSinks = wb.sinking || wb.removed;
+    const ab = V.spawn('jetski', sp.x + 10, sp.z + 8, { yaw: GTP.util.dirToYaw(-1, 0) }), helm = new GTP.Ped({ x: sp.x + 10, z: sp.z + 8 }); GTP.Entities.add(helm); ab.enter(helm, 0);
+    const x0 = ab.x; ab.setControls(1, 0, false, 0); g.advance(3); out.aiBoat = Math.round(x0 - ab.x);
+    ab.destroy(); helm.destroy();
+    // sand: a boat driven onto a beach is beached, never under the sand or floating over it
+    let beach = null;
+    for (let i = 0; i < W.tiles.length && !beach; i += 7) { if (W.tiles[i] !== W.T.SAND) continue; const tx = i % W.w, tz = (i / W.w) | 0, x = tx * 4 + 2, z = tz * 4 + 2; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { if (W.tileAt(x + dx * 12, z + dz * 12) === W.T.WATER && W.tileAt(x + dx * 24, z + dz * 24) === W.T.WATER) { beach = { x, z, dx, dz }; break; } } }
+    out.beachFound = !!beach;
+    if (beach) {
+      g.debug.teleport(beach.x + beach.dx * 30, beach.z + beach.dz * 30 - 8); g.advance(0.3);
+      const bb = V.spawn('jetski', beach.x + beach.dx * 22, beach.z + beach.dz * 22, { yaw: GTP.util.dirToYaw(-beach.dx, -beach.dz) }); bb.enter(p, 0); g.advance(0.2);
+      T_.hold('forward', 4); g.advance(1);
+      out.beach = { beached: bb.hud().beached, y: +bb.y.toFixed(2), ground: +W.heightAt(bb.x, bb.z, bb.y + 1).toFixed(2), tile: W.tileAt(bb.x, bb.z) };
+      bb.vx = bb.vz = 0; T_.press('enter'); g.advance(0.5); bb.destroy();
+    }
+    // save in a heli, load: back in the heli; New Game empties the garages
+    g.debug.teleport(hx + 8, hz); g.advance(0.3); T_.clearAround(hx, hz, 40);
+    const sh = V.spawn('heli', hx, hz, {}); sh.enter(p, 0); g.advance(0.5);
+    V.store('safe_brownstone', g.debug.spawnVehicle(p.x + 20, p.z + 10, 'sedan'));
+    out.saved = g.saveSlot(2, { reason: 'test' }); out.loaded = g.loadSlot(2); g.advance(1);
+    out.reloaded = { inV: p.inVehicle && p.inVehicle.type, garage: V.garage('safe_brownstone').length };
+    g.newGame(7); g.advance(1);
+    out.newGame = { garage: V.garage('safe_brownstone').length + V.garage('safe_dorm').length, fleet: V.state().fleet.length };
+    return out;
+  });
+  console.log('  edges: ' + JSON.stringify(edges));
+  t.assert(edges.inverted > 0.15, 'inverted pitch: W lifts the nose: ' + edges.inverted);
+  t.assert(edges.burning && edges.burnDown.wreck, 'a burning heli comes down: ' + JSON.stringify(edges.burnDown));
+  t.assert(!edges.cut.inV && edges.cut.falling && edges.cut.tracked && edges.cut.chute === 'landed' && edges.cutGone, 'F under the canopy cuts away (a tracked fall) and the canopy goes: ' + JSON.stringify(edges.cut));
+  t.assert(edges.boatSinks, 'a wrecked boat sinks');
+  t.assert(edges.aiBoat > 10, 'an AI helmsman drives a jet ski with the car controls: ' + edges.aiBoat + ' m');
+  t.assert(!edges.beachFound || (edges.beach.beached && edges.beach.y >= edges.beach.ground - 0.05 && edges.beach.y < edges.beach.ground + 0.6), 'a jet ski run onto sand is beached on it: ' + JSON.stringify(edges.beach));
+  t.assert(edges.saved && edges.loaded && edges.reloaded.inV === 'heli' && edges.reloaded.garage === 1, 'a save in a heli loads back in the heli with the garage: ' + JSON.stringify(edges.reloaded));
+  t.assert(edges.newGame.garage === 0 && edges.newGame.fleet > 4, 'New Game empties the garages and rebuilds the fleet: ' + JSON.stringify(edges.newGame));
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
