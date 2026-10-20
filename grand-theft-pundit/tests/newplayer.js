@@ -35,6 +35,7 @@ const H = require('./_harness');
 const SEED = +(process.env.NEWPLAYER_SEED || 7);
 const BUDGET = +(process.env.NEWPLAYER_BUDGET || 600);
 const VERBOSE = !!process.env.NEWPLAYER_VERBOSE;
+const MOCK = !!process.env.NEWPLAYER_MOCK;   // a crude v0.3 stand-in (tests/regress/qa_b_lib_v03mock.js) to exercise this test's own paths
 const STEPS = [
   ['title', 'Title menu shows NEW GAME; Enter starts a new game'],
   ['story_1min', 'In the story within 60 s (a mission starts by itself)'],
@@ -57,7 +58,7 @@ function installPlayer(budget) {
   const NP = window.NP = {
     budget,
     t0steps: GTP.game.steps,
-    log: [], notes: {}, events: { gps: [], phone: [], chapter: [], interiorEnter: [], interiorExit: [], coverEnter: 0, saved: [], complete: [], start: [], fail: [], range: [], buy: [], objective: [] },
+    log: [], notes: {}, events: { gps: [], phone: [], chapter: [], interiorEnter: [], interiorExit: [], coverEnter: 0, saved: [], complete: [], start: [], fail: [], range: [], rangeStart: null, buy: [], objective: [] },
     held: {},
     usedFallback: {},
     // ---- clock: simulated seconds since the Enter press (fixed steps the game ran) ----
@@ -111,6 +112,9 @@ function installPlayer(budget) {
         return true;
       }
       if (ui.confirm) { NP.press('confirm'); return true; }
+      // a ringing phone (phone:call): answer it as the prompt says
+      const ph = ui.phone || ui.call || ui.phoneCall;
+      if (ph && (ph.ringing || ph.incoming) && !ph.answered) { NP.releaseAll(); NP.press('confirm'); NP.adv(0.3); return true; }
       if (g.state === 'wasted' || g.state === 'busted') { NP.releaseAll(); NP.adv(0.5); NP.notes.deaths = (NP.notes.deaths || 0) + 1; return true; }
       if (g.state === 'paused') { NP.press('pause'); return true; }
       return false;
@@ -215,7 +219,11 @@ function installPlayer(budget) {
     // the route to a point: the game's GPS line when it draws one, else the fallback (recorded)
     routeTo(pt, mode, tag) {
       const r = NP.gpsRoute(pt.x, pt.z);
-      if (r) { NP.routeSrc = r.src; return r; }
+      if (r) {   // the GPS line runs on roads: the last steps off the road go straight at the blip
+        const last = r.pts[r.pts.length - 1];
+        if (U.dist2d(last.x, last.z, pt.x, pt.z) > 1.5) r.pts = r.pts.concat([{ x: pt.x, z: pt.z }]);
+        NP.routeSrc = r.src; return r;
+      }
       NP.usedFallback[tag || 'route'] = true; NP.routeSrc = 'fallback';
       return NP.ownRoute(pt.x, pt.z, mode);
     },
@@ -238,11 +246,15 @@ function installPlayer(budget) {
     playObjective(maxSec) {
       const text0 = NP.objectiveText(), mid = NP.hud().active, p = NP.p();
       const changed = () => NP.hud().active !== mid || NP.objectiveText() !== text0 || NP.hud().phase !== 'play';
-      const t0 = NP.now();
+      const t0 = NP.now(); let tries = 0;
       while (!changed() && NP.now() - t0 < maxSec && !NP.over()) {
         if (NP.housekeeping()) continue;
         if (GTP.game.state === 'minigame') { const r = NP.debate(120); NP.say('debate: ' + JSON.stringify(r)); NP.adv(0.5); continue; }
         const txt = text0.toLowerCase();
+        // the shooting range (m01c: "bronze at the range"): shoot the targets that pop up until range:end
+        if (NP.rangeActive() || (NP.inArmory() && /range|target|medal|bronze|silver|gold/.test(txt) && NP.rangeTargets().length)) { const r = NP.shootRange(90); NP.say('range: ' + JSON.stringify(r)); continue; }
+        // a shop counter open (the armory UI): buy what the objective names
+        if (NP.shopUiOpen() || (NP.inArmory() && /\bbuy\b|purchase|pick up a|ammo box/.test(txt) && NP.tryOpenCounter())) { const r = NP.buyFromUi(txt); NP.say('buy: ' + JSON.stringify(r)); NP.adv(0.5); continue; }
         const pt = NP.objectivePoint();
         if (!pt) { NP.adv(0.25); continue; }
         // "Get in the ..." with a vehicle under the arrow: walk to it and press F
@@ -262,7 +274,7 @@ function installPlayer(budget) {
           if (!changed()) {
             // parked beside the blip but it did not count (a kerb, a bench, a lamp in the way): roll forward a touch, then hop out for it
             const v = p.inVehicle; NP.hold('forward', true); NP.adv(0.6); NP.releaseAll(); NP.adv(0.4);
-            if (!changed() && v && U.dist2d(v.x, v.z, pt.x, pt.z) < 6 && !/back to|bring|return|drive/.test(txt)) {
+            if (!changed() && v && U.dist2d(v.x, v.z, pt.x, pt.z) < 6 && !/back to|bring|return|drive/.test(txt) && !(GTP.AI.wanted && GTP.AI.wanted.level > 0)) {
               NP.press('enter'); NP.adv(1.2); NP.notes.hopOuts = (NP.notes.hopOuts || 0) + 1;
               NP.walk(() => ({ pts: [{ x: pt.x, z: pt.z }] }), () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 0.6, 10);
             }
@@ -274,7 +286,11 @@ function installPlayer(budget) {
           NP.press('enter'); NP.adv(2);
           if (!p.inVehicle) NP.myCar = null;
         } else {
-          NP.walk(() => NP.routeTo(pt, 'ped', 'objective'), () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 40);
+          // stuck on one blip: every other attempt walks the player's own way there instead of the GPS line
+          tries++;
+          const rt = tries % 2 === 0 ? () => { NP.usedFallback.objective_retry = true; return NP.ownRoute(pt.x, pt.z, 'ped'); } : () => NP.routeTo(pt, 'ped', 'objective');
+          NP.walk(rt, () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 25);
+          if (!changed() && NP.inArmory() && U.dist2d(p.x, p.z, pt.x, pt.z) < 2) { NP.press('action'); NP.adv(1); }
         }
       }
       NP.releaseAll();
@@ -317,9 +333,17 @@ function installPlayer(budget) {
     // walk (or drive, if seated) into a mission's light; returns the mission id that started or null
     goStart(target, maxSec) {
       const p = NP.p(), t0 = NP.now();
-      if (p.inVehicle) { NP.press('enter'); NP.adv(1); }
       const started = () => !!NP.hud().active;
-      const r = NP.walk(() => NP.routeTo(target, 'ped', 'story'), started, maxSec, { keepGoing: true });
+      // far away and sitting in a car: drive there first (a new player would), then walk the last stretch
+      if (p.inVehicle && U.dist2d(p.x, p.z, target.x, target.z) > 80) {
+        NP.drive(() => NP.routeTo(target, 'car', 'story'), () => started() || U.dist2d(p.inVehicle ? p.inVehicle.x : p.x, p.inVehicle ? p.inVehicle.z : p.z, target.x, target.z) < 18, Math.min(maxSec, 120));
+      }
+      if (p.inVehicle) { NP.hold('jump', true); NP.adv(1); NP.releaseAll(); NP.press('enter'); NP.adv(1.2); }
+      // the blue light itself, when it stands a few metres off the point the GPS / story gave
+      const light = () => { const mk = NP.markers().filter((m) => m.kind === 'mission' && U.dist2d(m.x, m.z, target.x, target.z) < 30); mk.sort((a, b) => U.dist2d(a.x, a.z, target.x, target.z) - U.dist2d(b.x, b.z, target.x, target.z)); return mk[0] || null; };
+      const lt = light(); if (lt) target = { x: lt.x, z: lt.z, id: lt.id };
+      let r = NP.walk(() => NP.routeTo(target, 'ped', 'story'), started, maxSec, { keepGoing: true });
+      const lt2 = !started() && light(); if (lt2 && U.dist2d(lt2.x, lt2.z, target.x, target.z) > 1) { target = { x: lt2.x, z: lt2.z, id: lt2.id }; r = NP.walk(() => NP.routeTo(target, 'ped', 'story'), started, 40, { keepGoing: true }); }
       if (!started()) {   // circle the light once: a marker may arm only on entry
         // (a New Game spawns the player inside the first light, which arms only once they have stepped out of it)
         for (const a of [0, 1.6, 3.2, 4.8]) {
@@ -331,6 +355,73 @@ function installPlayer(budget) {
       }
       return { ok: started(), id: NP.hud().active, t: NP.now() - t0, why: r.why };
     },
+    // ---- the range: targets are the meshes the room shows (feature-detected), aimed at with mouse look ----
+    rangeActive() { const e = NP.events; return e.rangeStart != null && e.rangeStart >= (e.range.length ? e.range[e.range.length - 1].t : -1); },
+    rangeTargets() {
+      const I = GTP.Interiors, out = [];
+      const lists = I ? [I.range && I.range.targets, I.current && I.current.targets, I.current && I.current.range && I.current.range.targets, I.targets] : [];
+      for (const L of lists) if (Array.isArray(L)) for (const tg of L) {
+        if (!tg || tg.down || tg.hit || tg.dead || tg.up === false || tg.active === false) continue;
+        const m = tg.mesh || tg.obj || tg; const wp = new THREE.Vector3();
+        if (m && m.getWorldPosition) { if (m.visible === false) continue; m.getWorldPosition(wp); } else if (typeof tg.x === 'number') wp.set(tg.x, tg.y || 1.2, tg.z); else continue;
+        out.push({ x: wp.x, y: wp.y, z: wp.z, ref: tg });
+      }
+      if (!out.length && GTP.Render && GTP.Render.scene) GTP.Render.scene.traverse((o) => {   // a mesh tagged as a range target
+        const ud = o.userData || {}; if (!(ud.rangeTarget || ud.target === 'range' || /range[_-]?target/i.test(o.name || ''))) return;
+        let vis = true, a = o; while (a) { if (a.visible === false) { vis = false; break; } a = a.parent; } if (!vis || ud.down || ud.hit) return;
+        const wp = new THREE.Vector3(); o.getWorldPosition(wp); out.push({ x: wp.x, y: wp.y, z: wp.z, ref: o });
+      });
+      return out;
+    },
+    aimAt(x, y, z) {
+      const cam = GTP.Render.camera, rig = GTP.Render.rig, sens = (GTP.C.CAMERA && GTP.C.CAMERA.lookSens) || 0.0032;
+      const dx = x - cam.position.x, dz = z - cam.position.z, dist = Math.hypot(dx, dz) || 1;
+      const yawErr = U.wrapAngle(U.dirToYaw(dx, dz) - rig.yaw), pitchErr = Math.atan2(cam.position.y - y, dist) - rig.pitch;
+      In.setLook(-Math.max(-0.3, Math.min(0.3, yawErr)) / sens, Math.max(-0.3, Math.min(0.3, pitchErr)) / sens);
+      return Math.abs(yawErr) + Math.abs(pitchErr);
+    },
+    shootRange(maxSec) {
+      const t0 = NP.now(), p = NP.p(); NP.equipPistol(); let shots = 0, sweep = 0;
+      while (NP.now() - t0 < maxSec && !NP.over()) {
+        if (NP.events.range.length && NP.events.range[NP.events.range.length - 1].t >= t0) break;
+        if (NP.housekeeping()) continue;
+        const cam = GTP.Render.camera, tg = NP.rangeTargets().sort((a, b) => Math.hypot(a.x - cam.position.x, a.z - cam.position.z) - Math.hypot(b.x - cam.position.x, b.z - cam.position.z))[0];
+        NP.hold('aim', true);
+        if (tg) { const e = NP.aimAt(tg.x, tg.y, tg.z); NP.adv(1 / 30); if (e < 0.04) { NP.press('shoot'); shots++; NP.adv(0.12); } if ((p.weapons[p.weapon] | 0) === 0 && p.weapons[p.weapon] !== Infinity) NP.press('reload'); }
+        else { sweep += 1 / 30; In.setLook(Math.sin(sweep * 1.5) * 6, 0); NP.adv(1 / 30); if (Math.floor(sweep * 3) !== Math.floor((sweep - 1 / 30) * 3)) { NP.press('shoot'); shots++; } }
+        if (!NP.rangeActive() && NP.now() - t0 > 4 && NP.events.rangeStart == null) { NP.hold('aim', false); NP.press('action'); NP.adv(0.5); }
+      }
+      NP.releaseAll();
+      const last = NP.events.range[NP.events.range.length - 1];
+      return { shots, end: last && last.t >= t0 ? { score: last.score, medal: last.medal } : null, targetsSeen: NP.rangeTargets().length };
+    },
+    // ---- the counter: open it with E at Merle, pick the row the objective names, buy it ----
+    shopUiOpen() { const ui = GTP.UI.state; return !!(ui.shopOpen || (ui.armory && (ui.armory.open || ui.armory.active))); },
+    tryOpenCounter() {
+      const p = NP.p(), a = NP.arrow(); if (a && U.dist2d(p.x, p.z, a.x, a.z) > 2.5) return false;
+      NP.press('action'); NP.adv(0.6); return NP.shopUiOpen();
+    },
+    buyFromUi(txt) {
+      const ui = GTP.UI.state, n0 = NP.events.buy.length;
+      const want = /ammo/.test(txt) ? /ammo|rounds|box/i : /armor|vest/.test(txt) ? /armor|vest/i : null;
+      // the UI's list as it is drawn: armory.items or the v0.2 shop rows; walk it with S / Down until the highlighted row matches
+      const rows = () => { const A = ui.armory; if (A && Array.isArray(A.items)) return { items: A.items, sel: () => A.sel }; const S = ui.shop; if (S && Array.isArray(S.items)) return { items: S.items, sel: () => S.sel }; return null; };
+      const r = rows();
+      if (r && want) {
+        for (let i = 0; i < r.items.length + 2; i++) { const it = r.items[r.sel()]; if (it && want.test(String(it.name || it.label || it.kind || '')) && !it.owned && !it.locked) break; NP.press('back'); NP.adv(0.05); }
+        NP.press('confirm'); NP.adv(0.4);
+      }
+      let how = r ? 'ui rows' : 'no readable row list';
+      if (NP.events.buy.length === n0) {
+        // the UI's list is not readable from outside: buy through the shop API the UI itself calls, and say so
+        const CB = GTP.Combat; let item = null;
+        try { const cat = CB.catalog ? CB.catalog(NP.interior() && NP.interior().store) : []; item = cat.find((c) => (want ? want.test(c.kind + ' ' + c.name) : true) && !c.locked && (c.kind === 'ammo' ? NP.isPistol(c.weaponId) || true : true)); } catch (e) { item = null; }
+        if (item && CB.buy) { const res = CB.buy(item.id, {}); how += '; bought "' + item.name + '" through GTP.Combat.buy (' + JSON.stringify(res) + ')'; NP.warn('m01c buy: the armory list could not be driven from the screen, used GTP.Combat.buy'); }
+      }
+      for (let i = 0; i < 4 && NP.shopUiOpen(); i++) { NP.press('cancel'); NP.adv(0.3); }
+      return { bought: NP.events.buy.length > n0, how };
+    },
+    warn(s) { NP.warnings = NP.warnings || []; if (NP.warnings.indexOf(s) < 0) NP.warnings.push(s); },
     // ---- v0.3 features, detected ----
     interior() { const I = GTP.Interiors; if (!I) return null; const c = I.current; return I.active ? (c && typeof c === 'object' ? { id: c.id, kind: c.kind || c.template || null, store: c.store || null } : { id: String(c || I.active) }) : null; },
     inArmory() { const c = NP.interior(); return !!c && (c.kind === 'armory' || /armory|arms/i.test(String(c.id || ''))); },
@@ -375,6 +466,7 @@ function installPlayer(budget) {
   E.on('mission:start', (e) => { NP.events.start.push({ t: NP.now(), id: e && (e.id || e.missionId) }); NP.say('mission start ' + (e && (e.id || e.missionId))); });
   E.on('mission:fail', (e) => { NP.events.fail.push({ t: NP.now(), id: e && (e.id || e.missionId), why: e && (e.reason || e.why || e.text) }); NP.say('mission FAIL ' + JSON.stringify(e && { id: e.id, reason: e.reason || e.text })); });
   E.on('mission:objective', (e) => { NP.events.objective.push({ t: NP.now(), text: e && (e.text || (e.def && e.def.text)) }); });
+  E.on('range:start', () => { NP.events.rangeStart = NP.now(); });
   E.on('range:end', (e) => { NP.events.range.push(Object.assign({ t: NP.now() }, e || {})); });
   E.on('shop:buy', (e) => { NP.events.buy.push(Object.assign({ t: NP.now() }, e && { item: e.item, price: e.price })); });
   return { ok: true };
@@ -389,6 +481,7 @@ if (require.main === module) H.run('newplayer', async (t) => {
   let shotN = 0;
   const page = await t.browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.setDefaultTimeout(600000);
+  if (MOCK) { await page.addInitScript('(' + require('./regress/qa_b_lib_v03mock.js').toString() + ')()'); console.log('  NEWPLAYER_MOCK=1: v0.3 features are FAKED; this run only checks the test itself'); }
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e && e.stack || e)));
   const shot = async (name) => {
@@ -558,7 +651,7 @@ if (require.main === module) H.run('newplayer', async (t) => {
         const yaw = a / 16 * Math.PI * 2, d = GTP.util.yawToDir(yaw);
         for (let r = 0.8; r < 12; r += 0.4) { if (W.solidAt(p.x + d.x * r, p.z + d.z * r, p.y + 0.5)) { if (!best || r < best.r) best = { yaw, r }; break; } }
       }
-      const cars = GTP.Entities.near(p.x, p.z, 12, 'vehicle'); if (cars.length) { const c = cars[0], r = GTP.util.dist2d(p.x, p.z, c.x, c.z) - 1.5; if (!best || r < best.r) best = { yaw: GTP.util.dirToYaw(c.x - p.x, c.z - p.z), r, car: true }; }
+      const cars = best ? [] : GTP.Entities.near(p.x, p.z, 12, 'vehicle'); if (cars.length) { const c = cars[0], r = GTP.util.dist2d(p.x, p.z, c.x, c.z) - 1.5; if (!best || r < best.r) best = { yaw: GTP.util.dirToYaw(c.x - p.x, c.z - p.z), r, car: true }; }
       if (!best) return { ok: false, why: 'no wall or car within 12 m to take cover behind' };
       const n0 = NP.events.coverEnter;
       for (let i = 0; i < 90 && NP.events.coverEnter === n0; i++) {
@@ -601,9 +694,9 @@ if (require.main === module) H.run('newplayer', async (t) => {
     const required = ['title', 'story_1min', 'gps_first', 'm00', 'm01_van', 'm01c', 'armory', 'pistol', 'aim', 'cover', 'save'];
     const allOk = required.every((id) => steps[id].status === 'PASS');
     set('ten_min', allOk && total <= BUDGET, 'simulated ' + total.toFixed(0) + ' s of ' + BUDGET + ' s' + (allOk ? '' : ' (steps missing: ' + required.filter((id) => steps[id].status !== 'PASS').join(', ') + ')'));
-    const inPage = await ev(() => ({ log: NP.log, notes: NP.notes, events: { gps: NP.events.gps.length, phone: NP.events.phone.map((p) => p.from), chapter: NP.events.chapter, interiors: NP.events.interiorEnter, saved: NP.events.saved, complete: NP.events.complete, fail: NP.events.fail } }));
+    const inPage = await ev(() => ({ log: NP.log, notes: NP.notes, warnings: NP.warnings || [], events: { gps: NP.events.gps.length, phone: NP.events.phone.map((p) => p.from), chapter: NP.events.chapter, interiors: NP.events.interiorEnter, saved: NP.events.saved, complete: NP.events.complete, fail: NP.events.fail } }));
     const gerr = await t.gameErrors(page).catch(() => []);
-    report = { seed: SEED, budget: BUDGET, simulated: +total.toFixed(1), steps: STEPS.map(([id]) => steps[id]), screenshots: shots, events: inPage.events, notes: inPage.notes, errors: pageErrors.concat(gerr).slice(0, 20), log: inPage.log };
+    report = { seed: SEED, mock: MOCK, budget: BUDGET, simulated: +total.toFixed(1), steps: STEPS.map(([id]) => steps[id]), screenshots: shots, events: inPage.events, notes: inPage.notes, warnings: inPage.warnings, errors: pageErrors.concat(gerr).slice(0, 20), log: inPage.log };
     if (VERBOSE) console.log(inPage.log.join('\n'));
   } catch (e) {
     console.log('  the run stopped early: ' + (e && e.stack || e));
@@ -612,8 +705,9 @@ if (require.main === module) H.run('newplayer', async (t) => {
   fs.mkdirSync(t.OUT, { recursive: true });
   fs.writeFileSync(path.join(t.OUT, 'newplayer_report.json'), JSON.stringify(report, null, 1));
   // the step table
-  console.log('\n  NEW-PLAYER STEP REPORT (seed ' + SEED + ', budget ' + BUDGET + ' s simulated)');
+  console.log('\n  NEW-PLAYER STEP REPORT (seed ' + SEED + ', budget ' + BUDGET + ' s simulated)' + (MOCK ? ' [MOCKED v0.3 FEATURES]' : ''));
   STEPS.forEach(([id, desc], i) => { const s = steps[id]; console.log('  ' + String(i + 1).padStart(2) + ' ' + s.status.padEnd(4) + ' ' + id.padEnd(11) + ' ' + desc + (s.status === 'PASS' ? '' : '\n' + ' '.repeat(20) + '-> ' + s.note)); });
+  if (report && report.warnings && report.warnings.length) console.log('  warnings:\n    ' + report.warnings.join('\n    '));
   if (report && report.errors && report.errors.length) console.log('  page / game errors: ' + report.errors.length + '\n    ' + report.errors.slice(0, 5).map((e) => e.split('\n')[0]).join('\n    '));
   const failed = STEPS.filter(([id]) => steps[id].status !== 'PASS').map(([id]) => id);
   t.assert(!failed.length, 'the new-player bar is not met; missing steps: ' + failed.join(', '));
