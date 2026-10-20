@@ -12,13 +12,13 @@ bonus), an unlock tied to a story progress flag, and an epilogue ticker line whe
 | strand id | name | eccentric (cast id) | home (district) | unlock (flag) | missions | mechanics |
 |---|---|---|---|---|---|---|
 | `heckle_union` | Local 404 | Moira Cutoff, shop steward of the Amalgamated Hecklers (`moira`) | `campus_quad` (campus) | `m02_read` (`sponsored`) | `st_heckle_1..3` | bare-knuckle fight (`defeat` with `weapon: 'fist'`), ratio war, picket `survive`, wreck the scab bus, one star, union car + Kip passenger, debate vs Management |
-| `ghostwriter` | Ghost Notes | Marisol Echo-Venn, ghostwriter for podcasts that do not exist (`marisol`) | `green_room` (downtown) | `m04_hit` (`a_voice`) | `st_ghost_1..3` | timed pickups + drive, on-foot tail of the only listener, a fight, an inline race to the Listening Room |
-| `reaction_face` | Mouth Open | Gasp Haverly, professional thumbnail reaction face (`gasp`) | `strip_gas` (strip) | `m03b_range` (`range_trained`) | `st_gasp_1..3` | timed three-stop drive, stunt jump `sj_02`, two stars, wreck three vans, ratio war |
+| `ghostwriter` | Ghost Notes | Marisol Echo-Venn, ghostwriter for podcasts that do not exist (`marisol`) | `impression_alley` (downtown) | `m04_hit` (`a_voice`) | `st_ghost_1..3` | timed pickups + drive, on-foot tail of the only listener, a fight, an inline race to the Listening Room |
+| `reaction_face` | Mouth Open | Gasp Haverly, professional thumbnail reaction face (`gasp`) | `listening_room` (strip) | `m03b_range` (`range_trained`) | `st_gasp_1..3` | timed three-stop drive, stunt jump `sj_02`, two stars, wreck three vans, ratio war |
 | `daylight` | Daylight Savings | Thaddeus Wainscot, think-tank intern who has never seen daylight (`thaddeus`) | `fulcrum` (capitol) | `m05_peer` (`contract_sold`) | `st_day_1..3` | passenger ride to the sky, `collect_any` 5 of 7 under a timer, a fight, a long timed drive to the runway, two ramming SUVs |
 | `caddie` | Put Me Down for a Ten | Lyle Bunkerton, the President's caddie (`lyle`) | `goldplate_links` (hills) | `m06_rally` (`show_renamed`) | `st_caddie_1..3` | tail the rogue scorekeeper to the bridge dead drop, pickup, scooter race (podium place 3), table-leg-only fight (`equip` + `weapon`), pickup, drive |
 | `hoa_appeals` | Appeal Pending | Dewey Varnum-Pleat, live-streams his HOA appeals (`dewey`) | `hoa_hall` (suburbs) | `m10_pellets` (`hoa_enemy`) | `st_hoa_1..3` | timed pickups + goto, one star, `stop_vehicle` on a fleeing HOA SUV, pickup at the tag, passenger to the Capitol, debate vs the Board, survive the board's volunteer enforcers |
 | `proofreader` | The Second L | Ottoline Kerning, Monday Memo proofreader (`ottoline`) | `memo_press` (industrial) | `m12_memo` (`knows_memo`) | `st_proof_1..2` | truck pickups in the port container maze, drive back, timed wreck of four driving vans, ratio war vs House Style, three stars |
-| `fresh_takes` | Catch of the Day | Captain Mortimer Brine, fishmonger of takes (`brine`) | `fish_shack` (marina) | `m07b_ferry` (`ferry_friend`) | `st_brine_1..2` | timed van pickups on Manifest Quay (port) + drive back, the revolver (`equip`), wreck three trucks, two stars |
+| `fresh_takes` | Catch of the Day | Captain Mortimer Brine, fishmonger of takes (`brine`) | `velvetine_pier` (marina) | `m07b_ferry` (`ferry_friend`) | `st_brine_1..2` | timed van pickups on Manifest Quay (port) + drive back, the revolver (`equip`), wreck three trucks, two stars |
 | `standby` | Now Boarding | Rutherford Standby, six years on standby (`rutherford`) | `airport_terminal` (airport) | `m08b_jets` (`jets_arrived`) | `st_standby_1..2` | timed three-gate taxi drive, stunt jump `sj_09` (port), passenger ride to the ferry |
 | `apology` | Not as Such | Cornelius Ashby-Ledger IV, heir who would like to apologise (`cornelius`) | `heirloom_club` (uptown) | `m13_thursday` (`survived_thursday`) | `st_apology_1..2` | `stop_vehicle` on the lawyers' sedan, pickup at the tag, three stars, passenger to the museum, a fight, debate vs family counsel |
 
@@ -33,12 +33,21 @@ Supporting cast added: `listener` (Lenny Autoplay), `scorer` (Dot Tallymark), an
 
 ## Decisions
 
-- **Registration**: every strand mission is appended at load time to `GTP.Content.expansion.missions`, the list
-  `GTP.Missions.allMissions()` concatenates after the story (its cache keys on the list length). That is the mechanism the
-  expansion missions use, and it means the blue-light markers, the giver and Kip at the door, the intro two-shot, the
-  phone's MISSIONS tab, REPLAY, checkpoints / RETRY, best times, rewards, subscribers and the save (`completed`, `flags`)
-  pick them up with no other file touched. Cast and minigame opponents are merged into `GTP.Content.cast`,
-  `GTP.Content.debate.opponents` and `GTP.Content.ratio.opponents` without overwriting an existing id.
+- **Registration** (integration round 1): `GTP.Missions.allMissions()` merges `GTP.Content.strangers.missions` natively
+  as side missions (`docs/v03/story.md`), so this file no longer appends anything to `Content.expansion.missions`. The
+  blue-light markers, the giver and Kip at the door, the intro two-shot, the phone, REPLAY, RETRY, best times, rewards,
+  subscribers and the save pick them up; `Story.order()` / `next()` skip them (asserted). Cast and minigame opponents
+  are still merged here into `GTP.Content.cast`, `GTP.Content.debate.opponents` and `GTP.Content.ratio.opponents`
+  (nobody else does it) without overwriting an existing id.
+- **Home lights never share a spot** with another track's foot marker: the systems track's business properties sit on
+  the `green_room`, `strip_gas` and `fish_shack` doors with the same 1.9 m / 0.5 s trigger, so walking into Marisol's
+  light at the Green Room opened the property purchase modal and took control away (the round-1 failure). The three
+  homes moved to `impression_alley` (Marisol writes on the bench under the billboards), `listening_room` (Gasp poses for
+  thumbnails of nothing playing) and `velvetine_pier` (the Captain fishes off it; the takes still go to the shack).
+  The test now fails if any `GTP.Systems.markers()` or shop marker lies within 4 m of a home door.
+- **No live HOA patrol peds in a survive wave**: on the integrated build a `survive` wave of the AI `hoa` role hands its
+  patrol peds back to the city AI when the objective ends, and with `hoa_enemy` set they bust the player during the
+  outro. The Final Ruling wave is the board's volunteer enforcers (thugs and protesters) instead.
 - **Unlock = requires + flag**: the runtime's `available()` reads only `requires`, so each strand's first mission
   requires exactly the story mission whose `onComplete` sets the named flag (`unlock: {mission, flag}` on the mission and
   the strand). The test asserts the pair agrees. Later strand missions require the previous one only.
@@ -62,12 +71,15 @@ Supporting cast added: `listener` (Lenny Autoplay), `scorer` (Dot Tallymark), an
 Exposed:
 - `GTP.Content.strangers = { version, cast, debate, ratio, strands, missions }`
 - `GTP.Content.strangerIds` (the ten giver cast ids)
-- `GTP.Strangers = { list(), strand(id), missions(id), status(id), summary(), homes(), epilogue(id), strandOf(missionId), flagged(id) }`;
+- `GTP.Strangers = { list(), markers(), strands(), strand(id), missions(id), status(id), summary(), homes(), epilogue(id), strandOf(missionId), flagged(id) }`;
+  `list()` is the UI's phone rows `[{id: strandId, title, giver, status, line, x, z, missionId, done, total}]`; `markers()` is the
+  UI's purple blips `[{id: strandId, x, z, y, title, giver, missionId}]`, one per strand whose next mission is available, on the
+  home door, empty while any mission runs (`docs/v03/ui.md`); `strands()` returns the strand records (the old `list()`);
   `status()` is `{id, name, giver, home, district, blurb, state: 'locked'|'available'|'active'|'done', done, total, next, unlock, epilogue}`;
   `homes()` is `[{id, strand, name, giver, landmark, x, z, state, color}]` for a map legend or a phone tab
 - event `strangers:epilogue {id, name, line, giver}`; flags `st_<mission id>` and `stranger_<strand id>`
 
-Consumed (all feature-detected): `GTP.Content.expansion.missions`, `GTP.Content.cast`, `GTP.Content.debate/ratio.opponents`,
+Consumed (all feature-detected): `GTP.Content.cast`, `GTP.Content.debate/ratio.opponents`,
 `GTP.Content.opponentIds`, `GTP.Events` (`mission:objective`, `mission:complete`), `GTP.Missions.state`, `GTP.Entities`,
 `GTP.World.landmark`, `GTP.UI.ticker/toast`.
 
