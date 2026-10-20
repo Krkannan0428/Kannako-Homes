@@ -109,7 +109,10 @@
       st.parts = { legL: B.legL, legR: B.legR, armL: B.armL, armR: B.armR, torso: B.torso, head: B.head, body: m, _mesh: m };
       for (k in B) st.parts[k] = B[k];
     }
-    var now = nowS(); st.dt = clamp(now - st.t, 0, 0.1); st.t = now;
+    // blend time: the game clock's step (frames between steps, pauses and tests that sync repeatedly see 0), else the wall clock
+    var now = nowS(), g = GTP.game, gt = g && g.time ? g.time.t : null, dg = gt != null && st.gt != null ? gt - st.gt : 0;
+    // after a long gap (the ped was off screen, a test advanced the world without frames) blends land at once
+    st.dt = dg > 0.25 ? 10 : clamp(dg > 0 ? dg : now - st.t, 0, 0.1); st.t = now; st.gt = gt;
     return st;
   }
   function rot(b, x, y, z) { b.rotation.set(x, y, z); }
@@ -279,7 +282,7 @@
       gpy = 0.03 * rk; gz += 0.05 * rk;
     } else {
       // pistols: both arms out aiming, the gun down by the thigh otherwise
-      gx = 0.05 + 0.12 * (1 - aimW); gy = 0.16 * aimW - 0.36 * (1 - aimW); gz = -0.43 * aimW - 0.08 * (1 - aimW) + walk * 0.05 * (1 - aimW); gp = -1.0 * (1 - aimW); gyaw = 0.1 * (1 - aimW);
+      gx = 0.04 + 0.13 * (1 - aimW); gy = 0.18 * aimW - 0.36 * (1 - aimW); gz = -0.51 * aimW - 0.08 * (1 - aimW) + walk * 0.05 * (1 - aimW); gp = -1.0 * (1 - aimW); gyaw = 0.1 * (1 - aimW);
       gpy = 0.25 * rk; gz += 0.04 * rk; gy += 0.02 * rk;
     }
     // reload: the gun tilts and drops a little, the support hand travels to the magazine, the pouch and back
@@ -415,10 +418,10 @@
   function seatedPose(p, B, R, P, st, t) {
     var v = p.inVehicle, ud = v.mesh && v.mesh.userData, rec = ud && ud.rec, ride = P.ride;
     var sc = (p.look && p.look.scale) || 1;
-    rot(B.hips, ride ? 0.15 : -0.12, 0, 0);
+    rot(B.hips, ride ? 0.15 : -0.05, 0, 0);
     rot(B.torso, ride ? -0.3 : 0.08, 0, 0); rot(B.chest, ride ? -0.05 : 0.02, 0, 0); rot(B.neck, ride ? 0.25 : -0.05, 0, 0); rot(B.head, ride ? 0.1 : 0, 0, 0);
     if (ride) { rot(B.legL, 1.15, 0, -0.12); rot(B.legR, 1.15, 0, 0.12); rot(B.lowerLegL, -1.05, 0, 0); rot(B.lowerLegR, -1.05, 0, 0); rot(B.footL, -0.1, 0, 0); rot(B.footR, -0.1, 0, 0); }
-    else { rot(B.legL, 1.55, 0, -0.08); rot(B.legR, 1.5, 0, 0.1); rot(B.lowerLegL, -1.25, 0, 0); rot(B.lowerLegR, -1.35, 0, 0); rot(B.footL, 0.15, 0, 0); rot(B.footR, 0.25, 0, 0); }
+    else { rot(B.legL, 1.45, 0, -0.08); rot(B.legR, 1.42, 0, 0.1); rot(B.lowerLegL, -0.5, 0, 0); rot(B.lowerLegR, -0.6, 0, 0); rot(B.footL, -0.45, 0, 0); rot(B.footR, -0.35, 0, 0); }
     var driver = p.seat === 0 || v.driver === p;
     var wheel = rec && (ride ? rec.bars : rec.wheelPoint), seat = rec && rec.seats && rec.seats[Math.min(p.seat | 0, rec.seats.length - 1)];
     if (driver && wheel && seat && B.chest) {
@@ -485,6 +488,9 @@
     var ride = P.ride && !v.wreck && !v.sinking && (p.seat | 0) === 0;
     var show = !firstPerson && !p.removed && p.alive && !v.wreck && !v.sinking && !(vm && !vm.visible) && !tooFar(p, Math.min(C.QUALITY.pedDraw, ride ? 999 : 55));
     if (!ride && !seat) show = false;
+    // v0.2 hides the player's own body inside a car (tests/actors.js); GTP.Anim.showPlayerInCar opts in, NPC occupants show
+    if (!ride && p.kind === 'player' && !GTP.Anim.showPlayerInCar) show = false;
+    if (!ride && !GTP.Anim.showOccupants) show = false;
     if (!ride && v.type === 'bike') show = false;
     m.visible = show;
     if (!show) return;
@@ -507,7 +513,9 @@
     armIK: armIK,
     syncMesh: syncMesh,
     legacySync: legacySync,
-    GRIP: GRIP
+    GRIP: GRIP,
+    showOccupants: true,
+    showPlayerInCar: false
   };
   Ped.prototype.syncMesh = syncMesh;
 

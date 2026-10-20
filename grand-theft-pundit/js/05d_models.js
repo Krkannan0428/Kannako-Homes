@@ -750,13 +750,31 @@
   }
 
   // ------------------------------------------------------------ the builder --
-  var GEO = new Map(), INV = new Map(), stats = { built: 0, peds: 0 };
-  function lodGeos(look) {
-    var key = lookKey(look), g = GEO.get(key);
-    if (g) return g;
-    g = [buildBody(look, 0), buildBody(look, 1), buildBody(look, 2)];
-    GEO.set(key, g); stats.built++;
-    return g;
+  // One entry per look key: LODs built on demand (mid and far at spawn, near when a ped first comes close), shared by
+  // every ped wearing the look, ref-counted; idle entries wait in a small LRU before their geometry is disposed.
+  var GEO = new Map(), IDLE = new Map(), INV = new Map(), stats = { built: 0, peds: 0, disposed: 0 }, IDLE_MAX = 48;
+  function entryFor(look) {
+    var key = lookKey(look), e = GEO.get(key);
+    if (!e) { e = { key: key, look: look, lods: [null, null, null], refs: 0 }; e.lods[2] = buildBody(look, 2); e.rig = e.lods[2].userData.rig; GEO.set(key, e); stats.built++; }
+    return e;
+  }
+  function lodOf(e, i) { if (!e.lods[i]) e.lods[i] = buildBody(e.look, i); return e.lods[i]; }
+  function acquire(e) { if (e.refs++ === 0) IDLE.delete(e.key); }
+  function release(e) {
+    if (!e || e.refs <= 0) return;
+    if (--e.refs > 0) return;
+    IDLE.set(e.key, e);
+    while (IDLE.size > IDLE_MAX) {
+      var k = IDLE.keys().next().value, old = IDLE.get(k); IDLE.delete(k); GEO.delete(k);
+      old.lods.forEach(function (g) { if (g) g.dispose(); }); stats.disposed++;
+    }
+  }
+  // Render.detach (environment track) releases a ped's look; wrapped the first time a ped is built (Render loads later)
+  function hookDetach() {
+    var R = GTP.Render; if (!R || !R.detach || R.detach._models) return;
+    var orig = R.detach;
+    R.detach = function (e) { var m = e && e.mesh, ud = m && m.userData; var r = orig.apply(this, arguments); if (ud && ud.models && ud.entry && !ud.released) { ud.released = true; release(ud.entry); } return r; };
+    R.detach._models = true;
   }
   function inverses(rig) {
     var key = rig.map(function (p) { return p[0].toFixed(4); }).join(',') + rig[11][0].toFixed(4);
@@ -768,7 +786,9 @@
   }
   function pedParts(look) {
     look = look || {};
-    var lods = lodGeos(look), rig = lods[0].userData.rig;
+    hookDetach();
+    var entry = entryFor(look), rig = entry.rig;
+    acquire(entry); lodOf(entry, 1);
     var bones = [], i;
     for (i = 0; i < BONES.length; i++) {
       var b = new THREE.Bone(); b.name = ALIAS[BONES[i]] || BONES[i]; b.userData.bone = BONES[i];
@@ -777,7 +797,7 @@
       if (PARENT[i] >= 0) bones[PARENT[i]].add(b);
       bones.push(b);
     }
-    var mesh = new THREE.SkinnedMesh(lods[0], pedMaterial());
+    var mesh = new THREE.SkinnedMesh(entry.lods[1], pedMaterial());
     mesh.name = 'skin'; mesh.castShadow = true; mesh.receiveShadow = false;
     mesh.add(bones[0]);
     mesh.bind(new THREE.Skeleton(bones, inverses(rig)), new THREE.Matrix4());
@@ -788,7 +808,7 @@
     addProps(look, bones);
     g.scale.setScalar(look.scale || 1);
     g.userData.look = look;
-    g.userData.bones = dict; g.userData.boneList = bones; g.userData.skin = mesh; g.userData.lods = lods; g.userData.lod = 0;
+    g.userData.bones = dict; g.userData.boneList = bones; g.userData.skin = mesh; g.userData.lods = entry.lods; g.userData.entry = entry; g.userData.lod = 1;
     g.userData.rest = rig; g.userData.models = true;
     stats.peds++;
     return g;
@@ -808,13 +828,698 @@
     lodFor: function (d) { return d < GTP.Models.LOD_NEAR ? 0 : d < GTP.Models.LOD_MID ? 1 : 2; },
     setLod: function (root, i) {
       var ud = root && root.userData; if (!ud || !ud.lods || ud.lod === i) return;
-      ud.lod = i; ud.skin.geometry = ud.lods[i];
+      ud.lod = i; ud.skin.geometry = ud.entry ? lodOf(ud.entry, i) : ud.lods[i];
       ud.skin.castShadow = i < 2;
       for (var k = 0; k < ud.boneList.length; k++) { var ch = ud.boneList[k].children; for (var j = 0; j < ch.length; j++) if (ch[j].name === 'prop') ch[j].visible = i < 2 && !ch[j].userData.hidden; }
     },
-    stats: function () { return { lookGeometries: stats.built, peds: stats.peds, atlasCells: ATLAS.next }; },
+    lodGeometry: function (root, i) { var ud = root && root.userData; return ud && ud.entry ? lodOf(ud.entry, i) : null; },
+    release: function (root) { var ud = root && root.userData; if (ud && ud.entry && !ud.released) { ud.released = true; release(ud.entry); } },
+    stats: function () { return { lookGeometries: stats.built, live: GEO.size - IDLE.size, idle: IDLE.size, disposed: stats.disposed, peds: stats.peds, atlasCells: ATLAS.next }; },
     _helpers: { SB: SB, tube: tube, ellipsoid: ellipsoid, torus: torus, hex3: hex3, shade: shade, mix: mix }
   };
   A.pedPartsV02 = A.pedParts;
   A.pedParts = pedParts;
+})();
+
+/* ---------------------------------------------------------------------------------------------------------------------
+ * Vehicles (GTP.Models.vehicle*): GTP.Assets.vehicleGeometry(cls, wrap, mods) for the nine C.VEHICLES classes.
+ *   Bodies are lofts: stations along the car (front = -z) through rounded cross-sections whose bottom follows the wheel
+ *   arches, a greenhouse loft with a raked windshield and rear window, pillars and black window trim, separate glass,
+ *   chrome trim, lamp pods (lens + chrome reflector) on the real surface, grille, number plates, mirrors, door seams and
+ *   handles, interior silhouettes (seats, headrests, dash, steering wheel), class extras (light bar, taxi sign, roof
+ *   rails, cargo box, bus windows, the scooter's shield). Smooth normals throughout.
+ *   Same record as v0.2 (body groups paint 0, detail 1, glass 2, head 3, tail 4, barRed 5, barBlue 6, wrap 7, chrome 8;
+ *   wheel, wheelRadius, wheelWidth, wheelOffsets, lightPoints, doorPoints, size, wrap) plus:
+ *     lods: [body0, body1, body2], wheelLods: [w0, w1, w2], seats: [{x, y, z}] (hip points, mesh frame), wheelPoint
+ *     (steering wheel centre), bars (scooter), mods (the normalised mods), finish.
+ *   mods: {paint: {primary, secondary, finish}, wheels 0..5, spoiler 0..3, tint 0..3}: wheels picks the rim, spoiler adds
+ *   a lip / duck tail / wing, tint darkens the glass, paint.secondary colours the roof, mirrors and spoiler.
+ * ------------------------------------------------------------------------------------------------------------------- */
+(function () {
+  'use strict';
+  var GTP = window.GTP = window.GTP || {};
+  var A = GTP.Assets = GTP.Assets || {};
+  var C = GTP.C, U = GTP.util, TAU = Math.PI * 2;
+  var ORDER = ['paint', 'detail', 'glass', 'head', 'tail', 'barRed', 'barBlue', 'wrap', 'chrome'];
+  function lin(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  function hex3(h) { var r = U.hexToRgb(h); return [r[0] / 255, r[1] / 255, r[2] / 255]; }
+  function pw(list, t) {
+    if (t <= list[0][0]) return list[0][1];
+    for (var i = 0; i < list.length - 1; i++) if (t <= list[i + 1][0]) { var a = list[i], b = list[i + 1], k = (t - a[0]) / (b[0] - a[0]); return a[1] + (b[1] - a[1]) * k; }
+    return list[list.length - 1][1];
+  }
+  var WHITE = [1, 1, 1], DARK = [0.07, 0.07, 0.08], TRIM = [0.04, 0.04, 0.05], CHROME = [0.82, 0.84, 0.88], GLASS = [0.55, 0.62, 0.7], SEAT = [0.13, 0.12, 0.13], DASH = [0.08, 0.08, 0.09];
+  var PLATE = [0.93, 0.92, 0.86], HEADC = [1, 0.98, 0.9], TAILC = [0.85, 0.06, 0.05], AMBER = [1, 0.62, 0.1], NAVY = [0.12, 0.17, 0.36], RED = [1, 0.12, 0.08], BLUE = [0.2, 0.45, 1], REFL = [0.75, 0.77, 0.8];
+
+  // ---------------------------------------------------------------- builder --
+  function VB() { var g = this.g = {}; ORDER.forEach(function (n) { g[n] = { p: [], n: [], c: [], uv: [], ix: [], cnt: 0 }; }); }
+  VB.prototype.vert = function (gn, x, y, z, nx, ny, nz, col, u, v) {
+    var G = this.g[gn]; G.p.push(x, y, z); G.n.push(nx, ny, nz); G.c.push(lin(col[0]), lin(col[1]), lin(col[2])); G.uv.push(u || 0, v || 0); return G.cnt++;
+  };
+  VB.prototype.tri = function (gn, a, b, c) { this.g[gn].ix.push(a, b, c); };
+  // a flat quad (a b c d counter-clockwise from the front)
+  VB.prototype.quad = function (gn, a, b, c, d, col, uvs) {
+    var ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2], vx = d[0] - b[0], vy = d[1] - b[1], vz = d[2] - b[2];
+    var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (l < 1e-10) return; nx /= l; ny /= l; nz /= l;
+    uvs = uvs || [[0, 0], [1, 0], [1, 1], [0, 1]];
+    var i0 = this.vert(gn, a[0], a[1], a[2], nx, ny, nz, col, uvs[0][0], uvs[0][1]), i1 = this.vert(gn, b[0], b[1], b[2], nx, ny, nz, col, uvs[1][0], uvs[1][1]);
+    var i2 = this.vert(gn, c[0], c[1], c[2], nx, ny, nz, col, uvs[2][0], uvs[2][1]), i3 = this.vert(gn, d[0], d[1], d[2], nx, ny, nz, col, uvs[3][0], uvs[3][1]);
+    this.g[gn].ix.push(i0, i1, i2, i0, i2, i3);
+  };
+  VB.prototype.count = function () { var n = 0; for (var k in this.g) n += this.g[k].ix.length / 3; return n; };
+  VB.prototype.build = function () {
+    var parts = [], ranges = [], self = this;
+    ORDER.forEach(function (name, gi) {
+      var G = self.g[name]; if (!G.ix.length) return;
+      parts.push(G); ranges.push({ gi: gi, count: G.ix.length });
+    });
+    var nv = 0, ni = 0; parts.forEach(function (G) { nv += G.cnt; ni += G.ix.length; });
+    var P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), Cc = new Float32Array(nv * 3), UV = new Float32Array(nv * 2), I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+    var vo = 0, io = 0;
+    parts.forEach(function (G) {
+      P.set(G.p, vo * 3); N.set(G.n, vo * 3); Cc.set(G.c, vo * 3); UV.set(G.uv, vo * 2);
+      for (var k = 0; k < G.ix.length; k++) I[io + k] = G.ix[k] + vo;
+      vo += G.cnt; io += G.ix.length;
+    });
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(Cc, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
+    geo.setIndex(new THREE.BufferAttribute(I, 1));
+    var start = 0; ranges.forEach(function (r) { geo.addGroup(start, r.count, r.gi); start += r.count; });
+    geo.computeBoundingSphere(); geo.computeBoundingBox();
+    geo.userData.tris = ni / 3;
+    return geo;
+  };
+
+  // A loft: stations [{z, pts: [[x, y], ...]}] (same count each); closed loops wrap. classify(i, j) -> {g, c} | null.
+  // Smooth normals: every grid vertex averages its quads' outward normals (outward = away from ref(i) = [x, y]).
+  function loft(vb, st, closed, classify, ref) {
+    var S = st.length, M = st[0].pts.length, i, j, Nn = [], segs = closed ? M : M - 1;
+    for (i = 0; i < S; i++) { Nn.push([]); for (j = 0; j < M; j++) Nn[i].push([0, 0, 0]); }
+    var flip = [];
+    function P(i, j) { var p = st[i].pts[j]; return [p[0], p[1], st[i].z]; }
+    for (i = 0; i < S - 1; i++) {
+      flip.push([]);
+      var r0 = ref(i), r1 = ref(i + 1), cx = (r0[0] + r1[0]) / 2, cy = (r0[1] + r1[1]) / 2, cz = (st[i].z + st[i + 1].z) / 2;
+      for (j = 0; j < segs; j++) {
+        var j1 = (j + 1) % M, a = P(i, j), b = P(i, j1), c = P(i + 1, j1), d = P(i + 1, j);
+        var ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2], vx = d[0] - b[0], vy = d[1] - b[1], vz = d[2] - b[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (l < 1e-12) { flip[i].push(0); continue; }
+        nx /= l; ny /= l; nz /= l;
+        var mx = (a[0] + c[0]) / 2 - cx, my = (a[1] + c[1]) / 2 - cy, mz = (a[2] + c[2]) / 2 - cz, f = (nx * mx + ny * my + nz * mz) >= 0 ? 1 : -1;
+        flip[i].push(f); nx *= f; ny *= f; nz *= f;
+        [[i, j], [i, j1], [i + 1, j1], [i + 1, j]].forEach(function (q) { var n = Nn[q[0]][q[1]]; n[0] += nx; n[1] += ny; n[2] += nz; });
+      }
+    }
+    for (i = 0; i < S; i++) for (j = 0; j < M; j++) { var n = Nn[i][j], l2 = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) || 1; n[0] /= l2; n[1] /= l2; n[2] /= l2; }
+    for (i = 0; i < S - 1; i++) for (j = 0; j < segs; j++) {
+      var fl = flip[i][j]; if (!fl) continue;
+      var cl = classify(i, j); if (!cl) continue;
+      var jj = (j + 1) % M, q = [[i, j], [i, jj], [i + 1, jj], [i + 1, j]], ids = [];
+      for (var k = 0; k < 4; k++) { var pp = P(q[k][0], q[k][1]), nn = Nn[q[k][0]][q[k][1]]; ids.push(vb.vert(cl.g, pp[0], pp[1], pp[2], nn[0], nn[1], nn[2], cl.c, cl.u ? cl.u[k][0] : 0, cl.u ? cl.u[k][1] : 0)); }
+      if (fl > 0) vb.g[cl.g].ix.push(ids[0], ids[1], ids[2], ids[0], ids[2], ids[3]);
+      else vb.g[cl.g].ix.push(ids[0], ids[2], ids[1], ids[0], ids[3], ids[2]);
+    }
+    return Nn;
+  }
+  // a flat cap over station i (a fan from its centroid), facing dir (-1: -z, +1: +z)
+  function cap(vb, st, i, dir, g, col) {
+    var pts = st[i].pts, z = st[i].z, cx = 0, cy = 0, M = pts.length;
+    pts.forEach(function (p) { cx += p[0]; cy += p[1]; }); cx /= M; cy /= M;
+    var c0 = vb.vert(g, cx, cy, z, 0, 0, dir, col);
+    var ids = pts.map(function (p) { return vb.vert(g, p[0], p[1], z, 0, 0, dir, col); });
+    for (var j = 0; j < M; j++) {
+      var a = ids[j], b = ids[(j + 1) % M], pa = pts[j], pb = pts[(j + 1) % M];
+      var cr = (pa[0] - cx) * (pb[1] - cy) - (pa[1] - cy) * (pb[0] - cx);   // + : counter-clockwise seen from +z
+      if ((cr > 0) === (dir > 0)) vb.g[g].ix.push(c0, a, b); else vb.g[g].ix.push(c0, b, a);
+    }
+  }
+  // a superellipsoid (p 2: an ellipsoid; 4+: a rounded box) with analytic normals; opts.deform(p) bends it
+  function blob(vb, g, cx, cy, cz, rx, ry, rz, segs, rings, col, p, deform) {
+    p = p || 2; if (p > 2 && rings < 4) rings = 4; var e = 2 / p, base = vb.g[g].cnt, i, j;
+    function sp(v, k) { return v < 0 ? -Math.pow(-v, k) : Math.pow(v, k); }
+    for (i = 0; i <= rings; i++) {
+      var v = -Math.PI / 2 + i / rings * Math.PI, cv = Math.cos(v), sv = Math.sin(v);
+      for (j = 0; j <= segs; j++) {
+        var u = j / segs * TAU, cu = Math.cos(u), su = Math.sin(u);
+        var x = rx * sp(cv, e) * sp(cu, e), y = ry * sp(sv, e), z = rz * sp(cv, e) * sp(su, e);
+        var nx = sp(cv, 2 - e) * sp(cu, 2 - e) / rx, ny = sp(sv, 2 - e) / ry, nz = sp(cv, 2 - e) * sp(su, 2 - e) / rz, l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        var pt = [cx + x, cy + y, cz + z], nn = [nx / l, ny / l, nz / l];
+        if (deform) deform(pt, nn);
+        vb.vert(g, pt[0], pt[1], pt[2], nn[0], nn[1], nn[2], typeof col === 'function' ? col(x, y, z) : col);
+      }
+    }
+    for (i = 0; i < rings; i++) for (j = 0; j < segs; j++) {
+      var a = base + i * (segs + 1) + j, b = a + 1, c = a + segs + 2, d = a + segs + 1;
+      vb.g[g].ix.push(a, c, b, a, d, c);
+    }
+  }
+  // a cylinder along an axis ('x' | 'y' | 'z') with smooth sides and flat caps
+  function cyl(vb, g, ax, cx, cy, cz, r0, r1, len, segs, col, noCaps) {
+    var base = vb.g[g].cnt, i;
+    function P(a, r, t) { var c = Math.cos(a) * r, s = Math.sin(a) * r; return ax === 'x' ? [cx + t, cy + c, cz + s] : ax === 'y' ? [cx + c, cy + t, cz + s] : [cx + c, cy + s, cz + t]; }
+    function Nr(a) { var c = Math.cos(a), s = Math.sin(a); return ax === 'x' ? [0, c, s] : ax === 'y' ? [c, 0, s] : [c, s, 0]; }
+    for (i = 0; i <= segs; i++) { var a = i / segs * TAU, n = Nr(a), p0 = P(a, r0, -len / 2), p1 = P(a, r1, len / 2); vb.vert(g, p0[0], p0[1], p0[2], n[0], n[1], n[2], col); vb.vert(g, p1[0], p1[1], p1[2], n[0], n[1], n[2], col); }
+    for (i = 0; i < segs; i++) { var k = base + i * 2; if (ax === 'y') vb.g[g].ix.push(k, k + 1, k + 3, k, k + 3, k + 2); else vb.g[g].ix.push(k, k + 3, k + 1, k, k + 2, k + 3); }
+    if (noCaps) return;
+    [-1, 1].forEach(function (sg) {
+      var r = sg < 0 ? r0 : r1, nn = ax === 'x' ? [sg, 0, 0] : ax === 'y' ? [0, sg, 0] : [0, 0, sg], cc = P(0, 0, sg * len / 2);
+      var c0 = vb.vert(g, cc[0], cc[1], cc[2], nn[0], nn[1], nn[2], col), first = vb.g[g].cnt;
+      for (var q = 0; q <= segs; q++) { var p = P(q / segs * TAU, r, sg * len / 2); vb.vert(g, p[0], p[1], p[2], nn[0], nn[1], nn[2], col); }
+      for (q = 0; q < segs; q++) { var flipC = (ax === 'y') ? sg < 0 : sg > 0; if (flipC) vb.g[g].ix.push(c0, first + q + 1, first + q); else vb.g[g].ix.push(c0, first + q, first + q + 1); }
+    });
+  }
+  // a torus around an axis (the steering wheel, the rim lips)
+  function torus(vb, g, ax, cx, cy, cz, R, r, segs, tsegs, col) {
+    var base = vb.g[g].cnt, i, j;
+    for (i = 0; i <= segs; i++) {
+      var a = i / segs * TAU, ca = Math.cos(a), sa = Math.sin(a);
+      for (j = 0; j <= tsegs; j++) {
+        var b = j / tsegs * TAU, cb = Math.cos(b), sb = Math.sin(b), rr = R + r * cb, x, y, z, nx, ny, nz;
+        if (ax === 'x') { x = cx + r * sb; y = cy + ca * rr; z = cz + sa * rr; nx = sb; ny = ca * cb; nz = sa * cb; }
+        else if (ax === 'y') { x = cx + ca * rr; y = cy + r * sb; z = cz + sa * rr; nx = ca * cb; ny = sb; nz = sa * cb; }
+        else { x = cx + ca * rr; y = cy + sa * rr; z = cz + r * sb; nx = ca * cb; ny = sa * cb; nz = sb; }
+        vb.vert(g, x, y, z, nx, ny, nz, col);
+      }
+    }
+    for (i = 0; i < segs; i++) for (j = 0; j < tsegs; j++) {
+      var p = base + i * (tsegs + 1) + j, q = p + tsegs + 1;
+      if (ax === 'y') vb.g[g].ix.push(p, p + 1, q + 1, p, q + 1, q); else vb.g[g].ix.push(p, q + 1, p + 1, p, q, q + 1);
+    }
+  }
+
+  // ----------------------------------------------------------- class specs --
+  // t runs 0 (front bumper) .. 1 (rear bumper). yt: top of the lower body (hood, beltline, deck); yb: the body's
+  // bottom edge (sill) before the arches; hw: plan-view half-width factor; cab: windshield base, roof front, roof back,
+  // rear window base (t), roofK: roof half-width / body half-width; hip: the seated hip height; ex: class extras
+  var SPECS = {
+    sedan: { yt: [[0, 0.6], [0.025, 0.68], [0.07, 0.74], [0.25, 0.8], [0.34, 0.86], [0.7, 0.9], [0.86, 0.91], [0.96, 0.88], [1, 0.76]], yb: [[0, 0.3], [0.035, 0.22], [0.965, 0.24], [1, 0.34]],
+      hw: [[0, 0.84], [0.02, 0.93], [0.06, 0.99], [0.12, 1], [0.9, 1], [0.97, 0.97], [1, 0.88]], cab: [0.335, 0.47, 0.73, 0.87], roofK: 0.8, crown: 0.025, hip: 0.56, rows: 2, rb: 0.07, rt: 0.13, bulge: 0.02, tuck: 0.05 },
+    sports: { yt: [[0, 0.44], [0.03, 0.5], [0.1, 0.56], [0.36, 0.66], [0.5, 0.7], [0.82, 0.74], [0.95, 0.74], [1, 0.62]], yb: [[0, 0.22], [0.04, 0.14], [0.96, 0.16], [1, 0.26]],
+      hw: [[0, 0.82], [0.03, 0.94], [0.1, 1], [0.6, 1.02], [0.85, 1.03], [0.97, 0.98], [1, 0.9]], cab: [0.4, 0.55, 0.66, 0.92], roofK: 0.72, crown: 0.03, hip: 0.34, rows: 1, rb: 0.07, rt: 0.12, bulge: 0.03, tuck: 0.06, wing: true },
+    suv: { yt: [[0, 0.8], [0.03, 0.88], [0.08, 0.96], [0.27, 1.02], [0.31, 1.06], [0.9, 1.1], [0.985, 1.08], [1, 0.98]], yb: [[0, 0.44], [0.035, 0.36], [0.965, 0.38], [1, 0.46]],
+      hw: [[0, 0.88], [0.025, 0.96], [0.06, 1], [0.94, 1], [0.985, 0.97], [1, 0.9]], cab: [0.3, 0.4, 0.95, 0.995], roofK: 0.86, crown: 0.02, hip: 0.74, rows: 2, rb: 0.08, rt: 0.12, bulge: 0.015, tuck: 0.04, rails: true, clad: true },
+    cop: { base: 'sedan', hip: 0.52, ex: 'cop' },
+    taxi: { base: 'sedan', hip: 0.52, ex: 'taxi' },
+    van: { yt: [[0, 0.78], [0.03, 0.86], [0.08, 0.92], [0.17, 0.98], [0.2, 1.06], [1, 1.08]], yb: [[0, 0.42], [0.035, 0.34], [0.97, 0.36], [1, 0.44]],
+      hw: [[0, 0.88], [0.025, 0.96], [0.07, 1], [0.97, 1], [1, 0.97]], cab: [0.19, 0.28, 0.985, 1.0], roofK: 0.95, crown: 0.02, hip: 0.92, rows: 1, rb: 0.08, rt: 0.08, bulge: 0.01, tuck: 0.03, cabWin: 0.42 },
+    truck: { cabT: 0.36, yt: [[0, 1.2], [0.02, 1.32], [0.06, 1.4], [0.15, 1.46], [0.18, 1.7], [0.36, 1.74]], yb: [[0, 0.62], [0.02, 0.5], [0.36, 0.5]],
+      hw: [[0, 0.88], [0.02, 0.95], [0.05, 0.98], [0.36, 0.98]], cab: [0.175, 0.23, 0.355, 0.36], roofK: 0.92, crown: 0.02, hip: 1.5, rows: 1, rb: 0.08, rt: 0.08, bulge: 0.0, tuck: 0.04, roofH: 2.62 },
+    bus: { midF: 0.62, yt: [[0, 1.4], [0.01, 1.5], [1, 1.5]], yb: [[0, 0.42], [0.012, 0.34], [0.988, 0.34], [1, 0.42]],
+      hw: [[0, 0.95], [0.012, 0.99], [0.02, 1], [0.98, 1], [0.99, 0.99], [1, 0.95]], cab: [0.0, 0.03, 0.985, 1.0], roofK: 0.94, crown: 0.03, hip: 1.05, rows: 0, rb: 0.1, rt: 0.08, bulge: 0.0, tuck: 0.03, bus: true }
+  };
+  function specFor(cls) {
+    var s = SPECS[cls] || SPECS.sedan;
+    if (s.base) { var b = SPECS[s.base], o = {}; for (var k in b) o[k] = b[k]; for (k in s) if (k !== 'base') o[k] = s[k]; return o; }
+    return s;
+  }
+
+  // the right half of a lower-body section: bottom centre -> bottom corner -> side -> shoulder -> top centre
+  function lowerHalf(hw, yb, yt, sp, q, flare) {
+    var h = Math.max(0.02, yt - yb), rb = Math.min(sp.rb, h * 0.35), rt = Math.min(sp.rt, h * 0.45), out = [];
+    var nb = [3, 2, 1][q], nt = [4, 3, 2][q], tuck = sp.tuck, tumble = sp.tumble || 0.03, crown = sp.crown;
+    var sx = hw + (flare || 0);
+    out.push([0, yb], [hw * 0.55, yb]);
+    for (var i = 0; i <= nb; i++) { var a = -Math.PI / 2 + i / nb * Math.PI / 2; out.push([sx - tuck - rb + Math.cos(a) * (rb + tuck * (i / nb)), yb + rb + Math.sin(a) * rb]); }
+    out.push([sx + sp.bulge, yb + rb + (h - rb - rt) * 0.5]);
+    for (i = 0; i <= nt; i++) { var b = i / nt * Math.PI / 2; out.push([sx - tumble - rt + Math.cos(b) * (rt + tumble * (1 - i / nt)), yt - rt + Math.sin(b) * rt]); }
+    out.push([hw * 0.45, yt + crown * 0.8], [0, yt + crown]);
+    return out;
+  }
+  // the right half of a greenhouse section: belt (side) -> roof corner -> roof centre
+  function cabinHalf(hwB, yB, hwR, yR, crown, q, midF) {
+    var h = Math.max(0, yR - yB), rc = Math.min(0.07, h * 0.4), out = [], nc = [3, 2, 1][q], f = midF || 0.5;
+    var tr = Math.min(0.035, h * 0.15);
+    out.push([hwB, yB], [hwB + (hwR + rc - hwB) * tr / Math.max(0.001, h), yB + tr], [hwB + (hwR + rc - hwB) * f, yB + (h - rc) * f], [hwR + rc, yR - rc]);
+    for (var i = 1; i <= nc; i++) { var a = i / nc * Math.PI / 2; out.push([hwR + Math.cos(a) * rc, yR - rc + Math.sin(a) * rc]); }
+    out.push([hwR * 0.5, yR + crown * 0.8], [0, yR + crown]);
+    return out;
+  }
+  function mirrorLoop(half, closed) {
+    var left = [];
+    for (var i = half.length - 2; i >= (closed ? 1 : 0); i--) left.push([-half[i][0], half[i][1]]);
+    return half.concat(left);
+  }
+  function pointIn(pts, x, y) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+
+  // ------------------------------------------------------------ car bodies --
+  function carBody(vb, cls, sp, dims, q, mods, out) {
+    var L = dims.L, W = dims.W, H = dims.H, wr = dims.wr, hl = L / 2, hw0 = W / 2, i;
+    var tEnd = sp.cabT || 1, zEnd = -hl + L * tEnd;
+    var axles = dims.axles, Ra = wr + 0.055;
+    function zOf(t) { return -hl + t * L; }
+    function archY(z) { var y = -1; axles.forEach(function (az) { var d = Math.abs(z - az); if (d < Ra) y = Math.max(y, wr + Math.sqrt(Ra * Ra - d * d) - 0.02); }); return y; }
+    function sectAt(t) {
+      var z = zOf(t), hw = hw0 * pw(sp.hw, t), yt = pw(sp.yt, t), yb = pw(sp.yb, t), ay = archY(z), flare = 0;
+      if (ay > yb) { flare = 0.018 * Math.min(1, (ay - yb) / 0.2); yb = Math.min(ay, yt - 0.06); }
+      return { z: z, pts: lowerHalf(hw, yb, yt, sp, q, flare), yb: yb, yt: yt, hw: hw };
+    }
+    // stations: a base step, the ends dense (the rounded nose and tail), dense through every arch
+    var ts = [], step = [1 / 44, 1 / 26, 1 / 14][q];
+    for (var t = 0; t <= tEnd + 1e-6; t += step) ts.push(t);
+    [0.006, 0.015, 0.03, 0.045].forEach(function (e) { ts.push(e); if (!sp.cabT) ts.push(1 - e); });
+    if (q < 2) axles.forEach(function (az) { for (var k = -6; k <= 6; k++) { var tt = (az + Ra * k / 6 - -hl) / L; if (tt > 0 && tt < tEnd) ts.push(tt); } });
+    else axles.forEach(function (az) { [-1, -0.6, 0, 0.6, 1].forEach(function (k) { var tt = (az + Ra * k - -hl) / L; if (tt > 0 && tt < tEnd) ts.push(tt); }); });
+    var cab = sp.cab; cab.forEach(function (c) { if (c <= tEnd) ts.push(c); });
+    ts.push(tEnd);
+    ts = ts.filter(function (v) { return v >= 0 && v <= tEnd + 1e-9; }).sort(function (a, b) { return a - b; }).filter(function (v, k, arr) { return k === 0 || v - arr[k - 1] > 0.0015; });
+    var st = ts.map(function (tt) { var s = sectAt(tt), lp = mirrorLoop(s.pts, true); return { z: s.z, pts: lp, t: tt, s: s }; });
+    var half = st[0].s.pts.length;
+    var paintC = WHITE, two = mods.secondary;
+    function lowerClass(i, j) {
+      var k = j < half - 1 ? j : (2 * half - 3 - j);   // index along the right half
+      var t = (st[i].t + st[i + 1].t) / 2, p = st[i].pts[j], yq = p[1];
+      if (k < 2) return { g: 'detail', c: DARK };
+      if (sp.clad && yq < st[i].s.yb + 0.12) return { g: 'detail', c: [0.12, 0.12, 0.13] };
+      if (cls === 'cop' && (t < 0.3 || t > 0.8)) return { g: 'paint', c: [0.07, 0.07, 0.08] };
+      return { g: 'paint', c: paintC };
+    }
+    loft(vb, st, true, lowerClass, function (i) { var s = st[i].s; return [0, (s.yb + s.yt) / 2]; });
+    cap(vb, st, 0, -1, 'paint', paintC);
+    cap(vb, st, st.length - 1, 1, sp.cabT ? 'detail' : 'paint', sp.cabT ? DARK : paintC);
+    out.section = sectAt;
+    out.st = st;
+    // wheel-well liners: dark half shells inside each arch
+    if (q < 2) axles.forEach(function (az) {
+      [-1, 1].forEach(function (s) {
+        var hw = hw0 * pw(sp.hw, (az + hl) / L), segs = q ? 8 : 12, base = vb.g.detail.cnt;
+        for (var k = 0; k <= segs; k++) {
+          var a = Math.PI * k / segs, ca = Math.cos(a), sa = Math.sin(a), y = wr + sa * (Ra - 0.01), z = az + ca * (Ra - 0.01);
+          vb.vert('detail', s * (hw - 0.02), y, z, 0, -sa, -ca, TRIM); vb.vert('detail', s * (hw - 0.36), y, z, 0, -sa, -ca, TRIM);
+        }
+        for (k = 0; k < segs; k++) { var b = base + k * 2; if (s > 0) vb.g.detail.ix.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); else vb.g.detail.ix.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); }
+      });
+    });
+    // ---- the greenhouse
+    var tA = cab[0], tR0 = cab[1], tR1 = cab[2], tC = cab[3], roofH = sp.roofH || H;
+    var cts = [], cstep = [1 / 60, 1 / 34, 1 / 16][q];
+    for (t = tA; t <= tC + 1e-6; t += cstep) cts.push(t);
+    var pillarB = (tR0 + tR1) / 2 + (sp.rows === 2 ? -0.02 : 0.1), pb = 0.06 / L;
+    var pillars = [];
+    if (sp.bus) { var nW = 8, wl = (tR1 - tR0) / nW; for (var w = 0; w <= nW; w++) pillars.push([tR0 + w * wl - 0.006, tR0 + w * wl + 0.006]); }
+    else if (cls === 'van') pillars.push([sp.cabWin, 2]);
+    else if (cls === 'truck') pillars.push([tR1 - 0.012, 2]);
+    else if (sp.rows === 2) pillars.push([pillarB - pb, pillarB + pb]);
+    [tA, tR0, tR1, tC].forEach(function (v) { cts.push(v); });
+    pillars.forEach(function (pp) { if (pp[0] > tA && pp[0] < tC) cts.push(pp[0] - 0.0005, pp[0] + 0.0005); if (pp[1] > tA && pp[1] < tC) cts.push(pp[1] - 0.0005, pp[1] + 0.0005); });
+    cts = cts.filter(function (v) { return v >= tA && v <= tC + 1e-9; }).sort(function (a, b) { return a - b; }).filter(function (v, k, arr) { return k === 0 || v - arr[k - 1] > 0.0008; });
+    function roofY(t) {
+      var yB = pw(sp.yt, t), k;
+      if (t < tR0) { k = (t - tA) / Math.max(1e-6, tR0 - tA); return yB + (roofH - yB) * Math.sin(Math.min(1, k) * Math.PI / 2 * 0.98 + 0.02) * Math.min(1, k * 4); }
+      if (t > tR1) { k = (tC - t) / Math.max(1e-6, tC - tR1); return yB + (roofH - yB) * Math.min(1, k * (sp.bus || cls === 'van' || cls === 'truck' ? 1 : 1.0)); }
+      return roofH;
+    }
+    var cst = cts.map(function (tt) {
+      var s = sectAt(tt), yB = s.yt - 0.01, yR = Math.max(yB, roofY(tt)), hwB = s.hw - (sp.tumble || 0.03) - 0.015, hwR = s.hw * sp.roofK;
+      var kk = U.clamp((yR - yB) / Math.max(0.01, roofH - yB), 0, 1); hwR = hwB + (hwR - hwB) * Math.min(1, kk * 1.6);
+      return { z: s.z, t: tt, pts: mirrorLoop(cabinHalf(hwB, yB, hwR, yR, sp.crown * kk, q, sp.midF), false), yB: yB, yR: yR };
+    });
+    var chalf = cabinHalf(1, 0, 0.8, 1, 0, q).length, nCorner = [3, 2, 1][q];
+    var glassC = mods.tintC;
+    function inPillar(t) { for (var k = 0; k < pillars.length; k++) if (t > pillars[k][0] && t < pillars[k][1]) return true; return false; }
+    function cabClass(i, j) {
+      var k = j < chalf - 1 ? j : (2 * chalf - 3 - j), t = (cst[i].t + cst[i + 1].t) / 2;
+      var side = k <= 2, corner = !side && k < 3 + nCorner, top = !side && !corner;
+      var roofZone = t > tR0 && t < tR1, windshield = t <= tR0, rear = t >= tR1;
+      var roofCol = two ? two : paintC, roofG = two ? 'detail' : 'paint';
+      if (top) return roofZone ? { g: roofG, c: roofCol } : { g: 'glass', c: glassC };
+      if (corner) return windshield && (sp.bus) ? { g: 'glass', c: glassC } : { g: roofG, c: roofCol };
+      // the sides: trim at the belt, glass in the openings, paint in the pillars and the rear quarter
+      if (sp.bus) { if (k !== 1 || inPillar(t) || rear) return { g: 'paint', c: paintC }; return { g: 'glass', c: glassC }; }
+      if (k === 0) return { g: 'detail', c: TRIM };
+      if (sp.bus) return inPillar(t) || rear ? { g: 'paint', c: paintC } : { g: 'glass', c: glassC };
+      if (inPillar(t)) return { g: 'paint', c: paintC };
+      if (rear && cls !== 'suv' && cls !== 'sports') return { g: 'paint', c: paintC };
+      return { g: 'glass', c: glassC };
+    }
+    loft(vb, cst, false, cabClass, function (i) { return [0, cst[i].yB]; });
+    if (sp.bus || cls === 'van' || cls === 'truck') {
+      // the flat back of a box body: a paint cap (the bus: a rear window in it)
+      var last = cst.length - 1; cap(vb, cst, last, 1, 'paint', paintC);
+    }
+    out.cab = { tA: tA, tR0: tR0, tR1: tR1, tC: tC, zA: zOf(tA), zR0: zOf(tR0), zR1: zOf(tR1), zC: zOf(tC), roofH: roofH, pillarB: zOf(pillarB) };
+    out.frontZ = function (x, y) { for (var k = 0; k < st.length; k++) if (pointIn(st[k].pts, x, y)) return st[k].z; return -hl; };
+    out.rearZ = function (x, y) { for (var k = st.length - 1; k >= 0; k--) if (pointIn(st[k].pts, x, y)) return st[k].z; return hl; };
+    out.sideX = function (t, y) {
+      var s = sectAt(t).pts, best = 0;
+      for (var k = 0; k < s.length - 1; k++) { var a = s[k], b = s[k + 1]; if ((a[1] - y) * (b[1] - y) <= 0 && a[0] > 0.2) { var f = (y - a[1]) / ((b[1] - a[1]) || 1); best = Math.max(best, a[0] + (b[0] - a[0]) * f); } }
+      return best || sectAt(t).hw;
+    };
+    void i;
+  }
+
+  // ------------------------------------------------------------- details --
+  function details(vb, cls, sp, dims, q, mods, B) {
+    var L = dims.L, W = dims.W, H = dims.H, wr = dims.wr, hl = L / 2, hw = W / 2, c = B.cab;
+    function zOf(t) { return -hl + t * L; }
+    var fz = function (x, y) { return B.frontZ(x, y); }, rz = function (x, y) { return B.rearZ(x, y); };
+    var segs = [16, 10, 6][q], small = [10, 6, 4][q];
+    // ---- head lamps: a chrome reflector and a lens pod on the nose surface
+    var ly = pw(sp.yt, 0.03) - (cls === 'bus' ? 0.6 : cls === 'truck' ? 0.45 : 0.13), lx = hw * (cls === 'bus' ? 0.72 : 0.66), lw = cls === 'sports' ? 0.2 : cls === 'truck' ? 0.16 : 0.17, lh = cls === 'sports' ? 0.055 : 0.075;
+    if (cls === 'bus') ly = 0.75; if (cls === 'truck') ly = 0.82; if (cls === 'van') ly = 0.68; if (cls === 'suv') ly = 0.82;
+    [-1, 1].forEach(function (s) {
+      var z = fz(s * lx, ly);
+      if (q < 2) blob(vb, 'chrome', s * lx, ly, z + 0.012, lw + 0.015, lh + 0.015, 0.04, small, 5, REFL, 4);
+      blob(vb, 'head', s * lx, ly, z + 0.006, lw, lh, 0.035, small, q ? 3 : 5, HEADC, 4);
+      if (q === 0) blob(vb, 'chrome', s * lx * 0.97, ly, z - 0.02, lw * 0.35, lh * 0.55, 0.012, 8, 4, CHROME, 2);
+      // tail lamps on the rear surface (the bus and truck: low, square)
+      var ty = cls === 'bus' ? 0.85 : cls === 'truck' ? 0.7 : pw(sp.yt, 0.98) - 0.12, tx = hw * (cls === 'sports' ? 0.7 : 0.72), tw = cls === 'sports' ? 0.22 : 0.16;
+      var zr = cls === 'truck' ? hl : rz(s * tx, ty);
+      blob(vb, 'tail', s * tx, ty, zr - 0.008, tw, cls === 'sports' ? 0.04 : 0.06, 0.03, small, q ? 3 : 4, TAILC, 4);
+      if (q === 0) blob(vb, 'detail', s * tx, ty - 0.08, zr - 0.006, tw * 0.6, 0.016, 0.02, 8, 3, [0.9, 0.9, 0.92], 4);   // reverse lamp
+    });
+    // ---- grille, bumper lip, plates
+    var gy = cls === 'sports' ? 0.32 : cls === 'suv' ? 0.66 : cls === 'van' ? 0.55 : cls === 'truck' ? 0.75 : cls === 'bus' ? 0.5 : 0.45;
+    var gw = cls === 'truck' ? 0.62 : cls === 'suv' ? 0.42 : cls === 'sports' ? 0.4 : 0.34, gh = cls === 'truck' ? 0.32 : cls === 'suv' ? 0.12 : 0.07;
+    if (cls !== 'bus') {
+      var gz = fz(0, gy);
+      blob(vb, 'detail', 0, gy, gz + 0.01, gw, gh, 0.03, small, 4, TRIM, 5);
+      blob(vb, 'chrome', 0, gy, gz + 0.016, gw + 0.02, gh + 0.015, 0.024, small, 4, cls === 'sports' ? [0.2, 0.2, 0.22] : CHROME, 5);
+      if (q === 0) for (var k = -2; k <= 2; k++) blob(vb, 'chrome', 0, gy + k * gh * 0.36, gz - 0.008, gw * 0.92, 0.006, 0.01, 6, 2, CHROME, 4);
+      // the lower intake
+      var iy = (cls === 'sports' ? 0.2 : pw(sp.yb, 0.01) + 0.08);
+      if (q < 2) blob(vb, 'detail', 0, iy, fz(0, iy) + 0.012, hw * 0.55, 0.035, 0.025, small, 3, TRIM, 5);
+    }
+    var py = cls === 'bus' ? 0.55 : cls === 'truck' ? 0.6 : cls === 'sports' ? 0.28 : pw(sp.yb, 0.98) + 0.17;
+    function plate(z, dir) {
+      blob(vb, 'detail', 0, py, z + dir * 0.006, 0.26, 0.065, 0.008, 8, 2, PLATE, 6);
+      if (q === 0) { blob(vb, 'detail', 0, py, z + dir * 0.012, 0.18, 0.02, 0.003, 6, 2, [0.15, 0.2, 0.4], 6); }
+    }
+    plate(cls === 'truck' ? hl : rz(0, py), 1);
+    if (cls !== 'bus') plate(fz(0, Math.max(py - 0.04, 0.3)), -1);
+    // ---- mirrors (secondary colour when two-tone)
+    var my = pw(sp.yt, c.tA) + 0.08, mz = c.zA + 0.12, mxs = B.sideX(c.tA + 0.02, pw(sp.yt, c.tA) - 0.02);
+    if (cls !== 'bus' || q < 2) [-1, 1].forEach(function (s) {
+      blob(vb, mods.secondary ? 'detail' : 'paint', s * (mxs + 0.09), my + (cls === 'bus' || cls === 'truck' ? 0.3 : 0), mz, 0.07, 0.05, 0.04, small, 4, mods.secondary || WHITE, 3);
+      if (q < 2) blob(vb, 'detail', s * (mxs + 0.035), my - 0.02, mz + 0.01, 0.04, 0.015, 0.02, 6, 3, TRIM, 3);
+    });
+    // ---- door seams, handles, a chrome belt strip
+    if (q === 0 && cls !== 'bus') {
+      var doors = sp.rows === 2 ? [c.tA - 0.01, (c.tR0 + c.tR1) / 2 - 0.02, c.tR1 + 0.005] : cls === 'van' ? [c.tA - 0.005, sp.cabWin + 0.005, 0.6, 0.97] : [c.tA - 0.01, c.tR1 + 0.03];
+      doors.forEach(function (t, di) {
+        var y0 = pw(sp.yb, t) + 0.05 + (sp.clad ? 0.12 : 0), y1 = pw(sp.yt, t) - 0.03;
+        [-1, 1].forEach(function (s) {
+          var x0 = B.sideX(t, y0), x1 = B.sideX(t, y1), xm = B.sideX(t, (y0 + y1) / 2), z = zOf(t);
+          var nv = 3, pts = [];
+          for (var k2 = 0; k2 <= nv; k2++) { var yy = y0 + (y1 - y0) * k2 / nv; pts.push([s * (B.sideX(t, yy) + 0.003), yy]); }
+          for (k2 = 0; k2 < nv; k2++) { var a = pts[k2], b = pts[k2 + 1]; if (s > 0) vb.quad('detail', [a[0], a[1], z - 0.006], [a[0], a[1], z + 0.006], [b[0], b[1], z + 0.006], [b[0], b[1], z - 0.006], TRIM); else vb.quad('detail', [a[0], a[1], z + 0.006], [a[0], a[1], z - 0.006], [b[0], b[1], z - 0.006], [b[0], b[1], z + 0.006], TRIM); }
+          if (di < doors.length - 1 || doors.length === 2) {
+            var hzz = di < doors.length - 1 ? zOf(doors[di + 1]) - 0.22 : z + 0.0, hy = y1 - 0.09;
+            if (di < doors.length - 1) blob(vb, 'chrome', s * (B.sideX((hzz + hl) / L, hy) + 0.008), hy, hzz, 0.008, 0.012, 0.06, 6, 3, CHROME, 4);
+          }
+          void x0; void x1; void xm;
+        });
+      });
+    }
+    // ---- interior: seats with headrests, the dash, the steering wheel
+    var hip = sp.hip, seats = [], seatX = Math.min(0.4, hw * 0.42), hz = c.zR0 + (cls === 'sports' ? 0.32 : cls === 'van' || cls === 'truck' ? 0.38 : 0.24);
+    if (cls === 'bus') { hz = -hl + 1.0; seatX = hw * 0.55; }
+    seats.push({ x: -seatX, y: hip, z: hz });
+    if (cls !== 'bus') seats.push({ x: seatX, y: hip, z: hz });
+    if (sp.rows === 2) { seats.push({ x: -seatX, y: hip + 0.02, z: hz + 0.88 }); seats.push({ x: seatX, y: hip + 0.02, z: hz + 0.88 }); }
+    if (cls === 'van') seats.push({ x: 0, y: hip, z: hz + 0.2 });
+    if (cls === 'bus') for (var r = 0; r < 7; r++) { seats.push({ x: -hw * 0.5, y: hip, z: -hl + 2.2 + r * 1.05 }); seats.push({ x: hw * 0.5, y: hip, z: -hl + 2.2 + r * 1.05 }); }
+    B.seats = seats;
+    var wheelPoint = { x: -seatX, y: hip + 0.32, z: hz - 0.46 };
+    if (cls === 'bus') wheelPoint = { x: -seatX, y: hip + 0.3, z: hz - 0.5 };
+    B.wheelPoint = wheelPoint;
+    if (q < 2) {
+      seats.forEach(function (s0, si) {
+        if (cls === 'bus' && si > 0 && q > 0) return;
+        blob(vb, 'detail', s0.x, s0.y - 0.13, s0.z - 0.1, 0.22, 0.06, 0.24, small, 3, SEAT, 4);
+        blob(vb, 'detail', s0.x, s0.y + 0.2, s0.z + 0.16, 0.21, 0.28, 0.06, small, 3, SEAT, 4, function (p) { p[2] += (p[1] - s0.y - 0.2) * 0.22; });
+        if (q === 0) blob(vb, 'detail', s0.x, s0.y + 0.56, s0.z + 0.23, 0.11, 0.07, 0.05, 8, 3, SEAT, 4);
+      });
+      if (cls !== 'bus') {
+        var dz = hz - 0.82, dy = pw(sp.yt, c.tA + 0.03) - 0.05;
+        blob(vb, 'detail', 0, dy, dz, hw * 0.86, 0.09, 0.16, small, 3, DASH, 5);
+        torus(vb, 'detail', 'z', wheelPoint.x, wheelPoint.y, wheelPoint.z, 0.17, 0.015, q ? 10 : 16, 5, [0.05, 0.05, 0.06]);
+        cyl(vb, 'detail', 'z', wheelPoint.x, wheelPoint.y - 0.05, wheelPoint.z - 0.18, 0.025, 0.025, 0.3, 6, DASH);
+      }
+    }
+    // ---- exhaust, under-tray
+    if (q < 2 && cls !== 'bus' && cls !== 'truck') { var ez = rz(hw * 0.55, pw(sp.yb, 0.99) + 0.06); cyl(vb, 'chrome', 'z', hw * 0.55, pw(sp.yb, 0.99) + 0.03, ez - 0.02, 0.032, 0.036, 0.12, 8, CHROME); if (cls === 'sports') cyl(vb, 'chrome', 'z', -hw * 0.55, pw(sp.yb, 0.99) + 0.03, ez - 0.02, 0.032, 0.036, 0.12, 8, CHROME); }
+    // ---- class extras
+    var roof = c.roofH;
+    if (cls === 'cop') {
+      var bz = (c.zR0 + c.zR1) / 2 - 0.1;
+      blob(vb, 'detail', 0, roof + 0.03, bz, 0.62, 0.03, 0.14, small, 3, DARK, 4);
+      blob(vb, 'barRed', -0.31, roof + 0.09, bz, 0.29, 0.055, 0.12, small, 4, RED, 4);
+      blob(vb, 'barBlue', 0.31, roof + 0.09, bz, 0.29, 0.055, 0.12, small, 4, BLUE, 4);
+      if (q < 2) {
+        // the push bar and a navy door stripe
+        var pz = -hl - 0.12; [-1, 1].forEach(function (s) { cyl(vb, 'detail', 'y', s * 0.36, 0.5, pz, 0.03, 0.03, 0.5, 6, DARK); });
+        cyl(vb, 'detail', 'x', 0, 0.68, pz, 0.03, 0.03, 0.78, 6, DARK); cyl(vb, 'detail', 'x', 0, 0.4, pz, 0.03, 0.03, 0.78, 6, DARK);
+        stripe(vb, B, sp, dims, c.tA - 0.02, c.tR1 + 0.04, 0.52, 0.6, NAVY);
+      }
+    }
+    if (cls === 'taxi') {
+      var tz = (c.zR0 + c.zR1) / 2;
+      blob(vb, 'detail', 0, roof + 0.1, tz, 0.3, 0.09, 0.12, small, 4, AMBER, 5);
+      if (q < 2) { blob(vb, 'detail', 0, roof + 0.1, tz - 0.123, 0.22, 0.04, 0.004, 6, 2, DARK, 6); blob(vb, 'detail', 0, roof + 0.1, tz + 0.123, 0.22, 0.04, 0.004, 6, 2, DARK, 6); }
+      if (q < 2) for (var ck = 0; ck < 12; ck++) { var t0 = c.tA + (c.tR1 + 0.03 - c.tA) * ck / 12, t1 = c.tA + (c.tR1 + 0.03 - c.tA) * (ck + 1) / 12; stripe(vb, B, sp, dims, t0, t1, 0.5, 0.57, ck % 2 ? DARK : [0.96, 0.96, 0.94]); }
+    }
+    if (cls === 'bus') {
+      blob(vb, 'detail', 0, H - 0.32, -hl + 0.06, hw * 0.7, 0.13, 0.03, small, 3, AMBER, 6);                          // the destination sign
+      [-hl + 0.8, hl - 3.4].forEach(function (z) { blob(vb, 'glass', hw + 0.004, 1.55, z, 0.012, 1.15, 0.48, small, 3, [0.15, 0.17, 0.2], 8); blob(vb, 'detail', hw + 0.01, 1.55, z, 0.006, 1.15, 0.012, 4, 2, TRIM, 4); });
+      stripe(vb, B, sp, dims, 0.03, 0.97, 1.28, 1.42, NAVY);
+    }
+    if (sp.rails && q < 2) [-1, 1].forEach(function (s) { cyl(vb, 'chrome', 'z', s * hw * sp.roofK * 0.82, roof + 0.05, (c.zR0 + c.zR1) / 2, 0.016, 0.016, (c.zR1 - c.zR0) * 0.9, 6, [0.2, 0.2, 0.22]); [-0.4, 0.4].forEach(function (f) { blob(vb, 'detail', s * hw * sp.roofK * 0.82, roof + 0.025, (c.zR0 + c.zR1) / 2 + f * (c.zR1 - c.zR0), 0.02, 0.03, 0.03, 6, 3, DARK, 4); }); });
+    if (sp.clad && q < 2) [-1, 1].forEach(function (s) { cyl(vb, 'detail', 'z', s * (hw - 0.02), 0.34, 0, 0.04, 0.04, L * 0.38, 6, [0.15, 0.15, 0.16]); });   // side steps
+    // spoilers: a lip, a duck tail, a wing on struts (sports carry the wing)
+    var spo = mods.spoiler != null ? mods.spoiler : (sp.wing ? 3 : 0);
+    if (spo && cls !== 'bus' && cls !== 'truck' && cls !== 'van') {
+      var sy = pw(sp.yt, 0.97), szz = zOf(0.965), scol = mods.secondary || WHITE, sg = mods.secondary ? 'detail' : 'paint';
+      if (spo === 1) blob(vb, sg, 0, sy + 0.015, szz, hw * 0.8, 0.012, 0.05, small, 3, scol, 4);
+      else if (spo === 2) blob(vb, sg, 0, sy + 0.03, szz - 0.02, hw * 0.85, 0.03, 0.08, small, 3, scol, 4, function (p) { p[1] += (p[2] - szz) * 0.4; });
+      else { [-1, 1].forEach(function (s) { blob(vb, 'detail', s * hw * 0.6, sy + 0.08, szz + 0.02, 0.012, 0.08, 0.03, 6, 3, DARK, 4); }); blob(vb, sg, 0, sy + 0.17, szz + 0.03, hw * 0.92, 0.015, 0.1, small, 3, scol, 4, function (p) { p[1] += (p[2] - szz) * 0.15; }); }
+    }
+  }
+  // a band of colour on both flanks (t0..t1, y0..y1): the cop's stripe, the taxi's checks
+  function stripe(vb, B, sp, dims, t0, t1, y0, y1, col) {
+    var L = dims.L, hl = L / 2, n = 3;
+    [-1, 1].forEach(function (s) {
+      for (var i = 0; i < n; i++) {
+        var ta = t0 + (t1 - t0) * i / n, tb = t0 + (t1 - t0) * (i + 1) / n, za = -hl + ta * L, zb = -hl + tb * L;
+        var a0 = B.sideX(ta, y0) + 0.004, a1 = B.sideX(ta, y1) + 0.004, b0 = B.sideX(tb, y0) + 0.004, b1 = B.sideX(tb, y1) + 0.004;
+        if (s > 0) vb.quad('detail', [a0, y0, za], [a1, y1, za], [b1, y1, zb], [b0, y0, zb], col);
+        else vb.quad('detail', [-a0, y0, za], [-b0, y0, zb], [-b1, y1, zb], [-a1, y1, za], col);
+      }
+    });
+  }
+
+  // --------------------------------------------------- truck cargo / van wrap --
+  function truckBox(vb, dims, q, B) {
+    var L = dims.L, W = dims.W, H = dims.H, hl = L / 2, hw = W / 2, z0 = -hl + L * 0.36 + 0.25, z1 = hl, y0 = 0.82, LG = [0.88, 0.88, 0.86];
+    var n = [8, 5, 3][q];
+    blob(vb, 'detail', 0, (y0 + H) / 2, (z0 + z1) / 2, hw, (H - y0) / 2, (z1 - z0) / 2, [16, 10, 6][q], [6, 4, 2][q], LG, 10);
+    if (q < 2) {
+      for (var k = 0; k < n; k++) { var y = y0 + 0.25 + k * (H - y0 - 0.4) / (n - 1); [-1, 1].forEach(function (s) { blob(vb, 'detail', s * (hw + 0.004), y, (z0 + z1) / 2, 0.006, 0.02, (z1 - z0) / 2 - 0.12, 4, 2, [0.72, 0.72, 0.7], 4); }); }
+      blob(vb, 'detail', 0, (y0 + H) / 2, z1 + 0.004, 0.012, (H - y0) / 2 - 0.12, 0.004, 4, 2, DARK, 4);   // the rear door seam
+      [-0.4, 0.4].forEach(function (x) { cyl(vb, 'chrome', 'y', x, (y0 + H) / 2, z1 + 0.02, 0.012, 0.012, H - y0 - 0.4, 6, CHROME); });
+    }
+    // chassis rails, the fuel tank, the exhaust stack, mud flaps
+    blob(vb, 'detail', 0, 0.62, 0.3, hw * 0.55, 0.12, hl - 0.4, 8, 3, DARK, 6);
+    if (q < 2) {
+      cyl(vb, 'chrome', 'z', -hw + 0.25, 0.62, -hl + L * 0.45, 0.22, 0.22, 0.9, 12, CHROME);
+      cyl(vb, 'chrome', 'y', hw - 0.12, 2.1, -hl + L * 0.36 + 0.1, 0.07, 0.07, 2.0, 8, CHROME);
+      [-1, 1].forEach(function (s) { blob(vb, 'detail', s * (hw - 0.2), 0.42, hl - 0.25, 0.2, 0.22, 0.01, 6, 2, TRIM, 6); });
+    }
+    // the big chrome bumper
+    blob(vb, 'chrome', 0, 0.55, -hl - 0.03, hw - 0.1, 0.13, 0.08, [14, 8, 4][q], 3, CHROME, 5);
+  }
+  function wrapPanels(vb, dims, B) {
+    var L = dims.L, H = dims.H, hl = L / 2, sp = SPECS.van, e = 0.012;
+    var wz0 = -hl + L * sp.cabWin + 0.15, wz1 = hl - 0.08, wy0 = 0.62, wy1 = H - 0.22;
+    var n = 6;
+    for (var i = 0; i < n; i++) {
+      var za = wz0 + (wz1 - wz0) * i / n, zb = wz0 + (wz1 - wz0) * (i + 1) / n, ta = (za + hl) / L, tb = (zb + hl) / L;
+      var xa0 = B.sideX(ta, wy0) + e, xb0 = B.sideX(tb, wy0) + e, xa1 = B.sideX(ta, Math.min(wy1, 1.0)) + e, xb1 = B.sideX(tb, Math.min(wy1, 1.0)) + e;
+      var xa = Math.max(xa0, xa1), xb = Math.max(xb0, xb1), ua = i / n, ub = (i + 1) / n;
+      vb.quad('wrap', [-xa, wy0, za], [-xb, wy0, zb], [-xb, wy1, zb], [-xa, wy1, za], WHITE, [[ua, 0.5], [ub, 0.5], [ub, 1], [ua, 1]]);
+      vb.quad('wrap', [xb, wy0, zb], [xa, wy0, za], [xa, wy1, za], [xb, wy1, zb], WHITE, [[1 - ub, 0.5], [1 - ua, 0.5], [1 - ua, 1], [1 - ub, 1]]);
+    }
+    var hw = dims.W / 2 - 0.12;
+    vb.quad('wrap', [-hw, wy0, hl + e], [hw, wy0, hl + e], [hw, wy1, hl + e], [-hw, wy1, hl + e], WHITE, [[0.25, 0], [0.75, 0], [0.75, 0.5], [0.25, 0.5]]);
+  }
+
+  // ------------------------------------------------------------- scooter --
+  function scooter(vb, q, mods) {
+    var s = [12, 8, 5][q], r = [6, 4, 3][q], P = WHITE;
+    blob(vb, 'detail', 0, 0.33, -0.12, 0.17, 0.03, 0.42, s, 3, DARK, 6);                                                // floorboard
+    blob(vb, 'paint', 0, 0.56, 0.42, 0.21, 0.22, 0.44, s, r, P, 3, function (p) { p[1] += (p[2] - 0.42) * 0.25; if (p[1] < 0.36) p[1] = 0.36; });   // the rear body
+    blob(vb, 'detail', 0, 0.82, 0.3, 0.16, 0.05, 0.36, s, r, SEAT, 4);                                                // the seat
+    blob(vb, 'paint', 0, 0.68, -0.68, 0.19, 0.34, 0.06, s, r, P, 3, function (p) { p[2] += (p[1] - 0.68) * 0.25; });  // the leg shield
+    blob(vb, 'paint', 0, 0.45, -0.8, 0.07, 0.07, 0.16, s, r, P, 3);                                                  // the front fender
+    cyl(vb, 'detail', 'y', 0, 0.95, -0.76, 0.025, 0.025, 0.3, 6, DARK);                                                  // the column
+    blob(vb, 'paint', 0, 1.03, -0.78, 0.13, 0.06, 0.07, s, 3, P, 4);                                                  // the headset
+    cyl(vb, 'chrome', 'x', 0, 1.04, -0.8, 0.012, 0.012, 0.62, 6, CHROME);                                                 // the bars
+    [-1, 1].forEach(function (k) { cyl(vb, 'detail', 'x', k * 0.28, 1.04, -0.8, 0.02, 0.02, 0.1, 6, DARK); if (q < 2) { cyl(vb, 'chrome', 'y', k * 0.2, 1.12, -0.78, 0.006, 0.006, 0.16, 4, CHROME); blob(vb, 'detail', k * 0.2, 1.22, -0.78, 0.04, 0.025, 0.012, 6, 3, DARK, 2); } });
+    blob(vb, 'head', 0, 1.02, -0.86, 0.06, 0.045, 0.02, 10, 4, HEADC, 2);
+    blob(vb, 'tail', 0, 0.68, 0.87, 0.07, 0.03, 0.02, 8, 3, TAILC, 4);
+    blob(vb, 'detail', 0, 0.55, 0.9, 0.08, 0.05, 0.006, 6, 2, PLATE, 6);
+    cyl(vb, 'detail', 'y', 0, 0.3, -0.72, 0.022, 0.022, 0.3, 6, DARK);                                                   // the fork
+    if (q < 2) cyl(vb, 'chrome', 'z', 0.12, 0.28, 0.62, 0.025, 0.03, 0.3, 6, CHROME);                                    // exhaust
+    void mods;
+  }
+
+  // --------------------------------------------------------------- wheels --
+  // around the x axis, symmetric (one geometry serves both sides): a rounded tyre with tread and sidewall, a rim lip,
+  // spokes per style, a brake disc and caliper behind them, a centre cap and lug nuts
+  function wheelGeo(cls, wr, ww, style, q) {
+    var vb = new VB(), g = 'paint';
+    var segs = [28, 16, 10][q], rimR = wr * (cls === 'bike' ? 0.62 : cls === 'truck' || cls === 'bus' ? 0.62 : style === 5 ? 0.6 : 0.68), hw = ww / 2;
+    var tread = [0.05, 0.05, 0.055], side = [0.1, 0.1, 0.11];
+    // the tyre: a lathe of a rounded profile [r, x]
+    var prof = [[rimR, hw * 0.92], [rimR + (wr - rimR) * 0.45, hw * 1.02], [wr * 0.985, hw * 0.92], [wr, hw * 0.65], [wr, 0]];
+    var full = prof.concat(prof.slice(0, -1).reverse().map(function (p) { return [p[0], -p[1]]; }));
+    var base = vb.g[g].cnt, n = full.length, i, j;
+    for (i = 0; i <= segs; i++) {
+      var a = i / segs * TAU, ca = Math.cos(a), sa = Math.sin(a);
+      for (j = 0; j < n; j++) {
+        var r = full[j][0], x = full[j][1], nr, nx;
+        var pj = full[Math.max(0, j - 1)], nj = full[Math.min(n - 1, j + 1)], dr = nj[0] - pj[0], dx = nj[1] - pj[1];
+        nr = -dx; nx = dr; var l = Math.sqrt(nr * nr + nx * nx) || 1; nr /= l; nx /= l;
+        if (nr < 0) { nr = -nr; nx = -nx; }
+        var col = Math.abs(x) < hw * 0.8 && r > wr * 0.95 ? tread : side;
+        if (q === 0 && Math.abs(x) < hw * 0.8 && r > wr * 0.95 && (i % 2)) col = [0.035, 0.035, 0.04];
+        vb.vert(g, x, ca * r, sa * r, nx, ca * nr, sa * nr, col);
+      }
+    }
+    for (i = 0; i < segs; i++) for (j = 0; j < n - 1; j++) { var p0 = base + i * n + j, p1 = p0 + n; vb.g[g].ix.push(p0, p1, p1 + 1, p0, p1 + 1, p0 + 1); }
+    // the rim: a lip, a dark barrel face, spokes, a cap
+    var rimC = style === 3 ? [0.92, 0.93, 0.96] : style === 4 ? [0.18, 0.18, 0.2] : style === 5 ? [0.1, 0.1, 0.11] : (cls === 'van' || cls === 'truck' || cls === 'bus' || cls === 'taxi') && !style ? [0.62, 0.63, 0.66] : cls === 'cop' && !style ? [0.12, 0.12, 0.13] : [0.75, 0.76, 0.8];
+    var face = hw * 0.78, rs = [16, 10, 6][q];
+    [-1, 1].forEach(function (s) {
+      torus(vb, g, 'x', s * face, 0, 0, rimR * 0.97, 0.012, segs, 4, rimC);
+      cyl(vb, g, 'x', s * (face - 0.035), 0, 0, rimR * 0.96, rimR * 0.96, 0.02, segs, [0.05, 0.05, 0.06], false);   // the dark barrel behind the spokes
+      if (q < 2) { cyl(vb, g, 'x', s * (face - 0.06), 0, 0, rimR * 0.78, rimR * 0.78, 0.012, rs, [0.4, 0.4, 0.42]); if (cls === 'sports' || style === 2 || style === 3) blob(vb, g, s * (face - 0.045), rimR * 0.55, rimR * 0.3, 0.02, 0.05, 0.035, 6, 3, cls === 'sports' ? [0.8, 0.12, 0.1] : [0.85, 0.75, 0.2], 3); }
+      var nsp = cls === 'bike' ? 5 : style === 1 ? 10 : style === 2 ? 16 : style === 3 ? 8 : style === 4 ? 12 : style === 5 ? 6 : (cls === 'sports' ? 10 : cls === 'suv' ? 6 : cls === 'sedan' ? 5 : 0);
+      if (q === 2) nsp = Math.min(nsp, 5);
+      if (nsp) {
+        var sw = style === 5 ? 0.05 : style === 2 ? 0.008 : nsp >= 10 ? 0.012 : 0.022, sx = s * (face - 0.01);
+        for (var k = 0; k < nsp; k++) {
+          var a0 = k / nsp * TAU + (style === 4 ? 0 : 0), ca0 = Math.cos(a0), sa0 = Math.sin(a0), mid = rimR * 0.55;
+          blob(vb, g, sx, ca0 * mid, sa0 * mid, 0.012, style === 4 ? 0.018 : sw, rimR * 0.42, 4, 2, rimC, 3, (function (A0, SX) { return function (p, n) {
+            // rotate the spoke (built along z) to its angle about x, with a little dish toward the centre
+            var y = p[1] - Math.cos(A0) * mid, z = p[2] - Math.sin(A0) * mid, rr = z, tt = y;
+            var cA = Math.cos(A0), sA = Math.sin(A0);
+            p[1] = cA * (mid + rr) - sA * tt;
+            p[2] = sA * (mid + rr) + cA * tt;
+            p[0] = SX + (p[0] - SX) - Math.sign(SX) * (1 - Math.abs(rr) / (rimR * 0.42)) * 0.012;
+            if (n) { var ny = n[1], nz = n[2]; n[1] = cA * nz - sA * ny; n[2] = sA * nz + cA * ny; }
+          }; })(a0, sx));
+        }
+      } else {
+        // a steel wheel: a pressed disc with holes and a hub cap
+        cyl(vb, g, 'x', s * (face - 0.012), 0, 0, rimR * 0.92, rimR * 0.92, 0.012, segs, rimC);
+        if (q < 2) for (var hk = 0; hk < 8; hk++) { var ha = hk / 8 * TAU; blob(vb, g, s * (face - 0.004), Math.cos(ha) * rimR * 0.62, Math.sin(ha) * rimR * 0.62, 0.004, 0.03, 0.03, 6, 3, [0.08, 0.08, 0.09], 2); }
+      }
+      blob(vb, g, s * (face + 0.004), 0, 0, 0.018, rimR * 0.26, rimR * 0.26, rs, 4, style === 4 ? [0.8, 0.12, 0.2] : nsp ? [0.3, 0.3, 0.33] : [0.75, 0.76, 0.8], 2);   // the centre cap
+      if (q === 0 && nsp) for (var lk = 0; lk < 5; lk++) { var la = lk / 5 * TAU; blob(vb, g, s * (face + 0.006), Math.cos(la) * rimR * 0.33, Math.sin(la) * rimR * 0.33, 0.008, 0.012, 0.012, 6, 3, CHROME, 2); }
+    });
+    return vb.build();
+  }
+
+  // ------------------------------------------------------------- the record --
+  var CACHE = {}, stats = { built: 0 };
+  function normMods(mods) {
+    mods = mods || {};
+    var p = mods.paint || {}, tint = U.clamp(mods.tint | 0, 0, 3);
+    return { wheels: U.clamp(mods.wheels | 0, 0, 5), spoiler: mods.spoiler == null ? null : U.clamp(mods.spoiler | 0, 0, 3), tint: tint, secondary: p.secondary ? hex3(p.secondary) : null, finish: p.finish || null, primary: p.primary || null,
+      tintC: [[0.55, 0.62, 0.7], [0.32, 0.36, 0.42], [0.16, 0.18, 0.22], [0.06, 0.06, 0.08]][tint] };
+  }
+  function modsKey(m) { return m ? [m.wheels | 0, m.spoiler == null ? '-' : m.spoiler, m.tint | 0, m.paint && m.paint.secondary || ''].join(',') : ''; }
+  function vehicleGeometry(cls, wrap, mods) {
+    var key = cls + (wrap ? ':' + wrap : '') + '|' + modsKey(mods);
+    if (CACHE[key]) return CACHE[key];
+    var spec = C.VEHICLES[cls];
+    if (!spec) { if (A.vehicleGeometryV02 && cls !== 'sedan') { var v2 = A.vehicleGeometryV02(cls, wrap); if (v2) return v2; } cls = 'sedan'; spec = C.VEHICLES.sedan; }
+    var M = normMods(mods), L = spec.length, Wd = spec.width, H = spec.height, wr = spec.wheelRadius, hl = L / 2, hw = Wd / 2;
+    var ww = cls === 'bike' ? 0.1 : (cls === 'truck' || cls === 'bus') ? 0.3 : cls === 'suv' ? 0.26 : cls === 'sports' ? 0.25 : 0.22;
+    var wx = cls === 'bike' ? 0 : hw - ww * 0.5 + 0.02, fz = -(hl - L * 0.2), bz = hl - L * 0.2;
+    var wheelOffsets;
+    if (cls === 'bike') wheelOffsets = [{ x: 0, z: -0.72, steer: true }, { x: 0, z: 0.72, steer: false }];
+    else if (cls === 'truck') wheelOffsets = [{ x: -wx, z: -hl + 1.0, steer: true }, { x: wx, z: -hl + 1.0, steer: true }, { x: -wx, z: hl - 1.0, steer: false }, { x: wx, z: hl - 1.0, steer: false }, { x: -wx, z: hl - 2.3, steer: false }, { x: wx, z: hl - 2.3, steer: false }];
+    else if (cls === 'bus') wheelOffsets = [{ x: -wx, z: -hl + 1.7, steer: true }, { x: wx, z: -hl + 1.7, steer: true }, { x: -wx, z: hl - 2.4, steer: false }, { x: wx, z: hl - 2.4, steer: false }];
+    else wheelOffsets = [{ x: -wx, z: fz, steer: true }, { x: wx, z: fz, steer: true }, { x: -wx, z: bz, steer: false }, { x: wx, z: bz, steer: false }];
+    var axles = []; wheelOffsets.forEach(function (o) { if (axles.indexOf(o.z) < 0) axles.push(o.z); });
+    var dims = { L: L, W: Wd, H: H, wr: wr, axles: axles };
+    var lods = [], info = null;
+    for (var q = 0; q < 3; q++) {
+      var vb = new VB(), B = {};
+      if (cls === 'bike') { scooter(vb, q, M); B.seats = [{ x: 0, y: 0.88, z: 0.25 }]; B.bars = { x: 0, y: 1.04, z: -0.8 }; }
+      else {
+        var sp = specFor(cls);
+        carBody(vb, cls, sp, dims, q, M, B);
+        details(vb, cls, sp, dims, q, M, B);
+        if (cls === 'truck') truckBox(vb, dims, q, B);
+        if (cls === 'van' && wrap) wrapPanels(vb, dims, B);
+      }
+      var geo = vb.build(); lods.push(geo);
+      if (q === 0) info = B;
+    }
+    var wheelLods = [0, 1, 2].map(function (k) { return wheelGeo(cls, wr, ww, M.wheels, k); });
+    var ly = cls === 'bike' ? 0.78 : cls === 'truck' ? 0.82 : cls === 'bus' ? 0.75 : 0.62;
+    var eyeZ = info.seats ? info.seats[0].z - 0.1 : -hl * 0.2, eyeY = info.seats ? Math.min(H - 0.12, info.seats[0].y + 0.72) : H * 0.82;
+    var rec = CACHE[key] = {
+      body: lods[0], groups: A.GROUPS || { paint: 0, detail: 1, glass: 2, head: 3, tail: 4, barRed: 5, barBlue: 6, wrap: 7, chrome: 8 }, wheel: wheelLods[0], wheelRadius: wr, wheelWidth: ww, wheelOffsets: wheelOffsets,
+      lightPoints: { headL: { x: -hw + 0.3, y: ly, z: -hl }, headR: { x: hw - 0.3, y: ly, z: -hl }, head: { x: 0, y: ly, z: -hl }, tailL: { x: -hw + 0.3, y: ly, z: hl }, tailR: { x: hw - 0.3, y: ly, z: hl }, roof: { x: 0, y: H + 0.1, z: 0 }, eye: { x: cls === 'bike' ? 0 : (info.seats ? info.seats[0].x : -0.4), y: eyeY, z: eyeZ } },
+      doorPoints: [{ x: -(hw + 0.7), z: -hl * 0.15, seat: 0 }, { x: hw + 0.7, z: -hl * 0.15, seat: 1 }],
+      size: { length: L, width: Wd, height: H }, wrap: wrap || null,
+      lods: lods, wheelLods: wheelLods, seats: info.seats || null, wheelPoint: info.wheelPoint || null, bars: info.bars || null,
+      mods: M, modsKey: modsKey(mods), finish: M.finish, models: true, tris: lods.map(function (g) { return g.userData.tris; })
+    };
+    stats.built++;
+    return rec;
+  }
+
+  // ---------------------------------------------- live mesh: LOD and mods --
+  var FINISH = { gloss: { roughness: 0.22, metalness: 0.35 }, metallic: { roughness: 0.3, metalness: 0.8 }, matte: { roughness: 0.85, metalness: 0.05 }, chrome: { roughness: 0.06, metalness: 1.0 } };
+  function applyFinish(mat, f, primary) {
+    if (!mat) return;
+    var F = FINISH[f]; if (F) { mat.roughness = F.roughness; mat.metalness = F.metalness; if (mat.clearcoat != null) mat.clearcoat = f === 'matte' ? 0 : 1; if (f === 'chrome') mat.color.setRGB(0.85, 0.86, 0.9); }
+    if (primary && f !== 'chrome') mat.color.set(primary);
+  }
+  function syncVehicle(v, m, ud) {
+    var body = ud._body || (ud._body = m.getObjectByName('body')); if (!body || !ud.rec) return;
+    var mk = modsKey(v.mods);
+    if (ud.rec.models && ud.rec.modsKey !== mk) {
+      var rec = vehicleGeometry(v.type || 'sedan', v.wrap, v.mods);
+      if (rec.models) { ud.rec = rec; ud.lodI = -1; }
+    }
+    if (!ud._paintTuned && ud.paint) { ud._paintTuned = true; if (!(v.mods && v.mods.paint && v.mods.paint.finish)) { ud.paint.metalness = Math.min(ud.paint.metalness, 0.28); ud.paint.roughness = Math.max(ud.paint.roughness, 0.36); } }
+    if (ud._finishKey !== mk + (v.mods && v.mods.paint ? v.mods.paint.finish + v.mods.paint.primary : '')) {
+      ud._finishKey = mk + (v.mods && v.mods.paint ? v.mods.paint.finish + v.mods.paint.primary : '');
+      if (v.mods && v.mods.paint) applyFinish(ud.paint, v.mods.paint.finish, v.mods.paint.primary);
+    }
+    var r = ud.rec; if (!r.lods) return;
+    var cam = GTP.Render && GTP.Render.camera, d = 0;
+    if (cam) { var dx = v.x - cam.position.x, dz = v.z - cam.position.z; d = Math.sqrt(dx * dx + dz * dz); }
+    var i = d < GTP.Models.VLOD_NEAR ? 0 : d < GTP.Models.VLOD_MID ? 1 : 2;
+    if (ud.lodI === i) return;
+    if (ud.lodI != null && ud.lodI >= 0 && Math.abs(i - ud.lodI) === 1) { var lim = ud.lodI < i ? (i === 1 ? GTP.Models.VLOD_NEAR : GTP.Models.VLOD_MID) + 4 : (i === 0 ? GTP.Models.VLOD_NEAR : GTP.Models.VLOD_MID) - 4; if ((ud.lodI < i && d < lim) || (ud.lodI > i && d > lim)) return; }
+    ud.lodI = i;
+    body.geometry = r.lods[i]; body.castShadow = i < 2;
+    if (ud.wheels) { ud.wheels.geometry = r.wheelLods[i]; ud.wheels.castShadow = i < 1; }
+  }
+
+  A.vehicleGeometryV02 = A.vehicleGeometry;
+  A.vehicleGeometry = vehicleGeometry;
+  var Mo = GTP.Models = GTP.Models || {};
+  Mo.vehicleGeometry = vehicleGeometry;
+  Mo.syncVehicle = syncVehicle;
+  Mo.vehicleStats = function () { return { built: stats.built }; };
+  Mo.VLOD_NEAR = 30; Mo.VLOD_MID = 80;
+  Mo.normMods = normMods; Mo.modsKey = modsKey;
+  Mo.wheelGeometry = wheelGeo;
 })();
