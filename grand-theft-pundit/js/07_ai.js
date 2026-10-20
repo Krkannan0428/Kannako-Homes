@@ -2327,6 +2327,14 @@
       setNext: function (sec) { events.t = 0; events.next = Math.max(0.01, sec); }
     },
     routeVias: routeVias,
+    // v0.3 map / minimap blips for the UI: the door markers (mod shops, clothing, barber, safehouses; the armory has its
+    // store icon already) and the running street event: [{id, kind:'place'|'event', icon, x, z, title, color}]
+    blips: function () {
+      var out = [], list = W().doors || [], i;
+      for (i = 0; i < list.length; i++) { var d = list[i]; if (d.kind === 'armory' || d.kind === 'garage') continue; out.push({ id: 'door:' + d.id, kind: 'place', icon: d.kind, x: d.x, z: d.z, title: d.label, color: d.color }); }
+      var c = events.cur; if (c) out.push({ id: 'event:' + c.id, kind: 'event', icon: 'event', x: c.x, z: c.z, title: c.def.name, color: '#ffd45a' });
+      return out;
+    },
     update: function (dt) {
       var t0 = U.now();
       stepN++;

@@ -1499,6 +1499,7 @@
     },
     // furniture a clearing may take away (never structure: buildings' props, cranes, ships, planes, pillars, containers)
     _clearable: { tree: 1, palm: 1, lamp: 1, bench: 1, hydrant: 1, bin: 1, bollard: 1, planter: 1, stanchion: 1, crate: 1, pallet: 1, luggage: 1, flag: 1, cutout: 0, sign: 1, signal: 1, busstop: 1, windsock: 1, hedge: 0, table: 0, kiosk: 0, trash: 1, edgelight: 1 },
+    _tallStructure: { billboard: 1, crane: 1, craneleg: 1, gantry: 1, canopy: 1, jetbridge: 1, mast: 1, stack: 1, pillar: 1, plane: 1, ship: 1, yacht: 1 },
     _markNoPark: function (cx, cz, r) {
       var tx0 = Math.floor((cx - r) / TILE), tx1 = Math.floor((cx + r) / TILE), tz0 = Math.floor((cz - r) / TILE), tz1 = Math.floor((cz + r) / TILE);
       for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) if (World.inBounds(tx, tz)) World._noPark[tz * World.w + tx] = 1;
@@ -1514,17 +1515,24 @@
             if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
             var tx = n.tx + dx, tz = n.tz + dz, ok = true;
             for (var qz = tz; qz < tz + 3 && ok; qz++) for (var qx = tx; qx < tx + 3 && ok; qx++) { if (!World.inBounds(qx, qz) || !padOk(tiles[qz * w + qx], qz * w + qx)) ok = false; }
+            // rotor room: no building in the ring of tiles round the pad
+            for (qz = tz - 1; qz < tz + 4 && ok; qz++) for (qx = tx - 1; qx < tx + 4 && ok; qx++) { if (World.tile(qx, qz) === T.BUILDING) ok = false; }
             if (!ok) continue;
             var cx = (tx + 1.5) * TILE, cz = (tz + 1.5) * TILE;
-            // structure (a non-clearable solid prop) on the pad rules the patch out
-            for (var k = 0; k < World.props.length && ok; k++) { var p = World.props[k]; if (p.solid && !World._clearable[p.kind] && Math.abs(p.x - cx) < 6.5 + (p.r || 0) && Math.abs(p.z - cz) < 6.5 + (p.r || 0)) ok = false; }
+            // structure on the pad (a non-clearable solid prop) or tall structure beside it (billboards, cranes, canopies,
+            // masts, pillars: a rotor's reach) rules the patch out
+            for (var k = 0; k < World.props.length && ok; k++) {
+              var p = World.props[k], dd2 = Math.max(Math.abs(p.x - cx), Math.abs(p.z - cz));
+              if (p.solid && !World._clearable[p.kind] && dd2 < 6.5 + (p.r || 0)) ok = false;
+              else if (World._tallStructure[p.kind] && dd2 < 7.5 + (p.r || 0)) ok = false;
+            }
             if (!ok) continue;
             var dd = Math.abs(dx) + Math.abs(dz);
             if (dd < bd) { bd = dd; best = { x: cx, z: cz, tx: tx + 1, tz: tz + 1 }; }
           }
         }
         if (!best) return;
-        World._removeProps(function (p) { return World._clearable[p.kind] && Math.abs(p.x - best.x) < 6.5 && Math.abs(p.z - best.z) < 6.5 && !p.landmark; });
+        World._removeProps(function (p) { var rr = p.kind === 'tree' || p.kind === 'palm' ? 9 : 6.5; return World._clearable[p.kind] && Math.abs(p.x - best.x) < rr && Math.abs(p.z - best.z) < rr && !p.landmark; });   // tree canopies overhang the rotor
         var y = World.heightAt(best.x, best.z, 0);
         World._prop({ kind: 'helipad', x: best.x, z: best.z, y: y + 0.01, rot: 0, r: 0, solid: false, h: 0.1, helipad: def.id });
         World._markNoPark(best.x, best.z, 7);

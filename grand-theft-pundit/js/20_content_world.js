@@ -313,7 +313,7 @@
     // nearest `near` (tiles), clears its small props and keeps parked cars off it.
     helipads: [
       { id: 'heli_airport', name: 'Goldplate International Helipad', near: { tx: 82, tz: 176 }, district: 'airport' },
-      { id: 'heli_tower', name: 'Goldplate Tower Helipad', near: { tx: 88, tz: 66 }, district: 'downtown' },
+      { id: 'heli_tower', name: 'Goldplate Tower Waterfront Helipad', near: { tx: 113, tz: 64 }, district: 'downtown' },   // on the promenade east of the tower (its own lot has no rotor room)
       { id: 'heli_hospital', name: 'Goldplate Memorial Helipad', near: { tx: 100, tz: 48 }, district: 'downtown' },
       { id: 'heli_port', name: 'Manifest Harbor Helipad', near: { tx: 160, tz: 205 }, district: 'port' },
       { id: 'heli_uptown', name: 'Heirloom Heights Helipad', near: { tx: 188, tz: 100 }, district: 'uptown' }
