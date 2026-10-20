@@ -112,6 +112,7 @@ function installPlayer(budget) {
         return true;
       }
       if (ui.confirm) { NP.press('confirm'); return true; }
+      if (ui.shopOpen && !NP.wantShop) { NP.releaseAll(); NP.press('cancel'); NP.adv(0.3); NP.notes.shopClosed = (NP.notes.shopClosed || 0) + 1; return true; }
       // a ringing phone (phone:call): answer it as the prompt says
       const ph = ui.phone || ui.call || ui.phoneCall;
       if (ph && (ph.ringing || ph.incoming) && !ph.answered) { NP.releaseAll(); NP.press('confirm'); NP.adv(0.3); return true; }
@@ -254,6 +255,7 @@ function installPlayer(budget) {
         // the shooting range (m01c: "bronze at the range"): shoot the targets that pop up until range:end
         if (NP.rangeActive() || (NP.inArmory() && /range|target|medal|bronze|silver|gold/.test(txt) && NP.rangeTargets().length)) { const r = NP.shootRange(90); NP.say('range: ' + JSON.stringify(r)); continue; }
         // a shop counter open (the armory UI): buy what the objective names
+        NP.wantShop = /\bbuy\b|purchase|ammo box|shop/.test(txt);
         if (NP.shopUiOpen() || (NP.inArmory() && /\bbuy\b|purchase|pick up a|ammo box/.test(txt) && NP.tryOpenCounter())) { const r = NP.buyFromUi(txt); NP.say('buy: ' + JSON.stringify(r)); NP.adv(0.5); continue; }
         const pt = NP.objectivePoint();
         if (!pt) { NP.adv(0.25); continue; }
@@ -336,7 +338,8 @@ function installPlayer(budget) {
       const started = () => !!NP.hud().active;
       // far away and sitting in a car: drive there first (a new player would), then walk the last stretch
       if (p.inVehicle && U.dist2d(p.x, p.z, target.x, target.z) > 80) {
-        NP.drive(() => NP.routeTo(target, 'car', 'story'), () => started() || U.dist2d(p.inVehicle ? p.inVehicle.x : p.x, p.inVehicle ? p.inVehicle.z : p.z, target.x, target.z) < 18, Math.min(maxSec, 120));
+        const dr = NP.drive(() => NP.routeTo(target, 'car', 'story'), () => started() || U.dist2d(p.inVehicle ? p.inVehicle.x : p.x, p.inVehicle ? p.inVehicle.z : p.z, target.x, target.z) < 18, Math.min(maxSec, 120));
+        NP.say('drove toward the story target: ' + JSON.stringify({ ok: dr.ok, t: +(dr.t || 0).toFixed(1), why: dr.why, left: Math.round(U.dist2d(p.x, p.z, target.x, target.z)) }));
       }
       if (p.inVehicle) { NP.hold('jump', true); NP.adv(1); NP.releaseAll(); NP.press('enter'); NP.adv(1.2); }
       // the blue light itself, when it stands a few metres off the point the GPS / story gave

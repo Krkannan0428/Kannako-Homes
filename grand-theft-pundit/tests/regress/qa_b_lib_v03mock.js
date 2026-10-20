@@ -56,7 +56,7 @@ module.exports = function v03mock() {
       if (!started && t > 1 && !isDone('m00_intro') && !(M.state && M.state.active)) { started = true; M.start('m00_intro'); }
       // m01c's light (test missions get no marker of their own): walking onto the door starts it
       const nx = GTP.Story.next();
-      if (nx && nx.missionId === 'm01c_both_sides' && !(M.state && M.state.active) && !p.inVehicle && U.dist2d(p.x, p.z, nx.x, nx.z) < 2) M.start('m01c_both_sides');
+      if (nx && nx.missionId === 'm01c_both_sides' && !(M.state && M.state.active) && !p.inVehicle && U.dist2d(p.x, p.z, nx.x, nx.z) < 3) M.start('m01c_both_sides');
       // the armory: within 4 m of a Both Sides Arms door
       const st = GTP.Combat.shop && GTP.Combat.shop.stores ? GTP.Combat.shop.stores() : [];
       const near = st.find((s) => U.dist2d(p.x, p.z, s.x, s.z) < 4);
