@@ -69,9 +69,10 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 - **Door markers** (`GTP.AI.doors`): a ring of light (`GTP.Render.markerMesh` / `addMarker`) at every door within 120 m.
   A foot door fires when the player walks in on foot; a drive door when the player drives in (driver, < 7 m/s). It fires
   once, then waits until the player has stepped 1.5 m out of it (and after leaving an interior the door they come out at
-  is latched; a garage that shares its kerb tile with the front door also latches the front door). While a mission or a
-  strand (race, rampage, cab shift) runs, or while wanted ("Lose the heat first."), only the armory door opens (m01c
-  walks the player into the armory as an objective).
+  is latched; a garage that shares its kerb tile with the front door also latches the front door). While a mission, a
+  race or an on-foot strand runs, or a vehicle strand (cab shift, HOA patrol) while the player sits in its vehicle
+  ("Finish what you started first."), or while wanted ("Lose the heat first."), only the armory door opens (m01c walks
+  the player into the armory as an objective).
   - shops and owned safehouses: `GTP.Interiors.enter(door.interior, {store, landmark, kind, door:{x,y,z,yaw}, property,
     branch})` where `door.yaw` faces the street and `door.interior` is `'armory' | 'clothing' | 'barber' | 'safehouse'` and `store` / `landmark` /
     `branch` name the branch (`both_sides_strip`, `lanyard_uptown`, `safe_penthouse`, ...).
@@ -104,9 +105,9 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 - **Cowering** (shots fired near a cowering civilian break it into a run): a civilian (any non-cop ped on the AI's brain) within 28 m in the line of a gun the player aims (aim
   held, a weapon that is not melee) stops, faces the player and cowers (`ped.cowering = true`, `ai.mode = 'cower'`,
   emits `ped:cower {ped}`, a "Don't shoot!" bark); 1.4 s after the aim leaves them they run. `AI.isAimedAt(ped)`.
-  For v0.2's figures a wrapper on `GTP.Ped.prototype.syncMesh` (from 07_ai at load) raises the hands and drops the head;
-  the animation track's `syncMesh` (06c, loaded later) replaces it and should read `ped.cowering` for its own hands-up
-  crouch. Screenshot: tests/out/events_cower.png.
+  For v0.2's figures a wrapper on `GTP.Ped.prototype.syncMesh` (from 07_ai at load; 06c loads before 07) raises the
+  hands and drops the head; it stands aside as soon as `GTP.Anim` exists, and the animation track should pose
+  `ped.cowering` itself (a hands-up crouch). Screenshot: tests/out/events_cower.png.
 - **Flanking**: `GTP.AI.coverAlert(x, z)` (also on the event `cover:enter` with `{x, z}` or the player's position while
   wanted; `cover:exit` ends it). The nearest chasing cop pins the player; the others alternate left and right to a point
   ~70 degrees round the cover, 8-13 m out, on walkable ground with a clear line to the player, and shoot from there.
@@ -154,7 +155,7 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 
 - `GTP.Assets.prop` (05_assets, environment): serves the six new prop kinds, from 20_content_world at load time.
 - `GTP.Strands.drivers.take` (09_missions, story): the race route fix, from 07_ai on the first AI update.
-- `GTP.Ped.prototype.syncMesh` (06_entities, shooting): the cowering pose, from 07_ai at load (superseded by 06c).
+- `GTP.Ped.prototype.syncMesh` (06_entities / 06c): the cowering pose, from 07_ai at load; inert once `GTP.Anim` exists.
 
 ## Interfaces consumed (feature-detected)
 

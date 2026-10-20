@@ -871,14 +871,15 @@
     if (shot || ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, shot || pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
   }
 
-  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load;
-  // the animation track's syncMesh (06c, loaded after this file) replaces it and reads ped.cowering itself.
+  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load
+  // (06c_animation loads before this file); once the animation track's GTP.Anim is in, it poses ped.cowering itself and
+  // this wrapper stands aside.
   (function () {
     var P = GTP.Ped && GTP.Ped.prototype; if (!P || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
     var base = P.syncMesh;
     P.syncMesh = function (alpha) {
       base.call(this, alpha);
-      if (!this.cowering || !this.alive || this.inVehicle || this.knockedDown) return;
+      if (!this.cowering || !this.alive || this.inVehicle || this.knockedDown || GTP.Anim) return;
       var parts = this._parts, m = this.mesh; if (!parts || !parts.armL || !parts.armR || !m || !m.visible) return;
       parts.armL.rotation.x = Math.PI - 0.3; parts.armR.rotation.x = Math.PI - 0.3; parts.armL.rotation.z = 0.4; parts.armR.rotation.z = -0.4;
       if (parts.head) parts.head.rotation.x = 0.3;
@@ -1918,17 +1919,23 @@
     return !pl.inVehicle && Math.abs(pl.y - d.y) < 2;
   }
   // a mission or a strand (a race, a rampage, a cab shift) runs: only the armory door stays open (m01c walks the player in)
+  // (a strand with a vehicle, a cab shift or an HOA patrol, only counts while the player sits in it: a shift left running
+  // by a parked cab must not shut every door in the city)
   function storyBusy() {
-    var Ms = GTP.Missions, St = GTP.Strands;
+    var Ms = GTP.Missions, St = GTP.Strands, pl = player();
     if (Ms && Ms.state && Ms.state.active) return true;
-    try { if (St && St.debug && St.debug.cur && St.debug.cur()) return true; if (St && St.races && St.races.cur) return true; } catch (e) { /* optional */ }
+    try {
+      if (St && St.races && St.races.cur) return true;
+      var cur = St && St.debug && St.debug.cur ? St.debug.cur() : null;
+      if (cur) return !(cur.v && pl && pl.inVehicle !== cur.v);
+    } catch (e) { /* optional */ }
     return false;
   }
   function doorTrigger(d, pl) {
     var Ev = GTP.Events, I = GTP.Interiors, v = pl.inVehicle, rec = { id: d.id, kind: d.kind, t: simT() };
     doors.latched[d.id] = true; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
     if (d.foot) doors.latched[d.foot] = true;   // a garage sharing the kerb with its front door: stepping out of the car does not walk in
-    if (d.kind !== 'armory' && storyBusy()) { rec.result = 'busy'; return; }
+    if (d.kind !== 'armory' && storyBusy()) { toast('Finish what you started first.'); rec.result = 'busy'; return; }
     if (wanted.level > 0 && d.kind !== 'armory') { toast('Lose the heat first.'); rec.result = 'wanted'; return; }
     Ev.emit('door:enter', { door: d, landmark: d.landmark, kind: d.kind, vehicle: v || null });
     var owned = d.property ? systemsOwns(d.property) : null;
