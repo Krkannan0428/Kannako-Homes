@@ -908,7 +908,8 @@
     if (!h || !g || g.state !== 'playing') return y;
     var k = h.k || 0, a = k < 0.06 ? k / 0.06 : k > 0.92 ? (1 - k) / 0.08 : 1;
     var font = F(12, '', FONT_TEXT), maxW = Math.min(px(560), W - safe.l - safe.r - px(20));
-    var lines = wrap(ctx, h.text, font, maxW - px(60)), keys = hintGlyphs(h.id, h.keys);
+    var htext = String(h.text || '').replace(/\s*\(or Q\)/g, '');   // v0.3: Q is cover now, aim is the right mouse button / LT
+    var lines = wrap(ctx, htext, font, maxW - px(60)), keys = hintGlyphs(h.id, h.keys).filter(function (k) { return !(h.id === 'h_aim' && k === 'Q'); });
     var kw = 0; for (var i = 0; i < keys.length; i++) kw += measure(ctx, keys[i], F(10, 'bold')) + px(18);
     var pw = Math.max(px(220), Math.min(maxW, Math.max(kw + px(60), measure(ctx, lines[0] || '', font) + px(60)))), ph = px(16) + lines.length * px(16) + (keys.length ? px(22) : 0);
     var x = (W - pw) / 2;
@@ -985,6 +986,7 @@
     var at = arrowTarget(); if (!at) return;
     var t = at.t, col = at.col;
     var s = Rd.worldToScreen(t.x, (t.y || 0) + 2.6, t.z);
+    if (ui.gpsLabelDrawn && ui.gps && t.x === ui.gps.x && t.z === ui.gps.z && s.visible && s.depth < 1) return;   // the floating label already marks it
     var distTxt = Math.round(t.dist) + ' m';
     var inside = s.visible && s.depth < 1 && s.sx > px(30) && s.sx < W - px(30) && s.sy > px(80) && s.sy < H - px(60);
     if (inside) {
@@ -1303,7 +1305,7 @@
   }
   function drawToasts(ctx) {
     if (!ui.toasts.length) return;
-    var y = ui.shopOpen ? safe.t + px(52) : ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0) - letterboxBar();
+    var y = ui.shopOpen || ui.modal ? safe.t + px(52) : ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0) - letterboxBar();
     for (var i = ui.toasts.length - 1; i >= 0; i--) {
       var t = ui.toasts[i], k = t.t / t.dur, a = k < 0.1 ? k / 0.1 : k > 0.8 ? (1 - k) / 0.2 : 1;
       var font = F(13, 'bold'), tw = Math.min(measure(ctx, t.text, font), W - px(60)) + px(24);
@@ -1950,7 +1952,7 @@
     txt(ctx, help, W / 2, y + ph - px(9), { font: F(10), color: COL.muted, align: 'center', outline: false, maxW: pw - px(20) });
   }
   // --------------------------------------------------------- the big map ----
-  var MAP_LEGEND = [['mission', 'Mission', '#4aa8ff'], ['objective', 'Objective', COL.amber], ['gunshop', 'Both Sides Arms', COL.green], ['rampage', 'Ratio Rampage', COL.pink], ['race', 'Loop Race', COL.white], ['ramp', 'Stunt ramp', COL.pink], ['violation', 'HOA target', COL.cream], ['home', 'Home', COL.white], ['waypoint', 'Waypoint', COL.white]];
+  var MAP_LEGEND = [['mission', 'Mission', '#4aa8ff'], ['objective', 'Objective', COL.amber], ['gunshop', 'Both Sides Arms', COL.green], ['rampage', 'Ratio Rampage', COL.pink], ['race', 'Loop Race', COL.white], ['ramp', 'Stunt ramp', COL.pink], ['violation', 'HOA target', COL.cream], ['home', 'Home', COL.white], ['waypoint', 'Waypoint', COL.white], ['dot', 'GPS route', COL.gold]];
   function mapCenterOnPlayer() { var p = player(); if (p) { ui.map.cx = p.x; ui.map.cz = p.z; } }
   function mapScale(w, h) { var bake = ensureMap(); if (!bake) return 1; return Math.min(w / bake.width, h / bake.height) * ui.map.zoom; }
   function mapClampCenter(w, h) {
@@ -3066,7 +3068,7 @@
         if (retryInput(In)) return true;
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         if (In.pressed('pause')) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action', 'confirm']); advanceDialogue(); return true; }
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (ui.golf && golfInput(In)) return true;
         if (ui.interior && ui.interior.kind === 'armory' && In.pressed('lockOn')) { openArmory(ui.interior.store && (ui.interior.store.id || ui.interior.store), null); return true; }
         if (click && ui.card && ui.card.kind === 'failed' && retryOffer()) pointerTap(In.mouse.x, In.mouse.y);
@@ -3076,7 +3078,7 @@
         // Escape skips the shot as the pill says (the cutscene reads back / cancel itself); P / Start still pause (QA-C1-08)
         var Cs = GTP.Cutscenes, chh = Cs && Cs.hud ? Cs.hud() : null, skippable = !!(chh && chh.active && chh.skippable !== false);
         if (In.pressed('pause') && !(skippable && In.pressed('cancel'))) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action', 'confirm']); advanceDialogue(); return true; }
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         return true;
       }
@@ -3303,7 +3305,9 @@
   function missionTitle(id) {
     var Ms = GTP.Missions, all = Ms && Ms.allMissions ? call(Ms.allMissions, Ms, [], []) : [];
     for (var i = 0; i < all.length; i++) if (all[i] && all[i].id === id) return all[i].title || id;
-    var pm = findById(parity().missions, id); return (pm && pm.title) || String(id || '');
+    var pm = findById(parity().missions, id); if (pm && pm.title) return pm.title;
+    var t = String(id || '').replace(/^[a-z]\d+[a-z]?_/, '').replace(/_/g, ' ');   // h01_casing -> Casing
+    return t.charAt(0).toUpperCase() + t.slice(1);
   }
   function storyNext() { var S = GTP.Story; return S && S.next ? call(S.next, S, [], null) : null; }
   function storyChapter() {
@@ -3507,8 +3511,8 @@
   }
   function drawMarkerLabels(ctx) {
     var Rd = GTP.Render, p = player(), g = game(); if (!Rd || !Rd.worldToScreen || !p || !g || g.state !== 'playing') return;
-    var list = labelTargets(), rects = [];
-    ui.labelsDrawn = 0;
+    var list = labelTargets(), rects = [], G = ui.gps;
+    ui.labelsDrawn = 0; ui.gpsLabelDrawn = false;
     for (var i = 0; i < list.length; i++) {
       var L = list[i], y = (typeof L.y === 'number' ? L.y : groundY(L.x, L.z)) + 3.6, s;
       try { s = Rd.worldToScreen(L.x, y, L.z); } catch (e) { s = null; }
@@ -3520,6 +3524,7 @@
       for (var r = 0; r < rects.length; r++) { var q = rects[r]; if (bx < q.x + q.w && bx + w > q.x && by < q.y + q.h && by + h > q.y) { clash = true; break; } }
       if (clash) continue;
       rects.push({ x: bx, y: by, w: w, h: h });
+      if (G && U.dist2d(L.x, L.z, G.x, G.z) < 8) ui.gpsLabelDrawn = true;
       ctx.save(); ctx.globalAlpha = a;
       panel(ctx, bx, by, w, h, px(8), 'rgba(9,11,22,0.78)', hexA(L.col, 0.75), 1.5);
       txt(ctx, L.title, s.sx, by + px(15), { font: font, color: COL.ink, align: 'center', outline: false, maxW: px(200) });
@@ -3671,7 +3676,7 @@
     ui.placeCard = { title: name, sub: e.kind === 'armory' ? 'We arm both sides. That\'s balance.' : e.kind === 'clothing' ? 'Dress for the outrage you want.' : e.kind === 'barber' ? 'Hair that holds a take.' : e.kind === 'safehouse' ? 'Bed saves. Wardrobe changes.' : '', t: 0 };
   }
   function drawPlaceCard(ctx) {
-    var c = ui.placeCard; if (!c) return;
+    var c = ui.placeCard; if (!c || ui.range || ui.rangeEnd) return;
     var k = c.t / 3.6, a = k < 0.1 ? k / 0.1 : k > 0.8 ? (1 - k) / 0.2 : 1;
     ctx.save(); ctx.globalAlpha = clamp01(a);
     var y = H * 0.24;
@@ -3699,7 +3704,7 @@
   function drawVehicleName(ctx) {
     var n = ui.vehName; if (!n) return;
     var k = n.t / 3, a = k < 0.12 ? k / 0.12 : k > 0.75 ? (1 - k) / 0.25 : 1, m = minimapRect();
-    var x = m.left || ui.touch.visible ? W / 2 : m.x - px(16), y = m.left || ui.touch.visible ? H * 0.34 : m.y + m.s - px(4);
+    var x = m.left || ui.touch.visible ? W / 2 : m.x - px(16), y = m.left || ui.touch.visible ? H * 0.34 : m.y + m.s - px(46);
     ctx.save(); ctx.globalAlpha = clamp01(a);
     txt(ctx, n.name, x, y, { font: F(portrait ? 20 : 26, '900', FONT_DISPLAY), color: COL.ink, align: m.left || ui.touch.visible ? 'center' : 'right', lw: px(5), outline: 'rgba(0,0,0,0.75)', maxW: W * 0.6 });
     if (n.sub) txt(ctx, n.sub, x, y + px(18), { font: F(11, 'bold'), color: COL.cyan, align: m.left || ui.touch.visible ? 'center' : 'right' });
@@ -3951,7 +3956,7 @@
     ui.vehHudCat = h ? cat : null;
     if (!h || cat === 'car' || cat === 'chute') return;
     var w = px(cat === 'bike' || cat === 'boat' ? 210 : 300), hh = px(cat === 'bike' || cat === 'boat' ? 96 : 132);
-    var x = safe.l, y = ui.touch.visible ? ui.hudTop + px(portrait ? 130 : 60) : H - safe.b - hh;
+    var mm = minimapRect(), x = safe.l, y = ui.touch.visible ? ui.hudTop + px(portrait ? 130 : 60) : mm.y + mm.s - px(40) - hh;   // clear of the radio ticker along the bottom
     if (ui.touch.visible && portrait) x = W - safe.r - w;
     glass(ctx, x, y, w, hh, cat === 'boat' ? COL.cyan : cat === 'bike' ? COL.pink : COL.amber, px(12));
     var spd = Math.abs(h.speed || 0);
@@ -4065,22 +4070,25 @@
   function bossRect() {
     var m = minimapRect(), left = safe.l + px(10), right = m.top ? W - safe.r - px(10) : m.x - px(16);
     var w = Math.min(px(620), right - left), x = left + (right - left - w) / 2;
-    var y = ui.touch.visible ? ui.objBottom + px(26) : H - safe.b - px(36);
+    var y = ui.touch.visible ? Math.max(ui.objBottom, m.top ? ui.chipBottom : 0) + px(30) : H - safe.b - px(36);
+    if (ui.touch.visible && !portrait) { w = Math.min(px(460), W - safe.l - safe.r - m.s - px(40)); x = (W - w) / 2; y = ui.objBottom + px(26); }
+    else if (ui.touch.visible) { x = safe.l + px(6); w = W - safe.l - safe.r - px(12); }
     return { x: x, y: y, w: w };
   }
   function drawBoss(ctx) {
     var b = ui.boss, g = game();
     if (ui.bossDown) drawBossDown(ctx);
     if (!b || !g || (g.state !== 'playing' && g.state !== 'cutscene')) return;
-    var r = bossRect(), k = clamp01(b.hp / Math.max(1, b.maxHp)), tk = clamp01(b.trail / Math.max(1, b.maxHp)), bh = px(12), a = Math.min(1, b.t / 0.4);
+    var r = bossRect(), k = clamp01(b.hp / Math.max(1, b.maxHp)), tk = clamp01(b.trail / Math.max(1, b.maxHp)), bh = px(14), a = Math.min(1, b.t / 0.4);
     ctx.save(); ctx.globalAlpha = a;
     txt(ctx, String(b.name).toUpperCase(), r.x, r.y - px(8), { font: F(15, '900', FONT_DISPLAY), color: COL.ink, lw: px(4), maxW: r.w * 0.7 });
     var ph = 'PHASE ' + (b.phase || 1) + (b.phases ? ' / ' + b.phases : '');
     txt(ctx, ph, r.x + r.w, r.y - px(8), { font: F(11, 'bold'), color: b.flashT > 0 && Math.floor(ui.t * 8) % 2 ? COL.ink : COL.amber, align: 'right' });
     panel(ctx, r.x, r.y, r.w, bh, px(3), 'rgba(6,7,13,0.82)', 'rgba(255,255,255,0.3)');
-    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * tk, bh - 4);
+    ctx.fillStyle = 'rgba(255,200,120,0.75)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * tk, bh - 4);
     var gr = ctx.createLinearGradient(0, r.y, 0, r.y + bh); gr.addColorStop(0, '#ff6a5e'); gr.addColorStop(1, '#b3121f');
-    ctx.fillStyle = b.flashT > 0 && Math.floor(ui.t * 10) % 2 ? '#ffffff' : gr; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, bh - 4);
+    ctx.fillStyle = b.flashT > 0 && Math.floor(ui.t * 10) % 2 ? '#ff9d93' : gr; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, bh - 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, (bh - 4) * 0.4);
     if (b.phases > 1) { ctx.fillStyle = 'rgba(0,0,0,0.6)'; for (var i = 1; i < b.phases; i++) ctx.fillRect(r.x + r.w * i / b.phases - 1, r.y, 2, bh); }
     ctx.restore();
     if (b.announce) {
@@ -4149,7 +4157,7 @@
     ui.range = { t: 0, dur: e.seconds || e.duration || 60, score: 0, floats: [], medals: med, hits: 0 };
     ui.rangeEnd = null;
   }
-  function rangeHit(e) { var R = ui.range; if (!R) return; var n = (e && (e.points != null ? e.points : e.score)) || 0; R.score += n; R.hits++; R.floats.push({ n: n, t: 0, x: (urng ? urng.random() : 0.5) }); if (R.floats.length > 6) R.floats.shift(); }
+  function rangeHit(e) { var R = ui.range; if (!R) return; var n = (e && (e.points != null ? e.points : e.score)) || 0; R.score += n; R.hits++; R.floats.push({ n: n, t: 0, x: ((R.hits * 0.37) % 1) }); if (R.floats.length > 6) R.floats.shift(); }
   function rangeEnd(e) { var R = ui.range; ui.rangeEnd = { score: e && e.score != null ? e.score : (R ? R.score : 0), medal: e && e.medal ? String(e.medal) : null, t: 0, best: e && e.best }; ui.range = null; if (ui.rangeEnd.medal) sfx('achievement', 0.5); }
   function rangeHud() { var I = GTP.Interiors, r = I && I.range; return r && typeof r.hud === 'function' ? call(r.hud, r, [], null) : null; }
   function updateRange(dt) {
@@ -4333,11 +4341,22 @@
     if (!ui.camTaken) { Rd.freeCam(true); ui.camTaken = true; }
     var In = GTP.Input;
     c.yaw = (c.yaw || 0) + (c.spin || 0) * dt + (In && In.look ? In.look.dx * 0.004 : 0);
-    var tg = c.target, base = (tg.yaw || 0) + c.yaw, fx = -Math.sin(base), fz = -Math.cos(base);
-    var cam = Rd.camera, tx = tg.x + fx * c.dist, tz = tg.z + fz * c.dist, ty = (tg.y || 0) + c.height;
+    var tg = c.target, base = (tg.yaw || 0) + c.yaw, fx = -Math.sin(base), fz = -Math.cos(base), dist = c.dist, Wd = GTP.World;
+    // pull in when a building stands between the target and the camera
+    if (Wd && Wd.raycastBuildings) {
+      try {
+        var dy = (c.height - c.lookY) / Math.max(0.5, dist), dl = Math.sqrt(1 + dy * dy);
+        var hitB = Wd.raycastBuildings(tg.x, (tg.y || 0) + c.lookY, tg.z, fx / dl, dy / dl, fz / dl, dist * dl + 0.3);
+        if (hitB && hitB.t != null && hitB.t / dl < dist) dist = Math.max(1.1, hitB.t / dl - 0.35);
+      } catch (e) { /* optional */ }
+    }
+    var cam = Rd.camera, tx = tg.x + fx * dist, tz = tg.z + fz * dist, ty = (tg.y || 0) + c.height;
     if (!c.placed) { cam.position.set(tx, ty, tz); c.placed = true; }
     else cam.position.set(U.damp(cam.position.x, tx, 8, dt), U.damp(cam.position.y, ty, 8, dt), U.damp(cam.position.z, tz, 8, dt));
-    cam.lookAt(tg.x, (tg.y || 0) + c.lookY, tg.z);
+    // frame the target clear of the side panel (landscape: right of centre) or the bottom sheet (portrait: higher up)
+    var side = m.kind === 'modshop' || m.kind === 'wardrobe', R2 = side ? sidePanelRect() : null, sheet = R2 && R2.w >= W - safe.l - safe.r - 1;
+    var rx = fz, rz = -fx, shift = R2 && !sheet ? dist * 0.32 : 0, drop = sheet ? dist * 0.3 : 0;   // the camera's right, seen from the camera looking back at the target
+    cam.lookAt(tg.x - rx * shift, (tg.y || 0) + c.lookY - drop, tg.z - rz * shift);
   }
   function rebuildMesh(e) {
     var Rd = GTP.Render; if (!Rd || !e) return;
@@ -4466,7 +4485,7 @@
     moneyChip(ctx, x + pw - px(110), y + px(34));
     exitButton(ctx, x + pw - px(16), y + px(14));
     // the weapon list
-    var lx = x + px(16), ly = y + px(66), lw = narrow ? pw - px(36) : pw * 0.33, lh = narrow ? (ph - px(80)) * 0.3 : ph - px(108), rh = narrow ? px(36) : px(44);
+    var lx = x + px(16), ly = y + px(74), lw = narrow ? pw - px(36) : pw * 0.33, lh = narrow ? (ph - px(80)) * 0.3 : ph - px(108), rh = narrow ? px(36) : px(44);
     txt(ctx, 'WEAPONS', lx, ly - px(2), { font: F(9, 'bold'), color: m.focus === 0 ? COL.green : COL.muted, outline: false });
     listBox(ctx, rows.length, m.row, lx, ly + px(6), lw, lh - px(6), rh, function (i, rx, ry, rw, rhh, sel) {
       var r = rows[i], col = r.locked ? COL.muted : COL.ink;
@@ -4479,7 +4498,7 @@
       txt(ctx, tag, rx + rw - px(10), ry + (rhh - px(4)) / 2 + px(5), { font: F(11, 'bold'), color: r.owned ? COL.lime : r.locked ? COL.amber : (p && p.money >= r.price ? COL.ink : COL.red), align: 'right', outline: false });
     }, function (k) { if (m.row === k && m.focus === 0) { m.focus = 1; } m.row = k; m.isel = 0; sfx('ui', 0.15); }, 'arm-w');
     // the card
-    var cx = narrow ? lx : lx + lw + px(18), cy = narrow ? ly + lh + px(8) : ly - px(10), cw = narrow ? lw : x + pw - px(16) - cx, ch = narrow ? y + ph - cy - px(30) : ph - px(84);
+    var cx = narrow ? lx : lx + lw + px(18), cy = narrow ? ly + lh + px(8) : ly - px(10), cw = narrow ? lw : x + pw - px(16) - cx, ch = narrow ? y + ph - cy - px(30) : ph - px(92);
     panel(ctx, cx, cy, cw, ch, px(12), 'rgba(255,255,255,0.035)', 'rgba(255,255,255,0.1)');
     if (!row) { txt(ctx, 'The racks are empty. Merle is "restocking".', cx + px(20), cy + px(40), { font: F(13, '', FONT_TEXT), color: COL.muted, outline: false }); return; }
     var gearPage = row.kind === 'gearpage', wid = row.weaponId || row.id, wd = weaponDef(wid) || {};
@@ -4492,7 +4511,9 @@
       ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(hx + heroW / 2, hy + heroH * 0.86, heroW * 0.4, heroH * 0.08, 0, 0, Math.PI * 2); ctx.stroke();
       var icoS = Math.min(heroH * 0.95, heroW * 0.8), bob = Math.sin(m.turn * 1.4) * px(3);
       ctx.save(); ctx.translate(hx + heroW / 2, hy + heroH / 2 + bob); var sq = Math.cos(m.turn * 0.6); ctx.scale(0.7 + 0.3 * Math.abs(sq), 1); ctx.translate(-icoS / 2, -icoS / 2);
+      ctx.shadowColor = 'rgba(220,255,235,0.85)'; ctx.shadowBlur = px(10);   // a rim light so a black tint still reads on the dark card
       weaponIcon(ctx, wid, 0, 0, icoS, row.locked ? 'rgba(143,151,179,0.6)' : (equippedTint || COL.ink));
+      ctx.shadowBlur = 0;
       ctx.restore();
     }
     var tx = gearPage ? cx + px(18) : hx + heroW + px(16), tw = cx + cw - tx - px(16);
@@ -4528,6 +4549,19 @@
     }
     // the tab's items
     var iy = tby + px(34), ih = cy + ch - iy - px(52), items = S2.items, irh = px(34);
+    if (!gearPage && m.tab === 0) {   // PURCHASE: the facts under the buy row
+      var facts = [];
+      if (wd.mag) facts.push(['MAGAZINE', wd.mag]); if (wd.reserve) facts.push(['RESERVE', wd.reserve]); if (wd.reload) facts.push(['RELOAD', wd.reload + ' s']);
+      if (wd.range) facts.push(['RANGE', Math.round(wd.range) + ' m']); if (wd.projectile) facts.push(['ROUND', String(wd.projectile).toUpperCase()]);
+      if (row.owned && p && p.weapons) { var have = p.weapons[wid]; facts.push(['CARRYING', have === Infinity ? '∞' : (have | 0)]); }
+      var fy = iy + irh + px(6), fw2 = Math.min(px(120), (cw - px(36)) / Math.max(1, Math.min(4, facts.length)));
+      for (i = 0; i < Math.min(facts.length, 8); i++) {
+        var fx2 = cx + px(18) + (i % 4) * fw2, fyy = fy + Math.floor(i / 4) * px(44);
+        panel(ctx, fx2, fyy, fw2 - px(6), px(38), px(6), 'rgba(255,255,255,0.04)', 'rgba(255,255,255,0.08)');
+        txt(ctx, facts[i][0], fx2 + px(8), fyy + px(13), { font: F(8, 'bold'), color: COL.muted, outline: false });
+        txt(ctx, String(facts[i][1]), fx2 + px(8), fyy + px(31), { font: F(13, '900', FONT_DISPLAY), color: COL.ink, outline: false, maxW: fw2 - px(20) });
+      }
+    }
     if (gearPage || m.tab !== 3) {
       var groups = m.tab === 2 && !gearPage;
       if (!items.length) txt(ctx, m.tab === 1 ? 'No ammo for this one. It runs on conviction.' : m.tab === 2 ? 'No attachments fit this one.' : 'Nothing here.', cx + px(18), iy + px(20), { font: F(12, '', FONT_TEXT), color: COL.muted, outline: false });
@@ -4672,7 +4706,7 @@
     modalFrame(ctx, R.x, R.y, R.w, R.h, 'SPIN DOCTOR CUSTOMS', m.vehicle ? vehicleName(m.vehicle) : 'Bring a car. We bring the spin.', COL.pink);
     moneyChip(ctx, R.x + R.w - px(16), R.y + px(32));
     if (!m.vehicle) { txt(ctx, 'No vehicle in the bay.', R.x + px(18), R.y + px(110), { font: F(13, '', FONT_TEXT), color: COL.muted, outline: false }); exitButton(ctx, R.x + R.w - px(16), R.y + R.h - px(36)); return; }
-    var top = R.y + px(84), split = portrait || W < px(700) ? 0.42 : 0.44, cw = (R.w - px(44)) * split, ow = R.w - px(44) - cw, rh = px(30), lh = R.h - (top - R.y) - px(120);
+    var top = R.y + px(84), split = portrait || W < px(700) ? 0.42 : 0.44, cw = (R.w - px(44)) * split, ow = R.w - px(44) - cw, rh = px(30), lh = R.h - (top - R.y) - px(158);
     listBox(ctx, cats.length, m.cat, R.x + px(16), top, cw, lh, rh, function (i, x, y, w, h, sel) {
       panel(ctx, x, y, w, h - px(4), px(6), sel ? (m.focus === 0 ? 'rgba(255,63,164,0.3)' : 'rgba(255,63,164,0.14)') : 'rgba(255,255,255,0.04)', sel ? COL.pink : null);
       txt(ctx, cats[i].name.toUpperCase(), x + px(10), y + px(17), { font: F(10, 'bold'), color: sel ? COL.ink : COL.muted, outline: false, maxW: w - px(16) });
@@ -4690,11 +4724,11 @@
     var pf0 = modPerf(m.applied), pf1 = modPerf(m.preview), sy = top + lh + px(12), sw = R.w - px(36);
     [['accel', 'ACCELERATION', COL.lime], ['top', 'TOP SPEED', COL.cyan], ['brakes', 'BRAKING', COL.amber], ['armor', 'ARMOR', '#5aa8ff']].forEach(function (s2, i) { statBar(ctx, s2[1], pf0[s2[0]], R.x + px(18), sy + i * px(16), sw, s2[2], pf1[s2[0]] - pf0[s2[0]]); });
     var o2 = opts[m.opt], inst2 = o2 && (o2.value === cur || (o2.value == null && cur == null));
-    var bw = px(150), bx = R.x + R.w - bw - px(16), byy = R.y + R.h - px(42);
+    var bw = px(150), bx = R.x + R.w - bw - px(16), byy = R.y + R.h - px(52);
     button(ctx, bx, byy, bw, px(30), inst2 ? 'INSTALLED' : 'BUY ' + U.fmtMoney(o2 ? o2.price : 0), { color: COL.pink, disabled: inst2 || m.focus !== 1, sel: m.flash > 0, fn: function () { modBuy(m); }, id: 'mod-buy' });
     exitButton(ctx, bx - px(8), byy + px(2));
-    if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, R.x + px(18), byy - px(8), { font: F(10, 'bold'), color: m.msg.color, outline: false, maxW: R.w - px(36) });
-    helpLine(ctx, navKeys() + '  ·  drag / right stick turns the car', R.x + px(18), R.y + R.h - px(4), R.w - px(36));
+    if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, R.x + px(18), byy - px(10), { font: F(10, 'bold'), color: m.msg.color, outline: false, maxW: R.w - px(36) });
+    helpLine(ctx, navKeys() + '  ·  drag / right stick turns the car', R.x + px(18), R.y + R.h - px(10), R.w - px(36));
   }
   function modShopInput(In) {
     var m = ui.modal, cats = modCats(), c = cats[m.cat], opts = modOptions(c);
@@ -4722,11 +4756,11 @@
     { id: 'top', name: 'Tops', items: [{ id: 'top_tee_white', name: 'Plain Tee (White)', price: 40, color: '#e9ecf2' }, { id: 'top_quarterzip', name: 'Quarter-Zip of Authority', price: 180, color: '#2a3550' }, { id: 'top_blazer', name: 'Debate Blazer', price: 450, color: '#3a2a4a' }, { id: 'top_hoodie', name: 'Podcast Hoodie', price: 120, color: '#ff3fa4' }, { id: 'top_vest', name: 'Fleece Vest (Finance)', price: 260, color: '#4a5a6a' }] },
     { id: 'bottom', name: 'Bottoms', items: [{ id: 'bottom_chinos', name: 'Chinos', price: 90, color: '#b8a27a' }, { id: 'bottom_jeans', name: 'Relatable Jeans', price: 120, color: '#3a5a8a' }, { id: 'bottom_slacks', name: 'Cable-Hit Slacks', price: 220, color: '#2a2a33' }] },
     { id: 'shoes', name: 'Shoes', items: [{ id: 'shoes_loafers', name: 'Loafers', price: 160, color: '#5a3a22' }, { id: 'shoes_sneakers', name: 'Hype Sneakers', price: 300, color: '#f0f0f0' }] },
-    { id: 'hat', name: 'Hats', items: [{ id: 'hat_none', name: 'No hat', price: 0 }, { id: 'hat_cap', name: 'Ball Cap (No Slogan)', price: 35, color: '#d7262e' }, { id: 'hat_beanie', name: 'Studio Beanie', price: 45, color: '#1a1d2b' }] },
-    { id: 'glasses', name: 'Glasses', items: [{ id: 'glasses_none', name: 'No glasses', price: 0 }, { id: 'glasses_round', name: 'Thinkpiece Rounds', price: 95 }, { id: 'glasses_aviator', name: 'Aviators (Bold)', price: 140 }] }
+    { id: 'hat', name: 'Hats', items: [{ id: 'hat_none', name: 'No hat', price: 0 }, { id: 'hat_cap', name: 'Ball Cap (No Slogan)', price: 35, color: '#d7262e' }, { id: 'hat_beanie', name: 'Studio Beanie', price: 45, color: '#1a1d2b' }, { id: 'hat_fedora', name: 'Fedora (Regrettable)', price: 120, color: '#3a2a22' }, { id: 'hat_beret', name: 'Beret (Thinkpiece)', price: 80, color: '#7a3fd1' }] },
+    { id: 'glasses', name: 'Glasses', items: [{ id: 'glasses_none', name: 'No glasses', price: 0 }, { id: 'glasses_round', name: 'Thinkpiece Rounds', price: 95 }, { id: 'glasses_aviator', name: 'Aviators (Bold)', price: 140 }, { id: 'glasses_thick', name: 'Thick Frames (Credible)', price: 110 }] }
   ];
   var BARBER_DEFAULT = [
-    { id: 'hair', name: 'Cut', items: [{ id: 'hair_short', name: 'The Short Take', price: 30 }, { id: 'hair_side', name: 'Side Part (Pundit)', price: 45 }, { id: 'hair_quiff', name: 'Quiff of Certainty', price: 70 }, { id: 'hair_buzz', name: 'Buzz', price: 20 }, { id: 'hair_long', name: 'Long, Contemplative', price: 60 }] },
+    { id: 'hair', name: 'Cut', items: [{ id: 'hair_short', name: 'The Short Take', price: 30, style: 'short' }, { id: 'hair_slick', name: 'Slick Side Part (Pundit)', price: 45, style: 'slick' }, { id: 'hair_pompadour', name: 'Pompadour of Certainty', price: 70, style: 'pompadour' }, { id: 'hair_bald', name: 'Clean Slate', price: 20, style: 'bald' }, { id: 'hair_long', name: 'Long, Contemplative', price: 60, style: 'long' }, { id: 'hair_mohawk', name: 'Mohawk (Disruptor)', price: 90, style: 'mohawk' }, { id: 'hair_afro', name: 'Big Opinion Afro', price: 80, style: 'afro' }, { id: 'hair_bun', name: 'Op-Ed Bun', price: 55, style: 'bun' }] },
     { id: 'color', name: 'Color', items: [{ id: 'hc_brown', name: 'Brown', price: 25, hex: '#5a3a22' }, { id: 'hc_black', name: 'Black', price: 25, hex: '#16161a' }, { id: 'hc_blond', name: 'Blond', price: 35, hex: '#d8b866' }, { id: 'hc_grey', name: 'Distinguished Grey', price: 40, hex: '#a8a8ad' }, { id: 'hc_pink', name: 'Rebrand Pink', price: 60, hex: '#ff3fa4' }] },
     { id: 'beard', name: 'Facial hair', items: [{ id: 'beard_none', name: 'Clean', price: 15 }, { id: 'beard_stubble', name: 'Deadline Stubble', price: 20 }, { id: 'beard_full', name: 'Full (Serious)', price: 45 }] }
   ];
@@ -4745,22 +4779,24 @@
   function cloneLook(l) { return JSON.parse(JSON.stringify(l || {})); }
   function applyItemToLook(look, mode, slot, it) {
     slot = String(slot || '').toLowerCase();
+    var style = it.style || String(it.id || '').replace(/^(hair|hat|glasses|beard)_/, '');
     if (mode === 'barber') {
       if (/col/.test(slot)) look.hairColor = it.hex || it.color || look.hairColor;
-      else if (/beard|facial/.test(slot)) look.beard = it.id;
-      else look.hair = it.id;
+      else if (/beard|facial/.test(slot)) look.beard = style;
+      else look.hair = style;
       return look;
     }
     look.outfit = look.outfit || {};
     look.outfit[slot] = it.id;
     if (it.color) { if (/top|shirt|jacket|torso/.test(slot)) look.shirt = it.color; else if (/bottom|pant|leg/.test(slot)) look.pants = it.color; }
-    if (/hat/.test(slot)) look.hat = /none/.test(it.id) ? null : it.id;
-    if (/glass/.test(slot)) look.glasses = /none/.test(it.id) ? null : it.id;
+    if (/hat/.test(slot)) { look.hat = /none/.test(it.id) ? 'none' : style; if (it.color) look.hatColor = it.color; }
+    if (/glass/.test(slot)) look.glasses = /none/.test(it.id) ? 'none' : style;
     return look;
   }
   function isWorn(p, mode, slot, it) {
     var l = lookOf(p); slot = String(slot || '').toLowerCase();
-    if (mode === 'barber') { if (/col/.test(slot)) return (it.hex || it.color) === l.hairColor; if (/beard|facial/.test(slot)) return l.beard === it.id; return l.hair === it.id; }
+    var style = it.style || String(it.id || '').replace(/^(hair|hat|glasses|beard)_/, '');
+    if (mode === 'barber') { if (/col/.test(slot)) return (it.hex || it.color) === l.hairColor; if (/beard|facial/.test(slot)) return l.beard === style; return l.hair === style; }
     return !!(l.outfit && l.outfit[slot] === it.id);
   }
   function ownsItem(p, id) {
@@ -4775,7 +4811,7 @@
     var committed = cloneLook(lookOf(p));
     return openModal('wardrobe', { mode: barber ? 'barber' : 'clothing', committed: committed, cat: 0, opt: 0, focus: 0, previewT: -1,
       cam: { target: p, dist: barber ? 1.5 : 3.1, height: barber ? 1.72 : 1.45, lookY: barber ? 1.62 : 1.05, yaw: barber ? 0.35 : 0.25, spin: 0 },
-      onClose: function (m) { var pl = player(); if (pl && JSON.stringify(pl.look) !== JSON.stringify(m.committed)) { pl.look = cloneLook(m.committed); rebuildMesh(pl); } } });
+      onClose: function (m) { var pl = player(), want = JSON.stringify(m.committed); if (pl && (JSON.stringify(pl.look) !== want || (m.meshLook && m.meshLook !== want))) { pl.look = cloneLook(m.committed); rebuildMesh(pl); } } });
   }
   function wardrobePreview(m) {
     var p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
@@ -4797,7 +4833,8 @@
       GTP.Events.emit('shop:buy', { item: { id: it.id, kind: m.mode, name: it.name, slot: c.id }, price: price, player: p });
     }
     m.committed = applyItemToLook(cloneLook(m.committed), m.mode, c.id, it);
-    if (JSON.stringify(p.look) !== JSON.stringify(m.committed)) { p.look = cloneLook(m.committed); rebuildMesh(p); }
+    if (JSON.stringify(p.look) !== JSON.stringify(m.committed) || (m.meshLook && m.meshLook !== JSON.stringify(m.committed))) { p.look = cloneLook(m.committed); rebuildMesh(p); }
+    m.meshLook = JSON.stringify(p.look); m.previewT = -1;
     modalMsg(m, (price ? 'BOUGHT: ' : 'WEARING: ') + it.name + (price ? '  -' + U.fmtMoney(price) : ''), COL.lime); m.flash = 1; sfx('cash', 0.5);
   }
   function drawWardrobe(ctx) {
@@ -4817,7 +4854,7 @@
       hit(chipX, top, cw2, px(24), (function (k) { return function () { m.cat = k; m.opt = 0; m.focus = 1; wardrobePreview(m); }; })(i), 'ward-cat-' + i);
       chipX += cw2 + px(6);
     }
-    var ly = top + px(34), lh = R.h - (ly - R.y) - px(70), rh = px(36);
+    var ly = top + px(34), lh = R.h - (ly - R.y) - px(100), rh = px(36);
     listBox(ctx, items.length, m.opt, R.x + px(16), ly, R.w - px(36), lh, rh, function (k, x, y, w, h, sel) {
       var it = items[k], worn = isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it), own = ownsItem(p, it.id);
       panel(ctx, x, y, w, h - px(4), px(7), sel && m.focus === 1 ? hexA(accent, 0.24) : 'rgba(255,255,255,0.04)', sel ? accent : 'rgba(255,255,255,0.08)', sel ? 1.5 : 1);
@@ -4827,11 +4864,11 @@
       txt(ctx, worn ? 'WEARING' : own ? 'OWNED' : it.price ? U.fmtMoney(it.price) : 'FREE', x + w - px(10), y + px(21), { font: F(11, 'bold'), color: worn ? accent : own ? COL.lime : (p.money >= (it.price || 0) ? COL.ink : COL.red), align: 'right', outline: false });
     }, function (k) { if (m.opt === k && m.focus === 1) wardrobeBuy(m); else { m.opt = k; m.focus = 1; wardrobePreview(m); } }, 'ward-item');
     var it2 = items[m.opt], worn2 = it2 && isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it2);
-    var bw = px(160), bx = R.x + R.w - bw - px(16), byy = R.y + R.h - px(44);
+    var bw = px(160), bx = R.x + R.w - bw - px(16), byy = R.y + R.h - px(52);
     button(ctx, bx, byy, bw, px(30), worn2 ? 'WEARING' : it2 && (ownsItem(p, it2.id) || !it2.price) ? 'WEAR' : 'BUY ' + U.fmtMoney(it2 ? it2.price : 0), { color: accent, disabled: !it2 || worn2 || m.focus !== 1, sel: m.flash > 0, fn: function () { wardrobeBuy(m); }, id: 'ward-buy' });
     exitButton(ctx, bx - px(8), byy + px(2));
     if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, R.x + px(18), byy - px(8), { font: F(10, 'bold'), color: m.msg.color, outline: false, maxW: R.w - px(36) });
-    helpLine(ctx, navKeys() + '  ·  drag turns the camera', R.x + px(18), R.y + R.h - px(4), R.w - px(36));
+    helpLine(ctx, navKeys() + '  ·  drag turns the camera', R.x + px(18), R.y + R.h - px(10), R.w - px(36));
   }
   function wardrobeInput(In) {
     var m = ui.modal, cats = wardrobeCats(m.mode), n = Math.max(1, (cats[m.cat] || { items: [] }).items.length);
@@ -4841,7 +4878,7 @@
       if (In.pressed('right')) { m.cat = (m.cat + 1) % cats.length; m.opt = 0; sfx('ui', 0.15); }
       if (In.pressed('confirm') || menuDown(In)) { m.focus = 1; wardrobePreview(m); }
     } else {
-      if (menuBack(In)) { m.focus = 0; var p = player(); if (p) { p.look = cloneLook(m.committed); m.previewT = 0.05; } return true; }
+      if (menuBack(In)) { m.focus = 0; var p = player(); if (p) { p.look = cloneLook(m.committed); if (m.meshLook && m.meshLook !== JSON.stringify(p.look)) { rebuildMesh(p); m.meshLook = JSON.stringify(p.look); } m.previewT = -1; } return true; }
       if (In.pressed('left') || In.pressed('weaponPrev')) { m.cat = (m.cat - 1 + cats.length) % cats.length; m.opt = 0; wardrobePreview(m); }
       if (In.pressed('right') || In.pressed('weaponNext') || In.pressed('tabNext')) { m.cat = (m.cat + 1) % cats.length; m.opt = 0; wardrobePreview(m); }
       if (In.pressed('forward')) { m.opt = (m.opt - 1 + n) % n; wardrobePreview(m); sfx('ui', 0.12); }
@@ -4899,7 +4936,7 @@
   function drawProperty(ctx) {
     var m = ui.modal, d = propertyDef(m.id), owned = propertyOwned(m.id), p = player();
     ctx.fillStyle = 'rgba(4,5,10,0.6)'; ctx.fillRect(0, 0, W, H);
-    var pw = Math.min(px(560), W - safe.l - safe.r), ph = Math.min(px(500), H - safe.t - safe.b), x = (W - pw) / 2, y = (H - ph) / 2;
+    var pw = Math.min(px(560), W - safe.l - safe.r), ph = Math.min(px(470), H - safe.t - safe.b), x = (W - pw) / 2, y = (H - ph) / 2;
     glass(ctx, x, y, pw, ph, null, px(16));
     var ah = Math.min(px(180), ph * 0.36);
     var seed = 0; String(m.id).split('').forEach(function (ch) { seed = (seed * 31 + ch.charCodeAt(0)) % 233280; });
@@ -4975,8 +5012,9 @@
     ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3);
     ctx.fillStyle = '#f4efe4'; ctx.fillRect(0, 0, w, w * 1.24); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     castPortrait(ctx, id, w * 0.08, w * 0.08, w * 0.84);
-    txt(ctx, label, w / 2, w * 1.06, { font: F(10, 'bold', FONT_TEXT), color: '#20202a', align: 'center', outline: false, maxW: w * 0.92 });
-    if (sub) txt(ctx, sub, w / 2, w * 1.18, { font: F(9, 'bold'), color: '#a02040', align: 'center', outline: false });
+    var fs = Math.max(7, Math.min(10, w / S / 7.5));
+    txt(ctx, label, w / 2, w * 1.04, { font: F(fs, 'bold', FONT_TEXT), color: '#20202a', align: 'center', outline: false, maxW: w * 0.92 });
+    if (sub) txt(ctx, sub, w / 2, w * 1.19, { font: F(fs - 1, 'bold'), color: '#a02040', align: 'center', outline: false, maxW: w * 0.95 });
     if (sel) { ctx.strokeStyle = COL.pink; ctx.lineWidth = px(3); ctx.strokeRect(-px(3), -px(3), w + px(6), w * 1.24 + px(6)); }
     ctx.fillStyle = '#d7262e'; ctx.beginPath(); ctx.arc(w / 2, px(2), px(5), 0, Math.PI * 2); ctx.fill();
     ctx.restore();
@@ -4998,16 +5036,17 @@
     txt(ctx, 'Pick an approach, pick a crew. The string is decorative.', px(14), px(46), { font: F(10, 'italic', FONT_TEXT), color: '#555', outline: false, maxW: Math.min(px(400), pw - px(70)) });
     ctx.restore();
     // approaches: index cards
-    var ay = y + px(96), aw = narrow ? (pw - px(48)) / d.approaches.length - px(8) : Math.min(px(220), (pw * 0.62) / d.approaches.length - px(14)), ah = narrow ? px(110) : px(150);
+    var ay = y + px(96), aw = narrow ? (pw - px(48) - (d.approaches.length - 1) * px(8)) / d.approaches.length : Math.min(px(220), (pw * 0.62) / d.approaches.length - px(14)), ah = narrow ? px(128) : px(150);
     txt(ctx, 'APPROACH', x + px(24), ay - px(6), { font: F(11, '900'), color: '#fff3d6', outline: 'rgba(0,0,0,0.4)' });
     for (i = 0; i < d.approaches.length; i++) {
-      var ap = d.approaches[i], ax = x + px(24) + i * (aw + px(14)), on = i === m.approach, foc = m.row === 0 && on;
+      var ap = d.approaches[i], ax = x + px(24) + i * (aw + (narrow ? px(8) : px(14))), on = i === m.approach, foc = m.row === 0 && on;
       ctx.save(); ctx.translate(ax + aw / 2, ay + ah / 2); ctx.rotate((i % 2 ? 1 : -1) * 0.02); ctx.translate(-aw / 2, -ah / 2);
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = on ? '#fffbe8' : '#ece4d0'; ctx.fillRect(0, 0, aw, ah); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
       ctx.fillStyle = ap.color || COL.cyan; ctx.fillRect(0, 0, aw, px(6));
-      txt(ctx, String(ap.name || ap.id).toUpperCase(), px(10), px(26), { font: F(12, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: aw - px(20) });
-      var dl = wrap(ctx, ap.desc || '', F(10, '', FONT_TEXT), aw - px(20));
-      for (var k = 0; k < Math.min(narrow ? 3 : 5, dl.length); k++) txt(ctx, dl[k], px(10), px(44) + k * px(14), { font: F(10, '', FONT_TEXT), color: '#444', outline: false });
+      var tl = wrap(ctx, String(ap.name || ap.id).toUpperCase(), F(narrow ? 10 : 12, '900', FONT_DISPLAY), aw - px(26));
+      for (var k = 0; k < Math.min(2, tl.length); k++) txt(ctx, tl[k], px(8), px(24) + k * px(14), { font: F(narrow ? 10 : 12, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: aw - px(16) });
+      var dfont = F(narrow ? 9 : 10, '', FONT_TEXT), dl = wrap(ctx, ap.desc || '', dfont, aw - px(16)), dy0 = px(30) + Math.min(2, tl.length) * px(14), maxL = Math.max(1, Math.floor((ah - dy0 - px(22)) / px(13)));
+      for (k = 0; k < Math.min(maxL, dl.length); k++) txt(ctx, k === maxL - 1 && dl.length > maxL ? dl[k].replace(/\s*\S*$/, '…') : dl[k], px(8), dy0 + k * px(13), { font: dfont, color: '#444', outline: false });
       txt(ctx, 'RISK: ' + (ap.risk || '?'), px(10), ah - px(10), { font: F(9, 'bold'), color: ap.risk === 'HIGH' ? '#b3121f' : '#2a5a2a', outline: false });
       if (on) { ctx.strokeStyle = foc ? COL.pink : '#20202a'; ctx.lineWidth = px(foc ? 4 : 2); ctx.strokeRect(-px(2), -px(2), aw + px(4), ah + px(4)); txt(ctx, '✔', aw - px(14), px(26), { font: F(16, '900'), color: '#b3121f', align: 'center', outline: false }); }
       ctx.fillStyle = '#2ee6ff'; ctx.beginPath(); ctx.arc(aw / 2, px(3), px(5), 0, Math.PI * 2); ctx.fill();
@@ -5015,21 +5054,22 @@
       hit(ax, ay, aw, ah, (function (kk) { return function () { m.approach = kk; m.row = 0; sfx('ui', 0.2); }; })(i), 'heist-ap-' + i);
     }
     // crew polaroids, one row per role
-    var cy = ay + ah + px(36), pwid = narrow ? px(58) : px(76), rowH = pwid * 1.24 + px(30);
+    var cy = ay + ah + px(36), availH = y + ph - px(60) - cy, rowH = Math.min(px(76) * 1.24 + px(30), availH / Math.max(1, d.roles.length)), pwid = Math.max(px(40), (rowH - px(30)) / 1.24);
+    if (narrow) pwid = Math.min(pwid, (pw * 0.55 - px(60)) / 3);
     for (var ri = 0; ri < d.roles.length; ri++) {
       var role = d.roles[ri], ry = cy + ri * rowH, rowOn = m.row === ri + 1;
       if (ry + rowH > y + ph - px(10) && ri > 0) { /* small screens: rows overlap the summary less than they clip */ }
       txt(ctx, String(role.name || role.id).toUpperCase(), x + px(24), ry + px(4), { font: F(11, '900'), color: rowOn ? '#fff' : '#fff3d6', outline: 'rgba(0,0,0,0.45)' });
       for (var oi = 0; oi < role.options.length; oi++) {
-        var o = role.options[oi], ox = x + px(24) + oi * (pwid + px(22)), oy = ry + px(14), osel = m.picks[ri] === oi;
+        var o = role.options[oi], ox = x + px(24) + oi * (pwid + px(narrow ? 12 : 22)), oy = ry + px(14), osel = m.picks[ri] === oi;
         polaroid(ctx, o.id, ox, oy, pwid, osel && rowOn, (oi - 1) * 0.04, castName(o.id).split(' ')[0], Math.round((o.cut || 0) * 100) + '% CUT');
         if (osel) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), x + pw * 0.78, y + px(150)); ctx.stroke(); }
         hit(ox, oy, pwid, pwid * 1.24, (function (a, b) { return function () { m.picks[a] = b; m.row = a + 1; sfx('ui', 0.2); }; })(ri, oi), 'heist-crew-' + ri + '-' + oi);
       }
     }
     // the take summary (a sticky note) and CONFIRM
-    var sw = narrow ? px(170) : px(230), sx = x + pw - sw - px(24), sy = y + (narrow ? px(96) + ah + px(30) : px(110));
-    if (narrow) sx = x + pw - sw - px(16);
+    var sw = narrow ? Math.min(px(170), pw * 0.4) : px(230), sx = x + pw - sw - px(24), sy = y + (narrow ? px(96) + ah + px(30) : px(110));
+    if (narrow) sx = x + pw - sw - px(12);
     ctx.save(); ctx.translate(sx + sw / 2, sy + px(80)); ctx.rotate(0.03); ctx.translate(-sw / 2, -px(80));
     ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = '#ffe873'; ctx.fillRect(0, 0, sw, px(160)); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     txt(ctx, 'EST. TAKE', px(14), px(26), { font: F(10, 'bold'), color: '#5a4a00', outline: false });
@@ -5069,7 +5109,7 @@
     m.t += dt; m.turn = (m.turn || 0) + dt;
     if (m.msgT > 0) m.msgT -= dt; if (m.flash > 0) m.flash -= dt * 3;
     if (m.kind === 'modshop' && m.previewT >= 0) { m.previewT -= dt; if (m.previewT < 0 && m.vehicle) { var want = JSON.stringify(m.preview); if (want !== (m.onVehicle || JSON.stringify(m.applied))) { applyMods(m.vehicle, m.preview); m.onVehicle = want; } } }
-    if (m.kind === 'wardrobe' && m.previewT >= 0) { m.previewT -= dt; if (m.previewT < 0) rebuildMesh(player()); }
+    if (m.kind === 'wardrobe' && m.previewT >= 0) { m.previewT -= dt; if (m.previewT < 0) { var pl = player(); if (pl) { rebuildMesh(pl); m.meshLook = JSON.stringify(pl.look); } } }
     updateModalCam(m, dt);
   }
   function drawModal(ctx) { var m = ui.modal; if (!m || !MODALS[m.kind]) return; MODALS[m.kind].draw(ctx); }

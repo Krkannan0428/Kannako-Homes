@@ -233,7 +233,7 @@ H.run('ui_v03', async (t) => {
   console.log('  wardrobe: ' + JSON.stringify([ward, ward2, barb]));
   t.assert(ward.modal === 'wardrobe' && ward.free && ward.preview === 'top_quarterzip' && ward.money === 1820 && ward.ev === 'top_quarterzip' && ward.preview2 === 'top_blazer', 'clothing previews on player.look, buys the quarter-zip and previews the next: ' + JSON.stringify(ward));
   t.assert(!ward2.modal && ward2.top === 'top_quarterzip', 'leaving keeps what was bought and drops the preview: ' + JSON.stringify(ward2));
-  t.assert(barb.hair === 'hair_side' && barb.after !== 'hair_side' && !barb.free, 'the barber previews a cut and reverts it on exit: ' + JSON.stringify(barb));
+  t.assert(barb.hair === 'slick' && barb.after === 'short' && !barb.free, 'the barber previews a cut and reverts it on exit: ' + JSON.stringify(barb));
 
   // ---- 9. property ----
   const prop = await page.evaluate(() => { const p = GTP.game.player; p.money = 100000; GTP.Events.emit('property:open', { id: 'safe_brownstone' }); T_.adv(0.3); GTP.game.render(); return { modal: T_.ui.modal && T_.ui.modal.kind }; });
@@ -275,7 +275,6 @@ H.run('ui_v03', async (t) => {
     GTP.Events.emit('cover:exit'); delete CB.cover.available;
     GTP.Input.set('aim', true); T_.adv(0.4); g.render();
     const a = { state: T_.ui.crosshair.state };
-    GTP.Input.set('aim', false); T_.adv(0.1);
     const cs = GTP.UI._v3.crossState;
     a.hostile = cs({ weapon: { id: 'pistol' } }, { target: { role: 'cop' } }, null);
     a.friendly = cs({ weapon: { id: 'pistol' } }, { target: { role: 'civ' } }, null);
@@ -287,6 +286,7 @@ H.run('ui_v03', async (t) => {
     return a;
   });
   await shot('cross_aim');
+  await page.evaluate(() => { GTP.Input.set('aim', false); T_.adv(0.1); });
   // the crosshair gallery: every state drawn on the HUD canvas over the frame
   await page.evaluate(() => {
     const g = GTP.game; g.render();
@@ -316,9 +316,9 @@ H.run('ui_v03', async (t) => {
   });
   const cats = {};
   for (const [type, hud] of [['moto', { speed: 31, roll: -0.42, pitch: 0.05, gear: 4 }], ['heli', { speed: 22, alt: 140, pitch: -0.12, roll: 0.25, heading: 0.9, throttle: 0.72, rotor: 1 }], ['jet', { speed: 95, alt: 22, pitch: -0.35, roll: -0.1, heading: 3.6, throttle: 0.9, gear: 'up' }], ['speedboat', { speed: 16, heading: 4.4, throttle: 0.8 }]]) {
-    cats[type] = await page.evaluate(([ty, h]) => { const v = VH, t0 = v.type; v.type = ty; v.hud = () => h; GTP.game.render(); const c = T_.ui.vehHudCat; v.type = t0; delete v.hud; return c; }, [type, hud]);
-    await page.evaluate(([ty, h]) => { const v = VH, t0 = v.type; v.type = ty; v.hud = () => h; GTP.game.render(); v.type = t0; delete v.hud; }, [type, hud]);
-    await shot('veh_' + type);
+    cats[type] = await page.evaluate(([ty, h]) => { const v = VH; window.VT0 = v.type; v.type = ty; v.hud = () => h; GTP.game.render(); return T_.ui.vehHudCat; }, [type, hud]);
+    await shot('veh_' + type);   // re-renders with the type still swapped
+    await page.evaluate(() => { const v = VH; v.type = VT0; delete v.hud; });
   }
   console.log('  vehicle huds: ' + JSON.stringify([vh, cats]));
   t.assert(vh.inCar && cats.moto === 'bike' && cats.heli === 'heli' && cats.jet === 'plane' && cats.speedboat === 'boat', 'bike, heli, plane and boat HUDs from vehicle.hud(): ' + JSON.stringify(cats));
