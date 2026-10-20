@@ -24,7 +24,7 @@ w: 224, h: 224,
 land: [rect(6, 6, 112, 124), rect(128, 12, 26, 112),      // unchanged: mainland, the island
        rect(162, 8, 54, 142),                              // uptown: x 162..216, z 8..150
        rect(6, 150, 210, 66)],                             // south landmass: x 6..216, z 150..216 (airport west, port east)
-sand: [ ...existing, rect(162, 8, 2, 142), rect(6, 150, 210, 2), rect(6, 214, 100, 2) ],   // uptown's west shore, the south shore of the bay, the beach under the runway
+sand: [ ...existing, rect(162, 8, 2, 142), rect(6, 150, 210, 2), rect(6, 196, 12, 20), rect(18, 214, 88, 2) ],   // uptown's west shore, the south shore of the bay, the 48 m beach west of the runway threshold (the sj_07 landing), the beach under the runway
 ```
 
 ### 1.1 The three new districts
@@ -144,7 +144,7 @@ New kinds and their prop sets are defined under the table. Existing kinds (`brid
 | `container_yard` | Manifest Container Yard | `yard` (new) | port | Every container is labelled MERCH; one of them is. | m07b, m13b, Ratio Rampage rr_07, Stunt Jump sj_09, HOA Patrol spawns |
 | `manifest_quay` | Manifest Quay | `quay` (new) | port | Three cranes, one ship, zero cargo moved since the ship arrived; the ship is a listening session. | m13b, Monday Memos, Loud Cab fares |
 | `ferry_terminal` | Ferry to Elsewhere | `ferry` (new) | port | Departs hourly, arrives never; the waiting room has a podium. | m07b, Loud Cab, Sponsor Runs |
-| `customs_shed` | Customs & Disclosures | `warehouse` | port | NOTHING TO DECLARE, EVERYTHING TO DISCLOSE; the disclosure is a coupon code. | m09b, m07b (fail trigger), Monday Memos |
+| `customs_shed` | Customs & Disclosures | `warehouse` | port | NOTHING TO DECLARE, EVERYTHING TO DISCLOSE; the disclosure is a coupon code. | m09b, m07b (the inspectors' vans spawn here), Monday Memos |
 | `both_sides_port` | Both Sides Arms (Harbor) | `gunshop` (new) | port | "We arm both sides. That's balance." Harbor branch: bulk discounts on rockets. | the shop (§2.4), Sponsor Runs |
 | `museum_of_takes` | Museum of Takes | `museum` (new) | uptown | A thousand years of saying it louder, under glass; the gift shop sells the glass. | m05b, m12b, cs_act3 (shot 1), Monday Memos |
 | `heirloom_club` | The Heirloom Club | `club` | uptown | Members since before opinions; the door policy is "who was your grandfather listening with." | m05b, Loud Cab, Sponsor Runs, Loop Race lr_03 start |
@@ -157,7 +157,7 @@ New kinds and their prop sets are defined under the table. Existing kinds (`brid
 ```js
 // 20_content_world.js landmark entries (lot tiles, footprint tiles; same lm() helper)
 lm('airport_terminal', 'Goldplate International Terminal', 'terminal', 'airport', 56, 168, 23, 12, { footprint: fp(18, 6), floors: 2, height: 9, facade: 'airport', ground: 'parking', door: 'e', sign: 'GOLDPLATE INTERNATIONAL', neon: true, gates: 4 }),
-lm('airport_runway', 'Runway 10/10', 'runway', 'airport', 10, 200, 96, 14, { ground: 'runway', door: 'n', sign: 'RUNWAY 10/10', points: { east: { tx: 101, tz: 206 }, west: { tx: 12, tz: 206 } } }),
+lm('airport_runway', 'Runway 10/10', 'runway', 'airport', 18, 200, 88, 14, { ground: 'runway', door: 'n', sign: 'RUNWAY 10/10', points: { east: { tx: 101, tz: 206 }, west: { tx: 20, tz: 206 } } }),   // x 18..106; the 12 tiles of sand west of the threshold are the sj_07 landing (a truck tops out at 28 m/s and lands 20 to 35 m out, never in the sea)
 lm('control_tower', 'Goldplate Control', 'atc', 'airport', 86, 168, 6, 8, { footprint: fp(3, 3), floors: 11, facade: 'airport', ground: 'plaza', door: 'w', sign: 'CONTROL', roofSign: '10' }),
 lm('hangar_row', 'Hangar Row', 'hangar', 'airport', 16, 162, 12, 18, { footprint: fp(9, 7), floors: 2, height: 11, facade: 'port', ground: 'parking', door: 'e', sign: 'HANGAR 1 OF 1' }),
 lm('container_yard', 'Manifest Container Yard', 'yard', 'port', 126, 160, 20, 20, { ground: 'gravel', door: 'w', sign: 'MANIFEST YARD' }),
@@ -169,7 +169,7 @@ lm('museum_of_takes', 'Museum of Takes', 'museum', 'uptown', 172, 36, 8, 20, { f
 lm('heirloom_club', 'The Heirloom Club', 'club', 'uptown', 196, 60, 8, 7, { footprint: fp(5, 4), floors: 4, facade: 'brownstone', ground: 'plaza', door: 's', sign: 'THE HEIRLOOM CLUB', awning: true }),
 lm('old_money_common', 'Old Money Common', 'park', 'uptown', 184, 96, 8, 20, { ground: 'lawn', door: 'w', bandstand: true }),
 lm('both_sides_uptown', 'Both Sides Arms (Heights)', 'gunshop', 'uptown', 208, 36, 6, 8, { footprint: fp(4, 4), floors: 2, facade: 'brownstone', ground: 'plaza', door: 'w', sign: 'BOTH SIDES ARMS', neon: true }),
-lm('both_sides_strip', 'Both Sides Arms', 'gunshop', 'strip', 72, 97, 7, 7, { footprint: fp(4, 3), fpOffset: { x: 1, z: 1 }, floors: 1, height: 5, facade: 'strip', ground: 'parking', door: 's', sign: 'BOTH SIDES ARMS', neon: true, flagship: true, points: { range: { tx: 73, tz: 99 } } }),
+lm('both_sides_strip', 'Both Sides Arms', 'gunshop', 'strip', 72, 97, 7, 7, { footprint: fp(4, 3), fpOffset: { x: 2, z: 1 }, floors: 1, height: 5, facade: 'strip', ground: 'parking', door: 's', sign: 'BOTH SIDES ARMS', neon: true, flagship: true, points: { range: { tx: 73, tz: 99 } } }),
 lm('bridge_south', 'Sponsor Span', 'bridge', 'marina', 78, 128, 8, 22, { doorAt: { tx: 84, tz: 140 } }),
 lm('causeway_east', 'Goldplate Goldplate Causeway', 'bridge', 'uptown', 153, 67, 9, 6, { doorAt: { tx: 158, tz: 67 }, points: { island: { tx: 154, tz: 67 }, uptown: { tx: 161, tz: 67 } } })
 ```
@@ -235,11 +235,11 @@ ORDER = ['fist', 'tableleg', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 
 | `pistol` | Pistol | pistol | 18 | 4 | 12 | 120 | 1.2 | 0.012 | 0.008 / 0.04 / 0.10 | 1.2° | 35 | hitscan | drive-by; knock 1.6; vehicleMul 0.55 (unchanged) | $450 | `m05_peer` unlock; loaner in `m03b_range`; sold everywhere after m03b |
 | `revolver` | The Rebuttal | pistol | 40 | 1.6 | 6 | 60 | 2.0 (all six at once, 0.4 s per round animation) | 0.006 | 0.010 / 0.03 / 0.08 | 2.4° | 45 | hitscan | drive-by; head zone x3 (not x2); a body hit knocks the ped down (knock 3.0); vehicleMul 0.7 | $900 | `m05b_provenance` unlock; sold after it |
 | `smg` | SMG | smg | 9 | 11 | 30 | 240 | 1.6 | 0.04 | 0.004 / 0.09 / 0.14 | 0.35°/shot | 30 | hitscan | drive-by; knock 0.9; vehicleMul 0.5 (unchanged) | $1,400 | `m11_trustless` unlock; sold after it |
-| `rifle` | The Monologue | rifle | 22 | 8 | 30 | 180 | 2.0 | 0.018 (aim: 0.009) | 0.006 / 0.055 / 0.12 | 0.5°/shot | 60 | hitscan | full auto; aiming halves the spread; the first 3 rounds of a burst from rest are at base spread (the "point"); vehicleMul 0.65; no drive-by | $2,400 | `m08b_jets` unlock; pickup at `hangar_row`; sold after it |
+| `rifle` | The Monologue | rifle | 24 | 5.5 | 30 | 180 | 2.0 | 0.018 (aim: 0.009) | 0.006 / 0.055 / 0.12 | 0.5°/shot | 60 | hitscan | full auto (132 dps: above the SMG's 99 at twice the range, below the sniper's 120 per shot, so the later SMG keeps the drive-by and volume niche); aiming halves the spread; the first 3 rounds of a burst from rest are at base spread (the "point"); vehicleMul 0.65; no drive-by | $2,400 | `m08b_jets` unlock; pickup at `hangar_row`; sold after it |
 | `shotgun` | Shotgun | shotgun | 45 | 1.1 | 6 | 48 | shell by shell, 0.45 s each, interruptible by `shoot` | 0.085 | - | 3.0° | 12 | hitscan x6 pellets | drive-by; knock 2.5 (unchanged); vehicleMul 0.6 | $1,100 | pickup at `memo_press` after `m11_trustless` (unchanged); sold after m11 |
 | `sniper` | The Fact Checker | sniper | 120 | 0.7 | 5 | 30 | 2.6 | 0.0 scoped, 0.08 from the hip | - | 4.0° | 160 | hitscan | scope overlay (§2.3), zoom 2x / 4x, breath sway 0.15° at 0.5 Hz, head zone x3, vehicleMul 1.0 (a car takes 120), the helicopter at full range; no auto-target; no drive-by | $4,500 | `m12b_scope` unlock; pickup at `control_tower`; sold after it |
 | `hottake` | Hot Take | thrown | 12 | 1 | - | 12 | - | - | - | - | 20 | lobbed (speed 21) | 5 m stun (unchanged) | $90 for 3 | `m09_balloon` unlock; sold after it |
-| `hotmic` | Hot Mic | thrown | 60 blast (120 to vehicles) | 0.8 | - | 8 | - | - | - | - | 24 | lobbed (speed 18, restitution 0.4, two bounces) | 2.5 s fuse; the red ON AIR light on the mic blinks faster toward the bang; blast radius 6 m; 5 m knockdown ring beyond the blast; it was on the whole time | $120 each, $400 for 4 | `m09b_hotmic` unlock; pickup at `customs_shed`; sold after it |
+| `hotmic` | Hot Mic | thrown | 60 blast (180 to vehicles: one mic wrecks a parked van or SUV, two a truck) | 0.8 | - | 8 | - | - | - | - | 24 | lobbed (speed 18, restitution 0.4, two bounces) | 2.5 s fuse; the red ON AIR light on the mic blinks faster toward the bang; blast radius 6 m; 5 m knockdown ring beyond the blast; it was on the whole time | $120 each, $400 for 4 | `m09b_hotmic` unlock; pickup at `customs_shed`; sold after it |
 | `ratio` | Ratio Launcher | launcher | 200 blast | 0.5 | 1 | 6 | 3.0 | 0.0 | - | 6.0° | 120 | rocket (40 m/s, straight for 3 s, then drops) | blast radius 8 m (`explodeRadius`), direct vehicle hit = instant wreck; backblast pushes the shooter 1.5 m; lock-on prefers vehicles and the helicopter; a rocket on the ground says RATIO'D in the pink text fx; no drive-by | $7,500; rockets $600 each | `m13b_ratio` unlock or 40 Monday Memos; pickup at `container_yard`; sold after m13_thursday |
 
 Shared rules:
@@ -297,7 +297,7 @@ Discounts stack additively, capped at 40%: Monday Memos 30 threshold 15% (§5.5)
 
 ## 3. Story additions: eight new missions
 
-**Design rules.** The chain stays a DAG and stays a line: each new mission slots between two existing ones and the later one's `requires` is updated to point at it (§3.3 lists every change). The two Act I additions are on-ramps with generous timers that teach driving, aiming and the wanted system before anything is at stake. Every new mission uses a new district. Wanted stars across the new missions rise 0, 1, 2, 0, 3, 3, 4, 5. Weapons now unlock in this order: fist (start), tableleg (`m03b`), megaphone (`m03`), pistol (`m05`), revolver (`m05b`), rifle (`m08b`), hottake (`m09`), hotmic (`m09b`), smg (`m11`), shotgun (pickup after `m11`), sniper (`m12b`), ratio (`m13b`, or 40 Monday Memos). The new missions pay $13,050 in total. Every `failOn` includes `player_dead`. New objective types and the target extensions used below (`equip`, `deliver_passenger`, `stop_vehicle`, `stunt`, `point`, `around: {tag}`, `stationary`, `weapon`, `mustKill`, `driven: 'cop'`, `takeWeapon`, `colors`) are defined in §7. Missions live in `GTP.Content.expansion.missions` with the same schema as `22_content_missions.js`; the runtime concatenates them into the mission list.
+**Design rules.** The chain stays a DAG and stays a line: each new mission slots between two existing ones and the later one's `requires` is updated to point at it (§3.3 lists every change). The two Act I additions are on-ramps with generous timers that teach driving, aiming and the wanted system before anything is at stake. Every new mission but `m03b` (the Strip's gun shop) uses a new district. Wanted stars across the new missions rise 0, 1, 2, 0, 3, 3, 4, 5. Weapons now unlock in this order: fist (start), megaphone (`m03`), tableleg (`m03b`), pistol (`m05`), revolver (`m05b`), rifle (`m08b`), hottake (`m09`), hotmic (`m09b`), smg (`m11`), shotgun (pickup after `m11`), sniper (`m12b`), ratio (`m13b`, or 40 Monday Memos). The new missions pay $13,050 in total. Every `failOn` includes `player_dead`. New objective types and the target extensions used below (`equip`, `deliver_passenger`, `stop_vehicle`, `stunt`, `point`, `around: {tag}`, `stationary`, `weapon`, `mustKill`, `driven: 'cop'`, `takeWeapon`, `colors`) are defined in §7. Missions live in `GTP.Content.expansion.missions` with the same schema as `22_content_missions.js`; the runtime concatenates them into the mission list.
 
 ---
 
@@ -373,7 +373,7 @@ failOn `['player_dead']` · onComplete `{ takeWeapon:'pistol', unlockWeapon:'tab
 ### m05b_provenance, "Chain of Custody"
 giver `vaultwright` · marker `heirloom_club` · requires `['m05_peer']` · reward `$1,200` · slots between `m05_peer` and `m06_rally`
 
-**Beats.** The Museum of Takes has acquired Bryce's original folding table and labelled it THE FIRST TAKE (ATTRIBUTED); it bought the table from Ptolemy Dunk, who did not own it. Vaultwright, a museum trustee, wants it in his hedge maze "as a loan, to me, from me." Bryce walks into the atrium, the docents object with binders, he takes the table, loads it into the museum's own loan van, loses museum security, and drives it over the causeway and the Goldplate Goldplate Bridge to the manor. Vaultwright whispers a revolver: the hedge has a hedge now.
+**Beats.** The Museum of Takes has acquired Bryce's original folding table and labelled it THE FIRST TAKE (ATTRIBUTED); it bought the table from Ptolemy Dunk, who did not own it. Vaultwright, a museum trustee, wants it in his hedge maze "as a loan, to me, from me." Bryce walks into the atrium, the docents object with binders, he takes the table, loads it into the museum's own loan van, loses museum security, and drives it over the causeway to the manor on the island (the Goldplate Goldplate Bridge is the long way round). Vaultwright whispers a revolver: the hedge has a hedge now.
 
 **Intro.**
 - vaultwright: "Mr. Takesworth. The museum has your table. They're calling it the first take. I'm whispering *attributed*."
@@ -416,7 +416,7 @@ giver `velvetine` · marker `ferry_terminal` · requires `['m07_listen']` · rew
 ```js
 { type:'enter_vehicle', spawn:{type:'truck', tag:'mixtruck', at:{landmark:'container_yard'}, color:'#8e3a8e'}, text:'Get in the Velvetine truck at the yard gate' },
 { type:'timer_wrap', seconds:150, objectives:[
-  { type:'pickup', spawn:{pickupType:'mission', count:4, around:{landmark:'container_yard'}, radius:120, label:'SEALED'}, text:'Collect 4 sealed crates in the container maze' }
+  { type:'pickup', spawn:{pickupType:'mission', count:4, around:{landmark:'container_yard'}, radius:320, label:'SEALED'}, text:'Collect 4 sealed crates in the container maze' }
 ]},
 { type:'destroy', spawn:{vehicle:'van', count:2, tag:'inspectors', around:{landmark:'customs_shed'}, radius:200, driven:'cop', color:'#d9cfa6'}, text:'Two customs vans want to open the crates. Wreck them' },
 { type:'drive_to', target:{landmark:'ferry_terminal'}, vehicle:'spawned:mixtruck', text:'Get the crates to the Ferry to Elsewhere' },
@@ -447,14 +447,14 @@ giver `warbanner` · marker `airport_terminal` · requires `['m08_scooters']` ·
 - player: "That's one jet. On a truck. It's flat."
 - warbanner: "It's in profile. Drive it down the runway. At speed. Off the end. The footage will show lift, and that's why we need the jets."
 - goldplate: "I'm in the tower. I rate the runway a ten. Both ends. Don't scratch my ten."
-- sloane: "Two minutes. Hit the ramp at the west end over forty. If it floats, it flies."
+- sloane: "Two minutes. Hit the ramp at the west end flat out. If it floats, it flies."
 
 **Objectives.**
 ```js
 { type:'enter_vehicle', spawn:{type:'truck', tag:'jettruck', at:{landmark:'airport_terminal'}, wrap:'jet', color:'#3d6fcf'}, text:'Get in the jet truck' },
 { type:'timer_wrap', seconds:120, objectives:[
   { type:'drive_to', target:{landmark:'airport_runway', point:'east'}, vehicle:'spawned:jettruck', radius:80, text:'Line up at the east end of Runway 10/10' },
-  { type:'stunt', ramp:'sj_07', vehicle:'spawned:jettruck', minAir:1.0, minSpeed:36, text:'Floor it west down the runway and hit the ramp at the end over 36 m/s' }
+  { type:'stunt', ramp:'sj_07', vehicle:'spawned:jettruck', minAir:0.8, minSpeed:18, text:'Floor it west down the runway and hit the ramp at the end flat out' }   // a truck tops out at 28 m/s; 18 is two thirds throttle over 350 m of runway
 ]},
 { type:'dialogue', lines:[
   { who:'goldplate', text:'Lift! I counted lift. Ten.' },
@@ -488,10 +488,10 @@ giver `redacted` · marker `customs_shed` · requires `['m09_balloon']` · rewar
 **Objectives.**
 ```js
 { type:'enter_vehicle', spawn:{type:'suv', tag:'chase', at:{landmark:'customs_shed'}, color:'#4c4c4c'}, text:'Take the OVA SUV' },
-{ type:'stop_vehicle', spawn:{vehicle:'van', tag:'courier', at:{landmark:'customs_shed'}, color:'#d9cfa6', driven:'traffic', flee:true}, stopSpeed:1, hold:3, maxDist:2400, text:'Stop the courier van before it leaves the harbor: block it, box it in, or bump it to a halt' },
-{ type:'pickup', spawn:{pickupType:'mission', count:1, around:{tag:'courier'}, radius:40, label:'PROOFS'}, text:'Lift the print proofs from the van' },
-{ type:'equip', weaponId:'hotmic', ammo:3, text:'Take the hot mic' },
-{ type:'destroy', spawn:{vehicle:'van', count:2, tag:'balloons', around:{landmark:'customs_shed'}, radius:160, color:'#d9cfa6'}, weapon:'hotmic', text:'Two weather balloons are parked behind the shed. The mic goes off. Throw it, then step back' },
+{ type:'stop_vehicle', spawn:{vehicle:'van', tag:'proofvan', at:{landmark:'customs_shed'}, color:'#d9cfa6', driven:'traffic', flee:true}, stopSpeed:1, hold:3, maxDist:2400, text:'Stop the courier van before it leaves the harbor: block it, box it in, or bump it to a halt' },
+{ type:'pickup', spawn:{pickupType:'mission', count:1, around:{tag:'proofvan'}, radius:40, label:'PROOFS'}, text:'Lift the print proofs from the van' },
+{ type:'equip', weaponId:'hotmic', ammo:4, text:'Take the hot mics' },
+{ type:'destroy', spawn:{vehicle:'van', count:2, tag:'balloons', around:{landmark:'customs_shed'}, radius:160, color:'#d9cfa6'}, weapon:'hotmic', text:'Two weather balloons are parked behind the shed. One mic each; the mic goes off. Throw it, then step back' },
 { type:'escape_wanted', setWanted:3, text:'The balloons have sirens. Lose them' }
 ```
 
@@ -507,19 +507,19 @@ failOn `['player_dead','target_escaped']` · onComplete `{ unlockWeapon:'hotmic'
 ### m12b_scope, "Citation Needed"
 giver `footnote` · marker `museum_of_takes` · requires `['m12_memo']` · reward `$2,600` · slots between `m12_memo` and `m13_thursday`
 
-**Beats.** With the ledger loose, Dr. Footnote has worked out that Fulcrum's forty fellows are the Memo's footnotes: five couriers hand off the week's "studies" on Goldplate Links across the east channel every evening. She wants them cited from the causeway railing with the Fact Checker, a long rifle she keeps "for peer review": hold aim, breathe, cite. Then cross the causeway, collect the studies, lose the balloons at four stars. Every study has one abstract, and the abstract is the comment section.
+**Beats.** With the ledger loose, Dr. Footnote has worked out that Fulcrum's forty fellows are the Memo's footnotes: five OVA couriers in balloon-repair coveralls hand off the week's "studies" on Goldplate Links across the east channel every evening, and they carry the agency's pistols, which they empty at anything on the causeway from a hundred metres away, badly, which is the range lesson. She wants them cited from the causeway railing with the Fact Checker, a long rifle she keeps "for peer review": hold aim, breathe, cite, duck. Then cross the causeway, collect the studies, lose the balloons at four stars. Every study has one abstract, and the abstract is the comment section.
 
 **Intro.**
 - footnote: "[citation pending] Forty fellows. One opinion. I've found where it comes from. Five couriers on the links across the water, every evening, handing it off."
 - player: "You want me to shoot them?"
-- footnote: "Cite them. From here. It's peer review at a distance. The scope is for reading. Hold aim, breathe, cite."
+- footnote: "Cite them. From here. It's peer review at a distance. They'll shoot back; they can't read at this range either. Hold aim, breathe, cite."
 - kip: "I'm the sixth courier. I quit this morning. Is this paid?"
 
 **Objectives.**
 ```js
 { type:'equip', weaponId:'sniper', ammo:10, text:'Take the Fact Checker' },
 { type:'goto', target:{landmark:'causeway_east'}, radius:48, text:'Get to the causeway railing and look across the channel' },
-{ type:'defeat', spawn:{ped:'courier', count:5, around:{landmark:'goldplate_links'}, radius:200, stationary:true, hostile:false, panic:true}, weapon:'sniper', mustKill:true, text:'Cite the five couriers on the links. Hold Aim to scope; the wheel zooms' },
+{ type:'defeat', spawn:{ped:'courier', count:5, around:{landmark:'goldplate_links'}, radius:200, stationary:true, hostile:true}, weapon:'sniper', mustKill:true, text:'Cite the five armed couriers on the links before they cite you. Hold Aim to scope; the wheel zooms' },
 { type:'pickup', spawn:{pickupType:'mission', count:5, around:{landmark:'goldplate_links'}, radius:200, label:'STUDY'}, text:'Cross the causeway and collect the five studies' },
 { type:'escape_wanted', setWanted:4, text:'The balloons saw the citations. Lose them' },
 { type:'goto', target:{landmark:'museum_of_takes'}, radius:48, text:'Bring the studies to Dr. Footnote' }
@@ -604,7 +604,7 @@ The Act I timers are 150 s for a 300 m job and 180 s for a 500 m job, which a fi
         seconds: 4, ease: 'linear' | 'in' | 'out' | 'inout',
         move: { to: { ...same forms } }           // optional camera dolly end position over `seconds`
       },
-      actors: [ { castId, at: { landmark, offset: { x, z } } | { x, z }, face: '<castId>' | 'player' | <yaw>, anim: 'idle' | 'talk' | 'point' | 'table' | 'wave' } ],
+      actors: [ { castId, at: { landmark, offset: { x, z }, roof: true? } | { x, z }, face: '<castId>' | 'player' | <yaw>, anim: 'idle' | 'talk' | 'point' | 'table' | 'wave' } ],   // castId may be a ped role (protester, thug, cop, civ) for extras: a random look from that role's pool, no portrait, no lines; roof: true stands the actor on the landmark building's roof (y = building top), as cs_act2 does on Goldplate Tower
       lines: [ { who, text } ],                   // dialogue lines in the existing shape; the dialogue box shows them, auto-advancing (max(C.MISSIONS.lineSeconds, typing + reading)) or on confirm
       fx: [ { type, ... } ],                      // optional Render.fx entries fired at the shot's start (confetti 'ring', 'text', 'explosion'...)
       hold: 1.0                                   // optional seconds to hold after the last line before the next shot
@@ -774,7 +774,7 @@ Every story mission gets `cs_intro_<id>`: two shots, 20 to 40 s, lines = that mi
 
 ## 5. Side strands
 
-Six repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a small `GTP.Strands` runtime inside `09_missions.js`'s file family (or `24_` plus a runtime hook: the strand runtime registers through `GTP.Missions.registerStrand`). A strand is never listed as a mission; it shows in the phone's STRANDS tab with progress, and its markers are distinct minimap icons. Only one strand runs at a time, and none can start during a story mission (the marker says "Finish the mission first" as a toast). Strand progress persists in the save (`strands: {id: {level, best, done, ...}}`). Every strand completion event emits `strand:cycle {id, level, reward}` (the autosave hook, §6.3) and adds subscribers (§5.8).
+Seven repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a small `GTP.Strands` runtime inside `09_missions.js`'s file family (or `24_` plus a runtime hook: the strand runtime registers through `GTP.Missions.registerStrand`). A strand is never listed as a mission; it shows in the phone's STRANDS tab with progress, and its markers are distinct minimap icons. Only one strand runs at a time, and none can start during a story mission (the marker says "Finish the mission first" as a toast). Strand progress persists in the save (`strands: {id: {level, best, done, ...}}`). Every strand completion event emits `strand:cycle {id, level, reward}` (the autosave hook, §6.3) and adds subscribers (§5.8).
 
 ### 5.1 `loud_cab`, Loud Cab
 
@@ -794,7 +794,7 @@ Six repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a sm
 | `fare_freshman` | the freshman | `freshman` cast look | "The library. I know there isn't one. Drive until there is." |
 | `fare_agent` | an OVA agent, off duty | beret, shades | "The balloon office. I'm not going there. Take me there." |
 | `fare_lobbyist` | a jet lobbyist | aviators, flag pin | "The embassy. We're close on the jets. We've been close for eleven years." |
-| `fare_bagholder` | a $PUNDIT holder | cap, red shirt | "The mining shed. I'm not selling. I'm checking it's still a shed." |
+| `fare_bagholder` | a $PUNDIT holder | cap, shades, phone (checking the chart) | "The mining shed. I'm not selling. I'm checking it's still a shed." |
 | `fare_docent` | a museum docent | bob, lanyard | "The Museum of Takes. I curate the gift shop. The gift shop is the museum." |
 | `fare_ferry` | a ferry passenger | beanie, luggage look (pale shirt) | "The ferry. I've missed it four times. It hasn't left. I'm consistent." |
 | `fare_kip` | Kip | `kip` cast look | "Anywhere with a coupon code. Is this fare paid?" |
@@ -858,7 +858,7 @@ Six repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a sm
 | `mm_12` | `nap_depot` (-14, -2), behind the showroom podium | "The podium is a mattress. Sleep on it." |
 | `mm_13` | `listening_room` (6, -8), the alley by the velvet rope | "Tonight: nothing. Doors at nine." |
 | `mm_14` | `strip_gas` (0, -10), between the pumps | "Premium has a stance. Regular has a podcast." |
-| `mm_15` | `both_sides_strip` (0, -14), behind cutout six | "Cutout six did the reading." |
+| `mm_15` | `both_sides_strip` (-10, -24), behind cutout six at the far end of the range lane | "Cutout six did the reading." |
 | `mm_16` | `capitol_dome` (0, -16), on the leased steps | "The dome is leased. The steps are a ten." |
 | `mm_17` | `fulcrum` (10, 0), outside the second door | "Door two. Same checkbook." |
 | `mm_18` | `char_charter` (-8, 6), by the Bronze salad bin | "The salad is Bronze. The bin is Gold." |
@@ -884,16 +884,16 @@ Six repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a sm
 | `mm_38` | `airport_terminal` (0, -20), the baggage carousel | "Baggage claim: your take has arrived. It was on the bus." |
 | `mm_39` | `airport_runway` point `west`, on the painted 10 | "Runway 10. Also runway 10. Both tens." |
 | `mm_40` | `control_tower` (0, -6), the tower's base | "Tower: clouds rated. Planes: none." |
-| `mm_41` | `hangar_row` (10, 12), under the cutout's wing | "Hangar 1 of 1. Jet 0 of 1." |
+| `mm_41` | `hangar_row` (-10, 12), under the cutout's wing (inside the lot; +10 would be Baggage Claim Boulevard) | "Hangar 1 of 1. Jet 0 of 1." |
 | `mm_42` | `{x: 260, z: 760}`, Plane Spotters' Park bench | "Planes spotted: 0. Memos spotted: 1." |
 | `mm_43` | `container_yard` (30, 30), the maze's centre stack | "This container is MERCH. So is that one." |
 | `mm_44` | `manifest_quay` (20, 40), the ship's gangway | "The Manifest: cargo moved, 0. Listening, yes." |
-| `mm_45` | `ferry_terminal` (0, 28), the end of the ferry pier | "Next ferry: soon. Soon is a vibe." |
+| `mm_45` | `ferry_terminal` (0, 90), the end of the ferry pier (the lot is 72 m deep, the pier 24 m beyond it) | "Next ferry: soon. Soon is a vibe." |
 | `mm_46` | `customs_shed` (-12, 10), the declared pile | "Declared: everything. Disclosed: code TAKES20." |
-| `mm_47` | `museum_of_takes` (-8, -20), the statue's plinth | "THE FIRST TAKE (attributed). Attributed to you." |
-| `mm_48` | `heirloom_club` (0, 14), behind the velvet rope | "Members since before opinions. Opinions since Tuesday." |
-| `mm_49` | `old_money_common` (0, 0), on the bandstand | "Bandstand. Bands: 0. Stands: 1." |
-| `mm_50` | `causeway_east` (8, 0), under the NO plaque | "Goldplate Goldplate Causeway. Uptown says NO. Respectfuly." |
+| `mm_47` | `museum_of_takes` (2, -20), the statue's plinth on the plaza strip inside the lot (-8 would be Provenance Place) | "THE FIRST TAKE (attributed). Attributed to you." |
+| `mm_48` | `heirloom_club` (0, -4), behind the velvet rope at the door (+14 would be Inheritance Avenue) | "Members since before opinions. Opinions since Tuesday." |
+| `mm_49` | `old_money_common` (16, 0), on the bandstand (the gazebo sits at the lot's centre, 16 m east of the west door) | "Bandstand. Bands: 0. Stands: 1." |
+| `mm_50` | `causeway_east` (12, 0), under the NO plaque at the uptown abutment | "Goldplate Goldplate Causeway. Uptown says NO. Respectfuly." |
 
 ### 5.6 `loop_races`, Loop Races
 
@@ -903,7 +903,7 @@ Six repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a sm
 |---|---|---|---|---|---|
 | `lr_01` | The Upper Loop | on the deck above Chyron Ramp (`{x: 424, z: 328, y: 7}`), heading north | the ring's four corners and four midpoints clockwise: NE corner, N mid, NW corner, W mid, SW corner, S mid, SE corner, E mid | 1 | $1,000 / $400 / $200 |
 | `lr_02` | The Lower Loop | on the south leg above Arrivals Ramp (`{x: 376, z: 664, y: 7}`), heading west | the lower ring clockwise: SW corner, W mid (over the bay), NW corner (the shared leg), N mid, NE corner, E mid (over the bay), SE corner, S mid | 1 | $2,000 / $800 / $400 |
-| `lr_03` | The Figure Eight | outside `heirloom_club` on Inheritance Avenue, heading west | Inheritance Avenue west, the causeway, Goldplate Goldplate Avenue, `bridge_main`, Goldplate Avenue to Chyron Ramp, up onto the Loop, the full figure eight (both rings, crossing at the shared leg), down Arrivals Ramp, Departures Drive east, Manifest Road, Trust Fund Terrace north to the finish at the club | 2 | $4,000 / $1,500 / $700 |
+| `lr_03` | The Figure Eight | outside `heirloom_club` on Inheritance Avenue, heading west | Inheritance Avenue west, the causeway, Goldplate Goldplate Avenue, `bridge_main`, Goldplate Avenue to Chyron Ramp, up onto the Loop, the full figure eight (both rings, crossing at the shared leg), down Arrivals Ramp, Gate Ten Street south to Lost Luggage Lane, east along it onto Container Crescent (Departures Drive and Manifest Road are severed at ground level by the Manifest Ramp, so the z = 182 row is the only ground route from the airport into the port), Trust Fund Terrace north to Inheritance Avenue, east to the finish at the club | 2 | $4,000 / $1,500 / $700 |
 
 `lr_02` opens after any `lr_01` finish; `lr_03` after a `lr_02` win. Best times are kept and shown on the marker chip. Winning all three once: `race_car` flag: a pink `sports` car, THE RATIO (wrap `ratio`, "SLOW IS A TAKE" on the doors), is parked at `pod_garage` forever (respawns on load). Subscribers +5,000 per first-time win, +500 per repeat.
 
@@ -915,12 +915,12 @@ Six repeatable strands, data in `GTP.Content.expansion.strands[id]`, run by a sm
 |---|---|---|---|---|
 | `sj_01` | The Quad Hop | `campus_quad` (0, 22), heading north over the LOUD & CORRECT sign | the Quad's north path | 1.0 |
 | `sj_02` | Lower Third Leap | the downtown promenade `{x: 456, z: 200}`, heading south | the promenade 30 m south | 1.0 |
-| `sj_03` | Citation Gap | the Loop's north leg above Citation Ramp `{x: 232, z: 136, y: 7}`, heading north off the deck | the Fulcrum Foundation's lawn below (two doors, one landing) | 1.6 |
+| `sj_03` | Assembly Required | the Loop's north leg `{x: 352, z: 136, y: 7}` (above Perpetual Assembly Plaza, x 84..93 tiles), heading north off the deck | Perpetual Assembly Plaza, a park with no building to land on (the Fulcrum lot is mostly roof) | 1.6 |
 | `sj_04` | Par Ten | Clubhouse Drive `{x: 536, z: 182}`, heading south over the bunker | the fairway of hole 3 | 1.0 |
-| `sj_05` | Hedge Fund | `vaultwright_manor` (-6, -8), heading east over the hedge maze | the manor's pool lawn | 1.2 |
+| `sj_05` | Hedge Fund | `vaultwright_manor`, on the lawn 3 m north of the hedge maze's first hedge and in line with its centre column (the maze is the five `hedge` props east of the house: `mx + 4.8`, `mz - 3` in `_landmarkProps`'s mansion case), heading south along the maze | the south lawn past the maze's far end (the hedges are 1.8 m tall and about 20 m long; a hedge is also a hedge) | 1.2 |
 | `sj_06` | Span Skip | the Sponsor Span's south end `{x: 332, z: 598}`, heading south over the toll gantry | Arrivals Avenue | 1.0 |
-| `sj_07` | Runway 10/10 | the runway's west threshold (point `west`), heading west | the beach below the runway | 1.2 |
-| `sj_08` | Hangar Hop | `hangar_row` (6, 14), heading north over the cutout jet | the hangar apron | 1.0 |
+| `sj_07` | Runway 10/10 | the runway's west threshold (point `west`), heading west | the 48 m beach west of the threshold (sand x 6..18 tiles; landing point `{x: 46, z: 826}`): a truck at 18 to 28 m/s lands 20 to 35 m out, and nothing on wheels reaches the sea | 1.0 |
+| `sj_08` | Hangar Hop | `hangar_row` (-8, 14), inside the lot's south end, heading north over the cutout jet | the hangar apron (the lot's north half) | 1.0 |
 | `sj_09` | Container Clear | `container_yard` (20, 36), heading north over a single-high row | the next lane | 1.0 |
 | `sj_10` | Well, Actually | Stoop Speech Street `{x: 752, z: 372}`, heading south over the Common's fountain | the lawn past the bandstand | 1.2 |
 
@@ -1107,10 +1107,11 @@ All new types follow the existing interpreter rules: distances in GDD units (8 p
 
 **Extensions to existing types.**
 
-- `defeat`: optional `weapon: id` (only kills with that weapon count; a kill with another shows WRONG TAKE and the ped is re-spawned at the next wave), `mustKill: true` (fled and down-for-3-s peds do not count; only dead), `panic: true` (survivors run around within the spawn radius instead of fleeing the area; used with `stationary`).
+- `defeat`: optional `weapon: id` (only kills with that weapon count; a kill with another shows WRONG TAKE and the ped is re-spawned at the next wave), `mustKill: true` (fled and down-for-3-s peds do not count; only dead).
 - `destroy`: optional `weapon: id` (only wrecks caused by that weapon count: a wreck's `lastHitBy` weapon id), `driven: 'cop'` (the targets drive at the player like cruisers and ram), `colors: [...]` (one per spawned vehicle, in order), `flee: true` (the drivers run from the player at 90% top speed).
-- Ped spawns: `stationary: true` (the mission brain never moves them; they turn to face the player), `hostile: false` (no attacking; with `panic`, they run when shot at), `ped: 'cutout'` (a new cast entry: a cardboard heckler, 30 hp, `look.sign` WRONG, `look.flat: true` so `pedParts` builds a single plane with a stand, knocked over rather than killed: the death is a topple with a `puff`, no cash drop, counts as a kill for `defeat`).
-- Targets: `{landmark, point: 'name'}` resolves `landmark.points[name]` (tile coordinates in the world data, e.g. `airport_runway.points = {east: {tx: 101, tz: 206}, west: {tx: 12, tz: 206}}`, `both_sides_strip.points = {range: {tx: 73, tz: 99}}`, `causeway_east.points = {island: {tx: 154, tz: 67}, uptown: {tx: 161, tz: 67}}`); `{landmark, offset: {x, z}}` adds GDD units to the door point; `around: {tag: 'x'}` places a pickup spawn at the tagged vehicle's current position.
+- Ped spawns: `stationary: true` (the mission brain never moves them; they turn to face the player; a hostile stationary ped shoots from where it stands whenever the player is inside its weapon's range, with the normal AI accuracy, and never charges, so the m12b couriers at a hundred metres are a firefight on paper and a shooting lesson in practice), `hostile: false` (no attacking, no heat; they stagger when hit, which with `mustKill` is the cardboard range), `ped` may be a cast id as well as a role (`courier`, `cutout`: `count` copies spawn with that cast look, the `thug` role brain and the cast `voice`), `ped: 'cutout'` (a new cast entry: a cardboard heckler, 30 hp, `look.sign` WRONG, `look.flat: true` so `pedParts` builds a single plane with a stand, knocked over rather than killed: the death is a topple with a `puff`, no cash drop, counts as a kill for `defeat`).
+- Targets: `{landmark, point: 'name'}` resolves `landmark.points[name]` (tile coordinates in the world data, e.g. `airport_runway.points = {east: {tx: 101, tz: 206}, west: {tx: 20, tz: 206}}`, `both_sides_strip.points = {range: {tx: 73, tz: 99}}`, `causeway_east.points = {island: {tx: 154, tz: 67}, uptown: {tx: 161, tz: 67}}`); `{landmark, offset: {x, z}}` adds GDD units to the door point. Both forms go through `resolvePoint`, so a spawn's `around` accepts them too (m03b spawns its cutouts `around: {landmark: 'both_sides_strip', point: 'range'}`); `around: {tag: 'x'}` places a pickup spawn at the tagged vehicle's current position.
+- `enter_vehicle` with a `tag` that already names a live persistent vehicle (`podvan` from `m01_van`, the strands' `sponsorvan`) reuses that vehicle instead of spawning a second one, moving it to a free bay at `at` if it is more than 60 m away; `wrap` and `color` on the spawn are applied to it. A missing or wrecked one is spawned as before.
 - `onComplete`: `takeWeapon: id` (removes the weapon and its ammo, with the toast "<name> returned"), `playCutscene: 'cs_xx'` (after the outro), `giveMoney: n`, `subs: n`.
 - Missions: `replayable: false` to exclude a mission from REPLAY (none use it), `act: 1|2|3` for the phone's grouping, `cutsceneIntro: 'cs_xx'` to override the default `cs_intro_<id>` lookup.
 - `vehicle: 'spawned:<tag>'` on `drive_to`, `stunt` and `deliver_passenger` accepts the strand-owned persistent vehicles by tag (`sponsorvan`, `podvan`).
@@ -1177,5 +1178,5 @@ New single ads (`billboards.ads`): `'GOLDPLATE INTERNATIONAL: ONE FLIGHT, TWO TE
 - **Rule 3, punch at power.** No slurs; no joke's punchline is race, ethnicity, religion, nationality, gender, sexuality, disability or body. The old-money jokes are about inherited money and inherited opinions. No sexual content: the club, the ferry and the yacht remain places where nothing happens. No minors (the freshman is a college student). Bryce remains the butt of the joke in every new mission, every cutscene and both endings.
 - **Rule 4, cartoon violence.** Hit zones, kill confirms and the sniper are arcade feedback: pixel puffs, a hat knocked off, "WRITE THAT DOWN", RATIO'D text, cardboard hecklers that topple. No gore, no executions, nothing aimed at a real person or stand-in; AI never aims for the head.
 - **Rule 5, tone.** Fast, absurd, PG-13; mild profanity at most; dialogue two to six lines.
-- **Audit.** This document avoids every term on the `tests/content_audit.js` lists (the real-name, place, agency, hate, trope and sexual lists), including the bounded words that could occur by accident in English prose; `node tests/content_audit.js` passes with this file in the tree. Every mission uses only the existing twelve objective types plus the seven defined in §7, with literal params; vehicle types are engine classes; `follow` is unused in the new missions; both endings still `require ['m14_grift']`; respawn ids are unchanged.
+- **Audit.** This document avoids every term on the `tests/content_audit.js` lists (the real-name, place, agency, hate, trope and sexual lists), including the bounded words that could occur by accident in English prose; `node tests/content_audit.js` passes with this file in the tree. Every mission uses only the existing twelve objective types plus the eight defined in §7, with literal params; vehicle types are engine classes; `follow` is unused in the new missions; both endings still `require ['m14_grift']`; respawn ids are unchanged.
 

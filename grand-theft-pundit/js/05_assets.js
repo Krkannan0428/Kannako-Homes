@@ -55,10 +55,116 @@
   }
   function alphaFill(ctx, color, a, x, y, w, h) { ctx.globalAlpha = a; ctx.fillStyle = color; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
 
+  // ---- surface maps generated from the colour maps (the graphics track) ----
+  // A tangent-space normal map from a canvas: luminance is read as height (mortar, grout, cracks and tar lines are
+  // dark, so they read as grooves; slabs, bricks and panels stand proud), box-blurred once, then a Sobel gradient.
+  // `scale` downsamples (an atlas normal at half the colour resolution is plenty), `strength` is the slope gain.
+  function normalFromCanvas(src, scale, strength, blur) {
+    var t0 = U.now(), out0 = normalFromCanvasInner(src, scale, strength, blur);
+    Assets.mapsMs = (Assets.mapsMs || 0) + (U.now() - t0);
+    return out0;
+  }
+  // read a canvas back at 1/scale resolution with a box filter in JS (getImageData on the source is cheap; drawing it
+  // scaled into a scratch canvas and reading that back is a multi-second readback in headless Chromium)
+  function sampleCanvas(src, scale) {
+    var sw = src.width, sh = src.height, w = Math.max(2, Math.floor(sw / scale)), h = Math.max(2, Math.floor(sh / scale));
+    var sd = src.getContext('2d').getImageData(0, 0, sw, sh).data;
+    if (scale === 1) return { w: w, h: h, data: sd };
+    var out = new Uint8ClampedArray(w * h * 4), inv = 1 / (scale * scale);
+    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
+      var r = 0, g = 0, b = 0;
+      for (var oy = 0; oy < scale; oy++) { var row = ((y * scale + oy) * sw + x * scale) * 4; for (var ox = 0; ox < scale; ox++, row += 4) { r += sd[row]; g += sd[row + 1]; b += sd[row + 2]; } }
+      var k = (y * w + x) * 4;
+      out[k] = r * inv; out[k + 1] = g * inv; out[k + 2] = b * inv; out[k + 3] = 255;
+    }
+    return { w: w, h: h, data: out };
+  }
+  function normalFromCanvasInner(src, scale, strength, blur) {
+    var smp = sampleCanvas(src, scale), w = smp.w, h = smp.h, d = smp.data;
+    var cv = canvas(w, h), ctx = cv.getContext('2d');
+    var n = w * h, lum = new Float32Array(n), i, x, y, row;
+    for (i = 0; i < n; i++) lum[i] = (d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114) / 255;
+    // wrap-around neighbour tables (tileable, no modulo in the hot loops)
+    var xl = new Int32Array(w), xr = new Int32Array(w), yu = new Int32Array(h), yd = new Int32Array(h);
+    for (x = 0; x < w; x++) { xl[x] = x === 0 ? w - 1 : x - 1; xr[x] = x === w - 1 ? 0 : x + 1; }
+    for (y = 0; y < h; y++) { yu[y] = (y === 0 ? h - 1 : y - 1) * w; yd[y] = (y === h - 1 ? 0 : y + 1) * w; }
+    if (blur) {
+      // a separable 3-tap box blur
+      var tmp = new Float32Array(n), b = new Float32Array(n);
+      for (y = 0; y < h; y++) { row = y * w; for (x = 0; x < w; x++) tmp[row + x] = (lum[row + xl[x]] + lum[row + x] + lum[row + xr[x]]) / 3; }
+      for (y = 0; y < h; y++) { row = y * w; for (x = 0; x < w; x++) b[row + x] = (tmp[yu[y] + x] + tmp[row + x] + tmp[yd[y] + x]) / 3; }
+      lum = b;
+    }
+    var out = ctx.createImageData(w, h), o = out.data, k = 0;
+    for (y = 0; y < h; y++) {
+      row = y * w;
+      for (x = 0; x < w; x++, k += 4) {
+        // height rises with luminance; v runs up the canvas (flipY), so the green slope is the downward difference
+        var nx = (lum[row + xl[x]] - lum[row + xr[x]]) * strength, ny = (lum[yd[y] + x] - lum[yu[y] + x]) * strength;
+        var inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
+        o[k] = (nx * inv * 0.5 + 0.5) * 255; o[k + 1] = (ny * inv * 0.5 + 0.5) * 255; o[k + 2] = (inv * 0.5 + 0.5) * 255; o[k + 3] = 255;
+      }
+    }
+    ctx.putImageData(out, 0, 0);
+    return cv;
+  }
+  function dataTexture(cv, srgb, repeat) {
+    var t = new THREE.CanvasTexture(cv);
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.wrapS = t.wrapT = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+    t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+    t.anisotropy = C.QUALITY.anisotropy || 4;
+    return t;
+  }
+  // roughness in the green channel (three's roughnessMap convention), from a per-pixel rule over the colour canvas
+  function roughnessFromCanvas(src, scale, rule) {
+    var smp = sampleCanvas(src, scale), w = smp.w, h = smp.h, d = smp.data;
+    var cv = canvas(w, h), ctx = cv.getContext('2d'), img = ctx.createImageData(w, h), o = img.data, n = w * h;
+    for (var i = 0; i < n; i++) {
+      var k = i * 4, r = d[k], g = d[k + 1], b = d[k + 2];
+      var rough = rule(r, g, b, i % w, (i / w) | 0, w, h);
+      o[k] = 0; o[k + 1] = Math.max(0, Math.min(255, rough * 255)) | 0; o[k + 2] = 0; o[k + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return cv;
+  }
+  // the facade rule: glass panes (a saturated blue) are glossy, everything else is masonry
+  function facadeRoughRule(r, g, b) {
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), sat = mx > 0 ? (mx - mn) / mx : 0;
+    if (b >= r && b >= g && sat >= 0.25 && mx > 60) return 0.22;
+    var lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+    return 0.72 + (0.5 - lum) * 0.25;
+  }
+  // tileable value noise on a canvas (clouds, water normals); octaves of smooth random lattices
+  function noiseCanvas(size, seed, octaves, persistence, alphaOnly, tint) {
+    var cv = canvas(size, size), ctx = cv.getContext('2d'), R = GTP.makeRng(seed);
+    var img = ctx.createImageData(size, size), d = img.data, total = new Float32Array(size * size);
+    var amp = 1, sum = 0, freq = 4;
+    for (var o = 0; o < octaves; o++) {
+      var lat = new Float32Array(freq * freq);
+      for (var i = 0; i < lat.length; i++) lat[i] = R.random();
+      for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+        var fx = x / size * freq, fy = y / size * freq, x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+        tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+        var x1 = (x0 + 1) % freq, y1 = (y0 + 1) % freq;
+        var v = lat[y0 * freq + x0] * (1 - tx) * (1 - ty) + lat[y0 * freq + x1] * tx * (1 - ty) + lat[y1 * freq + x0] * (1 - tx) * ty + lat[y1 * freq + x1] * tx * ty;
+        total[y * size + x] += v * amp;
+      }
+      sum += amp; amp *= persistence; freq *= 2;
+    }
+    for (var k = 0; k < size * size; k++) {
+      var n = total[k] / sum, p = k * 4;
+      if (alphaOnly) { d[p] = tint ? tint[0] : 255; d[p + 1] = tint ? tint[1] : 255; d[p + 2] = tint ? tint[2] : 255; d[p + 3] = n * 255; }
+      else { d[p] = d[p + 1] = d[p + 2] = n * 255; d[p + 3] = 255; }
+    }
+    ctx.putImageData(img, 0, 0);
+    return cv;
+  }
+
   var Assets = GTP.Assets = {
-    atlas: null, atlasCanvas: null, water: null, cells: cells,
-    _facades: {}, _facadeMats: {}, _signs: {}, _signMats: {}, _props: {}, _vehicles: {}, _mats: {},
-    particle: null, glow: null, sky: null, skyCanvas: null, ready: false,
+    atlas: null, atlasCanvas: null, atlasNormal: null, atlasRough: null, water: null, waterNormal: null, cells: cells,
+    _facades: {}, _facadeMats: {}, _facadeMatsFar: {}, _signs: {}, _signMats: {}, _props: {}, _vehicles: {}, _mats: {},
+    particle: null, glow: null, sky: null, skyCanvas: null, env: null, envCanvas: null, clouds: null, rain: null, moon: null, ready: false,
 
     init: function () {
       if (Assets.ready) return;
@@ -68,6 +174,26 @@
       Assets._buildSprites();
       Assets.ready = true;
       Assets.initMs = U.now() - t0;
+    },
+    // Quality presets toggle the costly maps on the shared materials (null normal / roughness maps compile to
+    // cheaper shaders); textures pick up the anisotropy. Render.quality.set calls this after mutating C.QUALITY.
+    applyQuality: function (q) {
+      q = q || C.QUALITY;
+      var nm = !!q.normalMaps, k, m;
+      if (nm) Assets.ensureSurfaceMaps();
+      function setMaps(mat, normal, rough) {
+        if (!mat) return;
+        var want = nm ? normal : null;
+        if (mat.normalMap !== want) { mat.normalMap = want; mat.needsUpdate = true; }
+        var wantR = nm ? rough : null;
+        if (mat.roughnessMap !== wantR) { mat.roughnessMap = wantR; mat.needsUpdate = true; }
+      }
+      setMaps(Assets._mats.ground, Assets.atlasNormal, Assets.atlasRough);
+      for (k in Assets._facadeMats) { m = Assets._facadeMats[k]; var f = Assets._facades[k]; if (f) setMaps(m, f.normal, f.rough); }
+      if (Assets._mats.water) { var wm = Assets._mats.water; var wn = nm ? Assets.waterNormal : null; if (wm.normalMap !== wn) { wm.normalMap = wn; wm.needsUpdate = true; } }
+      var aniso = q.anisotropy || 4;
+      [Assets.atlas, Assets.atlasNormal, Assets.atlasRough, Assets.water].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } });
+      for (k in Assets._facades) { var ff = Assets._facades[k]; [ff.day, ff.night, ff.normal, ff.rough].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } }); }
     },
 
     // --------------------------------------------------------------- atlas --
@@ -98,7 +224,9 @@
       var cv = Assets.atlasCanvas = canvas(ATLAS, ATLAS), ctx = cv.getContext('2d');
       var tile = canvas(S, S), tctx = tile.getContext('2d');
       var names = Object.keys(TILES), idx = 0;
-      ctx.fillStyle = '#ff00ff'; ctx.fillRect(0, 0, ATLAS, ATLAS);
+      // unused cells are asphalt-coloured: a coarse mip level blends neighbouring cells, and a loud fill would bleed into
+      // tiles seen at a grazing angle (the runway showed magenta flecks when this was debug magenta)
+      ctx.fillStyle = PAL.asphalt; ctx.fillRect(0, 0, ATLAS, ATLAS);
       names.forEach(function (name) {
         var col = idx % 8, row = Math.floor(idx / 8); idx++;
         cells[name] = { col: col, row: row };
@@ -115,6 +243,35 @@
       tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
       tex.anisotropy = C.QUALITY.anisotropy; tex.colorSpace = THREE.SRGBColorSpace;
       tex.needsUpdate = true;
+      if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
+    },
+    // The surface maps (generated from the colour canvases, at half resolution) are built the first time a preset
+    // with normalMaps asks for them, so a low boot (and every headless test) pays nothing for them:
+    //   atlasNormal  asphalt grain, tar lines and cracks, slab grout, kerb lips, dock planks
+    //   atlasRough   the per-cell base roughness (ROUGH) modulated by luminance: paint reads glossier than aggregate
+    //   waterNormal  layered-noise ripples
+    ensureSurfaceMaps: function () {
+      if (Assets.atlasNormal) return;
+      var cv = Assets.atlasCanvas, names = Object.keys(cells);
+      Assets.atlasNormal = dataTexture(normalFromCanvas(cv, 2, 2.6, true), false, false);
+      var baseRough = {};
+      names.forEach(function (name) { baseRough[cells[name].row * 8 + cells[name].col] = ROUGH[name] != null ? ROUGH[name] : 0.9; });
+      var cellPx = CELL / 2;
+      Assets.atlasRough = dataTexture(roughnessFromCanvas(cv, 2, function (r, g, b, x, y) {
+        var base = baseRough[Math.floor(y / cellPx) * 8 + Math.floor(x / cellPx)];
+        if (base == null) base = 0.9;
+        var lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+        return base - (lum - 0.45) * 0.3;
+      }), false, false);
+      Assets.waterNormal = dataTexture(normalFromCanvas(noiseCanvas(256, 0x3A7E2, 4, 0.55), 1, 3.2, true), false, true);
+      Assets.waterNormal.repeat.set(2600 / 14, 2600 / 14);
+      for (var k in Assets._facades) Assets._facadeMaps(Assets._facades[k]);
+    },
+    _facadeMaps: function (f) {
+      if (f.normal) return;
+      var day = f.day.image;
+      f.normal = dataTexture(normalFromCanvas(day, 2, 2.2, true), false, true); f.normal.wrapT = THREE.ClampToEdgeWrapping;
+      f.rough = dataTexture(roughnessFromCanvas(day, 2, facadeRoughRule), false, true); f.rough.wrapT = THREE.ClampToEdgeWrapping;
     },
     _buildWater: function () {
       var cv = canvas(256, 256), ctx = cv.getContext('2d'), R = rngTex.fork(99);
@@ -147,16 +304,93 @@
       c2.fillStyle = g2; c2.fillRect(0, 0, 128, 128);
       Assets.glow = new THREE.CanvasTexture(cv2);
       Assets.glow.colorSpace = THREE.SRGBColorSpace;
-      var sky = Assets.skyCanvas = canvas(4, 256);
+      // the sky: one 512 x 256 equirectangular canvas painted by Render.updateEnvironment (gradient, sun glow, horizon haze,
+      // a ground half). The dome samples it mirrored (seen from inside), the PMREM environment map samples it straight.
+      var sky = Assets.skyCanvas = canvas(512, 256);
       Assets.sky = new THREE.CanvasTexture(sky);
       Assets.sky.colorSpace = THREE.SRGBColorSpace;
-      Assets.sky.minFilter = THREE.LinearFilter; Assets.sky.magFilter = THREE.LinearFilter;
+      Assets.sky.minFilter = THREE.LinearFilter; Assets.sky.magFilter = THREE.LinearFilter; Assets.sky.generateMipmaps = false;
+      Assets.sky.wrapS = THREE.RepeatWrapping; Assets.sky.repeat.x = -1;
+      Assets.env = new THREE.CanvasTexture(sky);
+      Assets.env.colorSpace = THREE.SRGBColorSpace; Assets.env.mapping = THREE.EquirectangularReflectionMapping;
+      Assets.env.minFilter = THREE.LinearFilter; Assets.env.magFilter = THREE.LinearFilter; Assets.env.generateMipmaps = false;
       // the sun: soft warm disc
       var cv3 = canvas(128, 128), c3 = cv3.getContext('2d');
       var g3 = c3.createRadialGradient(64, 64, 10, 64, 64, 64);
       g3.addColorStop(0, 'rgba(255,250,230,1)'); g3.addColorStop(0.3, 'rgba(255,235,180,0.9)'); g3.addColorStop(0.55, 'rgba(255,200,120,0.25)'); g3.addColorStop(1, 'rgba(255,180,100,0)');
       c3.fillStyle = g3; c3.fillRect(0, 0, 128, 128);
       Assets.sun = new THREE.CanvasTexture(cv3); Assets.sun.colorSpace = THREE.SRGBColorSpace;
+      // the moon: a pale disc with a few maria and a soft limb
+      var cv4 = canvas(128, 128), c4 = cv4.getContext('2d'), Rm = rngTex.fork(0x300);
+      var g4 = c4.createRadialGradient(64, 64, 40, 64, 64, 64);
+      g4.addColorStop(0, 'rgba(236,240,250,1)'); g4.addColorStop(0.78, 'rgba(236,240,250,1)'); g4.addColorStop(0.86, 'rgba(220,228,245,0.6)'); g4.addColorStop(1, 'rgba(200,210,240,0)');
+      c4.fillStyle = g4; c4.beginPath(); c4.arc(64, 64, 64, 0, TAU); c4.fill();
+      c4.fillStyle = 'rgba(150,160,190,0.45)';
+      for (var mi = 0; mi < 9; mi++) { var ma = Rm.random() * TAU, mr = Rm.random() * 36; c4.beginPath(); c4.ellipse(64 + Math.cos(ma) * mr, 64 + Math.sin(ma) * mr, 5 + Rm.random() * 11, 4 + Rm.random() * 8, Rm.random() * 3, 0, TAU); c4.fill(); }
+      Assets.moon = new THREE.CanvasTexture(cv4); Assets.moon.colorSpace = THREE.SRGBColorSpace;
+      // clouds: tileable multi-octave noise, thresholded in the shader (cover) so the sky can go from scattered to overcast
+      Assets.clouds = dataTexture(noiseCanvas(512, 0xC10D5, 5, 0.52), false, true);
+      Assets.clouds.anisotropy = 1;
+      // a rain streak: a thin vertical line with soft ends, for a Points cloud around the camera
+      var cv5 = canvas(32, 128), c5 = cv5.getContext('2d');
+      var g5 = c5.createLinearGradient(0, 0, 0, 128);
+      g5.addColorStop(0, 'rgba(255,255,255,0)'); g5.addColorStop(0.3, 'rgba(255,255,255,0.55)'); g5.addColorStop(0.85, 'rgba(255,255,255,0.9)'); g5.addColorStop(1, 'rgba(255,255,255,0)');
+      c5.fillStyle = g5; c5.fillRect(13, 0, 6, 128);
+      c5.fillStyle = 'rgba(255,255,255,0.2)'; c5.fillRect(11, 10, 10, 108);
+      Assets.rain = new THREE.CanvasTexture(cv5); Assets.rain.minFilter = THREE.LinearFilter; Assets.rain.magFilter = THREE.LinearFilter;
+    },
+
+    // ----------------------------------------------------------- materials --
+    // The shared PBR materials the chunks use near the camera; the *Far variants are the cheaper Lambert ones the
+    // LOD swaps in beyond QUALITY.lodDistance (no normal map, no environment reflection).
+    groundMaterial: function () {
+      var M = Assets._mats;
+      if (!M.ground) {
+        if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
+        M.ground = new THREE.MeshStandardMaterial({ map: Assets.atlas, normalMap: C.QUALITY.normalMaps ? Assets.atlasNormal : null, normalScale: new THREE.Vector2(0.8, 0.8), roughnessMap: C.QUALITY.normalMaps ? Assets.atlasRough : null, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.5 });
+        M.ground.name = 'ground';
+      }
+      return M.ground;
+    },
+    groundMaterialFar: function () {
+      var M = Assets._mats;
+      if (!M.groundFar) { M.groundFar = new THREE.MeshLambertMaterial({ map: Assets.atlas }); M.groundFar.name = 'groundFar'; }
+      return M.groundFar;
+    },
+    waterMaterial: function () {
+      var M = Assets._mats;
+      if (!M.water) {
+        if (C.QUALITY.normalMaps) Assets.ensureSurfaceMaps();
+        M.water = new THREE.MeshStandardMaterial({ map: Assets.water, normalMap: C.QUALITY.normalMaps ? Assets.waterNormal : null, normalScale: new THREE.Vector2(0.55, 0.55), color: 0xffffff, roughness: 0.22, metalness: 0.08, envMapIntensity: 1.1, transparent: true, opacity: 0.94 });
+        M.water.name = 'water';
+      }
+      return M.water;
+    },
+    // vehicle paint: a clearcoated metallic at high / ultra, a plain metallic standard below (Render.quality may change
+    // the preset after a car is built; the car keeps its material until it is respawned)
+    paintMaterial: function (hex) {
+      var col = new THREE.Color(hex || '#c94040');
+      var m = C.QUALITY.clearcoat
+        ? new THREE.MeshPhysicalMaterial({ vertexColors: true, color: col, roughness: 0.42, metalness: 0.5, clearcoat: 1.0, clearcoatRoughness: 0.12, envMapIntensity: 1.0 })
+        : new THREE.MeshStandardMaterial({ vertexColors: true, color: col, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.0 });
+      m.name = 'paint';
+      return m;
+    },
+    glassMaterial: function () {
+      var M = Assets._mats;
+      if (!M.glass) { M.glass = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xb8c8d6, roughness: 0.05, metalness: 0.92, envMapIntensity: 1.1, transparent: true, opacity: 0.72 }); M.glass.name = 'glass'; }
+      return M.glass;
+    },
+    chromeMaterial: function () {
+      var M = Assets._mats;
+      if (!M.chrome) { M.chrome = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xffffff, roughness: 0.2, metalness: 1.0, envMapIntensity: 1.2 }); M.chrome.name = 'chrome'; }
+      return M.chrome;
+    },
+    // HDR emitters for the lamps a car carries: values above 1 so the bloom pass picks them up
+    emitterMaterial: function (r, g, b) {
+      var key = 'em:' + r + ',' + g + ',' + b, M = Assets._mats;
+      if (!M[key]) { M[key] = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color().setRGB(r, g, b), toneMapped: true }); M[key].name = key; }
+      return M[key];
     },
 
     // ------------------------------------------------------------- facades --
@@ -174,7 +408,9 @@
       drawCommonBands(dctx, nctx, style, GTP.makeRng(seed + 1));
       var td = new THREE.CanvasTexture(day), tn = new THREE.CanvasTexture(night);
       [td, tn].forEach(function (t) { t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = C.QUALITY.anisotropy; t.colorSpace = THREE.SRGBColorSpace; t.minFilter = THREE.LinearMipmapLinearFilter; });
-      f = Assets._facades[style] = { day: td, night: tn, style: style };
+      f = Assets._facades[style] = { day: td, night: tn, normal: null, rough: null, style: style };
+      // the surface maps (half resolution): brick courses, mullions, sills, siding laps and corrugations as relief; glass glossy
+      if (Assets.atlasNormal) Assets._facadeMaps(f);
       return f;
     },
     facadeMaterial: function (style) {
@@ -182,34 +418,68 @@
       var m = Assets._facadeMats[style];
       if (m) return m;
       var f = Assets.facade(style);
+      if (C.QUALITY.normalMaps) { Assets.ensureSurfaceMaps(); Assets._facadeMaps(f); }
       // vertexColors: the chunk builder tints each building slightly so a style is not a row of clones
-      m = new THREE.MeshLambertMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true });
-      m.userData.style = style;
+      m = new THREE.MeshStandardMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true, normalMap: C.QUALITY.normalMaps ? f.normal : null, normalScale: new THREE.Vector2(0.75, 0.75), roughnessMap: C.QUALITY.normalMaps ? f.rough : null, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.7 });
+      m.userData.style = style; m.name = 'facade:' + style;
       Assets._facadeMats[style] = m;
       return m;
+    },
+    // the LOD's far facade: the old Lambert look, no relief, no reflections
+    facadeMaterialFar: function (style) {
+      if (!FACADES[style]) style = 'downtown';
+      var m = Assets._facadeMatsFar[style];
+      if (m) return m;
+      var f = Assets.facade(style);
+      m = new THREE.MeshLambertMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true });
+      m.userData.style = style; m.name = 'facadeFar:' + style;
+      Assets._facadeMatsFar[style] = m;
+      return m;
+    },
+    // every shared material whose emissiveIntensity follows the night (Render.updateEnvironment drives them)
+    litMaterials: function () {
+      var out = [], k;
+      for (k in Assets._facadeMats) out.push(Assets._facadeMats[k]);
+      for (k in Assets._facadeMatsFar) out.push(Assets._facadeMatsFar[k]);
+      return out;
     },
     facadeStyles: function () { return Object.keys(FACADES); },
     // band uv rect: [u0, v0(bottom), u1, v1(top)] for band b (0..7); u spans 0..uRepeat
     bandUV: function (b, uRepeat) { return [0, 1 - (b + 1) * BAND / FH, uRepeat == null ? 1 : uRepeat, 1 - b * BAND / FH]; },
-    // uvs of a solid swatch color (band 6, 16 swatches of 32 px)
+    // uvs of a solid swatch color (band 6, 21 swatches of 24 px)
     swatchUV: function (name) {
       var i = SWATCH_NAMES.indexOf(name); if (i < 0) i = 0;
-      var u = (i + 0.5) * 32 / FW, v = 1 - (6 * BAND + BAND / 2) / FH;
+      var u = (i + 0.5) * SW / FW, v = 1 - (6 * BAND + BAND / 2) / FH;
       return [[u, v], [u, v], [u, v], [u, v]];
     },
     roof: function (style) { return Assets.facade(style).day; },
 
     // --------------------------------------------------------------- signs --
+    // opts: neon, w (aspect), target (Both Sides Arms: concentric rings behind the text), gold (the President's
+    // sign), brass (a plaque), banner (a hanging banner: tall aspect, text stacked)
     billboard: function (text, opts) {
       opts = opts || {};
-      var key = (opts.neon ? 'n:' : 'd:') + (opts.w || 2) + ':' + text;
+      var variant = (opts.target ? 't' : '') + (opts.gold ? 'g' : '') + (opts.brass ? 'b' : '') + (opts.banner ? 'v' : '');
+      var key = (opts.neon ? 'n:' : 'd:') + (opts.w || 2) + ':' + variant + ':' + text;
       if (Assets._signs[key]) return Assets._signs[key];
       var ar = opts.w || 2, W = 512, H = Math.round(W / ar), cv = canvas(W, H), ctx = cv.getContext('2d');
       var R = rngTex.fork(U.hash(text));
       var neon = !!opts.neon, color = opts.color || (neon ? R.pick(PAL.neon) : '#f4efe4');
       var bg = opts.bg || (neon ? '#0b0a12' : R.pick(['#1d2233', '#2c3e7a', '#8a2f2f', '#2f6b4a', '#4a3a6a', '#e8e2c8', '#c94040']));
+      if (opts.gold) { bg = PAL.gold; color = '#2a2015'; neon = false; }
+      if (opts.brass) { bg = '#8a6a2a'; color = '#2a2015'; neon = false; }
+      if (opts.banner) { bg = R.pick(['#8a2f2f', '#2c3e7a', '#2f6b4a']); color = '#f4efe4'; }
       ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-      if (!neon) {
+      if (opts.target) {
+        // a neon target: concentric rings behind the words
+        var ringC = neon ? R.pick(PAL.neon) : '#c94040';
+        ctx.lineWidth = Math.max(4, H * 0.06); ctx.strokeStyle = ringC; ctx.globalAlpha = 0.55;
+        if (neon) { ctx.shadowColor = ringC; ctx.shadowBlur = 16; }
+        for (var rk = 1; rk <= 4; rk++) { ctx.beginPath(); ctx.arc(W / 2, H / 2, H * 0.11 * rk, 0, TAU); ctx.stroke(); }
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      }
+      if (opts.gold || opts.brass) { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 8; ctx.strokeRect(10, 10, W - 20, H - 20); ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 3; ctx.strokeRect(16, 16, W - 32, H - 32); }
+      if (!neon && !opts.gold && !opts.brass) {
         // printed poster: halftone dots + a border
         ctx.globalAlpha = 0.08; ctx.fillStyle = '#000';
         for (var y = 6; y < H; y += 12) for (var x = 6; x < W; x += 12) { ctx.beginPath(); ctx.arc(x, y, 2.5, 0, TAU); ctx.fill(); }
@@ -218,8 +488,8 @@
         var light = U.hexToRgb(bg.replace('#', '')).reduce(function (a, b) { return a + b; }, 0) > 450;
         if (!opts.color) color = light ? '#1d2233' : '#f4efe4';
       }
-      // fit text: shrink until it fits, wrap on long lines
-      var words = String(text).split(' '), lines = [text], size = Math.floor(H * 0.42);
+      // fit text: shrink until it fits, wrap on long lines (a banner stacks every word)
+      var words = String(text).split(' '), lines = opts.banner && words.length > 1 ? words.slice() : [text], size = Math.floor(H * (opts.banner ? 0.12 : 0.42));
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       function setFont(sz) { ctx.font = '900 ' + sz + 'px "Arial Black", Impact, Arial, sans-serif'; }
       for (var tries = 0; tries < 20; tries++) {
@@ -241,10 +511,12 @@
       Assets._signs[key] = tex;
       return tex;
     },
-    signMaterial: function (text, neon, ar) {
-      var key = (neon ? 'n:' : 'd:') + (ar || 2) + ':' + text;
+    signMaterial: function (text, neon, ar, opts) {
+      opts = opts || {};
+      var variant = (opts.target ? 't' : '') + (opts.gold ? 'g' : '') + (opts.brass ? 'b' : '') + (opts.banner ? 'v' : '');
+      var key = (neon ? 'n:' : 'd:') + (ar || 2) + ':' + variant + ':' + text;
       if (Assets._signMats[key]) return Assets._signMats[key];
-      var tex = Assets.billboard(text, { neon: neon, w: ar || 2 });
+      var tex = Assets.billboard(text, { neon: neon, w: ar || 2, target: opts.target, gold: opts.gold, brass: opts.brass, banner: opts.banner });
       // front face only: a double-sided plane reads mirrored from behind; the renderer adds a backing board where a back is visible
       var m = new THREE.MeshLambertMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: neon ? 0.5 : 0.1, side: THREE.FrontSide });
       m.userData.neon = !!neon;
@@ -253,40 +525,105 @@
     },
 
     // --------------------------------------------------------------- props --
+    // The shared vertex-coloured PBR material for props, peds, weapons and pickups. A `glow` vertex attribute (0 by
+    // default, so geometry without one is unaffected) makes a part emit its own colour: traffic-light lenses, lamp
+    // heads, the hydrant's reflector. uGlow scales it (Render raises it at night).
     propMaterial: function () {
-      if (!Assets._mats.prop) Assets._mats.prop = new THREE.MeshLambertMaterial({ vertexColors: true });
+      if (!Assets._mats.prop) {
+        var m = Assets._mats.prop = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.0, envMapIntensity: 0.45 });
+        m.name = 'prop';
+        var glowU = { value: 0.35 };
+        m.onBeforeCompile = function (sh) {
+          sh.uniforms.uGlow = glowU;
+          sh.vertexShader = sh.vertexShader
+            .replace('#include <common>', '#include <common>\nattribute float glow;\nvarying float vGlow;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = glow;');
+          sh.fragmentShader = sh.fragmentShader
+            .replace('#include <common>', '#include <common>\nuniform float uGlow;\nvarying float vGlow;')
+            .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor.rgb * vGlow * uGlow;');
+        };
+        m.customProgramCacheKey = function () { return 'gtp-prop-glow'; };
+        m.userData.glow = glowU;
+      }
       return Assets._mats.prop;
     },
+    propMaterialFar: function () {
+      if (!Assets._mats.propFar) { Assets._mats.propFar = new THREE.MeshLambertMaterial({ vertexColors: true }); Assets._mats.propFar.name = 'propFar'; }
+      return Assets._mats.propFar;
+    },
+    setPropGlow: function (k) { var m = Assets.propMaterial(); if (m.userData.glow) m.userData.glow.value = k; },
     prop: function (kind) {
       if (Assets._props[kind]) return Assets._props[kind];
       var fn = PROPS[kind] || PROPS.crate;
       var g = new GB({ color: true });
+      g._glow = [];
       fn(g, GTP.makeRng(U.hash('prop:' + kind)));
-      var rec = Assets._props[kind] = { geometry: g.build(), material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' ? true : false };
+      var geo = g.build();
+      if (g._glow.length) {
+        var arr = new Float32Array(geo.attributes.position.count);
+        g._glow.forEach(function (rg) { for (var i = rg[0]; i < rg[1]; i++) arr[i] = rg[2]; });
+        geo.setAttribute('glow', new THREE.BufferAttribute(arr, 1));
+      }
+      var rec = Assets._props[kind] = { geometry: geo, material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' && kind !== 'edgelight' && kind !== 'beacon' };
       return rec;
     },
     colorMaterial: function (hex) {
       var m = Assets._mats['c:' + hex];
-      if (!m) m = Assets._mats['c:' + hex] = new THREE.MeshLambertMaterial({ color: new THREE.Color(hex) });
+      if (!m) m = Assets._mats['c:' + hex] = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.7, metalness: 0 });
       return m;
     },
 
     // ------------------------------------------------------------ vehicles --
     // Mesh-local frame: forward = -z, right = +x, up = +y, ground at y = 0.
     // Returns {body, groups, wheel, wheelRadius, wheelWidth, wheelOffsets[{x,z,steer}], lightPoints, doorPoints, size}.
-    // Body geometry groups (material slots): paint 0, detail 1, glass 2, head 3, tail 4, barRed 5, barBlue 6, wrap 7.
-    GROUPS: { paint: 0, detail: 1, glass: 2, head: 3, tail: 4, barRed: 5, barBlue: 6, wrap: 7 },
+    // Body geometry groups (material slots): paint 0, detail 1, glass 2, head 3, tail 4, barRed 5, barBlue 6, wrap 7, chrome 8.
+    GROUPS: { paint: 0, detail: 1, glass: 2, head: 3, tail: 4, barRed: 5, barBlue: 6, wrap: 7, chrome: 8 },
     vehicleGeometry: function (cls, wrap) {
       var key = cls + (wrap ? ':' + wrap : '');
       if (Assets._vehicles[key]) return Assets._vehicles[key];
       var spec = C.VEHICLES[cls] || C.VEHICLES.sedan;
       if (!C.VEHICLES[cls]) cls = 'sedan';
       var L = spec.length, Wd = spec.width, H = spec.height, wr = spec.wheelRadius, hl = L / 2, hw = Wd / 2;
-      var G = { paint: new GB({ color: true }), detail: new GB({ color: true }), glass: new GB({ color: true }), head: new GB({ color: true }), tail: new GB({ color: true }), barRed: new GB({ color: true }), barBlue: new GB({ color: true }), wrap: new GB({ color: true }) };
+      var G = { paint: new GB({ color: true }), detail: new GB({ color: true }), glass: new GB({ color: true }), head: new GB({ color: true }), tail: new GB({ color: true }), barRed: new GB({ color: true }), barBlue: new GB({ color: true }), wrap: new GB({ color: true }), chrome: new GB({ color: true }) };
       var WHITE = [1, 1, 1], GLASS = [0.42, 0.55, 0.66], DARK = [0.12, 0.12, 0.14], CHROME = [0.8, 0.82, 0.86], NAVY = [0.14, 0.2, 0.42], AMBER = [1, 0.72, 0.15], LGREY = [0.86, 0.86, 0.84], RED = [1, 0.12, 0.08], HEADC = [1, 0.97, 0.82], BLUE = [0.2, 0.45, 1];
+      var SEAT = [0.16, 0.15, 0.16], DASH = [0.1, 0.1, 0.11], PLATE = [0.92, 0.9, 0.82];
       var y0 = wr * 0.85;
       var ww = cls === 'bike' ? 0.1 : (cls === 'truck' || cls === 'bus') ? 0.3 : cls === 'suv' ? 0.26 : 0.22;
       function box(g, x, y, z, w, h, d, col, faces) { g.box(x, y, z, w, h, d, GB.UV0, col, faces); }
+      function cbox(g, x, y, z, w, h, d, b, col, faces) { chamferBox(g, x, y, z, w, h, d, b, col, faces); }
+      // a dark lamp housing behind each lens, a plate with a frame, a chrome exhaust tip, door seams and handles
+      function housings(ly, lw, lh, inset, zf, zb) {
+        zf = zf == null ? -hl : zf; zb = zb == null ? hl : zb;
+        box(Dt, -hw + inset - 0.03, ly - 0.03, zf + 0.02, lw + 0.06, lh + 0.06, 0.1, DARK); box(Dt, hw - inset - lw - 0.03, ly - 0.03, zf + 0.02, lw + 0.06, lh + 0.06, 0.1, DARK);
+        box(Dt, -hw + inset - 0.02, ly - 0.02, zb - 0.12, lw + 0.04, lh * 0.85 + 0.04, 0.1, DARK); box(Dt, hw - inset - lw - 0.02, ly - 0.02, zb - 0.12, lw + 0.04, lh * 0.85 + 0.04, 0.1, DARK);
+      }
+      function plates(y, zf, zb) {
+        zf = zf == null ? -hl : zf; zb = zb == null ? hl : zb;
+        box(Dt, -0.2, y - 0.01, zb - 0.02, 0.4, 0.14, 0.03, DARK); box(Dt, -0.18, y, zb, 0.36, 0.12, 0.02, PLATE); box(Dt, -0.12, y + 0.045, zb + 0.015, 0.24, 0.03, 0.01, [0.2, 0.25, 0.45]);
+        box(Dt, -0.2, y - 0.01, zf - 0.01, 0.4, 0.14, 0.03, DARK); box(Dt, -0.18, y, zf - 0.02, 0.36, 0.12, 0.02, PLATE);
+      }
+      function seams(zb0, zb1, yb, yt) {
+        var zm = (zb0 + zb1) / 2 + 0.05, seam = [0.06, 0.06, 0.07];
+        box(Dt, -hw - 0.004, yb, zm - 0.012, 0.01, yt - yb, 0.024, seam); box(Dt, hw - 0.006, yb, zm - 0.012, 0.01, yt - yb, 0.024, seam);
+        box(Dt, -hw - 0.004, yb, zb0 - 0.012, 0.01, yt - yb, 0.024, seam); box(Dt, hw - 0.006, yb, zb0 - 0.012, 0.01, yt - yb, 0.024, seam);
+        var hy = yb + (yt - yb) * 0.55;
+        box(G.chrome, -hw - 0.02, hy, zm - 0.28, 0.025, 0.04, 0.2, CHROME); box(G.chrome, hw - 0.005, hy, zm - 0.28, 0.025, 0.04, 0.2, CHROME);
+        box(G.chrome, -hw - 0.02, hy, zb1 - 0.75, 0.025, 0.04, 0.2, CHROME); box(G.chrome, hw - 0.005, hy, zb1 - 0.75, 0.025, 0.04, 0.2, CHROME);
+      }
+      function beltline(y, zf, zb) { box(G.chrome, -hw - 0.012, y, zf, 0.016, 0.035, zb - zf, CHROME); box(G.chrome, hw - 0.004, y, zf, 0.016, 0.035, zb - zf, CHROME); }
+      function exhaust(x, y) { G.chrome.cylinder(x, y, hl - 0.2, 0.045, 0.045, 0.3, 7, CHROME, null, false); }
+      function interior(zb0, zb1, yFloor, rows) {
+        // seats and a dash seen through the glass; a steering wheel on the left
+        var sw = Math.min(0.5, Wd * 0.28);
+        for (var r = 0; r < rows; r++) {
+          var sz = zb0 + 0.75 + r * 0.9;
+          box(Dt, -hw + 0.3, yFloor, sz, sw, 0.3, 0.5, SEAT); box(Dt, hw - 0.3 - sw, yFloor, sz, sw, 0.3, 0.5, SEAT);
+          box(Dt, -hw + 0.3, yFloor + 0.3, sz + 0.35, sw, 0.5, 0.14, SEAT); box(Dt, hw - 0.3 - sw, yFloor + 0.3, sz + 0.35, sw, 0.5, 0.14, SEAT);
+        }
+        box(Dt, -hw + 0.12, yFloor + 0.45, zb0 + 0.05, Wd - 0.24, 0.22, 0.4, DASH);
+        G.chrome.cylinder(-hw + 0.55, yFloor + 0.62, zb0 + 0.5, 0.17, 0.17, 0.03, 10, DARK);
+        void zb1;
+      }
       // trapezoid prism: bottom rect z[zb0,zb1] at yb, top rect z[zt0,zt1] (inset on x) at yt; cols = {front, back, left, right, top} -> [geo, color]
       function prism(x0, x1, yb, yt, zb0, zb1, zt0, zt1, inset, cols) {
         var A = [x0, yb, zb0], B = [x1, yb, zb0], Cc = [x1, yb, zb1], D = [x0, yb, zb1];
@@ -311,7 +648,6 @@
       }
       function underbody() { box(Dt, -hw + 0.15, y0 - 0.14, -hl + 0.4, Wd - 0.3, 0.16, L - 0.8, DARK, GB.ALL_FACES); }
       function mirrors(zc, yc) { box(Dt, -hw - 0.14, yc, zc, 0.16, 0.08, 0.1, DARK); box(Dt, hw - 0.02, yc, zc, 0.16, 0.08, 0.1, DARK); }
-      function plate(zb, y) { box(Dt, -0.18, y, zb - 0.01, 0.36, 0.12, 0.03, LGREY); }
       function pillars(zb0, zb1, yb, yt) {
         var zm = (zb0 + zb1) / 2;
         box(P, -hw + 0.08, yb, zm - 0.05, 0.05, yt - yb, 0.1, WHITE); box(P, hw - 0.13, yb, zm - 0.05, 0.05, yt - yb, 0.1, WHITE);
@@ -319,14 +655,18 @@
       var cab = null;   // cabin extents for door/light placement
       if (cls === 'sedan' || cls === 'cop' || cls === 'taxi') {
         var bh = 0.55;
-        box(P, -hw, y0, -hl, Wd, bh, L, WHITE, GB.NO_BOTTOM);
+        cbox(P, -hw, y0, -hl, Wd, bh, L, 0.08, WHITE, GB.NO_BOTTOM);
         cab = { zb0: -hl + 1.55, zb1: hl - 0.95 };
-        box(P, -hw + 0.02, y0 + bh, -hl + 0.1, Wd - 0.04, 0.17, cab.zb0 + hl - 0.1 + 0.2, WHITE);      // hood
-        box(P, -hw + 0.02, y0 + bh, cab.zb1 - 0.2, Wd - 0.04, 0.15, hl - cab.zb1 + 0.1, WHITE);        // trunk
+        cbox(P, -hw + 0.02, y0 + bh - 0.02, -hl + 0.1, Wd - 0.04, 0.19, cab.zb0 + hl - 0.1 + 0.2, 0.05, WHITE, GB.NO_BOTTOM);      // hood
+        cbox(P, -hw + 0.02, y0 + bh - 0.02, cab.zb1 - 0.2, Wd - 0.04, 0.17, hl - cab.zb1 + 0.1, 0.05, WHITE, GB.NO_BOTTOM);        // trunk
+        interior(cab.zb0, cab.zb1, y0 + bh - 0.05, 2);
         prism(-hw + 0.1, hw - 0.1, y0 + bh + 0.17, H, cab.zb0, cab.zb1, cab.zb0 + 0.8, cab.zb1 - 0.45, 0.1, glassCab);
         pillars(cab.zb0 + 0.3, cab.zb1 - 0.1, y0 + bh + 0.17, H - 0.03);
-        bumpers(0.24); underbody(); mirrors(cab.zb0 + 0.1, y0 + bh + 0.3); plate(hl, y0 + 0.2);
+        bumpers(0.24); underbody(); mirrors(cab.zb0 + 0.1, y0 + bh + 0.3); plates(y0 + 0.2);
+        seams(cab.zb0, cab.zb1, y0 + 0.08, y0 + bh - 0.02); beltline(y0 + bh - 0.06, -hl + 0.3, hl - 0.3); exhaust(hw - 0.4, y0 - 0.02);
         box(Dt, -0.45, y0 + 0.2, -hl - 0.02, 0.9, 0.22, 0.05, DARK);   // grille
+        for (var gk = 0; gk < 3; gk++) box(G.chrome, -0.42, y0 + 0.23 + gk * 0.07, -hl - 0.03, 0.84, 0.02, 0.02, CHROME);
+        housings(y0 + 0.36, 0.36, 0.16, 0.14);
         lights(y0 + 0.36, 0.36, 0.16, 0.14);
         if (cls === 'cop') {
           box(Dt, -0.6, H - 0.02, -0.25, 1.2, 0.06, 0.5, DARK);
@@ -341,54 +681,70 @@
           for (var ck = 0; ck < 10; ck++) { var cz = -hl + 0.3 + ck * (L - 0.6) / 10; box(Dt, -hw - 0.01, y0 + 0.3, cz, 0.02, 0.12, (L - 0.6) / 10, ck % 2 ? DARK : WHITE); box(Dt, hw - 0.01, y0 + 0.3, cz, 0.02, 0.12, (L - 0.6) / 10, ck % 2 ? DARK : WHITE); }
         }
       } else if (cls === 'sports') {
-        box(P, -hw, y0, -hl, Wd, 0.4, L, WHITE, GB.NO_BOTTOM);
+        cbox(P, -hw, y0, -hl, Wd, 0.4, L, 0.07, WHITE, GB.NO_BOTTOM);
         cab = { zb0: -hl + 1.75, zb1: hl - 1.05 };
         prism(-hw, hw, y0 + 0.4, y0 + 0.62, -hl + 0.05, hl - 0.05, cab.zb0 - 0.05, hl - 0.05, 0.02, { front: [P, WHITE], back: [P, WHITE], left: [P, WHITE], right: [P, WHITE], top: [P, WHITE] });
+        interior(cab.zb0, cab.zb1, y0 + 0.4, 1);
         prism(-hw + 0.12, hw - 0.12, y0 + 0.62, H, cab.zb0, cab.zb1, cab.zb0 + 0.95, cab.zb1 - 0.3, 0.12, glassCab);
         pillars(cab.zb0 + 0.5, cab.zb1, y0 + 0.62, H - 0.03);
         box(Dt, -hw + 0.1, H - 0.22, hl - 0.5, 0.08, 0.2, 0.3, DARK); box(Dt, hw - 0.18, H - 0.22, hl - 0.5, 0.08, 0.2, 0.3, DARK);
-        box(P, -hw + 0.05, H - 0.06, hl - 0.6, Wd - 0.1, 0.06, 0.4, WHITE);   // wing
+        cbox(P, -hw + 0.05, H - 0.06, hl - 0.6, Wd - 0.1, 0.06, 0.4, 0.02, WHITE);   // wing
         box(Dt, -hw + 0.1, y0 - 0.08, -hl - 0.12, Wd - 0.2, 0.2, 0.2, DARK);  // splitter
         box(Dt, -hw - 0.02, y0 - 0.06, -hl + 0.9, 0.06, 0.12, L - 1.8, DARK); box(Dt, hw - 0.04, y0 - 0.06, -hl + 0.9, 0.06, 0.12, L - 1.8, DARK);   // skirts
-        bumpers(0.18); underbody(); mirrors(cab.zb0 + 0.15, y0 + 0.7); plate(hl, y0 + 0.14);
+        bumpers(0.18); underbody(); mirrors(cab.zb0 + 0.15, y0 + 0.7); plates(y0 + 0.14);
+        seams(cab.zb0, cab.zb1, y0 + 0.06, y0 + 0.38); exhaust(-0.3, y0 - 0.04); exhaust(0.3, y0 - 0.04);
         box(Dt, -0.5, y0 + 0.08, -hl - 0.02, 1.0, 0.2, 0.05, DARK);
+        box(G.chrome, -0.48, y0 + 0.16, -hl - 0.03, 0.96, 0.02, 0.02, CHROME);
+        housings(y0 + 0.34, 0.42, 0.12, 0.12);
         lights(y0 + 0.34, 0.42, 0.12, 0.12);
       } else if (cls === 'suv') {
-        box(P, -hw, y0, -hl, Wd, 0.72, L, WHITE, GB.NO_BOTTOM);
+        cbox(P, -hw, y0, -hl, Wd, 0.72, L, 0.09, WHITE, GB.NO_BOTTOM);
         cab = { zb0: -hl + 1.45, zb1: hl - 0.15 };
-        box(P, -hw + 0.03, y0 + 0.72, -hl + 0.08, Wd - 0.06, 0.26, cab.zb0 + hl + 0.1, WHITE);       // hood
+        cbox(P, -hw + 0.03, y0 + 0.7, -hl + 0.08, Wd - 0.06, 0.28, cab.zb0 + hl + 0.1, 0.05, WHITE, GB.NO_BOTTOM);       // hood
+        interior(cab.zb0, cab.zb1, y0 + 0.7, 2);
         prism(-hw + 0.06, hw - 0.06, y0 + 0.98, H, cab.zb0, cab.zb1, cab.zb0 + 0.55, cab.zb1 - 0.08, 0.08, glassCab);
         pillars(cab.zb0 + 0.3, cab.zb1 - 1.2, y0 + 0.98, H - 0.03); pillars(cab.zb0 + 1.9, cab.zb1 + 0.4, y0 + 0.98, H - 0.03);
-        box(Dt, -hw + 0.25, H - 0.02, cab.zb0 + 0.6, 0.08, 0.1, cab.zb1 - cab.zb0 - 0.9, DARK); box(Dt, hw - 0.33, H - 0.02, cab.zb0 + 0.6, 0.08, 0.1, cab.zb1 - cab.zb0 - 0.9, DARK);   // roof rails
-        box(Dt, -hw - 0.1, y0 + 0.05, -hl + 1.3, 0.12, 0.08, L - 2.6, DARK); box(Dt, hw - 0.02, y0 + 0.05, -hl + 1.3, 0.12, 0.08, L - 2.6, DARK);   // side steps
-        bumpers(0.3); underbody(); mirrors(cab.zb0 + 0.1, y0 + 1.1); plate(hl, y0 + 0.3);
+        box(G.chrome, -hw + 0.25, H - 0.02, cab.zb0 + 0.6, 0.08, 0.1, cab.zb1 - cab.zb0 - 0.9, CHROME); box(G.chrome, hw - 0.33, H - 0.02, cab.zb0 + 0.6, 0.08, 0.1, cab.zb1 - cab.zb0 - 0.9, CHROME);   // roof rails
+        box(G.chrome, -hw - 0.1, y0 + 0.05, -hl + 1.3, 0.12, 0.08, L - 2.6, CHROME); box(G.chrome, hw - 0.02, y0 + 0.05, -hl + 1.3, 0.12, 0.08, L - 2.6, CHROME);   // side steps
+        bumpers(0.3); underbody(); mirrors(cab.zb0 + 0.1, y0 + 1.1); plates(y0 + 0.3);
+        seams(cab.zb0, cab.zb1, y0 + 0.1, y0 + 0.7); exhaust(hw - 0.45, y0);
         box(Dt, -0.55, y0 + 0.28, -hl - 0.02, 1.1, 0.34, 0.05, DARK);
+        for (var sk = 0; sk < 4; sk++) box(G.chrome, -0.52, y0 + 0.31 + sk * 0.08, -hl - 0.03, 1.04, 0.025, 0.02, CHROME);
+        housings(y0 + 0.5, 0.34, 0.2, 0.14);
         lights(y0 + 0.5, 0.34, 0.2, 0.14);
       } else if (cls === 'truck') {
         var cabL = 2.5;
         box(Dt, -hw + 0.2, y0 - 0.1, -hl + 0.3, Wd - 0.4, 0.34, L - 0.6, DARK);                        // chassis rails
-        box(P, -hw + 0.05, y0, -hl, Wd - 0.1, 1.0, 1.5, WHITE);                                           // hood
+        cbox(P, -hw + 0.05, y0, -hl, Wd - 0.1, 1.0, 1.5, 0.08, WHITE);                                    // hood
         cab = { zb0: -hl + 1.3, zb1: -hl + cabL };
         prism(-hw + 0.05, hw - 0.05, y0 + 1.0, y0 + 2.1, cab.zb0, cab.zb1, cab.zb0 + 0.35, cab.zb1, 0.06, { front: [Gl, GLASS], back: [P, WHITE], left: [Gl, GLASS], right: [Gl, GLASS], top: [P, WHITE] });
         box(P, -hw + 0.05, y0, cab.zb0, Wd - 0.1, 1.0, cabL - 1.3, WHITE);                               // cab lower
         pillars(cab.zb0 + 0.6, cab.zb1 - 0.05, y0 + 1.0, y0 + 2.08);
-        box(Dt, -hw, y0 + 0.3, -hl + cabL + 0.3, Wd, H - y0 - 0.3, L - cabL - 0.4, LGREY);              // cargo box
+        cbox(Dt, -hw, y0 + 0.3, -hl + cabL + 0.3, Wd, H - y0 - 0.3, L - cabL - 0.4, 0.06, LGREY);         // cargo box
+        for (var rk = 0; rk < 5; rk++) box(Dt, -hw - 0.01, y0 + 0.6 + rk * 0.5, -hl + cabL + 0.4, 0.015, 0.06, L - cabL - 0.6, [0.72, 0.72, 0.7]);   // panel ribs (left)
+        for (rk = 0; rk < 5; rk++) box(Dt, hw - 0.005, y0 + 0.6 + rk * 0.5, -hl + cabL + 0.4, 0.015, 0.06, L - cabL - 0.6, [0.72, 0.72, 0.7]);
         box(Dt, -0.03, y0 + 0.4, hl - 0.11, 0.06, H - y0 - 0.6, 0.03, DARK);                               // rear door seam
-        box(Dt, -0.25, y0 + 2.14, cab.zb0 + 0.2, 0.5, 0.25, 0.3, CHROME);                                 // exhaust stack / horn
-        box(Dt, -hw + 0.3, y0 + 0.05, -hl - 0.15, Wd - 0.6, 0.4, 0.2, CHROME);                            // front bumper
+        G.chrome.cylinder(-0.3, y0 + 2.14, cab.zb0 + 0.3, 0.07, 0.07, 1.2, 7, CHROME, null, false);         // exhaust stack
+        box(G.chrome, -hw + 0.3, y0 + 0.05, -hl - 0.15, Wd - 0.6, 0.4, 0.2, CHROME);                       // front bumper
         box(Dt, -0.6, y0 + 0.35, -hl - 0.02, 1.2, 0.5, 0.05, DARK);                                        // grille
-        mirrors(cab.zb0, y0 + 1.5);
+        for (var tk = 0; tk < 5; tk++) box(G.chrome, -0.58, y0 + 0.4 + tk * 0.09, -hl - 0.03, 1.16, 0.03, 0.02, CHROME);
+        mirrors(cab.zb0, y0 + 1.5); plates(y0 + 0.2);
+        housings(y0 + 0.5, 0.36, 0.22, 0.2, -hl, hl);
         lights(y0 + 0.5, 0.36, 0.22, 0.2, -hl, hl);
       } else if (cls === 'van') {
         var noseL = 1.15;
-        box(P, -hw + 0.02, y0, -hl, Wd - 0.04, 0.85, noseL + 0.1, WHITE, GB.NO_BOTTOM);                   // nose
-        box(P, -hw, y0, -hl + noseL, Wd, H - y0, L - noseL, WHITE, GB.NO_BOTTOM);                         // body
+        cbox(P, -hw + 0.02, y0, -hl, Wd - 0.04, 0.85, noseL + 0.1, 0.07, WHITE, GB.NO_BOTTOM);             // nose
+        cbox(P, -hw, y0, -hl + noseL, Wd, H - y0, L - noseL, 0.08, WHITE, GB.NO_BOTTOM);                   // body
         prism(-hw + 0.02, hw - 0.02, y0 + 0.85, H, -hl + 0.3, -hl + noseL, -hl + noseL - 0.05, -hl + noseL, 0.0, { front: [Gl, GLASS], back: [P, WHITE], left: [P, WHITE], right: [P, WHITE], top: [P, WHITE] });
         box(Gl, -hw - 0.01, y0 + 1.05, -hl + noseL + 0.08, 0.03, H - y0 - 1.45, 1.0, GLASS); box(Gl, hw - 0.02, y0 + 1.05, -hl + noseL + 0.08, 0.03, H - y0 - 1.45, 1.0, GLASS);   // cab windows
         box(Dt, -0.02, y0 + 0.3, hl - 0.11, 0.04, H - y0 - 0.5, 0.03, DARK);                               // rear doors seam
         box(Dt, -hw + 0.3, y0 + 0.5, hl - 0.11, 0.3, 0.3, 0.03, GLASS); box(Dt, hw - 0.6, y0 + 0.5, hl - 0.11, 0.3, 0.3, 0.03, GLASS);
-        bumpers(0.26); underbody(); mirrors(-hl + noseL + 0.05, y0 + 1.25); plate(hl, y0 + 0.2);
+        box(Dt, -hw - 0.004, y0 + 0.2, -hl + noseL + 1.15, 0.01, H - y0 - 0.5, 0.024, [0.06, 0.06, 0.07]); box(Dt, hw - 0.006, y0 + 0.2, -hl + noseL + 1.15, 0.01, H - y0 - 0.5, 0.024, [0.06, 0.06, 0.07]);   // sliding door seam
+        bumpers(0.26); underbody(); mirrors(-hl + noseL + 0.05, y0 + 1.25); plates(y0 + 0.2);
+        beltline(y0 + 0.42, -hl + noseL + 0.1, hl - 0.2); exhaust(hw - 0.5, y0 - 0.02);
         box(Dt, -0.5, y0 + 0.25, -hl - 0.02, 1.0, 0.3, 0.05, DARK);
+        box(G.chrome, -0.48, y0 + 0.38, -hl - 0.03, 0.96, 0.03, 0.02, CHROME);
+        housings(y0 + 0.4, 0.34, 0.2, 0.15);
         lights(y0 + 0.4, 0.34, 0.2, 0.15);
         if (wrap) {
           // side panels + rear doors carry the wrap texture (u runs front -> back on the left, back -> front on the right)
@@ -400,8 +756,10 @@
         }
       } else if (cls === 'bus') {
         var wy = y0 + 1.25, wh = 1.05, winL = 0.95, gap = 0.18, nWin = 8;
-        box(P, -hw, y0, -hl, Wd, H - y0 - 0.12, L, WHITE, GB.NO_BOTTOM);
-        box(P, -hw + 0.1, H - 0.14, -hl + 0.3, Wd - 0.2, 0.14, L - 0.6, WHITE);                           // roof
+        cbox(P, -hw, y0, -hl, Wd, H - y0 - 0.12, L, 0.1, WHITE, GB.NO_BOTTOM);
+        cbox(P, -hw + 0.1, H - 0.14, -hl + 0.3, Wd - 0.2, 0.14, L - 0.6, 0.05, WHITE);                      // roof
+        plates(y0 + 0.25); beltline(y0 + 1.18, -hl + 0.2, hl - 0.2);
+        for (var bk = 0; bk < 8; bk++) { var bz = -hl + 1.5 + bk * (winL + gap) + 0.2; box(Dt, -hw + 0.35, y0 + 0.65, bz, 0.5, 0.3, 0.45, SEAT); box(Dt, hw - 0.85, y0 + 0.65, bz, 0.5, 0.3, 0.45, SEAT); box(Dt, -hw + 0.35, y0 + 0.95, bz + 0.33, 0.5, 0.5, 0.12, SEAT); box(Dt, hw - 0.85, y0 + 0.95, bz + 0.33, 0.5, 0.5, 0.12, SEAT); }
         for (var wi = 0; wi < nWin; wi++) {
           var wz = -hl + 1.5 + wi * (winL + gap);
           box(Gl, -hw - 0.015, wy, wz, 0.03, wh, winL, GLASS); box(Gl, hw - 0.015, wy, wz, 0.03, wh, winL, GLASS);
@@ -427,7 +785,7 @@
         box(Dt, -0.06, 0.1, -0.76, 0.12, 0.3, 0.1, DARK); box(Dt, -0.06, 0.1, 0.66, 0.12, 0.3, 0.1, DARK);   // forks
       }
       // merge with stable group indices
-      var order = ['paint', 'detail', 'glass', 'head', 'tail', 'barRed', 'barBlue', 'wrap'], parts = [], ranges = [];
+      var order = ['paint', 'detail', 'glass', 'head', 'tail', 'barRed', 'barBlue', 'wrap', 'chrome'], parts = [], ranges = [];
       order.forEach(function (name, gi) {
         var gb = G[name]; if (!gb.count()) return;
         var geo = gb.build(); parts.push(geo); ranges.push({ gi: gi, count: geo.getIndex().count });
@@ -435,9 +793,11 @@
       var body = GB.merge(parts), start = 0;
       body.clearGroups();
       ranges.forEach(function (r) { body.addGroup(start, r.count, r.gi); start += r.count; });
-      // wheels: a cylinder around the x axis with a hub cap so the spin reads
+      // wheels: a tyre around the x axis with a dished rim, spokes and a hub; one geometry, one draw per car (the rim is
+      // vertex-coloured light alloy rather than a second chrome material: forty cars is forty draw calls saved)
       var wg = new GB({ color: true });
-      wheelAxle(wg, wr, ww, DARK, CHROME, cls === 'bike' ? 8 : 12);
+      wheelAxle(wg, wg, wr, ww, DARK, [0.86, 0.87, 0.9], cls === 'bike' ? 8 : 14);
+      var wheelGeo = wg.build();
       var wx = cls === 'bike' ? 0 : hw - ww * 0.5 + 0.02, fz = -(hl - L * 0.2), bz = hl - L * 0.2;
       var wheelOffsets;
       if (cls === 'bike') wheelOffsets = [{ x: 0, z: -0.72, steer: true }, { x: 0, z: 0.72, steer: false }];
@@ -446,7 +806,7 @@
       else wheelOffsets = [{ x: -wx, z: fz, steer: true }, { x: wx, z: fz, steer: true }, { x: -wx, z: bz, steer: false }, { x: wx, z: bz, steer: false }];
       var ly = cls === 'bike' ? 0.78 : cls === 'truck' ? y0 + 0.6 : y0 + 0.45;
       var rec = Assets._vehicles[key] = {
-        body: body, groups: Assets.GROUPS, wheel: wg.build(), wheelRadius: wr, wheelWidth: ww, wheelOffsets: wheelOffsets,
+        body: body, groups: Assets.GROUPS, wheel: wheelGeo, wheelRadius: wr, wheelWidth: ww, wheelOffsets: wheelOffsets,
         lightPoints: { headL: { x: -hw + 0.3, y: ly, z: -hl }, headR: { x: hw - 0.3, y: ly, z: -hl }, head: { x: 0, y: ly, z: -hl }, tailL: { x: -hw + 0.3, y: ly, z: hl }, tailR: { x: hw - 0.3, y: ly, z: hl }, roof: { x: 0, y: H + 0.1, z: 0 }, eye: { x: cls === 'bike' ? 0 : -0.4, y: H * 0.82, z: cab ? cab.zb0 + 0.6 : -hl * 0.2 } },
         doorPoints: [{ x: -(hw + 0.7), z: -hl * 0.15, seat: 0 }, { x: hw + 0.7, z: -hl * 0.15, seat: 1 }],
         size: { length: L, width: Wd, height: H }, wrap: wrap || null
@@ -513,14 +873,16 @@
       var mat = Assets.propMaterial();
       var sc = look.scale || 1;
       var skin = c(skinHex(look.skin)), shirt = c(look.shirt || '#6a8fcf'), pants = c(look.pants || '#2a2f4a'), hair = c(look.hairColor || '#3a2a1a');
-      var shoe = [0.13, 0.13, 0.15];
+      var shoe = [0.13, 0.13, 0.15], shoeSole = [0.06, 0.06, 0.07], pantsDark = shade3(pants, -0.18), shirtDark = shade3(shirt, -0.2);
       var legH = 0.84, torsoH = 0.6, headR = 0.14, hy = torsoH + 0.05 + 0.15;   // head centre in torso space
       function mesh(name, geo, x, y, z) { var m = new THREE.Mesh(geo, mat); m.name = name; m.castShadow = true; m.userData.own = false; if (x != null) m.position.set(x, y, z); return m; }
       function pivot(name, x, y, z) { var p = new THREE.Group(); p.name = name; p.position.set(x, y, z); return p; }
-      // legs
+      // legs: a rounded thigh and shin (the knee a shade darker), a shoe with a sole
       var legGeo = pedGeo('leg:' + look.pants, function (L) {
-        L.push(gbox(-0.085, -legH, -0.1, 0.17, legH - 0.04, 0.2, pants));
-        L.push(gbox(-0.09, -legH, -0.15, 0.18, 0.08, 0.3, shoe));
+        L.push(gcbox(-0.085, -legH * 0.52, -0.1, 0.17, legH * 0.52 - 0.02, 0.2, pants, 0.035));
+        L.push(gcbox(-0.08, -legH, -0.095, 0.16, legH * 0.5, 0.19, pantsDark, 0.03));
+        L.push(gcbox(-0.09, -legH, -0.16, 0.18, 0.075, 0.3, shoe, 0.025));
+        L.push(gbox(-0.092, -legH - 0.004, -0.165, 0.184, 0.022, 0.31, shoeSole));
       });
       var legL = pivot('legL', -0.11, legH, 0), legR = pivot('legR', 0.11, legH, 0);
       legL.add(mesh('legLMesh', legGeo)); legR.add(mesh('legRMesh', legGeo));
@@ -529,8 +891,13 @@
       var torso = pivot('torso', 0, legH, 0);
       var torsoKey = ['torso', look.shirt, look.tie, look.extra, look.uniform, look.badge, look.skin].join('|');
       var torsoGeo = pedGeo(torsoKey, function (L) {
-        L.push(gbox(-0.23, 0, -0.13, 0.46, torsoH, 0.26, shirt));
-        L.push(gbox(-0.05, torsoH - 0.01, -0.05, 0.1, 0.07, 0.1, skin));   // neck
+        L.push(gcbox(-0.22, 0, -0.125, 0.44, torsoH, 0.25, shirt, 0.045));       // the chest, rounded
+        L.push(gcbox(-0.2, 0, -0.115, 0.4, 0.14, 0.23, pants, 0.03));            // the waistband
+        L.push(gbox(-0.205, 0.13, -0.12, 0.41, 0.035, 0.24, [0.14, 0.1, 0.08]));  // the belt
+        L.push(gbox(-0.025, 0.133, -0.125, 0.05, 0.03, 0.01, [0.75, 0.65, 0.3])); // the buckle
+        L.push(gbox(-0.09, torsoH - 0.05, -0.135, 0.18, 0.05, 0.012, shirtDark));   // the collar
+        L.push(gbox(-0.015, 0.16, -0.13, 0.03, torsoH - 0.24, 0.008, shirtDark));   // the placket
+        L.push(gcbox(-0.06, torsoH - 0.01, -0.06, 0.12, 0.08, 0.12, skin, 0.02));   // neck
         if (look.uniform === 'swat') L.push(gbox(-0.25, 0.12, -0.15, 0.5, 0.42, 0.3, [0.1, 0.11, 0.14]));
         if (look.badge) L.push(gbox(0.08, torsoH - 0.2, -0.14, 0.06, 0.07, 0.012, c(look.badge)));
         var tie = look.tie && look.tie !== 'none' ? look.tie : null;
@@ -545,8 +912,10 @@
       function armGeo(side) {
         var held = side > 0 ? (look.extra === 'mic' || look.extra === 'phone' ? look.extra : null) : (look.sign ? 'sign' : null);
         return pedGeo(['arm', side, look.shirt, look.skin, held].join('|'), function (L) {
-          L.push(gbox(-0.065, -0.56, -0.07, 0.13, 0.54, 0.14, shirt));
-          L.push(gbox(-0.06, -0.66, -0.06, 0.12, 0.11, 0.12, skin));
+          L.push(gcbox(-0.07, -0.3, -0.075, 0.14, 0.3, 0.15, shirt, 0.035));            // upper arm
+          L.push(gcbox(-0.062, -0.56, -0.067, 0.124, 0.28, 0.134, shirt, 0.03));         // forearm (sleeve)
+          L.push(gbox(-0.066, -0.54, -0.07, 0.132, 0.025, 0.14, shirtDark));              // the cuff
+          L.push(gcbox(-0.055, -0.67, -0.055, 0.11, 0.12, 0.11, skin, 0.025));           // hand
           if (held === 'mic') { L.push(gcyl(0, -0.72, -0.04, 0.025, 0.2, [0.12, 0.12, 0.14], 0)); L.push(gsphere(0, -0.5, -0.04, 0.045, [0.55, 0.55, 0.58])); }
           if (held === 'phone') L.push(gbox(-0.035, -0.7, -0.14, 0.07, 0.13, 0.015, [0.1, 0.1, 0.12]));
           if (held === 'sign') { L.push(gbox(-0.015, -0.7, -0.1, 0.03, 1.0, 0.03, c('#8a6a44'))); L.push(gbox(-0.26, 0.2, -0.11, 0.52, 0.36, 0.02, [0.95, 0.93, 0.88])); L.push(gbox(-0.2, 0.3, -0.122, 0.4, 0.05, 0.012, c('#ff7a00'))); L.push(gbox(-0.16, 0.22, -0.122, 0.32, 0.04, 0.012, c('#ff7a00'))); }
@@ -559,12 +928,16 @@
       var hat = look.hat && look.hat !== 'none' ? look.hat : null, hairStyle = look.hair || 'short', glasses = look.glasses && look.glasses !== 'none' ? look.glasses : null;
       var headKey = ['head', look.skin, hairStyle, look.hairColor, hat, look.hatColor, glasses, look.extra, look.mask].join('|');
       var headGeo = pedGeo(headKey, function (L) {
-        var ht = 0.15;   // half height
-        L.push(gbox(-headR, -ht, -headR, headR * 2, ht * 2, headR * 2, skin));
-        L.push(gbox(-headR - 0.012, -0.03, -0.05, 0.012, 0.06, 0.04, skin)); L.push(gbox(headR, -0.03, -0.05, 0.012, 0.06, 0.04, skin));   // ears
-        L.push(gbox(-0.07, 0.01, -headR - 0.004, 0.035, 0.03, 0.006, [0.08, 0.08, 0.1])); L.push(gbox(0.035, 0.01, -headR - 0.004, 0.035, 0.03, 0.006, [0.08, 0.08, 0.1]));   // eyes
-        L.push(gbox(-0.02, -0.04, -headR - 0.02, 0.04, 0.05, 0.02, skin));   // nose
-        L.push(gbox(-0.04, -0.1, -headR - 0.003, 0.08, 0.012, 0.004, [0.45, 0.2, 0.2]));   // mouth
+        var ht = 0.15, skinD = shade3(skin, -0.22), browC = shade3(hair, -0.1);   // half height
+        L.push(gcbox(-headR, -ht, -headR, headR * 2, ht * 2, headR * 2, skin, 0.04));
+        L.push(gcbox(-headR - 0.014, -0.03, -0.05, 0.016, 0.06, 0.04, skin, 0.008)); L.push(gcbox(headR - 0.002, -0.03, -0.05, 0.016, 0.06, 0.04, skin, 0.008));   // ears
+        // eyes: whites, pupils, brows; a nose with a bridge; lips a shade darker than the skin
+        L.push(gbox(-0.075, 0.0, -headR - 0.004, 0.045, 0.034, 0.006, [0.93, 0.93, 0.9])); L.push(gbox(0.03, 0.0, -headR - 0.004, 0.045, 0.034, 0.006, [0.93, 0.93, 0.9]));
+        L.push(gbox(-0.062, 0.004, -headR - 0.008, 0.02, 0.024, 0.006, [0.08, 0.08, 0.1])); L.push(gbox(0.042, 0.004, -headR - 0.008, 0.02, 0.024, 0.006, [0.08, 0.08, 0.1]));
+        L.push(gbox(-0.08, 0.045, -headR - 0.005, 0.055, 0.012, 0.006, browC)); L.push(gbox(0.025, 0.045, -headR - 0.005, 0.055, 0.012, 0.006, browC));
+        L.push(gcbox(-0.018, -0.045, -headR - 0.022, 0.036, 0.055, 0.024, skin, 0.008));   // nose
+        L.push(gbox(-0.045, -0.095, -headR - 0.004, 0.09, 0.014, 0.005, [0.5, 0.24, 0.22]));   // mouth
+        L.push(gbox(-0.05, -0.108, -headR - 0.003, 0.1, 0.008, 0.004, skinD));
         if (look.mask) L.push(gbox(-headR - 0.005, -0.005, -headR - 0.006, headR * 2 + 0.01, 0.06, headR * 2 + 0.006, c(look.mask)));
         var top = ht, capY = top - 0.04;
         var hideHairTop = hat === 'beanie' || hat === 'helmet' || hat === 'cap';
@@ -638,6 +1011,8 @@
     return g;
   }
   function gbox(x, y, z, w, h, d, col) { var g = new GB({ color: true }); g.box(x, y, z, w, h, d, GB.UV0, col); return g.build(); }
+  function gcbox(x, y, z, w, h, d, col, b) { var g = new GB({ color: true }); chamferBox(g, x, y, z, w, h, d, b || 0.03, col); return g.build(); }
+  function shade3(col, k) { return k < 0 ? [col[0] * (1 + k), col[1] * (1 + k), col[2] * (1 + k)] : [col[0] + (1 - col[0]) * k, col[1] + (1 - col[1]) * k, col[2] + (1 - col[2]) * k]; }
   function gboxRot(x, y, z, w, h, d, col, rz, px, py) { var geo = gbox(x, y, z, w, h, d, col); geo.translate(-px, -py, 0); geo.rotateZ(rz); geo.translate(px, py, 0); return geo; }
   // vertical cylinder of height h standing at (x, y, z), optionally tilted about x around its base
   function gcyl(x, y, z, r, h, col, rx) { var g = new GB({ color: true }); g.cylinder(0, 0, 0, r, r, h, 7, col); var geo = g.build(); if (rx) geo.rotateX(rx); geo.translate(x, y, z); return geo; }
@@ -655,24 +1030,73 @@
     }
     return g.build();
   }
-  // wheel: tyre + spoked caps around the x axis, centred at the origin
-  function wheelAxle(g, r, w, tire, hub, segs) {
+  // a chamfered box (bevel b on every edge): six inset faces, twelve edge strips and eight corner caps, each
+  // wound so its normal points away from the box centre. The bevels catch the sun and the sky reflection along the
+  // panel lines, which is most of what separates a car body from a crate.
+  function chamferBox(g, x, y, z, w, h, d, b, col, faces) {
+    b = Math.min(b, w / 3, h / 3, d / 3);
+    var x1 = x + w, y1 = y + h, z1 = z + d, cx = x + w / 2, cy = y + h / 2, cz = z + d / 2, f = faces || GB.ALL_FACES;
+    function oq(a, bb, c, dd) {
+      var ux = bb[0] - a[0], uy = bb[1] - a[1], uz = bb[2] - a[2], vx = dd[0] - a[0], vy = dd[1] - a[1], vz = dd[2] - a[2];
+      var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      var mx = (a[0] + bb[0] + c[0] + dd[0]) / 4 - cx, my = (a[1] + bb[1] + c[1] + dd[1]) / 4 - cy, mz = (a[2] + bb[2] + c[2] + dd[2]) / 4 - cz;
+      if (nx * mx + ny * my + nz * mz < 0) g.quad(a, dd, c, bb, GB.UV0, col); else g.quad(a, bb, c, dd, GB.UV0, col);
+    }
+    // faces
+    oq([x + b, y1, z + b], [x1 - b, y1, z + b], [x1 - b, y1, z1 - b], [x + b, y1, z1 - b]);
+    if (f.bottom) oq([x + b, y, z + b], [x1 - b, y, z + b], [x1 - b, y, z1 - b], [x + b, y, z1 - b]);
+    oq([x + b, y + b, z], [x1 - b, y + b, z], [x1 - b, y1 - b, z], [x + b, y1 - b, z]);
+    oq([x + b, y + b, z1], [x1 - b, y + b, z1], [x1 - b, y1 - b, z1], [x + b, y1 - b, z1]);
+    oq([x, y + b, z + b], [x, y + b, z1 - b], [x, y1 - b, z1 - b], [x, y1 - b, z + b]);
+    oq([x1, y + b, z + b], [x1, y + b, z1 - b], [x1, y1 - b, z1 - b], [x1, y1 - b, z + b]);
+    // top and bottom edge strips
+    [[y1, y1 - b], [y, y + b]].forEach(function (yy, k) {
+      if (k === 1 && !f.bottom) return;
+      var ya = yy[0], yb = yy[1];
+      oq([x + b, ya, z + b], [x1 - b, ya, z + b], [x1 - b, yb, z], [x + b, yb, z]);
+      oq([x + b, ya, z1 - b], [x1 - b, ya, z1 - b], [x1 - b, yb, z1], [x + b, yb, z1]);
+      oq([x + b, ya, z + b], [x + b, ya, z1 - b], [x, yb, z1 - b], [x, yb, z + b]);
+      oq([x1 - b, ya, z + b], [x1 - b, ya, z1 - b], [x1, yb, z1 - b], [x1, yb, z + b]);
+    });
+    // vertical edge strips
+    oq([x, y + b, z + b], [x, y1 - b, z + b], [x + b, y1 - b, z], [x + b, y + b, z]);
+    oq([x1, y + b, z + b], [x1, y1 - b, z + b], [x1 - b, y1 - b, z], [x1 - b, y + b, z]);
+    oq([x, y + b, z1 - b], [x, y1 - b, z1 - b], [x + b, y1 - b, z1], [x + b, y + b, z1]);
+    oq([x1, y + b, z1 - b], [x1, y1 - b, z1 - b], [x1 - b, y1 - b, z1], [x1 - b, y + b, z1]);
+    // corner caps (a degenerate quad = one triangle)
+    [[x, x + b, 1], [x1, x1 - b, -1]].forEach(function (xx) {
+      [[z, z + b], [z1, z1 - b]].forEach(function (zz) {
+        oq([xx[1], y1, zz[1]], [xx[0], y1 - b, zz[1]], [xx[1], y1 - b, zz[0]], [xx[1], y1 - b, zz[0]]);
+        if (f.bottom) oq([xx[1], y, zz[1]], [xx[0], y + b, zz[1]], [xx[1], y + b, zz[0]], [xx[1], y + b, zz[0]]);
+      });
+    });
+  }
+  // wheel: a tyre (g) with a sidewall and tread groove, and a chrome rim with spokes and a hub (gr), around the x axis
+  function wheelAxle(g, gr, r, w, tire, hub, segs) {
     segs = segs || 12;
-    var hx = w / 2, ri = r * 0.5, i, a0, a1, y0, z0, y1, z1;
+    var hx = w / 2, ri = r * 0.62, i, a0, a1, y0, z0, y1, z1, rubber2 = [0.09, 0.09, 0.1], spokeDark = [0.3, 0.31, 0.34];
     for (i = 0; i < segs; i++) {
       a0 = i / segs * TAU; a1 = (i + 1) / segs * TAU;
       y0 = Math.cos(a0) * r; z0 = Math.sin(a0) * r; y1 = Math.cos(a1) * r; z1 = Math.sin(a1) * r;
-      g.quad([-hx, y0, z0], [-hx, y1, z1], [hx, y1, z1], [hx, y0, z0], GB.UV0, tire);
-      var spoke = (i % 3 === 0) ? hub : [0.2, 0.2, 0.22];
-      var o0 = g.vertex(hx, 0, 0, 1, 0, 0, 0, 0, spoke), o1 = g.vertex(hx, y0, z0, 1, 0, 0, 0, 0, spoke), o2 = g.vertex(hx, y1, z1, 1, 0, 0, 0, 0, spoke);
-      g.idx.push(o0, o1, o2);
-      var n0 = g.vertex(-hx, 0, 0, -1, 0, 0, 0, 0, spoke), n1 = g.vertex(-hx, y0, z0, -1, 0, 0, 0, 0, spoke), n2 = g.vertex(-hx, y1, z1, -1, 0, 0, 0, 0, spoke);
-      g.idx.push(n0, n2, n1);
-      // hub cap disc, a hair proud of the sidewall
-      var p0 = g.vertex(hx + 0.006, 0, 0, 1, 0, 0, 0, 0, hub), p1 = g.vertex(hx + 0.006, y0 * ri / r, z0 * ri / r, 1, 0, 0, 0, 0, hub), p2 = g.vertex(hx + 0.006, y1 * ri / r, z1 * ri / r, 1, 0, 0, 0, 0, hub);
-      g.idx.push(p0, p1, p2);
-      var q0 = g.vertex(-hx - 0.006, 0, 0, -1, 0, 0, 0, 0, hub), q1 = g.vertex(-hx - 0.006, y0 * ri / r, z0 * ri / r, -1, 0, 0, 0, 0, hub), q2 = g.vertex(-hx - 0.006, y1 * ri / r, z1 * ri / r, -1, 0, 0, 0, 0, hub);
-      g.idx.push(q0, q2, q1);
+      // tread: two bands with a groove between
+      g.quad([-hx, y0, z0], [-hx, y1, z1], [-hx * 0.3, y1, z1], [-hx * 0.3, y0, z0], GB.UV0, i % 2 ? tire : rubber2);
+      g.quad([-hx * 0.3, y0 * 0.985, z0 * 0.985], [-hx * 0.3, y1 * 0.985, z1 * 0.985], [hx * 0.3, y1 * 0.985, z1 * 0.985], [hx * 0.3, y0 * 0.985, z0 * 0.985], GB.UV0, rubber2);
+      g.quad([hx * 0.3, y0, z0], [hx * 0.3, y1, z1], [hx, y1, z1], [hx, y0, z0], GB.UV0, i % 2 ? tire : rubber2);
+      // sidewalls (tyre) out to the rim radius
+      var s0 = g.vertex(hx, y0 * ri / r, z0 * ri / r, 1, 0, 0, 0, 0, tire), s1 = g.vertex(hx, y0, z0, 1, 0, 0, 0, 0, tire), s2 = g.vertex(hx, y1, z1, 1, 0, 0, 0, 0, tire), s3 = g.vertex(hx, y1 * ri / r, z1 * ri / r, 1, 0, 0, 0, 0, tire);
+      g.idx.push(s0, s1, s2, s0, s2, s3);
+      var t0 = g.vertex(-hx, y0 * ri / r, z0 * ri / r, -1, 0, 0, 0, 0, tire), t1 = g.vertex(-hx, y0, z0, -1, 0, 0, 0, 0, tire), t2 = g.vertex(-hx, y1, z1, -1, 0, 0, 0, 0, tire), t3 = g.vertex(-hx, y1 * ri / r, z1 * ri / r, -1, 0, 0, 0, 0, tire);
+      g.idx.push(t0, t2, t1, t0, t3, t2);
+      // rim: a dished disc (spokes alternate chrome / dark) with a hub cap, a hair proud of the sidewall
+      var spoke = (i % 2 === 0) ? hub : spokeDark, px = hx + 0.008, hr = r * 0.2;
+      var p0 = gr.vertex(px + 0.01, y0 * hr / r, z0 * hr / r, 1, 0, 0, 0, 0, spoke), p1 = gr.vertex(px, y0 * ri / r, z0 * ri / r, 1, 0, 0, 0, 0, spoke), p2 = gr.vertex(px, y1 * ri / r, z1 * ri / r, 1, 0, 0, 0, 0, spoke), p3 = gr.vertex(px + 0.01, y1 * hr / r, z1 * hr / r, 1, 0, 0, 0, 0, spoke);
+      gr.idx.push(p0, p1, p2, p0, p2, p3);
+      var c0 = gr.vertex(px + 0.015, 0, 0, 1, 0, 0, 0, 0, hub), c1 = gr.vertex(px + 0.01, y0 * hr / r, z0 * hr / r, 1, 0, 0, 0, 0, hub), c2 = gr.vertex(px + 0.01, y1 * hr / r, z1 * hr / r, 1, 0, 0, 0, 0, hub);
+      gr.idx.push(c0, c1, c2);
+      var q0 = gr.vertex(-px - 0.01, y0 * hr / r, z0 * hr / r, -1, 0, 0, 0, 0, spoke), q1 = gr.vertex(-px, y0 * ri / r, z0 * ri / r, -1, 0, 0, 0, 0, spoke), q2 = gr.vertex(-px, y1 * ri / r, z1 * ri / r, -1, 0, 0, 0, 0, spoke), q3 = gr.vertex(-px - 0.01, y1 * hr / r, z1 * hr / r, -1, 0, 0, 0, 0, spoke);
+      gr.idx.push(q0, q2, q1, q0, q3, q2);
+      var d0 = gr.vertex(-px - 0.015, 0, 0, -1, 0, 0, 0, 0, hub), d1 = gr.vertex(-px - 0.01, y0 * hr / r, z0 * hr / r, -1, 0, 0, 0, 0, hub), d2 = gr.vertex(-px - 0.01, y1 * hr / r, z1 * hr / r, -1, 0, 0, 0, 0, hub);
+      gr.idx.push(d0, d2, d1);
     }
   }
 
@@ -811,12 +1235,43 @@
     white: function (ctx, S) { ctx.fillStyle = '#f0f0f0'; ctx.fillRect(0, 0, S, S); },
     black: function (ctx, S) { ctx.fillStyle = '#101014'; ctx.fillRect(0, 0, S, S); },
     gold: function (ctx, S, R) { ctx.fillStyle = PAL.gold; ctx.fillRect(0, 0, S, S); speckle(ctx, S, S, 0.02, 'rgba(255,255,255,0.3)', 'rgba(0,0,0,0.15)', R); },
-    field: function (ctx, S, R) { grassBase(ctx, S, R, '#3f8f3a', '#56a84a', '#357a30'); ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(0, 116, S, 6); ctx.fillRect(116, 0, 6, S); }
+    field: function (ctx, S, R) { grassBase(ctx, S, R, '#3f8f3a', '#56a84a', '#357a30'); ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(0, 116, S, 6); ctx.fillRect(116, 0, 6, S); },
+    // Runway 10/10 (GDD_EXPANSION §1.5): darker asphalt with tyre scuffs; the centreline tile carries its dashes on
+    // the bottom edge (the row above the axis uses it at rotation 0, the row below at 2, so the dashes meet); the
+    // edge tile a solid line on its top edge; the threshold tile the piano keys; the digits paint the "10".
+    runway: function (ctx, S, R) { runwayBase(ctx, S, R); },
+    runway_center: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; ctx.fillRect(20, S - 7, 90, 7); ctx.fillRect(150, S - 7, 70, 7); ctx.globalAlpha = 1; },
+    runway_edge: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.8; ctx.fillRect(0, 6, S, 8); ctx.globalAlpha = 1; worn(ctx, 0, 6, S, 8, R, 5); ctx.fillStyle = PAL.runway; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; },
+    runway_thresh: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; for (var k = 0; k < 3; k++) ctx.fillRect(14 + k * 80, 0, 36, S); ctx.globalAlpha = 1; for (k = 0; k < 3; k++) worn(ctx, 14 + k * 80, 0, 36, S, R, 10); ctx.fillStyle = PAL.runway; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; },
+    runway_1: function (ctx, S, R) { runwayBase(ctx, S, R); runwayDigit(ctx, S, '1'); },
+    runway_0: function (ctx, S, R) { runwayBase(ctx, S, R); runwayDigit(ctx, S, '0'); },
+    // airport apron: parking asphalt with a yellow taxi guide line
+    apron: function (ctx, S, R) { asphaltBase(ctx, S, R, PAL.parking); ctx.fillStyle = PAL.apronLine; ctx.globalAlpha = 0.7; ctx.fillRect(0, S / 2 - 3, S, 6); ctx.globalAlpha = 1; worn(ctx, 0, S / 2 - 3, S, 6, R, 6); ctx.fillStyle = PAL.parking; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; }
   };
+  // base roughness per atlas cell (the roughness map modulates it by luminance: paint reads glossier than aggregate)
+  var ROUGH = {
+    asphalt: 0.92, road_half: 0.92, road_dead: 0.92, ave_outer: 0.92, ave_inner: 0.92, cross: 0.88, cross_stop: 0.88, hw_outer: 0.9, hw_inner: 0.9,
+    sidewalk: 0.84, sidewalk_edge: 0.84, sidewalk_corner: 0.84, curbface: 0.8, plaza: 0.62, plaza2: 0.6, path: 0.9, gravel: 0.98,
+    grass: 1.0, grass2: 1.0, lawn: 1.0, field: 1.0, sand: 0.96, parking: 0.9, parking_bay: 0.9, apron: 0.9,
+    concrete: 0.78, concrete_dark: 0.8, barrier: 0.75, dock: 0.7, dockside: 0.75, seawall: 0.8, roofgravel: 0.98,
+    white: 0.5, black: 0.5, gold: 0.35, runway: 0.9, runway_center: 0.9, runway_edge: 0.9, runway_thresh: 0.9, runway_1: 0.9, runway_0: 0.9
+  };
+  function runwayBase(ctx, S, R) {
+    ctx.fillStyle = PAL.runway; ctx.fillRect(0, 0, S, S);
+    speckle(ctx, S, S, 0.04, 'rgba(255,255,255,0.06)', 'rgba(0,0,0,0.2)', R);
+    for (var i = 0; i < 4; i++) alphaFill(ctx, '#000', 0.18, R.random() * S, R.random() * S, 8 + R.random() * 14, 40 + R.random() * 120);   // tyre scuffs along the strip
+    cracks(ctx, S, S, 1, 'rgba(0,0,0,0.25)', R);
+  }
+  function runwayDigit(ctx, S, d) {
+    ctx.fillStyle = PAL.runwayNumber; ctx.globalAlpha = 0.88; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '900 ' + Math.floor(S * 0.9) + 'px "Arial Black", Impact, Arial, sans-serif';
+    ctx.fillText(d, S / 2, S / 2 + 6); ctx.globalAlpha = 1;
+  }
 
   // ====================================================================== facades
-  var SWATCH_NAMES = ['concrete', 'concreteDark', 'concreteLight', 'gravel', 'metal', 'white', 'black', 'gold', 'red', 'blue', 'green', 'brown', 'yellow', 'glass', 'rust', 'pink'];
-  var SWATCH_COLORS = [PAL.concrete, PAL.concreteDark, PAL.concreteLight, PAL.roofGravel, '#3a3d44', '#f0f0f0', '#101014', PAL.gold, '#c94040', '#3d6fcf', '#2f9e6a', '#5a3f2a', '#e2b43a', '#6fb7d8', '#8b4a2a', '#ff3fa4'];
+  var SW = 24;   // swatch width in px (21 swatches across the 512 px band)
+  var SWATCH_NAMES = ['concrete', 'concreteDark', 'concreteLight', 'gravel', 'metal', 'white', 'black', 'gold', 'red', 'blue', 'green', 'brown', 'yellow', 'glass', 'rust', 'pink', 'slate', 'sandstone', 'orange', 'navy', 'teal'];
+  var SWATCH_COLORS = [PAL.concrete, PAL.concreteDark, PAL.concreteLight, PAL.roofGravel, '#3a3d44', '#f0f0f0', '#101014', PAL.gold, '#c94040', '#3d6fcf', '#2f9e6a', '#5a3f2a', '#e2b43a', '#6fb7d8', '#8b4a2a', '#ff3fa4', '#2e3038', '#9a6a4a', '#f08a2a', '#1c2a4a', '#2a7a7a'];
 
   function drawCommonBands(dctx, nctx, style, R) {
     // band 5: roof gravel (U repeats)
@@ -827,9 +1282,9 @@
     for (i = 0; i < 8; i++) alphaFill(dctx, '#000', 0.12, R.random() * FW, y + R.random() * BAND, 30 + R.random() * 80, 20 + R.random() * 30);
     for (i = 0; i < 2500; i++) { dctx.fillStyle = R.random() < 0.5 ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.22)'; dctx.fillRect(R.random() * FW, y + R.random() * BAND, 2, 2); }
     dctx.restore();
-    // band 6: swatches
+    // band 6: swatches (gold and pink glow at night)
     y = 6 * BAND;
-    for (i = 0; i < 16; i++) { dctx.fillStyle = SWATCH_COLORS[i]; dctx.fillRect(i * 32, y, 32, BAND); nctx.fillStyle = (i === 15 || i === 7) ? SWATCH_COLORS[i] : '#000'; nctx.fillRect(i * 32, y, 32, BAND); }
+    for (i = 0; i < SWATCH_COLORS.length; i++) { dctx.fillStyle = SWATCH_COLORS[i]; dctx.fillRect(i * SW, y, SW, BAND); nctx.fillStyle = (i === 15 || i === 7) ? SWATCH_COLORS[i] : '#000'; nctx.fillRect(i * SW, y, SW, BAND); }
     // band 7: parapet / cornice trim: concrete light with a shadow line
     y = 7 * BAND;
     dctx.fillStyle = PAL.concreteLight; dctx.fillRect(0, y, FW, BAND);
@@ -990,7 +1445,7 @@
         var y = b * BAND;
         if (!night) { ctx.fillStyle = '#e9ebee'; ctx.fillRect(0, y, FW, BAND); ctx.fillStyle = '#b9d1e8'; ctx.fillRect(0, y + BAND - 26, FW, 20); for (var i = 0; i < 400; i++) { ctx.fillStyle = R.random() < 0.5 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.05)'; ctx.fillRect(R.random() * FW, y + R.random() * BAND, 2, 2); } }
         if (b === 0) {
-          if (night) { ctx.fillStyle = PAL.windowLitCool; ctx.fillRect(60, y + 40, 392, BAND - 50); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(236, y + 50, 40, BAND - 60); }
+          if (night) { ctx.fillStyle = U.shade(PAL.windowLitCool, -0.3); ctx.fillRect(60, y + 40, 392, BAND - 50); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(236, y + 50, 40, BAND - 60); }
           else { winDay(ctx, 60, y + 40, 392, BAND - 50, '#9aa3ad', '#8fc1e0', null); ctx.fillStyle = '#9aa3ad'; ctx.fillRect(0, y + 20, FW, 14); }
           ctx.fillStyle = night ? '#ff4a4a' : '#d23c3c'; ctx.fillRect(238, y + 2, 36, 10); ctx.fillRect(251, y - 11 + 11, 10, 36);
         } else {
@@ -1039,6 +1494,99 @@
           if (night) winNight(ctx, wx, wy, ww, wh, b === 0 ? true : lit(), false, R); else { ctx.fillStyle = '#2a2d33'; ctx.fillRect(wx, wy, ww, wh); if (b === 0) { ctx.fillStyle = '#e2b43a'; ctx.fillRect(wx, wy - 8, ww, 6); } }
         }
       }
+    },
+    // ---- expansion styles (GDD_EXPANSION §1.1) ----
+    // Heirloom Heights: warm sandstone, tall arched windows under white lintels, a five-step stoop with railings
+    // and a raised door on the ground floor, basement windows under the stoop line
+    brownstone: function (ctx, night, R) {
+      var base = R.pick(PAL.facades.brownstone), lit = litDecider(R, 0.5), trim = '#efe6d6', dark = U.shade(base, -0.45);
+      for (var b = 0; b < 5; b++) {
+        var y = b * BAND, k, wx, ww;
+        if (!night) ashlar(ctx, 0, y, FW, BAND, R, base);
+        if (b === 0) {
+          // the stoop: five steps up to the door at x 256, railings either side, two basement windows at street level
+          var sx = 196, sw = 120;
+          if (!night) {
+            for (k = 0; k < 5; k++) { ctx.fillStyle = U.shade(trim, -0.1 - k * 0.05); ctx.fillRect(sx - k * 6, y + BAND - 14 - k * 12, sw + k * 12, 12); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(sx - k * 6, y + BAND - 14 - k * 12 + 10, sw + k * 12, 2); }
+            ctx.fillStyle = '#2a2420'; ctx.fillRect(sx + 4, y + BAND - 74, 4, 60); ctx.fillRect(sx + sw - 8, y + BAND - 74, 4, 60);   // railing posts
+            ctx.fillRect(sx - 20, y + BAND - 80, sw + 40, 4);                                                                            // hand rail
+            for (k = 0; k < 8; k++) { ctx.fillRect(sx - 18 + k * 20, y + BAND - 78, 2, 22); }
+            ctx.fillStyle = trim; ctx.fillRect(sx + 22, y + 10, sw - 44, 14);                                                             // door lintel
+            ctx.fillStyle = '#3a2a1a'; ctx.fillRect(sx + 28, y + 24, sw - 56, BAND - 24 - 74);                                              // the door, up the steps
+            ctx.fillStyle = '#c9a24a'; ctx.fillRect(sx + sw / 2 + 14, y + 60, 4, 4);
+          } else { ctx.fillStyle = lit() ? PAL.windowLit : '#06070b'; ctx.fillRect(sx + 34, y + 30, sw - 68, 30); }
+          for (k = 0; k < 2; k++) {
+            wx = k ? 380 : 60; ww = 72;
+            if (night) { winNight(ctx, wx, y + 30, ww, 90, lit(), true, R); ctx.fillStyle = lit() ? U.shade(PAL.windowLit, -0.3) : '#06070b'; ctx.fillRect(wx + 10, y + BAND - 40, ww - 20, 26); }
+            else { ctx.fillStyle = trim; ctx.fillRect(wx - 8, y + 20, ww + 16, 10); winDay(ctx, wx, y + 30, ww, 90, dark, '#5f8fae', trim); ctx.fillStyle = dark; ctx.fillRect(wx + ww / 2 - 2, y + 30, 4, 90); ctx.fillStyle = '#1e1a16'; ctx.fillRect(wx + 10, y + BAND - 40, ww - 20, 26); ctx.fillStyle = '#2a2420'; for (var bb = 0; bb < 5; bb++) ctx.fillRect(wx + 10 + bb * 13, y + BAND - 40, 2, 26); }
+          }
+          if (!night) { ctx.fillStyle = U.shade(base, -0.5); ctx.fillRect(0, y + BAND - 6, FW, 6); }
+        } else {
+          for (k = 0; k < 3; k++) {
+            wx = 56 + k * 160; ww = 80;
+            if (night) winNight(ctx, wx, y + 28, ww, 104, lit(), true, R);
+            else {
+              ctx.fillStyle = trim; ctx.fillRect(wx - 8, y + 22, ww + 16, 10); ctx.beginPath(); ctx.arc(wx + ww / 2, y + 28, ww / 2 + 6, Math.PI, 0); ctx.fill();   // white lintel + arch
+              winDay(ctx, wx, y + 28, ww, 104, dark, '#5f8fae', trim); ctx.fillStyle = '#5f8fae'; ctx.beginPath(); ctx.arc(wx + ww / 2, y + 28, ww / 2, Math.PI, 0); ctx.fill();
+              ctx.fillStyle = dark; ctx.fillRect(wx + ww / 2 - 2, y + 28 - ww / 2, 4, 104 + ww / 2); ctx.fillRect(wx, y + 70, ww, 3);
+            }
+          }
+          if (!night) { floorShadow(ctx, y); ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(0, y + BAND - 12, FW, 4); }
+        }
+      }
+    },
+    // Goldplate International: pale composite panels, one long glass band per floor, a glass ground floor with
+    // sliding doors; gate numbers painted on the panels
+    airport: function (ctx, night, R) {
+      var base = R.pick(PAL.facades.airport), lit = litDecider(R, 0.7);
+      for (var b = 0; b < 5; b++) {
+        var y = b * BAND, k;
+        if (!night) {
+          ctx.fillStyle = base; ctx.fillRect(0, y, FW, BAND);
+          for (k = 0; k <= 8; k++) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(k * 64 - 2, y, 3, BAND); }
+          ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.fillRect(0, y + BAND - 10, FW, 10); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, y, FW, 4);
+        }
+        if (b === 0) {
+          if (night) { ctx.fillStyle = U.shade(PAL.windowLitCool, -0.3); ctx.fillRect(12, y + 26, FW - 24, BAND - 30); ctx.fillStyle = 'rgba(0,0,0,0.35)'; for (k = 0; k < 7; k++) ctx.fillRect(30 + k * 70, y + 40, 12, BAND - 50); }
+          else { winDay(ctx, 12, y + 26, FW - 24, BAND - 30, '#8a949e', '#9fc7e0', null); ctx.fillStyle = '#8a949e'; for (k = 0; k < 7; k++) ctx.fillRect(30 + k * 70, y + 26, 6, BAND - 30); ctx.fillStyle = '#5a6470'; ctx.fillRect(236, y + 40, 40, BAND - 44); ctx.fillStyle = PAL.gold; ctx.fillRect(0, y + 14, FW, 8); }
+        } else {
+          // the glass band
+          if (night) { for (k = 0; k < 8; k++) winNight(ctx, 10 + k * 64, y + 44, 46, 64, lit(), false, R); }
+          else { winDay(ctx, 10, y + 44, FW - 20, 64, '#8a949e', '#9fc7e0', null); ctx.fillStyle = '#8a949e'; for (k = 1; k < 8; k++) ctx.fillRect(k * 64 - 3, y + 44, 6, 64); }
+          // a gate number on a panel
+          ctx.fillStyle = night ? '#101418' : '#1c2a4a'; ctx.font = '900 34px "Arial Black", Impact, Arial, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+          ctx.fillText('G' + (b * 3 + (b % 2)), 18, y + 36);
+          if (!night) floorShadow(ctx, y);
+        }
+      }
+    },
+    // Manifest Harbor: corrugated metal in shipping colours, roll-up loading doors with stencilled bay numbers,
+    // small high windows above
+    port: function (ctx, night, R) {
+      var base = R.pick(PAL.facades.port), lit = litDecider(R, 0.3), ink = 'rgba(245,240,225,0.8)';
+      for (var b = 0; b < 5; b++) {
+        var y = b * BAND, k;
+        if (!night) corrugated(ctx, 0, y, FW, BAND, R, base);
+        if (b === 0) {
+          if (!night) {
+            for (k = 0; k < 2; k++) {
+              var dx = 36 + k * 260;
+              ctx.fillStyle = '#3a3d44'; ctx.fillRect(dx, y + 18, 180, BAND - 18);
+              for (var s = 0; s < 12; s++) { ctx.fillStyle = s % 2 ? '#4a4d55' : '#2f3238'; ctx.fillRect(dx + 4, y + 22 + s * 11, 172, 10); }
+              ctx.fillStyle = PAL.gold; ctx.fillRect(dx, y + BAND - 16, 180, 4);
+              ctx.fillStyle = ink; ctx.font = '900 40px "Arial Black", Impact, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillText('0' + (k + 1 + (R.random() < 0.5 ? 2 : 0)), dx + 90, y + 80);
+            }
+            ctx.fillStyle = PAL.concreteDark; ctx.fillRect(0, y + BAND - 12, FW, 12);
+          } else { ctx.fillStyle = lit() ? PAL.windowLit : '#06070b'; ctx.fillRect(236, y + 50, 40, 36); }
+        } else {
+          for (k = 0; k < 6; k++) {
+            var wx = 22 + k * 82, ww = 50, wy = y + 24, wh = 40;
+            if (night) winNight(ctx, wx, wy, ww, wh, lit(), false, R);
+            else { winDay(ctx, wx, wy, ww, wh, '#2b2e33', '#7b9aa8', null); ctx.fillStyle = '#2b2e33'; ctx.fillRect(wx + ww / 2 - 2, wy, 4, wh); }
+          }
+          if (!night) { ctx.fillStyle = ink; ctx.font = '900 30px "Arial Black", Impact, Arial, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText('BAY ' + (10 + b * 7), 20, y + BAND - 24); floorShadow(ctx, y); }
+        }
+      }
     }
   };
   function concreteBase2(ctx, x, y, w, h, R, base) {
@@ -1059,7 +1607,7 @@
       }
       if (b === 0) {
         // lobby: tall glass, dark frame, lit band, revolving door
-        if (night) { ctx.fillStyle = gold ? PAL.windowLit : PAL.windowLitCool; ctx.fillRect(16, y + 30, FW - 32, BAND - 40); ctx.fillStyle = 'rgba(0,0,0,0.45)'; for (i = 0; i < 6; i++) ctx.fillRect(40 + i * 80, y + 40, 18, BAND - 60); }
+        if (night) { ctx.fillStyle = U.shade(gold ? PAL.windowLit : PAL.windowLitCool, -0.3); ctx.fillRect(16, y + 30, FW - 32, BAND - 40); ctx.fillStyle = 'rgba(0,0,0,0.45)'; for (i = 0; i < 6; i++) ctx.fillRect(40 + i * 80, y + 40, 18, BAND - 60); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(16, y + 30, FW - 32, 30); }
         else { ctx.fillStyle = mullion; ctx.fillRect(0, y + 20, FW, BAND - 20); var lg = ctx.createLinearGradient(0, y + 30, 0, y + BAND); lg.addColorStop(0, U.shade(glass, 0.5)); lg.addColorStop(1, U.shade(glass, -0.1)); ctx.fillStyle = lg; ctx.fillRect(16, y + 30, FW - 32, BAND - 40); ctx.fillStyle = mullion; for (i = 0; i < 6; i++) ctx.fillRect(40 + i * 80, y + 30, 6, BAND - 40); ctx.fillStyle = gold ? PAL.gold : PAL.concreteLight; ctx.fillRect(0, y + 20, FW, 10); ctx.fillStyle = '#1a2430'; ctx.fillRect(236, y + 60, 40, BAND - 70); }
       } else {
         // curtain wall: 8 panes per 8 m, spandrel band
@@ -1121,14 +1669,24 @@
   function c(hex) { var r = U.hexToRgb(hex); return [r[0] / 255, r[1] / 255, r[2] / 255]; }
   var CONC = c(PAL.concrete), CONCD = c(PAL.concreteDark), METAL = c('#3a3d44'), LAMP = c(PAL.lamp), WHITE = [0.95, 0.95, 0.95], TRUNK = c(PAL.trunk);
   function treeBlob(g, x, y, z, r, col, squash) { g.sphere(x, y, z, r, 7, 4, col, null, squash); }
+  // mark the vertices a builder adds inside fn() as self-lit (the prop material's glow attribute); k scales the emission
+  function glowing(g, k, fn) { var from = g.n; fn(); if (g._glow) g._glow.push([from, g.n, k == null ? 1 : k]); }
   var PROPS = {
     tree: function (g, R) {
-      g.cylinder(0, 0, 0, 0.22, 0.16, 2.2, 6, TRUNK, null, false);
-      var col = c(R.pick(PAL.tree)), col2 = c(R.pick(PAL.tree));
-      treeBlob(g, 0, 3.3, 0, 1.7, col, 0.9);
-      treeBlob(g, 0.8, 4.1, 0.4, 1.3, col2, 0.9);
-      treeBlob(g, -0.7, 4.3, -0.5, 1.2, col, 0.9);
-      treeBlob(g, 0, 5.1, 0, 1.0, col2, 0.9);
+      // a trunk with a root flare and two boughs, then a canopy of eight blobs in three tones, dark at the core and
+      // light at the sunlit top (the instance colour varies the whole tree a little more)
+      g.cylinder(0, 0, 0, 0.3, 0.2, 0.5, 7, TRUNK, null, false);
+      g.cylinder(0, 0.4, 0, 0.21, 0.15, 2.4, 7, TRUNK, null, false);
+      g.cylinder(0.25, 2.3, 0.2, 0.09, 0.05, 1.3, 5, TRUNK, null, false); g.cylinder(-0.3, 2.5, -0.15, 0.08, 0.04, 1.1, 5, TRUNK, null, false);
+      var base = c(R.pick(PAL.tree)), dark = shade3(base, -0.28), light = shade3(c(R.pick(PAL.tree)), 0.16);
+      treeBlob(g, 0, 3.2, 0, 1.75, dark, 0.85);
+      treeBlob(g, 0.9, 3.8, 0.5, 1.35, base, 0.9);
+      treeBlob(g, -0.85, 3.9, -0.5, 1.3, base, 0.9);
+      treeBlob(g, 0.3, 3.7, -1.0, 1.15, base, 0.9);
+      treeBlob(g, -0.5, 3.6, 0.95, 1.1, dark, 0.9);
+      treeBlob(g, 0.5, 4.7, 0.2, 1.1, light, 0.85);
+      treeBlob(g, -0.4, 4.8, -0.3, 1.0, light, 0.85);
+      treeBlob(g, 0, 5.4, 0, 0.75, light, 0.8);
     },
     palm: function (g, R) {
       g.cylinder(0, 0, 0, 0.2, 0.14, 5.5, 6, c('#8a6a44'), null, false);
@@ -1142,31 +1700,81 @@
       void R;
     },
     lamp: function (g) {
-      g.cylinder(0, 0, 0, 0.14, 0.09, 6.2, 6, METAL, null, false);
+      g.cylinder(0, 0, 0, 0.16, 0.1, 6.2, 8, METAL, null, false);
+      g.cylinder(0, 0, 0, 0.2, 0.17, 0.5, 8, METAL, null, false);                // the base collar
       g.box(-0.06, 6.0, -0.06, 0.12, 0.12, 1.6, GB.UV0, METAL);   // arm reaching over the road (+z = toward the road at rot 0)
-      g.box(-0.22, 5.85, 1.1, 0.44, 0.2, 0.7, GB.UV0, LAMP);      // head
-      g.box(-0.16, 5.82, 1.2, 0.32, 0.04, 0.5, GB.UV0, c(PAL.lampGlow));
+      g.box(-0.05, 5.5, -0.05, 0.1, 0.1, 0.1, GB.UV0, METAL); g.quad([-0.025, 5.55, 0.05], [0.025, 5.55, 0.05], [0.025, 6.0, 1.2], [-0.025, 6.0, 1.2], GB.UV0, METAL); g.quad([-0.025, 6.0, 1.2], [0.025, 6.0, 1.2], [0.025, 5.55, 0.05], [-0.025, 5.55, 0.05], GB.UV0, METAL);   // the stay (a two-sided strip; never coincide a quad's first two corners: a zero normal is NaN lighting)
+      g.box(-0.24, 5.85, 1.05, 0.48, 0.22, 0.8, GB.UV0, LAMP);      // head
+      glowing(g, 1.3, function () { g.box(-0.17, 5.82, 1.15, 0.34, 0.04, 0.55, GB.UV0, c(PAL.lampGlow)); });   // the lens, lit
       g.box(-0.25, 0, -0.25, 0.5, 0.25, 0.5, GB.UV0, CONCD);
     },
     signal: function (g) {
       g.cylinder(0, 0, 0, 0.12, 0.09, 4.6, 6, METAL, null, false);
       g.box(-0.06, 4.4, -0.06, 0.12, 0.12, 3.2, GB.UV0, METAL);
       g.box(-0.18, 3.5, 2.5, 0.36, 1.0, 0.36, GB.UV0, [0.12, 0.12, 0.13]);
-      g.box(-0.12, 4.22, 2.86, 0.24, 0.22, 0.02, GB.UV0, [1, 0.15, 0.1]);
-      g.box(-0.12, 3.9, 2.86, 0.24, 0.22, 0.02, GB.UV0, [1, 0.7, 0.1]);
-      g.box(-0.12, 3.58, 2.86, 0.24, 0.22, 0.02, GB.UV0, [0.2, 0.9, 0.3]);
+      // visors over the lenses, then the lenses themselves lit through the glow attribute
+      for (var vk = 0; vk < 3; vk++) g.box(-0.14, 4.44 - vk * 0.32, 2.84, 0.28, 0.03, 0.1, GB.UV0, [0.1, 0.1, 0.11]);
+      glowing(g, 1.0, function () { g.box(-0.12, 4.22, 2.86, 0.24, 0.22, 0.02, GB.UV0, [1, 0.15, 0.1]); });
+      glowing(g, 0.55, function () { g.box(-0.12, 3.9, 2.86, 0.24, 0.22, 0.02, GB.UV0, [1, 0.7, 0.1]); });
+      glowing(g, 1.0, function () { g.box(-0.12, 3.58, 2.86, 0.24, 0.22, 0.02, GB.UV0, [0.2, 0.9, 0.3]); });
       g.box(-0.18, 2.2, -0.18, 0.36, 0.8, 0.36, GB.UV0, [0.12, 0.12, 0.13]);
-      g.box(-0.12, 2.75, 0.18, 0.24, 0.2, 0.02, GB.UV0, [1, 0.15, 0.1]);
-      g.box(-0.12, 2.5, 0.18, 0.24, 0.2, 0.02, GB.UV0, [0.2, 0.9, 0.3]);
+      glowing(g, 1.0, function () { g.box(-0.12, 2.75, 0.18, 0.24, 0.2, 0.02, GB.UV0, [1, 0.15, 0.1]); });
+      glowing(g, 1.0, function () { g.box(-0.12, 2.5, 0.18, 0.24, 0.2, 0.02, GB.UV0, [0.2, 0.9, 0.3]); });
+      g.box(-0.2, 1.1, -0.1, 0.4, 0.3, 0.06, GB.UV0, [0.85, 0.85, 0.8]);   // the push-button plate
     },
     bench: function (g) {
-      var wood = c('#8a6a44');
-      g.box(-0.9, 0.4, -0.25, 1.8, 0.08, 0.5, GB.UV0, wood);
-      g.box(-0.9, 0.5, -0.3, 1.8, 0.5, 0.08, GB.UV0, wood);
-      g.box(-0.85, 0, -0.25, 0.08, 0.45, 0.5, GB.UV0, METAL);
-      g.box(0.77, 0, -0.25, 0.08, 0.45, 0.5, GB.UV0, METAL);
+      var wood = c('#8a6a44'), wood2 = c('#7a5a38');
+      for (var sk = 0; sk < 3; sk++) g.box(-0.9, 0.4, -0.25 + sk * 0.17, 1.8, 0.06, 0.14, GB.UV0, sk % 2 ? wood2 : wood);   // seat slats
+      for (sk = 0; sk < 3; sk++) g.box(-0.9, 0.5 + sk * 0.16, -0.3, 1.8, 0.12, 0.06, GB.UV0, sk % 2 ? wood2 : wood);     // back slats
+      g.box(-0.85, 0, -0.25, 0.08, 0.45, 0.5, GB.UV0, METAL); g.box(0.77, 0, -0.25, 0.08, 0.45, 0.5, GB.UV0, METAL);
+      g.box(-0.85, 0.45, -0.3, 0.08, 0.55, 0.08, GB.UV0, METAL); g.box(0.77, 0.45, -0.3, 0.08, 0.55, 0.08, GB.UV0, METAL);
+      g.box(-0.85, 0.42, -0.25, 0.08, 0.06, 0.08, GB.UV0, METAL); g.box(0.77, 0.42, -0.25, 0.08, 0.06, 0.08, GB.UV0, METAL);   // armrest stubs
     },
-    hydrant: function (g) { var red = c('#c94040'); g.cylinder(0, 0, 0, 0.16, 0.14, 0.6, 6, red); g.sphere(0, 0.62, 0, 0.16, 6, 3, red); g.box(-0.26, 0.3, -0.07, 0.52, 0.14, 0.14, GB.UV0, red); },
+    hydrant: function (g) {
+      var red = c('#c94040'), cap = c('#e2b43a');
+      g.cylinder(0, 0, 0, 0.2, 0.17, 0.12, 8, red); g.cylinder(0, 0.12, 0, 0.15, 0.14, 0.5, 8, red); g.sphere(0, 0.64, 0, 0.16, 7, 4, red);
+      g.cylinder(0, 0.75, 0, 0.07, 0.05, 0.08, 6, cap);
+      g.box(-0.27, 0.32, -0.07, 0.54, 0.14, 0.14, GB.UV0, red); g.cylinder(-0.3, 0.3, 0, 0.08, 0.08, 0.17, 6, cap, null, true); g.cylinder(0.3, 0.3, 0, 0.08, 0.08, 0.17, 6, cap, null, true);
+      g.box(-0.08, 0.35, -0.2, 0.16, 0.1, 0.1, GB.UV0, cap);
+      glowing(g, 0.4, function () { g.box(-0.06, 0.5, -0.17, 0.12, 0.05, 0.02, GB.UV0, [1, 1, 0.9]); });   // a reflector strip
+    },
+    // a bus shelter: two posts, a glass back, a roof and a bench (world prop kind 'busstop', yaw 0 opens toward -z)
+    busstop: function (g) {
+      var glass = c('#6f9bb5'), frame = METAL, seat = c('#8a6a44');
+      g.box(-1.6, 0, 0.5, 0.1, 2.5, 0.1, GB.UV0, frame); g.box(1.5, 0, 0.5, 0.1, 2.5, 0.1, GB.UV0, frame);
+      g.box(-1.55, 0.4, 0.55, 3.1, 1.9, 0.03, GB.UV0, glass);
+      g.box(-1.8, 2.45, -0.9, 3.6, 0.12, 1.6, GB.UV0, frame); g.box(-1.75, 2.57, -0.85, 3.5, 0.06, 1.5, GB.UV0, c('#dfe3e8'));
+      g.box(-1.3, 0.45, 0.2, 2.6, 0.06, 0.4, GB.UV0, seat); g.box(-1.2, 0, 0.3, 0.06, 0.45, 0.2, GB.UV0, frame); g.box(1.14, 0, 0.3, 0.06, 0.45, 0.2, GB.UV0, frame);
+      g.box(1.62, 1.6, -0.6, 0.06, 0.5, 0.8, GB.UV0, c('#2c3e7a'));   // the route sign
+    },
+    // a concrete planter with a clipped shrub (world prop kind 'planter')
+    planter: function (g) {
+      g.box(-0.6, 0, -0.6, 1.2, 0.5, 1.2, GB.UV0, CONC); g.box(-0.65, 0.45, -0.65, 1.3, 0.08, 1.3, GB.UV0, CONCD);
+      g.box(-0.55, 0.5, -0.55, 1.1, 0.06, 1.1, GB.UV0, c('#4a3a2a'));
+      g.sphere(0, 0.85, 0, 0.55, 7, 4, c('#2f6b2c'), null, 0.8); g.sphere(0.25, 1.0, 0.2, 0.35, 6, 3, c('#3a7d34'), null, 0.9);
+    },
+    // a parked bicycle leaning on its stand (world prop kind 'bike'), along z
+    bike: function (g) {
+      var frame = c('#c0392b'), tyre = [0.1, 0.1, 0.11], rim = c('#c9ccd4');
+      [[-0.55], [0.55]].forEach(function (p) {
+        for (var i = 0; i < 10; i++) { var a0 = i / 10 * TAU, a1 = (i + 1) / 10 * TAU; g.quad([-0.02, 0.33 + Math.cos(a0) * 0.33, p[0] + Math.sin(a0) * 0.33], [0.02, 0.33 + Math.cos(a0) * 0.33, p[0] + Math.sin(a0) * 0.33], [0.02, 0.33 + Math.cos(a1) * 0.33, p[0] + Math.sin(a1) * 0.33], [-0.02, 0.33 + Math.cos(a1) * 0.33, p[0] + Math.sin(a1) * 0.33], GB.UV0, tyre); }
+        g.box(-0.005, 0.03, p[0] - 0.02, 0.01, 0.6, 0.04, GB.UV0, rim); g.box(-0.005, 0.31, p[0] - 0.3, 0.01, 0.04, 0.6, GB.UV0, rim);
+      });
+      g.box(-0.02, 0.33, -0.55, 0.04, 0.04, 1.1, GB.UV0, frame);                          // the chain stay line
+      g.quad([-0.02, 0.33, -0.55], [0.02, 0.33, -0.55], [0.02, 0.95, -0.2], [-0.02, 0.95, -0.2], GB.UV0, frame); g.quad([-0.02, 0.95, -0.2], [0.02, 0.95, -0.2], [0.02, 0.33, -0.55], [-0.02, 0.33, -0.55], GB.UV0, frame);
+      g.quad([-0.02, 0.33, 0.55], [0.02, 0.33, 0.55], [0.02, 0.9, 0.2], [-0.02, 0.9, 0.2], GB.UV0, frame); g.quad([-0.02, 0.9, 0.2], [0.02, 0.9, 0.2], [0.02, 0.33, 0.55], [-0.02, 0.33, 0.55], GB.UV0, frame);
+      g.box(-0.02, 0.9, -0.22, 0.04, 0.04, 0.44, GB.UV0, frame);                           // top tube
+      g.box(-0.12, 0.95, 0.12, 0.24, 0.05, 0.18, GB.UV0, [0.12, 0.12, 0.13]);             // saddle
+      g.box(-0.22, 0.97, -0.28, 0.44, 0.03, 0.03, GB.UV0, rim);                           // bars
+    },
+    // a street litter bin with a domed lid and a bag poking out (world prop kind 'trash')
+    trash: function (g) {
+      var green = c('#2f6b4a');
+      g.cylinder(0, 0, 0, 0.3, 0.32, 0.9, 8, green); for (var k = 0; k < 8; k++) { var a = k / 8 * TAU; g.box(Math.cos(a) * 0.3 - 0.02, 0.1, Math.sin(a) * 0.3 - 0.02, 0.04, 0.7, 0.04, GB.UV0, shade3(green, -0.3)); }
+      g.cylinder(0, 0.9, 0, 0.34, 0.3, 0.1, 8, METAL); g.sphere(0, 0.98, 0, 0.3, 8, 3, METAL, null, 0.5);
+      g.box(-0.1, 0.95, -0.34, 0.2, 0.18, 0.04, GB.UV0, [0.1, 0.1, 0.1]);
+      g.sphere(0.2, 1.05, 0.15, 0.12, 6, 3, [0.15, 0.15, 0.16], null, 0.9);
+    },
     billboard: function (g) { g.cylinder(-0.6, 0, 0, 0.12, 0.12, 5.2, 6, METAL, null, false); g.cylinder(0.6, 0, 0, 0.12, 0.12, 5.2, 6, METAL, null, false); },
     table: function (g) {
       g.box(-0.9, 0.72, -0.4, 1.8, 0.06, 0.8, GB.UV0, WHITE);
@@ -1214,9 +1822,268 @@
     mast: function (g) { g.cylinder(0, 0, 0, 0.3, 0.2, 0.9, 6, METAL, null, false); g.box(-0.9, 0.86, -0.3, 1.8, 0.14, 0.6, GB.UV0, METAL); g.box(-0.85, 0.9, -0.32, 1.7, 0.08, 0.04, GB.UV0, [1, 1, 0.85]); },
     stack: function (g) { g.cylinder(0, 0, 0, 1.2, 0.8, 1, 8, c('#8b4a2a'), null, false); g.cylinder(0, 0.94, 0, 0.82, 0.82, 0.06, 8, METAL); },
     kiosk: function (g) { g.box(-2, 0, -1.6, 4, 2.6, 3.2, GB.UV0, c('#2f6b4a')); g.box(-2.3, 2.5, -1.9, 4.6, 0.3, 3.8, GB.UV0, c('#e8b53a')); g.box(-1.5, 0.9, 1.55, 3, 1.2, 0.1, GB.UV0, [0.4, 0.6, 0.7]); },
-    bin: function (g) { g.cylinder(0, 0, 0, 0.3, 0.32, 1, 7, c('#2c3e50')); g.cylinder(0, 0.95, 0, 0.34, 0.34, 0.08, 7, METAL); },
+    bin: function (g) {
+      var navy = c('#2c3e50');
+      g.cylinder(0, 0, 0, 0.3, 0.32, 1, 8, navy); for (var k = 0; k < 8; k++) { var a = (k + 0.5) / 8 * TAU; g.box(Math.cos(a) * 0.31 - 0.015, 0.08, Math.sin(a) * 0.31 - 0.015, 0.03, 0.8, 0.03, GB.UV0, shade3(navy, 0.18)); }
+      g.cylinder(0, 0.95, 0, 0.35, 0.35, 0.08, 8, METAL); g.cylinder(0, 1.03, 0, 0.3, 0.22, 0.06, 8, METAL);
+      g.box(-0.12, 0.5, -0.325, 0.24, 0.12, 0.02, GB.UV0, [0.9, 0.88, 0.8]);   // the notice
+    },
     pool: function (g) { g.box(-4.5, 0, -2.5, 9, 0.3, 5, GB.UV0, CONCL()); g.box(-4.1, 0.05, -2.1, 8.2, 0.3, 4.2, GB.UV0, c('#39b6e8')); },
-    tableSmall: function (g) { PROPS.table(g); }
+    tableSmall: function (g) { PROPS.table(g); },
+
+    // ---- expansion props (GDD_EXPANSION §1.5). Mesh-local: yaw 0 faces -z; ground at y 0. ----
+    // an 8 m glass tube on a leg, reaching out from the terminal's airside face (-z) to a parked plane
+    jetbridge: function (g) {
+      var glass = c('#6f9bb5'), frame = METAL;
+      g.box(-1.2, 3.0, -8, 2.4, 2.4, 8, GB.UV0, glass, GB.NO_BOTTOM);
+      g.box(-1.25, 2.95, -8, 2.5, 0.12, 8, GB.UV0, frame); g.box(-1.25, 5.3, -8, 2.5, 0.12, 8, GB.UV0, frame);
+      g.box(-1.4, 2.6, -8.6, 2.8, 3.0, 1.4, GB.UV0, c('#dfe3e8'));   // the cab at the plane end
+      g.cylinder(0, 0, -5.5, 0.35, 0.3, 3.0, 6, frame, null, false); g.box(-0.9, 0, -6.1, 1.8, 0.3, 1.2, GB.UV0, CONCD);
+    },
+    // a red airfield beacon dome (the blink is a Points sprite the renderer adds)
+    beacon: function (g) { g.cylinder(0, 0, 0, 0.3, 0.3, 0.2, 6, METAL); g.sphere(0, 0.35, 0, 0.26, 6, 3, [1, 0.18, 0.15]); },
+    // a baggage cart with two cases
+    luggage: function (g) {
+      g.box(-0.6, 0.35, -0.4, 1.2, 0.08, 0.8, GB.UV0, METAL); g.box(-0.62, 0.35, -0.42, 0.06, 0.9, 0.84, GB.UV0, METAL);
+      for (var i = 0; i < 4; i++) g.cylinder(i % 2 ? 0.5 : -0.5, 0.1, i < 2 ? -0.3 : 0.3, 0.12, 0.12, 0.06, 6, [0.1, 0.1, 0.12]);
+      g.box(-0.5, 0.43, -0.35, 0.9, 0.5, 0.7, GB.UV0, c('#8a2f2f')); g.box(-0.4, 0.93, -0.3, 0.7, 0.35, 0.6, GB.UV0, c('#2c3e7a'));
+    },
+    // a runway edge light: a small amber lens on a stub (the glow is a Points sprite)
+    edgelight: function (g) { g.box(-0.12, 0, -0.12, 0.24, 0.22, 0.24, GB.UV0, METAL); g.sphere(0, 0.3, 0, 0.14, 6, 3, [1, 0.85, 0.4]); },
+    // a 6 m pole with an orange sock streaming east
+    windsock: function (g) {
+      g.cylinder(0, 0, 0, 0.07, 0.05, 6, 6, METAL, null, false); g.cylinder(0, 5.75, 0, 0.3, 0.3, 0.1, 8, METAL);
+      tubeX(g, 0.3, 3.2, 5.95, 0, 0.32, 0.12, 6, c('#f08a2a'));
+      tubeX(g, 1.2, 2.0, 5.95, 0, 0.26, 0.2, 6, [1, 1, 1]);
+    },
+    // the airliner in Goldplate gold: a 24 m fuselage along z (nose at -z), 22 m wings, a tail, engines, gear
+    plane: function (g) {
+      var gold = c(PAL.planeGold), trim = c(PAL.planeTrim), dark = [0.12, 0.13, 0.16], L = 24, r = 1.6;
+      tubeZ(g, -L / 2 + 3, L / 2 - 4, 2.2, 0, r, r, 10, gold);
+      tubeZ(g, -L / 2, -L / 2 + 3, 2.2, 0, 0.35, r, 10, trim);           // nose
+      tubeZ(g, L / 2 - 4, L / 2, 2.2, 0, r, 0.45, 10, gold);              // tail taper
+      g.box(-r - 0.02, 2.5, -L / 2 + 3.5, r * 2 + 0.04, 0.5, L - 8, GB.UV0, dark);   // a window strip through both sides
+      g.box(-r - 0.05, 1.3, -L / 2 + 0.5, r * 2 + 0.1, 0.35, L - 1.5, GB.UV0, trim);   // the cheat line
+      // wings: swept planks either side, slightly thick so they read from above and below
+      wingQuad(g, [r - 0.2, 1.6, -1.5], [11, 1.9, 1.5], [11, 1.9, 3.2], [r - 0.2, 1.6, 3.5], gold, 0.22);
+      wingQuad(g, [-r + 0.2, 1.6, 3.5], [-11, 1.9, 3.2], [-11, 1.9, 1.5], [-r + 0.2, 1.6, -1.5], gold, 0.22);
+      // tailplane and fin
+      wingQuad(g, [0.4, 2.6, 8.5], [4.5, 2.7, 10.5], [4.5, 2.7, 11.5], [0.4, 2.6, 11], gold, 0.14);
+      wingQuad(g, [-0.4, 2.6, 11], [-4.5, 2.7, 11.5], [-4.5, 2.7, 10.5], [-0.4, 2.6, 8.5], gold, 0.14);
+      g.quad([0, 3.4, 8.2], [0, 3.4, 12], [0, 7.4, 12.2], [0, 7.4, 10.8], GB.UV0, trim); g.quad([0, 3.4, 12], [0, 3.4, 8.2], [0, 7.4, 10.8], [0, 7.4, 12.2], GB.UV0, trim);
+      g.box(-0.08, 3.4, 8.2, 0.16, 4, 3.8, GB.UV0, gold);
+      // engines under the wings, landing gear
+      tubeZ(g, -0.5, 3.4, 1.0, 5.2, 0.75, 0.75, 8, trim); tubeZ(g, -0.5, 3.4, 1.0, -5.2, 0.75, 0.75, 8, trim);
+      g.cylinder(0, 0, -8, 0.14, 0.14, 1.2, 5, METAL, null, false); g.cylinder(0, 0, -8, 0.45, 0.45, 0.4, 6, dark);
+      g.cylinder(2.2, 0, 2, 0.14, 0.14, 1.2, 5, METAL, null, false); g.cylinder(2.2, 0, 2, 0.5, 0.5, 0.45, 6, dark);
+      g.cylinder(-2.2, 0, 2, 0.14, 0.14, 1.2, 5, METAL, null, false); g.cylinder(-2.2, 0, 2, 0.5, 0.5, 0.45, 6, dark);
+      g.box(-0.5, 2.9, -L / 2 + 2.2, 1.0, 0.5, 1.2, GB.UV0, dark);   // cockpit glass
+    },
+    // the cartoon fighter on its plinth: THE JET, ARRIVING
+    jet: function (g) {
+      var grey = c('#c9d3dc'), gold = c(PAL.planeGold), dark = [0.12, 0.13, 0.16];
+      g.box(-1.5, 0, -1.5, 3, 1.0, 3, GB.UV0, CONC); g.box(-1.1, 1.0, -1.1, 2.2, 0.3, 2.2, GB.UV0, CONCD);
+      g.box(-0.2, 1.3, -0.5, 0.4, 1.2, 1.0, GB.UV0, METAL);   // the pylon
+      tubeZ(g, -4, 2.5, 3.0, 0, 0.55, 0.55, 8, grey); tubeZ(g, 2.5, 4, 3.0, 0, 0.55, 0.3, 8, gold);
+      tubeZ(g, -4, -2.6, 3.0, 0, 0.5, 0.55, 8, grey);
+      g.box(-0.35, 3.3, -2.6, 0.7, 0.45, 1.4, GB.UV0, dark);     // canopy
+      wingQuad(g, [0.5, 2.9, 0], [3.2, 2.9, 2.6], [3.2, 2.9, 3.4], [0.5, 2.9, 3.0], grey, 0.12);
+      wingQuad(g, [-0.5, 2.9, 3.0], [-3.2, 2.9, 3.4], [-3.2, 2.9, 2.6], [-0.5, 2.9, 0], grey, 0.12);
+      g.box(-0.06, 3.4, 2.2, 0.12, 1.5, 1.6, GB.UV0, gold);       // fin
+      g.box(-0.6, 2.6, 3.6, 1.2, 0.8, 0.3, GB.UV0, [1, 0.45, 0.1]);   // the burner
+    },
+    // the control tower's cab: a glass octagon 14 m across (it overhangs the 12 m shaft, so it reads from the street),
+    // 3.4 m tall, on a flared floor slab under a wider roof disc
+    cab: function (g) {
+      g.cylinder(0, -1.2, 0, 5.2, 7.4, 1.2, 8, CONCD, null, false);
+      g.cylinder(0, 0, 0, 7.4, 7.4, 0.5, 8, c('#dfe3e8'));
+      g.cylinder(0, 0.5, 0, 7.0, 7.2, 2.6, 8, c('#4f7f9a'));
+      for (var i = 0; i < 8; i++) { var a = i / 8 * TAU; g.box(Math.cos(a) * 7.05 - 0.1, 0.5, Math.sin(a) * 7.05 - 0.1, 0.2, 2.6, 0.2, GB.UV0, METAL); }
+      g.cylinder(0, 3.1, 0, 7.8, 7.6, 0.4, 8, c('#dfe3e8'));
+      g.cylinder(0, 3.5, 0, 2.0, 1.6, 0.5, 8, CONCD);
+    },
+    // the hangar's roll-up door across the whole front (faces -z)
+    rolldoor: function (g) {
+      g.box(-4.5, 0, -0.2, 9, 6.5, 0.2, GB.UV0, [0.23, 0.24, 0.27]);
+      for (var i = 0; i < 12; i++) g.box(-4.4, 0.2 + i * 0.52, -0.24, 8.8, 0.26, 0.05, GB.UV0, i % 2 ? [0.3, 0.31, 0.34] : [0.18, 0.19, 0.22]);
+      g.box(-4.6, 6.4, -0.3, 9.2, 0.3, 0.35, GB.UV0, c(PAL.gold));
+    },
+    // a pallet with two crates on it (knockable)
+    pallet: function (g) { g.box(-0.6, 0, -0.5, 1.2, 0.14, 1.0, GB.UV0, c('#8a6a44')); g.box(-0.5, 0.14, -0.4, 0.6, 0.6, 0.8, GB.UV0, c('#8a6a44')); g.box(0.12, 0.14, -0.3, 0.42, 0.42, 0.6, GB.UV0, c('#5a3f2a')); },
+    // a shipping container 2.4 x 2.6 x 6 m (white: the instance colour paints it), corrugated, doors at +z
+    container: function (g) {
+      var w = 2.4, h = 2.6, L = 6, hw = w / 2, hl = L / 2, base = [0.92, 0.92, 0.92], rib = [0.74, 0.74, 0.74];
+      g.box(-hw, 0, -hl, w, h, L, GB.UV0, base);
+      for (var i = 1; i < 12; i++) { var z = -hl + i * L / 12; g.box(-hw - 0.03, 0.15, z - 0.05, 0.03, h - 0.3, 0.1, GB.UV0, rib); g.box(hw, 0.15, z - 0.05, 0.03, h - 0.3, 0.1, GB.UV0, rib); }
+      g.box(-hw + 0.1, 0.2, hl, w - 0.2, h - 0.4, 0.03, GB.UV0, rib); g.box(-0.03, 0.2, hl + 0.03, 0.06, h - 0.4, 0.02, GB.UV0, [0.3, 0.3, 0.3]);
+      g.box(-hw + 0.3, 0.9, -1.2, 0.02, 0.6, 2.4, GB.UV0, [0.2, 0.2, 0.22]); g.box(hw - 0.32, 0.9, -1.2, 0.02, 0.6, 2.4, GB.UV0, [0.2, 0.2, 0.22]);   // the label plate
+      for (i = 0; i < 4; i++) g.box(i % 2 ? hw - 0.2 : -hw, -0.02, i < 2 ? -hl : hl - 0.2, 0.2, 0.08, 0.2, GB.UV0, [0.2, 0.2, 0.22]);
+    },
+    // a gantry crane: four legs, a top frame, a boom with a trolley and a cab (the legs' collision is separate)
+    crane: function (g) {
+      var orange = c('#f08a2a'), dark = METAL;
+      [[-5, -3], [5, -3], [-5, 3], [5, 3]].forEach(function (p) { g.box(p[0] - 0.4, 0, p[1] - 0.4, 0.8, 16, 0.8, GB.UV0, orange, GB.NO_BOTTOM); });
+      g.box(-5.6, 16, -3.5, 11.2, 1.4, 1.2, GB.UV0, orange); g.box(-5.6, 16, 2.3, 11.2, 1.4, 1.2, GB.UV0, orange);
+      g.box(-5.2, 16.2, -3.5, 0.6, 1.0, 7.0, GB.UV0, orange); g.box(4.6, 16.2, -3.5, 0.6, 1.0, 7.0, GB.UV0, orange);
+      g.box(-5.6, 16.3, -0.6, 17.5, 0.9, 1.2, GB.UV0, orange);          // the boom reaching +x
+      g.box(-2, 15.3, -1.2, 2.4, 1.2, 2.4, GB.UV0, dark);               // the trolley
+      g.cylinder(-0.8, 10.5, 0, 0.05, 0.05, 4.8, 4, dark, null, false); g.box(-1.5, 9.6, -0.5, 1.4, 0.9, 1.0, GB.UV0, c(PAL.gold));   // the hook block
+      g.box(1.0, 14.0, 3.6, 2.4, 2.0, 2.2, GB.UV0, c('#dfe3e8')); g.box(1.1, 14.6, 5.8, 2.2, 1.0, 0.05, GB.UV0, [0.3, 0.45, 0.55]);   // the cab
+      for (var k = 0; k < 6; k++) { g.box(-5.3, 2 + k * 2.3, -3.2, 10.6, 0.25, 0.25, GB.UV0, dark); g.box(-5.3, 2 + k * 2.3, 2.95, 10.6, 0.25, 0.25, GB.UV0, dark); }
+    },
+    craneleg: function (g) { g.box(-0.4, 0, -0.4, 0.8, 1, 0.8, GB.UV0, c('#f08a2a'), GB.NO_BOTTOM); },
+    // THE MANIFEST: a 60 m container ship along x, stern at -x, twelve containers on deck, a bridge and a funnel
+    ship: function (g) {
+      var hull = [0.16, 0.2, 0.3], red = c('#8a2f2f'), deck = [0.5, 0.52, 0.55], white = [0.93, 0.93, 0.9], L = 60, W = 14, hw = W / 2;
+      g.box(-L / 2 + 4, -0.6, -hw, L - 10, 1.2, W, GB.UV0, red, GB.NO_BOTTOM);
+      g.box(-L / 2 + 4, 0.6, -hw, L - 10, 4.4, W, GB.UV0, hull, GB.NO_BOTTOM);
+      // bow: a wedge from the hull's +x end to a point
+      g.quad([L / 2 - 6, -0.6, -hw], [L / 2 - 6, 5, -hw], [L / 2, 5, 0], [L / 2, -0.6, 0], GB.UV0, hull);
+      g.quad([L / 2, -0.6, 0], [L / 2, 5, 0], [L / 2 - 6, 5, hw], [L / 2 - 6, -0.6, hw], GB.UV0, hull);
+      g.quad([L / 2 - 6, 5, -hw], [L / 2 - 6, 5, hw], [L / 2, 5, 0], [L / 2, 5, 0], GB.UV0, deck);
+      g.quad([-L / 2 + 4, -0.6, hw], [-L / 2 + 4, 5, hw], [-L / 2, 5, hw - 3], [-L / 2, -0.6, hw - 3], GB.UV0, hull);   // stern
+      g.quad([-L / 2, -0.6, -hw + 3], [-L / 2, 5, -hw + 3], [-L / 2 + 4, 5, -hw], [-L / 2 + 4, -0.6, -hw], GB.UV0, hull);
+      g.quad([-L / 2, -0.6, hw - 3], [-L / 2, 5, hw - 3], [-L / 2, 5, -hw + 3], [-L / 2, -0.6, -hw + 3], GB.UV0, hull);
+      g.quad([-L / 2 + 4, 5, hw], [-L / 2 + 4, 5, -hw], [-L / 2, 5, -hw + 3], [-L / 2, 5, hw - 3], GB.UV0, deck);
+      g.box(-L / 2 + 4, 5, -hw, L - 10, 0.2, W, GB.UV0, deck);
+      // superstructure at the stern
+      g.box(-L / 2 + 5, 5.2, -5, 9, 9, 10, GB.UV0, white); g.box(-L / 2 + 4.5, 12.5, -5.5, 10, 2.4, 11, GB.UV0, white);
+      g.box(-L / 2 + 14.55, 13.1, -5, 0.05, 1.2, 10, GB.UV0, [0.2, 0.3, 0.4]);
+      g.cylinder(-L / 2 + 8, 14.9, 0, 1.2, 1.0, 3.5, 8, red, null, false); g.cylinder(-L / 2 + 8, 18.3, 0, 1.0, 1.0, 0.4, 8, [0.1, 0.1, 0.12]);
+      g.cylinder(-L / 2 + 12, 14.9, 0, 0.08, 0.06, 6, 4, METAL, null, false);
+      // containers on deck: 2 rows x 3 columns x 2 high in the shipping colours
+      var cols = PAL.containers || ['#c94040'];
+      for (var i = 0; i < 12; i++) { var cx = -8 + (i % 3) * 6.5, cz = ((i >> 2) % 2 ? 1.4 : -4.0) + (i >= 6 ? 0 : 0), lvl = i >= 6 ? 1 : 0; var row = (i % 6) >= 3 ? 1 : 0; cz = row ? 1.4 : -4.0; g.box(cx, 5.2 + lvl * 2.6, cz, 6, 2.6, 2.4, GB.UV0, c(cols[(i * 5 + 1) % cols.length])); }
+      for (i = 0; i < 6; i++) g.box(12 + (i % 3) * 3.0, 5.2, i < 3 ? -4 : 1.4, 2.4, 2.6, 2.4, GB.UV0, c(cols[(i * 3 + 2) % cols.length]));
+      g.box(-L / 2 + 4, 5.2, -hw, L - 10, 0.9, 0.12, GB.UV0, white); g.box(-L / 2 + 4, 5.2, hw - 0.12, L - 10, 0.9, 0.12, GB.UV0, white);   // bulwarks
+    },
+    // the Ferry to Elsewhere: a 20 m flat ferry along z with a wheelhouse, moored and never leaving
+    ferryboat: function (g) {
+      var hull = [0.92, 0.92, 0.9], blue = c('#2c3e7a'), deck = [0.55, 0.5, 0.42], L = 20, W = 7, hw = W / 2;
+      g.box(-hw, -0.3, -L / 2 + 1.5, W, 1.6, L - 3, GB.UV0, hull, GB.NO_BOTTOM);
+      g.quad([-hw, -0.3, -L / 2 + 1.5], [-hw, 1.3, -L / 2 + 1.5], [0, 1.3, -L / 2], [0, -0.3, -L / 2], GB.UV0, hull);
+      g.quad([0, -0.3, -L / 2], [0, 1.3, -L / 2], [hw, 1.3, -L / 2 + 1.5], [hw, -0.3, -L / 2 + 1.5], GB.UV0, hull);
+      g.quad([hw, -0.3, L / 2 - 1.5], [hw, 1.3, L / 2 - 1.5], [0, 1.3, L / 2], [0, -0.3, L / 2], GB.UV0, hull);
+      g.quad([0, -0.3, L / 2], [0, 1.3, L / 2], [-hw, 1.3, L / 2 - 1.5], [-hw, -0.3, L / 2 - 1.5], GB.UV0, hull);
+      g.box(-hw, 0.2, -L / 2 + 1.5, W, 0.35, L - 3, GB.UV0, blue);   // the blue band
+      g.box(-hw + 0.2, 1.3, -L / 2 + 1.2, W - 0.4, 0.15, L - 2.4, GB.UV0, deck);
+      g.box(-1.6, 1.45, -1.5, 3.2, 2.6, 3.4, GB.UV0, hull); g.box(-1.65, 2.5, -1.55, 3.3, 0.9, 3.5, GB.UV0, [0.2, 0.3, 0.4]); g.box(-1.8, 4.05, -1.7, 3.6, 0.2, 3.8, GB.UV0, blue);
+      g.cylinder(0, 4.2, 0, 0.06, 0.05, 2.0, 4, METAL, null, false);
+      for (var k = 0; k <= 8; k++) { var z = -L / 2 + 1.6 + k * (L - 3.2) / 8; g.box(-hw + 0.1, 1.45, z - 0.04, 0.08, 1.0, 0.08, GB.UV0, METAL); g.box(hw - 0.18, 1.45, z - 0.04, 0.08, 1.0, 0.08, GB.UV0, METAL); }
+      g.box(-hw + 0.1, 2.4, -L / 2 + 1.6, 0.08, 0.06, L - 3.2, GB.UV0, METAL); g.box(hw - 0.18, 2.4, -L / 2 + 1.6, 0.08, 0.06, L - 3.2, GB.UV0, METAL);
+      g.box(-2.5, 1.0, L / 2 - 0.2, 5, 0.15, 2.4, GB.UV0, deck);   // the loading ramp, down but going nowhere
+    },
+    // a lectern: the podium every waiting room needs
+    podium: function (g) { var wood = c('#5a3f2a'); g.box(-0.35, 0, -0.3, 0.7, 1.1, 0.6, GB.UV0, wood); g.quad([-0.45, 1.1, 0.3], [0.45, 1.1, 0.3], [0.45, 1.3, -0.35], [-0.45, 1.3, -0.35], GB.UV0, wood); g.box(-0.45, 1.05, -0.35, 0.9, 0.06, 0.65, GB.UV0, c('#8a6a44')); g.box(-0.1, 1.2, -0.05, 0.2, 0.25, 0.1, GB.UV0, METAL); },
+    // a cardboard heckler on a stand (knockable): a ped-shaped flat with a raised fist
+    cutout: function (g) {
+      var card = [0.93, 0.88, 0.78], line = [0.3, 0.26, 0.22];
+      g.box(-0.5, 0, -0.3, 1.0, 0.08, 0.6, GB.UV0, line); g.box(-0.04, 0, -0.04, 0.08, 1.0, 0.08, GB.UV0, line);
+      g.box(-0.34, 0.25, -0.03, 0.68, 1.0, 0.06, GB.UV0, card);                 // torso
+      g.box(-0.42, 0.95, -0.03, 0.26, 0.5, 0.06, GB.UV0, card); g.box(0.16, 1.1, -0.03, 0.26, 0.55, 0.06, GB.UV0, card);   // arms, one raised
+      g.box(-0.2, 0, -0.03, 0.17, 0.3, 0.06, GB.UV0, card); g.box(0.03, 0, -0.03, 0.17, 0.3, 0.06, GB.UV0, card);
+      g.sphere(0, 1.5, 0, 0.26, 7, 4, card, null, 1); g.box(-0.2, 1.42, -0.27, 0.4, 0.1, 0.02, GB.UV0, line);   // head, a scowl
+    },
+    // a 4 m chain-link panel along z: posts, three rails, wire
+    fence: function (g) {
+      g.box(-0.05, 0, -2.05, 0.1, 2.0, 0.1, GB.UV0, METAL); g.box(-0.05, 0, 1.95, 0.1, 2.0, 0.1, GB.UV0, METAL);
+      for (var r = 0; r < 3; r++) g.box(-0.03, 0.1 + r * 0.9, -2, 0.06, 0.05, 4, GB.UV0, METAL);
+      for (var k = 1; k < 10; k++) g.box(-0.01, 0.1, -2 + k * 0.4, 0.02, 1.85, 0.02, GB.UV0, [0.6, 0.62, 0.66]);
+    },
+    // a stone column (unit height, scaled by the prop's h)
+    column: function (g) { g.cylinder(0, 0, 0, 0.5, 0.42, 1, 10, c(PAL.concreteLight)); g.cylinder(0, 0, 0, 0.62, 0.6, 0.03, 10, c(PAL.concreteLight)); g.cylinder(0, 0.96, 0, 0.44, 0.64, 0.04, 10, c(PAL.concreteLight)); },
+    // the WELL, ACTUALLY statue: a bronze figure with one finger raised, on a plinth
+    statue: function (g) {
+      var bronze = c('#6b5a2a'), stone = CONC;
+      g.box(-0.9, 0, -0.9, 1.8, 1.2, 1.8, GB.UV0, stone); g.box(-0.7, 1.2, -0.7, 1.4, 0.12, 1.4, GB.UV0, CONCD);
+      g.cylinder(0, 1.3, 0, 0.32, 0.26, 1.1, 7, bronze); g.cylinder(0, 2.4, 0, 0.36, 0.3, 0.9, 7, bronze);
+      g.sphere(0, 3.55, 0, 0.26, 7, 4, bronze, null, 1);
+      g.box(-0.5, 2.3, -0.12, 0.2, 0.9, 0.24, GB.UV0, bronze);                 // the resting arm
+      g.box(0.3, 2.6, -0.12, 0.2, 1.0, 0.24, GB.UV0, bronze); g.box(0.36, 3.6, -0.06, 0.08, 0.5, 0.12, GB.UV0, bronze);   // the raised arm, the finger
+    },
+    // THE FIRST TAKE (ATTRIBUTED): a bronze folding table on a plinth outside the museum
+    statue_table: function (g) {
+      var bronze = c('#6b5a2a');
+      g.box(-1.3, 0, -0.8, 2.6, 0.9, 1.6, GB.UV0, CONC); g.box(-1.1, 0.9, -0.6, 2.2, 0.1, 1.2, GB.UV0, CONCD);
+      g.box(-0.9, 1.72, -0.4, 1.8, 0.06, 0.8, GB.UV0, bronze);
+      for (var i = 0; i < 4; i++) g.box((i % 2 ? 0.78 : -0.84), 1.0, (i < 2 ? -0.36 : 0.3), 0.06, 0.72, 0.06, GB.UV0, bronze);
+      g.box(-0.5, 1.78, -0.2, 1.0, 0.02, 0.4, GB.UV0, c('#8a7a4a'));
+    },
+    // a stanchion with a rope trailing +x to its neighbour (knockable)
+    stanchion: function (g) { var brass = c('#c9a24a'); g.cylinder(0, 0, 0, 0.2, 0.18, 0.05, 8, brass); g.cylinder(0, 0.05, 0, 0.04, 0.04, 0.95, 5, brass, null, false); g.sphere(0, 1.02, 0, 0.07, 6, 3, brass); g.box(0, 0.82, -0.025, 2.1, 0.05, 0.05, GB.UV0, c('#8a2f2f')); },
+    // the bandstand that has never hosted a band: an octagonal floor, eight pillars, a conical roof
+    gazebo: function (g) {
+      var white = [0.93, 0.92, 0.88], roof = c('#2e3038');
+      g.cylinder(0, 0, 0, 4.2, 4.2, 0.5, 8, CONCL()); g.cylinder(0, 0.5, 0, 4.0, 4.0, 0.08, 8, c('#8a6a44'));
+      for (var i = 0; i < 8; i++) { var a = (i + 0.5) / 8 * TAU; g.cylinder(Math.cos(a) * 3.6, 0.58, Math.sin(a) * 3.6, 0.14, 0.12, 3.0, 6, white, null, false); g.box(Math.cos(a) * 3.6 - 0.6, 1.3, Math.sin(a) * 3.6 - 0.04, 1.2, 0.05, 0.08, GB.UV0, white); }
+      g.cylinder(0, 3.5, 0, 4.5, 4.5, 0.25, 8, white);
+      g.cylinder(0, 3.75, 0, 4.5, 0.25, 2.2, 8, roof);
+      g.cylinder(0, 5.9, 0, 0.1, 0.1, 0.7, 4, c(PAL.gold), null, false); g.sphere(0, 6.6, 0, 0.18, 6, 3, c(PAL.gold));
+    },
+    // a round fountain with a tiered centre
+    fountain: function (g) {
+      var stone = CONCL(), water = c('#39b6e8');
+      g.cylinder(0, 0, 0, 3.0, 3.0, 0.65, 14, stone, null, false); g.cylinder(0, 0, 0, 2.7, 2.7, 0.5, 14, water);
+      g.cylinder(0, 0.5, 0, 0.3, 0.26, 1.2, 8, stone, null, false); g.cylinder(0, 1.7, 0, 1.0, 1.1, 0.25, 10, stone);
+      g.cylinder(0, 1.95, 0, 0.9, 0.9, 0.04, 10, water); g.cylinder(0, 1.95, 0, 0.12, 0.08, 0.8, 6, stone);
+    },
+    // a toll gantry across the bridge's four lanes (17.6 m): two legs and a beam the sign hangs on
+    gantry: function (g) {
+      var steel = c('#8a8f99'), hw = 8.8;
+      g.box(-hw - 0.5, 0, -0.5, 1.0, 6.2, 1.0, GB.UV0, steel, GB.NO_BOTTOM); g.box(hw - 0.5, 0, -0.5, 1.0, 6.2, 1.0, GB.UV0, steel, GB.NO_BOTTOM);
+      g.box(-hw - 0.6, 6.0, -0.6, hw * 2 + 1.2, 0.5, 1.2, GB.UV0, steel); g.box(-hw - 0.6, 7.0, -0.6, hw * 2 + 1.2, 0.4, 1.2, GB.UV0, steel);
+      for (var k = 0; k < 8; k++) g.box(-hw + 0.4 + k * 2.2, 6.5, -0.1, 0.2, 0.5, 0.2, GB.UV0, steel);
+      g.box(-5.8, 5.5, -0.15, 11.6, 1.5, 0.3, GB.UV0, [0.06, 0.06, 0.09]);   // the board the sign sits on
+      g.box(-hw - 0.9, 0, -1.6, 1.8, 0.4, 3.2, GB.UV0, CONCD); g.box(hw - 0.9, 0, -1.6, 1.8, 0.4, 3.2, GB.UV0, CONCD);
+    },
+    // a stunt ramp: a 6 m striped wedge rising toward -z (the heading); the top is a real surface via World.heightAt
+    ramp_prop: function (g) {
+      var hw = 1.6, L = 6, H = 1.3, a = c('#e2b43a'), b = [0.1, 0.1, 0.12], side = [0.3, 0.3, 0.33];
+      for (var i = 0; i < 6; i++) {
+        var z0 = L / 2 - i * (L / 6), z1 = L / 2 - (i + 1) * (L / 6), y0 = H * i / 6, y1 = H * (i + 1) / 6, col = i % 2 ? b : a;
+        g.quad([-hw, y0, z0], [hw, y0, z0], [hw, y1, z1], [-hw, y1, z1], GB.UV0, col);
+      }
+      g.quad([-hw, 0, -L / 2], [-hw, H, -L / 2], [-hw, 0, L / 2], [-hw, 0, L / 2], GB.UV0, side);
+      g.quad([hw, 0, L / 2], [hw, 0, L / 2], [hw, H, -L / 2], [hw, 0, -L / 2], GB.UV0, side);
+      g.quad([hw, 0, -L / 2], [hw, H, -L / 2], [-hw, H, -L / 2], [-hw, 0, -L / 2], GB.UV0, side);
+    },
+    // a broad flight of three steps (12 m wide) up to a door at -z
+    steps: function (g) { var s = CONCL(); for (var i = 0; i < 3; i++) g.box(-6, i * 0.2, -1.5 + i * 1.0, 12, 0.2, 3 - i * 1.0, GB.UV0, s, GB.NO_BOTTOM); },
+    // a 4 m promenade railing along z
+    railing: function (g) { for (var k = 0; k < 4; k++) g.box(-0.04, 0, -2 + k * 1.33 + 0.6, 0.08, 1.0, 0.08, GB.UV0, METAL); g.box(-0.05, 0.95, -2, 0.1, 0.08, 4, GB.UV0, METAL); g.box(-0.03, 0.5, -2, 0.06, 0.05, 4, GB.UV0, METAL); },
+    // an awning over a door (white: the instance colour paints the stripes' partner), reaching -z from the wall
+    awning: function (g) {
+      var white = [0.95, 0.95, 0.95];
+      g.box(-2, 0, -2, 4, 0.15, 2, GB.UV0, white);
+      for (var k = 0; k < 8; k += 2) g.box(-2 + k * 0.5, 0.15, -2, 0.5, 0.03, 2, GB.UV0, [0.35, 0.35, 0.38]);
+      g.box(-2.05, -0.3, -2.05, 4.1, 0.3, 0.1, GB.UV0, white);
+      g.box(-1.9, -2.6, -0.06, 0.08, 2.6, 0.08, GB.UV0, METAL); g.box(1.82, -2.6, -0.06, 0.08, 2.6, 0.08, GB.UV0, METAL);
+    }
   };
   function CONCL() { return c(PAL.concreteLight); }
+  // a tapered tube along x from x0 to x1 (radius r0 at x0, r1 at x1), open ended
+  function tubeX(g, x0, x1, y, z, r0, r1, segs, col) {
+    for (var i = 0; i < segs; i++) {
+      var a0 = i / segs * TAU, a1 = (i + 1) / segs * TAU;
+      g.quad([x0, y + Math.cos(a0) * r0, z + Math.sin(a0) * r0], [x1, y + Math.cos(a0) * r1, z + Math.sin(a0) * r1], [x1, y + Math.cos(a1) * r1, z + Math.sin(a1) * r1], [x0, y + Math.cos(a1) * r0, z + Math.sin(a1) * r0], GB.UV0, col);
+    }
+  }
+  // a tapered tube along z from z0 to z1, capped at both ends
+  function tubeZ(g, z0, z1, y, x, r0, r1, segs, col) {
+    for (var i = 0; i < segs; i++) {
+      var a0 = i / segs * TAU, a1 = (i + 1) / segs * TAU;
+      g.quad([x + Math.cos(a0) * r0, y + Math.sin(a0) * r0, z0], [x + Math.cos(a1) * r0, y + Math.sin(a1) * r0, z0], [x + Math.cos(a1) * r1, y + Math.sin(a1) * r1, z1], [x + Math.cos(a0) * r1, y + Math.sin(a0) * r1, z1], GB.UV0, col);
+    }
+    for (i = 0; i < segs; i++) {
+      a0 = i / segs * TAU; a1 = (i + 1) / segs * TAU;
+      g.quad([x, y, z0], [x + Math.cos(a1) * r0, y + Math.sin(a1) * r0, z0], [x + Math.cos(a0) * r0, y + Math.sin(a0) * r0, z0], [x, y, z0], GB.UV0, col);
+      g.quad([x, y, z1], [x + Math.cos(a0) * r1, y + Math.sin(a0) * r1, z1], [x + Math.cos(a1) * r1, y + Math.sin(a1) * r1, z1], [x, y, z1], GB.UV0, col);
+    }
+  }
+  // a thick quad (a wing): the top face, the bottom face offset down by t, and the edge faces
+  function wingQuad(g, a, b, c2, d, col, t) {
+    var lo = function (p) { return [p[0], p[1] - t, p[2]]; };
+    g.quad(a, b, c2, d, GB.UV0, col); g.quad(lo(d), lo(c2), lo(b), lo(a), GB.UV0, col);
+    g.quad(lo(a), lo(b), b, a, GB.UV0, col); g.quad(lo(b), lo(c2), c2, b, GB.UV0, col); g.quad(lo(c2), lo(d), d, c2, GB.UV0, col); g.quad(lo(d), lo(a), a, d, GB.UV0, col);
+  }
 })();

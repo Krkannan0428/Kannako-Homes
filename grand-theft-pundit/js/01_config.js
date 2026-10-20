@@ -10,8 +10,8 @@
   var C = GTP.C = {
     // --- world geometry ---------------------------------------------------
     TILE: 4,                  // meters per tile
-    MAP_W: 160,               // tiles
-    MAP_H: 160,               // tiles
+    MAP_W: 224,               // tiles (896 m; the expansion grew the city from 160: three new landmasses east and south)
+    MAP_H: 224,               // tiles
     STEP: 1 / 60,             // fixed simulation step (s)
     MAX_STEPS: 5,             // max steps per animation frame before dropping time
     MAX_FRAME_DT: 0.25,       // clamp wall-clock dt (s) when the tab stalls
@@ -25,7 +25,43 @@
     MAX_DPR: 2,
 
     // --- quality ----------------------------------------------------------
-    QUALITY: { shadows: true, drawDistance: 260, fogStart: 120, shadowMap: 2048, shadowBox: 120, anisotropy: 4, pedDraw: 110, vehicleDraw: 200 },   // entity draw ranges sit inside the fog, which buys a denser street
+    // C.QUALITY is the LIVE object every module reads (identity never changes; Render.quality.set mutates it in place).
+    // The first keys are common to every preset; QUALITY_PRESETS below overlays the per-preset keys. The draw ranges
+    // sit inside the fog, which buys a denser street; prebuildPerCall = chunks per loading-screen step.
+    QUALITY: {
+      preset: 'medium',
+      drawDistance: 260, fogStart: 120, shadowBox: 120, pedDraw: 110, vehicleDraw: 200, prebuildPerCall: 3,
+      // overlaid from the preset:
+      shadows: true, shadowMap: 1024, softShadows: false, anisotropy: 4,
+      post: true, ssao: false, ssaoSamples: 12, bloom: true, fxaa: true, grain: false,
+      pointLights: 0, headlights: 1, weatherFx: true, rainCount: 900, puddles: 24,
+      normalMaps: true, envMap: true, clearcoat: false, lodDistance: 120, clouds: true
+    },
+    // Presets (GTP.Render.quality.set(name) applies one; 'auto' starts at medium and steps down when the measured
+    // frame time stays above QUALITY_AUTO.slowMs for QUALITY_AUTO.slowSeconds). Headless boots default to low unless
+    // ?quality= says otherwise. low: no post, no shadows, emissive-only night. medium: shadows 1024, FXAA, bloom.
+    // high: SSAO, soft shadows 2048, real lamp / headlight lights, weather fx. ultra: shadows 4096, more lights, full SSAO.
+    QUALITY_PRESETS: {
+      low:    { shadows: false, shadowMap: 1024, softShadows: false, anisotropy: 2,  post: false, ssao: false, ssaoSamples: 8,  bloom: false, fxaa: false, grain: false, pointLights: 0,  headlights: 0, weatherFx: false, rainCount: 400,  puddles: 0,  normalMaps: false, envMap: true, clearcoat: false, lodDistance: 90,  clouds: true },
+      medium: { shadows: true,  shadowMap: 1024, softShadows: false, anisotropy: 4,  post: true,  ssao: false, ssaoSamples: 8,  bloom: true,  fxaa: true,  grain: false, pointLights: 0,  headlights: 1, weatherFx: true,  rainCount: 900,  puddles: 24, normalMaps: true,  envMap: true, clearcoat: false, lodDistance: 120, clouds: true },
+      high:   { shadows: true,  shadowMap: 2048, softShadows: true,  anisotropy: 8,  post: true,  ssao: true,  ssaoSamples: 12, bloom: true,  fxaa: true,  grain: true,  pointLights: 8,  headlights: 4, weatherFx: true,  rainCount: 1600, puddles: 40, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 150, clouds: true },
+      ultra:  { shadows: true,  shadowMap: 4096, softShadows: true,  anisotropy: 16, post: true,  ssao: true,  ssaoSamples: 16, bloom: true,  fxaa: true,  grain: true,  pointLights: 12, headlights: 6, weatherFx: true,  rainCount: 2400, puddles: 60, normalMaps: true,  envMap: true, clearcoat: true,  lodDistance: 200, clouds: true }
+    },
+    QUALITY_AUTO: { start: 'medium', slowMs: 22, slowSeconds: 5, cooldown: 12 },
+
+    // --- weather (Render.weather; GDD: a slow cycle, clear / overcast / rain) ---
+    WEATHER: {
+      start: 'clear',
+      transition: 40,            // seconds to blend between states
+      holdHours: [3, 8],         // game hours a state lasts before the cycle rolls the next one
+      odds: { clear: 0.55, overcast: 0.27, rain: 0.18 },
+      wetRise: 0.07,             // wetness gained per second of rain
+      wetDry: 0.0045,            // wetness lost per second once the rain stops (about four minutes to dry)
+      wetRoughness: 0.32,        // ground roughness multiplier when soaked (dry 1.0)
+      rainFall: 15,              // m/s
+      rainBox: 18,               // half-size of the streak volume around the camera
+      fogStartWet: 0.62          // fog near as a fraction of the dry value in rain
+    },
 
     // --- camera (the GTA feel lives here) ---------------------------------
     CAMERA: {
@@ -131,6 +167,9 @@
       concrete: '#8d8f94', concreteDark: '#5f6166', concreteLight: '#b3b5ba',
       barrier: '#b8bac0', barrierStripe: '#e3b23a',
       parking: '#34363c', parkingLine: '#d7d6cb',
+      runway: '#262930', runwayLine: '#e8e6dc', runwayNumber: '#f2efe4', apronLine: '#e2b43a',
+      containers: ['#c94040', '#3d6fcf', '#2f9e6a', '#e2b43a', '#8e3a8e', '#6f7378'],
+      planeGold: '#e8b53a', planeTrim: '#f4efe4',
       plaza: '#a9a6a1', plazaLine: '#938f8a', plazaWarm: '#b8ad9a',
       path: '#c2b391',
       dock: '#8a6a44', dockLine: '#6e5436',
@@ -146,7 +185,11 @@
         capitol: ['#d6cfbd', '#cfc6b0', '#e0d9c7', '#c9bfa8'],
         strip: ['#b02a7b', '#2a8ab0', '#c9a227', '#3a3a3a', '#7a2ab0', '#2ab08a'],
         stadium: ['#9ea1a8', '#8b8e95', '#a9acb3'],
-        mansion: ['#efe4cd', '#f1e9d8', '#e9dcc2', '#f3ead9']
+        mansion: ['#efe4cd', '#f1e9d8', '#e9dcc2', '#f3ead9'],
+        // expansion districts (GDD_EXPANSION §1.1)
+        brownstone: ['#7a4a35', '#8a5a40', '#6e4030', '#9a6a4a', '#5e3a2a'],
+        airport: ['#dfe3e8', '#c9d3dc', '#eef1f4'],
+        port: ['#6f7378', '#8b5a3c', '#3f6f8a', '#8a8a7a']
       },
       neon: ['#ff3fa4', '#2ee6ff', '#ffbe3c', '#9dff3c', '#ff6a3c', '#b56bff'],
       windowLit: '#ffd98a', windowLitCool: '#bfe3ff', windowDark: '#1b2230',
@@ -174,6 +217,10 @@
     industrial: { lotW: [5, 9], lotH: [4, 6], gap: 1, alleyChance: 0.6, floors: [2, 3], facade: 'industrial', roof: 'flat', remnant: 'gravel', trees: 0.05, lamps: true, signals: false },
     capitol:    { lotW: [4, 7], lotH: [3, 5], gap: 1, alleyChance: 0.9, floors: [3, 5], facade: 'capitol', roof: 'flat', remnant: 'grass', trees: 0.6, lamps: true, signals: true },
     stadium:    { lotW: [3, 5], lotH: [3, 4], gap: 2, alleyChance: 1, floors: [2, 3], facade: 'mansion', roof: 'gable', remnant: 'grass', trees: 0.6, lamps: false, signals: false },
-    marina:     { lotW: [2, 4], lotH: [2, 3], gap: 1, alleyChance: 0.8, floors: [1, 3], facade: 'marina', roof: 'flat', remnant: 'plaza', trees: 0.3, lamps: true, signals: false }
+    marina:     { lotW: [2, 4], lotH: [2, 3], gap: 1, alleyChance: 0.8, floors: [1, 3], facade: 'marina', roof: 'flat', remnant: 'plaza', trees: 0.3, lamps: true, signals: false },
+    // expansion districts (GDD_EXPANSION §1.1): Heirloom Heights, Goldplate International, Manifest Harbor
+    brownstone: { lotW: [2, 4], lotH: [2, 3], gap: 0, alleyChance: 0.4, floors: [3, 5], facade: 'brownstone', roof: 'mansard', remnant: 'plaza', trees: 0.5, lamps: true, signals: true },
+    airport:    { lotW: [5, 9], lotH: [4, 7], gap: 2, alleyChance: 1,   floors: [1, 2], facade: 'airport',    roof: 'flat',    remnant: 'parking', trees: 0.05, lamps: true, signals: true },
+    port:       { lotW: [5, 9], lotH: [4, 6], gap: 1, alleyChance: 0.5, floors: [1, 3], facade: 'port',       roof: 'flat',    remnant: 'gravel', trees: 0.02, lamps: true, signals: false }
   };
 })();

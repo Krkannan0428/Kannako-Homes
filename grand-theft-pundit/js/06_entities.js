@@ -400,6 +400,12 @@
         }
         if (parts.torso) parts.torso.rotation.x = -lean;   // lean forward (negative pitches the torso toward -z)
         if (parts.head) parts.head.rotation.x = lean * 0.6;
+        if (this.reloadT > 0 && !lying && this.onGround && !this.swimming && parts.armR && parts.armL) {
+          // the reload (Combat sets reloadT / reloadTotal): the right forearm drops 35 degrees, the left hand goes to the magazine and back
+          var rk = 1 - this.reloadT / (this.reloadTotal || 1), rph = rk < 0.5 ? rk / 0.5 : 1 - (rk - 0.5) / 0.5;
+          parts.armR.rotation.x = 1.45 - 0.61 * rph; parts.armR.rotation.z = 0;
+          parts.armL.rotation.x = 1.0 + 0.35 * rph; parts.armL.rotation.z = 0.35 - 0.3 * rph;
+        }
       }
       m.position.set(x, y + bob, z);
       m.rotation.set(t, yaw, 0, 'YXZ');
@@ -432,7 +438,8 @@
 
   // ================================================================= Vehicle ==
   var COLL_CACHE = {};
-  var KNOCKABLE = { lamp: 1, hydrant: 1, bin: 1, bench: 1, table: 1 };
+  // the small props a fast car tips over (GDD_EXPANSION §1.5 adds the airport luggage, the port pallets, the club stanchions and the cutouts)
+  var KNOCKABLE = { lamp: 1, hydrant: 1, bin: 1, bench: 1, table: 1, luggage: 1, pallet: 1, stanchion: 1, cutout: 1 };
   function collPoints(type, cls) {
     var c = COLL_CACHE[type]; if (c) return c;
     var hw = cls.width / 2, hl = cls.length / 2, r = Math.min(0.32, hw * 0.45);
@@ -1003,7 +1010,10 @@
       if (A && A.engine) A.engine(0, null);
       void dt;
     }
+    // [ ] / the mouse wheel: Combat walks its ORDER (owned weapons only, the scope zoom while scoped, the wheel when open);
+    // the plain cycle over the owned keys is the fallback before Combat loads
     cycleWeapon(dir) {
+      if (GTP.Combat && GTP.Combat.cycleWeapon) return GTP.Combat.cycleWeapon(this, dir);
       var self = this, ids = Object.keys(this.weapons).filter(function (id) { return self.weapons[id] > 0; });
       if (!ids.length) return;
       var i = ids.indexOf(this.weapon); if (i < 0) i = 0;

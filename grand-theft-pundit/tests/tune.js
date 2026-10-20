@@ -153,22 +153,32 @@ H.run('tune', async (t) => {
     GTP.game.advance(4);
     let down = null; GTP.Events.on('heli:down', (e) => { down = { src: e.src === p }; });
     const hp0 = h.hp, maxHp = h.maxHp;
-    let locked = false, fired = 0, guard = 0;
+    let locked = false, fired = 0, guard = 0, shoved = 0;
     GTP.Input.set('aim', true);
-    while (guard++ < 400 && !h.down) {
+    // the SMG's 30-round magazine reloads for 1.6 s, so the 400 hp kill takes six or seven seconds standing still at five stars: the
+    // ground response is kept off the shooter meanwhile (a player would keep moving; the test keeps its stance and moves the cops
+    // instead), through the fight and the fall, so the bust (which god mode does not block) never lands
+    const keepClear = () => GTP.Entities.near(p.x, p.z, 14, null).forEach((e) => {
+      if (e.removed || e === p) return;
+      if (e.kind === 'vehicle' && e.type === 'cop') { e.destroy(); shoved++; }
+      else if (e.kind === 'ped' && (e.role === 'cop' || e.role === 'swat') && !e.inVehicle && U.dist2d(e.x, e.z, p.x, p.z) < 5) { const dx = e.x - p.x, dz = e.z - p.z, l = Math.hypot(dx, dz) || 1; e.x = p.x + dx / l * 14; e.z = p.z + dz / l * 14; e.snap(); shoved++; }
+    });
+    while (guard++ < 600 && !h.down) {
+      keepClear();
       R.rig.yaw = U.dirToYaw(h.x - p.x, h.z - p.z); R.rig.pitch = Math.atan2(h.y - p.y - 1.3, U.dist2d(h.x, h.z, p.x, p.z));
       GTP.game.advance(1 / 60);
       if (CB.aim.target === h) locked = true;
       GTP.Input.set('shoot', true); GTP.game.advance(1 / 30); GTP.Input.set('shoot', false); fired++;
     }
     GTP.Input.set('aim', false);
-    const hitAt = { hp: h.hp, down: h.down, locked, fired, ammo: p.weapons.smg };
+    const hitAt = { hp: h.hp, down: h.down, locked, fired, shoved, ammo: p.weapons.smg, state: GTP.game.state };
     // the fall and the blast
-    let s2 = 0; while (s2 < 12 && !h.removed) { GTP.game.advance(0.25); s2 += 0.25; }
-    const out = { hp0, maxHp, hit: hitAt, down, removed: h.removed, fallT: s2, policeHeli: GTP.AI.police.heli, heliT: +(GTP.AI.police.heliT || 0).toFixed(0), wanted: p.wanted, errors: GTP.errors.length };
+    let s2 = 0; while (s2 < 12 && !h.removed) { keepClear(); GTP.game.advance(0.25); s2 += 0.25; }
+    const out = { hp0, maxHp, hit: hitAt, down, removed: h.removed, fallT: s2, policeHeli: GTP.AI.police.heli, heliT: +(GTP.AI.police.heliT || 0).toFixed(0), wanted: p.wanted, errors: GTP.errors.length, state: GTP.game.state };
     // the shot: the wreck's smoke and the fire on the ground
     GTP.game.advance(0.3);
     R.rig.yaw = U.dirToYaw(h.x - p.x, h.z - p.z); R.rig.pitch = 0.25; R.rig.snap(); GTP.game.advance(0.05);
+    GTP.AI.wanted.clear();   // the stars go before the camera test: the ground units would bust the shooter standing still
     GTP.game.debug.godMode(false);
     return out;
   });
@@ -183,7 +193,8 @@ H.run('tune', async (t) => {
     const p = GTP.game.player, R = GTP.Render, C = GTP.C;
     GTP.AI.wanted.clear(); GTP.game.debug.teleport(GTP.World.landmark('campus_quad').door.x, GTP.World.landmark('campus_quad').door.z);
     R.rig.pitch = 0; GTP.Input.set('aim', true); GTP.game.advance(1.2);
-    const out = { dy: +(R.camera.position.y - p.y).toFixed(2), dist: +Math.hypot(R.camera.position.x - p.x, R.camera.position.z - p.z).toFixed(2), fov: Math.round(R.camera.fov), cfg: C.CAMERA.aimHeight };
+    const out = { dy: +(R.camera.position.y - p.y).toFixed(2), dist: +Math.hypot(R.camera.position.x - p.x, R.camera.position.z - p.z).toFixed(2), fov: Math.round(R.camera.fov), cfg: C.CAMERA.aimHeight,
+      aiming: p.aiming, alive: p.alive, state: GTP.game.state, pstate: p.state, control: p.controlEnabled, kd: p.knockedDown, entering: !!p.entering, swimming: p.swimming, weapon: p.weapon, hp: Math.round(p.hp) };
     GTP.Input.set('aim', false); GTP.game.advance(0.3);
     return out;
   });

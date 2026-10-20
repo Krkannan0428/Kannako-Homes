@@ -45,9 +45,9 @@
       ],
       objectives: [
         { type: 'goto', target: { landmark: 'dorm_studio' }, radius: 48, text: 'Get to Dorm 4B' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 3, around: { landmark: 'dorm_studio' }, radius: 160, label: ['TABLE LEGS', 'TABLE TOP', 'THE SIGN'] }, text: 'Grab the table legs, top and sign' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 3, around: { landmark: 'dorm_studio' }, radius: 120, label: ['TABLE LEGS', 'TABLE TOP', 'THE SIGN'] }, text: 'Grab the table legs, top and sign' },
         { type: 'goto', target: { landmark: 'campus_quad' }, radius: 48, text: 'Set up on the Quad' },
-        { type: 'minigame', game: 'debate', params: { rounds: 1, points: 4, timer: 6, bluff: 0, opponent: 'freshman' }, text: 'Win your first debate' }
+        { type: 'minigame', game: 'debate', params: { rounds: 1, points: 3, timer: 8, bluff: 0, opponent: 'freshman' }, text: 'Win your first debate' }
       ],
       outro: [
         { who: 'player', text: 'Minds changed?' },
@@ -65,12 +65,12 @@
         { who: 'sloane', text: 'Bryce Takesworth. You\'re pre-viral. Four minutes. Three.' },
         { who: 'player', text: 'Who are you?' },
         { who: 'sloane', text: 'Your producer. The van\'s yours. Your face is on it. Your face is on it twice.' },
-        { who: 'gus', text: 'The battery lasts ninety seconds. I didn\'t fix it. I\'m sound.' }
+        { who: 'gus', text: 'The battery lasts two and a half minutes. I didn\'t fix it. I\'m sound.' }
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'van', tag: 'podvan', at: { landmark: 'pod_garage' }, wrap: 'pod', color: '#f2f2f2' }, text: 'Get in the pod van' },
-        { type: 'timer_wrap', seconds: 90, objectives: [
-          { type: 'pickup', spawn: { pickupType: 'mission', count: 6, around: { landmark: 'campus_quad' }, radius: 400, label: 'SUBSCRIBER' }, text: 'Collect 6 subscribers before the battery dies' }
+        { type: 'timer_wrap', seconds: 150, objectives: [
+          { type: 'pickup', spawn: { pickupType: 'mission', count: 5, around: { landmark: 'campus_quad' }, radius: 300, label: 'SUBSCRIBER' }, text: 'Collect 5 subscribers before the battery dies' }
         ] },
         { type: 'drive_to', target: { landmark: 'pod_garage' }, vehicle: 'spawned:podvan', text: 'Bring the van back to Gus' }
       ],
@@ -85,7 +85,8 @@
 
     {
       id: 'm02_read', title: 'Read the Read',
-      giver: 'firmness', marker: 'nap_depot', requires: ['m01_van'], reward: 500,
+      giver: 'firmness', marker: 'nap_depot', requires: ['m01b_airport'], reward: 500,
+      startToast: 'Nap Dynasty\'s truck is slow and firm. The Loop is quicker than the streets.',
       intro: [
         { who: 'firmness', text: 'Dale Firmness, Nap Dynasty. Congratulations on the van, code TAKES20.' },
         { who: 'player', text: 'Thank you, I...' },
@@ -95,7 +96,7 @@
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'truck', tag: 'mattress', at: { landmark: 'nap_depot' }, color: '#2d5f8a' }, text: 'Get in the Nap Dynasty demo truck' },
-        { type: 'timer_wrap', seconds: 120, objectives: [
+        { type: 'timer_wrap', seconds: 180, objectives: [
           { type: 'drive_to', target: { landmark: 'green_room' }, vehicle: 'spawned:mattress', text: 'Deliver the mattress before code TAKES20 expires' }
         ] },
         { type: 'dialogue', lines: [
@@ -136,7 +137,7 @@
 
     {
       id: 'm04_hit', title: 'Four Minutes',
-      giver: 'chyron', marker: 'green_room', requires: ['m03_ratio'], reward: 800,
+      giver: 'chyron', marker: 'green_room', requires: ['m03b_range'], reward: 800,
       intro: [
         { who: 'chyron', text: 'BREAKING. Kid. Table. Four minutes. Tonight.' },
         { who: 'player', text: 'Four minutes? On television?' },
@@ -191,7 +192,7 @@
 
     {
       id: 'm06_rally', title: 'Hold the Table',
-      giver: 'goldplate', marker: 'stadium', requires: ['m05_peer'], reward: 1500,
+      giver: 'goldplate', marker: 'stadium', requires: ['m05b_provenance'], reward: 1500,
       intro: [
         { who: 'goldplate', text: 'Takesworth. Great kid. Rate him an eight. The rally\'s a ten. The stadium\'s a ten, both words.' },
         { who: 'player', text: 'What do you want me to say, sir?' },
@@ -244,7 +245,7 @@
 
     {
       id: 'm08_scooters', title: 'Defense Scooters',
-      giver: 'warbanner', marker: 'bravadia_embassy', requires: ['m07_listen'], reward: 1500,
+      giver: 'warbanner', marker: 'bravadia_embassy', requires: ['m07b_ferry'], reward: 1500,
       intro: [
         { who: 'warbanner', text: 'Mr. Takesworth. Bravadia welcomes you. Volume is policy, and that\'s why we need the jets.' },
         { who: 'player', text: 'I thought this was a tourism ad.' },
@@ -272,7 +273,7 @@
 
     {
       id: 'm09_balloon', title: 'Weather Balloon Repair',
-      giver: 'redacted', marker: 'ova_hq', requires: ['m08_scooters'], reward: 2000,
+      giver: 'redacted', marker: 'ova_hq', requires: ['m08b_jets'], reward: 2000,
       intro: [
         { who: 'redacted', text: 'You\'re an asset now. Don\'t write that down. Meet the courier at the [REDACTED].' },
         { who: 'player', text: 'Which [REDACTED]?' },
@@ -296,7 +297,7 @@
 
     {
       id: 'm10_pellets', title: 'Your Doctor Won\'t Tell You',
-      giver: 'saffron', marker: 'clarity_barn', requires: ['m09_balloon'], reward: 1800,
+      giver: 'saffron', marker: 'clarity_barn', requires: ['m09b_hotmic'], reward: 1800,
       intro: [
         { who: 'saffron', text: 'Bryce. Your aura is loud. Clarity Pellets fix that, and your doctor won\'t tell you that.' },
         { who: 'player', text: 'What\'s in them?' },
@@ -377,7 +378,7 @@
 
     {
       id: 'm13_thursday', title: 'Everybody\'s Thursday',
-      giver: 'kip', marker: 'dorm_studio', requires: ['m12_memo'], reward: 4000,
+      giver: 'kip', marker: 'dorm_studio', requires: ['m12b_scope'], reward: 4000,
       intro: [
         { who: 'kip', text: 'I wrote it. The scraper. During the unpaid week. Nobody else reads email, so I formatted the comments into a memo and everyone subscribed.' },
         { who: 'player', text: 'You\'ve been running the city.' },
@@ -403,7 +404,7 @@
 
     {
       id: 'm14_grift', title: 'Same Grift, Different Lanyard',
-      giver: 'sloane', marker: 'tyn_tower', requires: ['m13_thursday'], reward: 3000,
+      giver: 'sloane', marker: 'tyn_tower', requires: ['m13b_ratio'], reward: 3000,
       intro: [
         { who: 'chyron', text: 'BREAKING. Panel. Five guests. One kid. Tonight. WE\'LL HAVE TO LEAVE IT THERE, but not yet.' },
         { who: 'goldplate', text: 'Mattress. Jets. Pellets. I rate it a ten.' },

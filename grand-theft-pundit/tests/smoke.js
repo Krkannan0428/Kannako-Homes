@@ -18,8 +18,10 @@ H.run('smoke', async (t) => {
     out.landmarks = GTP.World.landmarks.length;
     out.markers = GTP.Missions.markers();
     out.headless = GTP.game.headless;
+    out.expansion = { cutscenes: !!GTP.Cutscenes && typeof GTP.Cutscenes.play === 'function', strands: !!GTP.Strands && typeof GTP.Strands.start === 'function', hints: !!GTP.Hints, loading: GTP.game.loading, slots: GTP.game.slots().length, missions: GTP.Missions.allMissions().length };
     return out;
   });
+  t.assert(info.expansion.cutscenes && info.expansion.strands && info.expansion.hints && info.expansion.loading.active === false && info.expansion.slots === 3 && info.expansion.missions >= 17, 'the expansion surfaces are up: ' + JSON.stringify(info.expansion));
   t.assert(info.three === '152', 'three r152 loaded: ' + info.three);
   t.assert(info.modules.length === 0, 'missing modules: ' + info.modules.join(','));
   t.assert(info.state === 'playing' && info.headless, 'headless playing');

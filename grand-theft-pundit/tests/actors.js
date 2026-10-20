@@ -44,6 +44,10 @@ H.run('actors', async (t) => {
     W.buildings.forEach((b) => { const d = Math.hypot(b.cx - p.x, b.cz - p.z); if (d < bd) { bd = d; best = b; } });
     const yaw = GTP.util.dirToYaw(best.cx - p.x, best.cz - p.z);
     R.yaw = yaw; R.snap();
+    // traffic and parked cars on the straight line to the wall are cleared first: the test wants the wall, not a fender
+    // (the ambient spawn stream differs on the bigger map, so a sedan stopped on Goldplate Avenue could sit in the run-up)
+    GTP.Entities.near(p.x, p.z, 60, 'vehicle').forEach((o) => { if (!o.removed) o.destroy(); });
+    GTP.game.advance(0.05);
     let inside = 0, minGap = 1e9;
     GTP.Input.set('forward', true); GTP.Input.set('run', true);
     for (let i = 0; i < 24; i++) {
@@ -84,6 +88,9 @@ H.run('actors', async (t) => {
     const p = GTP.game.player, E = GTP.Entities;
     GTP.game.debug.teleport(110, 278); GTP.game.advance(0.1);
     const v = GTP.game.debug.spawnVehicle(112.4, 278, 'sedan', { yaw: EAST });
+    // the run east along the avenue is cleared of traffic (the test measures the car, not a fender on a sedan ahead)
+    GTP.Entities.list.filter((e) => e.kind === 'vehicle' && e !== v && !e.removed && Math.abs(e.z - 278) < 7 && e.x > 100 && e.x < 240).forEach((e) => e.destroy());
+    GTP.game.advance(0.05);
     const doorDist = v.doorDistance(p.x, p.z);
     GTP.Input.set('enter', true); GTP.game.advance(0.05); GTP.Input.set('enter', false);
     const enteringState = p.state;
@@ -92,8 +99,10 @@ H.run('actors', async (t) => {
     const inCar = p.vehicle === v && p.inVehicle === v && v.driver === p, hidden = p.mesh && !p.mesh.visible, vehVisible = v.mesh && v.mesh.visible;
     const x0 = v.x, z0 = v.z;
     let peak = 0;
+    // traffic keeps arriving on the avenue (a bus from the far end, a car off a side street): the lane ahead stays clear for the run
+    const clearAhead = () => GTP.Entities.list.filter((e) => e.kind === 'vehicle' && e !== v && !e.removed && Math.abs(e.z - 278) < 7 && e.x > v.x - 6 && e.x < v.x + 70).forEach((e) => e.destroy());
     GTP.Input.set('forward', true);
-    for (let i = 0; i < 16; i++) { GTP.game.advance(0.25); peak = Math.max(peak, v.speed); }
+    for (let i = 0; i < 16; i++) { clearAhead(); GTP.game.advance(0.25); peak = Math.max(peak, v.speed); }
     GTP.Input.set('forward', false);
     const disp = Math.hypot(v.x - x0, v.z - z0), speedAfter4 = v.speed, wheelSpin = v.wheelSpin;
     // brake to a stop

@@ -334,7 +334,7 @@
   var spawner = {
     t: 0, warm: false, parked: new Map(), parkTiles: [], deckTiles: [], lotOf: new Map(), protestHome: null, protestT: 0, raccoon: null, raccoonAct: 0, hqDone: false, stats: { peds: 0, cars: 0, parked: 0 },
     reset: function () {
-      spawner.t = 0; spawner.warm = false; spawner.parked.clear(); spawner.parkTiles = []; spawner.deckTiles = []; spawner.lotOf.clear();
+      spawner.t = 0; spawner.warm = false; spawner.parked.clear(); spawner.parkTiles = []; spawner.deckTiles = []; spawner.lotOf.clear(); spawner._near = {};
       spawner.protestHome = null; spawner.protestT = 0; spawner.raccoon = null; spawner.raccoonAct = 0; spawner.hqDone = false;
       var Wd = W(); if (!Wd.tiles) return;
       ensureT();
@@ -412,11 +412,26 @@
       E().add(v);
       return v;
     },
+    // the spawnable tiles around a point (World.tilesNear, 64 m buckets: a superset by one bucket), cached per kind until the centre
+    // moves 24 m or the world changes, so the 224-tile map's whole-city tile lists are never rejection-sampled (most of 14 tries
+    // over the whole city would land too far away; sampling the near buckets keeps the density up at the same cadence)
+    _near: {},
+    nearTiles: function (kind, cx, cz, r) {
+      var Wd = W(), all = kind === 'sidewalk' ? Wd._sidewalkTiles : Wd._roadTiles;
+      if (!Wd.tilesNear) return all;
+      var c = spawner._near[kind];
+      if (c && c.seed === Wd._seed && c.r === r && Math.abs(c.x - cx) < 24 && Math.abs(c.z - cz) < 24) return c.list;
+      var list = Wd.tilesNear(cx, cz, r, kind);
+      if (!list.length) list = all;
+      spawner._near[kind] = { x: cx, z: cz, r: r, list: list, seed: Wd._seed };
+      return list;
+    },
     pedSpot: function (min, max) {
       var Wd = W(), p = player(); if (!p || !Wd._sidewalkTiles.length) return null;
       var CW = GTP.Content.world, dens = (CW.spawn.peds.density) || {};
+      var tiles = spawner.nearTiles('sidewalk', p.x, p.z, max);
       for (var tries = 0; tries < 14; tries++) {
-        var i = R().pick(Wd._sidewalkTiles), tx = i % Wd.w, tz = (i / Wd.w) | 0;
+        var i = R().pick(tiles), tx = i % Wd.w, tz = (i / Wd.w) | 0;
         var x = (tx + 0.5) * TILE + R().range(-1, 1), z = (tz + 0.5) * TILE + R().range(-1, 1);
         var d = U.dist2d(x, z, p.x, p.z);
         if (d < min || d > max) continue;
@@ -449,7 +464,7 @@
     },
     carSpot: function (min, max) {
       var Wd = W(), p = player(); if (!p) return null;
-      var ground = Wd._roadTiles, deck = spawner.deckTiles;
+      var ground = spawner.nearTiles('road', p.x, p.z, max), deck = spawner.deckTiles;
       for (var tries = 0; tries < 14; tries++) {
         var useDeck = deck.length && R().chance(0.18), i = useDeck ? R().pick(deck) : R().pick(ground);
         if (i == null) continue;
@@ -1300,10 +1315,12 @@
   // --- response: foot cops, cruisers, SWAT vans, roadblocks, the helicopter ---
   function responseSpot(kind, min, max) {
     var Wd = W(), lk = wanted.lastKnown, pl = player();
+    var tiles = kind === 'ped' ? Wd.tilesNear(lk.x, lk.z, max, 'sidewalk') : Wd.tilesNear(lk.x, lk.z, max, 'road');
+    if (!tiles.length) tiles = kind === 'ped' ? Wd._sidewalkTiles : Wd._roadTiles;
     for (var tries = 0; tries < 14; tries++) {
       var i, tx, tz, x, z, y = 0;
-      if (kind === 'ped') { i = R().pick(Wd._sidewalkTiles); if (i == null) return null; tx = i % Wd.w; tz = (i / Wd.w) | 0; x = (tx + 0.5) * TILE; z = (tz + 0.5) * TILE; }
-      else { i = R().pick(Wd._roadTiles); if (i == null) return null; tx = i % Wd.w; tz = (i / Wd.w) | 0; if (Wd.meta[tileI(tx, tz)] & M.DEAD) continue; x = (tx + 0.5) * TILE; z = (tz + 0.5) * TILE; }
+      if (kind === 'ped') { i = R().pick(tiles); if (i == null) return null; tx = i % Wd.w; tz = (i / Wd.w) | 0; x = (tx + 0.5) * TILE; z = (tz + 0.5) * TILE; }
+      else { i = R().pick(tiles); if (i == null) return null; tx = i % Wd.w; tz = (i / Wd.w) | 0; if (Wd.meta[tileI(tx, tz)] & M.DEAD) continue; x = (tx + 0.5) * TILE; z = (tz + 0.5) * TILE; }
       var d = U.dist2d(x, z, lk.x, lk.z); if (d < min || d > max) continue;
       if (pl && inView(x, y + 1, z, 90)) continue;
       var near = E().hash.query(x, z, kind === 'ped' ? 1.5 : 9, scratch3), blocked = false;

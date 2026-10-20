@@ -177,8 +177,9 @@ H.run('feel', async (t) => {
   // ---- 5. save, reload, CONTINUE ----
   const saved = await page.evaluate(() => {
     const p = GTP.game.player, W = GTP.World, M = GTP.Missions;
-    ['m00_intro', 'm01_van', 'm02_read'].forEach((id) => M.state.completed.add(id));
-    M.state.flags.has_table = true; M.state.flags.has_van = true; M.state.flags.sponsored = true;
+    // the expansion's chain puts m01b_airport between m01_van and m02_read (GDD_EXPANSION §3.3): with it done, only m03 is lit
+    ['m00_intro', 'm01_van', 'm01b_airport', 'm02_read'].forEach((id) => M.state.completed.add(id));
+    M.state.flags.has_table = true; M.state.flags.has_van = true; M.state.flags.seen_airport = true; M.state.flags.sponsored = true;
     M.refreshMarkers();
     GTP.game.debug.setMoney(4321);
     GTP.game.debug.giveWeapon('pistol', 17); GTP.game.debug.giveWeapon('smg', 33);
@@ -201,7 +202,7 @@ H.run('feel', async (t) => {
   t.assert(Math.hypot(loaded.x - saved.x, loaded.z - saved.z) < 1.5 && Math.abs(loaded.yaw - 1.2) < 0.05, 'position restored: ' + loaded.x + ',' + loaded.z);
   t.assert(loaded.money === 4321, 'money restored: ' + loaded.money);
   t.assert(loaded.weapons.pistol === 17 && loaded.weapons.smg === 33 && loaded.weapon === saved.weapon, 'weapons and ammo restored: ' + JSON.stringify(loaded.weapons));
-  t.assert(loaded.completed.length === 3 && loaded.completed.indexOf('m02_read') >= 0 && loaded.flags.sponsored === true && loaded.markers.join(',') === 'm03_ratio', 'completed missions, flags and the next light restored: ' + JSON.stringify({ completed: loaded.completed, markers: loaded.markers }));
+  t.assert(loaded.completed.length === 4 && loaded.completed.indexOf('m02_read') >= 0 && loaded.flags.sponsored === true && loaded.markers.join(',') === 'm03_ratio', 'completed missions, flags and the next light restored: ' + JSON.stringify({ completed: loaded.completed, markers: loaded.markers }));
   t.assert(Math.abs(loaded.clock - saved.clock) < 0.05, 'clock restored: ' + loaded.clock);
   await page.evaluate(() => { GTP.Render.rig.pitch = 0.2; GTP.Render.rig.snap(); GTP.game.advance(0.05); });
   await t.shot(page, 'feel_continue');

@@ -342,12 +342,50 @@
         glasses: ['shades', 'shades', 'none', 'round', 'aviator'],
         extra: ['phone', 'phone', 'none', 'none', 'cigar'],
         tie: ['none', 'none', 'none', 'bowtie']
+      },
+      // the expansion's districts (GDD_EXPANSION §1.6)
+      uptown: {
+        describe: 'tweed, pearls and a bow tie',
+        hair: ['slick', 'bun', 'bob', 'short', 'pompadour', 'bald', 'long'], hairColor: ['#d8d8d8', '#9c9c9c', '#3a2a1a', '#1a1a1a', '#b58a3c', '#4a3a2a'],
+        shirt: ['#6b5a3e', '#8a7452', '#4a3f2e', '#f4f4f4', '#e8dcc8', '#3a2f4a', '#7a2f3a', '#2a3a2a'],
+        pants: ['#4a3f2e', '#6b5a3e', '#2b2b3a', '#3a3020', '#e8dcc8'],
+        hat: ['none', 'none', 'none', 'fedora', 'fedora', 'cap'],
+        glasses: ['round', 'round', 'none', 'none', 'thick'],
+        extra: ['none', 'medal', 'phone', 'cigar', 'none', 'earpiece'],
+        tie: ['bowtie', 'bowtie', 'gold', 'none', 'red']
+      },
+      airport: {
+        describe: 'lanyards, neck pillows and the wrong terminal',
+        hair: HAIR_ALL, hairColor: HAIR_COLORS,
+        shirt: ['#f4f4f4', '#dfe8f4', '#c9d2dc', '#8a94c8', '#b3e0ff', '#cfe8d8', '#2b2b3a', '#f0ad4e'],
+        pants: JEANS.concat(KHAKI).concat(['#2b2b3a']),
+        hat: ['none', 'none', 'none', 'cap', 'beanie'],
+        glasses: ['none', 'none', 'shades', 'round', 'thick'],
+        extra: ['lanyard', 'lanyard', 'phone', 'phone', 'none', 'earpiece'],
+        tie: ['none', 'none', 'none', 'blue']
+      },
+      port: {
+        describe: 'hi-vis and beanies',
+        hair: ['short', 'short', 'bald', 'long', 'bun', 'mohawk', 'afro'], hairColor: HAIR_COLORS,
+        shirt: ['#f0b429', '#f0b429', '#ff6a00', '#d8ff00', '#4a4a4a', '#2a2f4a', '#c8b89a'],
+        pants: ['#4a4a4a', '#2a2f4a', '#3a3a3a', '#1e2436', '#c8b89a'],
+        hat: ['beanie', 'beanie', 'helmet', 'cap', 'none'],
+        glasses: ['none', 'none', 'none', 'shades'],
+        extra: ['none', 'none', 'phone', 'earpiece', 'none'],
+        tie: ['none']
       }
     },
 
     // Role overrides. A role look starts from the district pool and then
     // replaces these fields, so cops look like cops in every district.
     roles: {
+      // the hills' and uptown's mega-donors (rolesByDistrict `donor`): gold and a cigar in every district
+      donor: {
+        describe: 'a donor',
+        hair: ['slick', 'bald', 'pompadour', 'bun', 'bob'], hairColor: ['#d8d8d8', '#9c9c9c', '#b58a3c', '#1a1a1a'],
+        shirt: ['#f4f4f4', '#ffe08a', '#2b2b3a', '#6b5a3e'], pants: ['#2b2b3a', '#3a3020', '#e8dcc8'],
+        hat: ['none', 'none', 'fedora'], glasses: ['round', 'aviator', 'none'], extra: ['cigar', 'medal', 'phone'], tie: ['gold', 'bowtie', 'gold']
+      },
       cop: {
         describe: 'Grievance City PD',
         hair: ['short', 'short', 'bald', 'bun', 'slick'], hairColor: ['#1a1a1a', '#2a1a0a', '#3a2a1a', '#9c9c9c', '#b58a3c'],

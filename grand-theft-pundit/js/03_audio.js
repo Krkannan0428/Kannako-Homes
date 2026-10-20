@@ -20,13 +20,14 @@
 
   // the contract's SFX names, plus the extras the module adds (swap = weapon switch, static = radio tuning)
   var NAMES = ['shot', 'punch', 'hit', 'explode', 'pickup', 'horn', 'siren', 'enter', 'exit', 'mission', 'fail', 'ui', 'cash', 'debate', 'dunk', 'jump', 'land', 'skid', 'crash'];
-  var EXTRA = ['swap', 'static'];
+  // the arsenal's names (GDD_EXPANSION §2.2): reload = the magazine out / in, reloadDone = the bolt home, hitmark = the hit tick, confirm = the kill chime
+  var EXTRA = ['swap', 'static', 'reload', 'reloadDone', 'hitmark', 'confirm'];
   var LOOKAHEAD = 0.18;        // s of radio notes scheduled ahead of the context clock
   var MAX_VOICES = 28;         // concurrent one-shot voices
   var MAX_ERRORS = 6;          // after this many caught errors the module goes silent for good
-  var MIN_GAP = { shot: 0.025, hit: 0.04, punch: 0.04, ui: 0.03, crash: 0.06, skid: 0.25, land: 0.05, horn: 0.08, siren: 0.3, enter: 0.1, exit: 0.1, pickup: 0.05, cash: 0.05, explode: 0.05, debate: 0.15, dunk: 0.1, jump: 0.05, mission: 0.5, fail: 0.5, swap: 0.05, static: 0.1 };
+  var MIN_GAP = { shot: 0.025, hit: 0.04, punch: 0.04, ui: 0.03, crash: 0.06, skid: 0.25, land: 0.05, horn: 0.08, siren: 0.3, enter: 0.1, exit: 0.1, pickup: 0.05, cash: 0.05, explode: 0.05, debate: 0.15, dunk: 0.1, jump: 0.05, mission: 0.5, fail: 0.5, swap: 0.05, static: 0.1, reload: 0.08, reloadDone: 0.08, hitmark: 0.03, confirm: 0.2 };
   // audible range in metres per sound (full volume within 5 m, quadratic falloff to the range)
-  var RANGE = { shot: 110, punch: 28, hit: 40, explode: 240, pickup: 25, horn: 90, siren: 160, enter: 25, exit: 25, mission: 60, fail: 60, ui: 40, cash: 40, debate: 60, dunk: 60, jump: 20, land: 30, skid: 80, crash: 130, swap: 20, static: 20 };
+  var RANGE = { shot: 110, punch: 28, hit: 40, explode: 240, pickup: 25, horn: 90, siren: 160, enter: 25, exit: 25, mission: 60, fail: 60, ui: 40, cash: 40, debate: 60, dunk: 60, jump: 20, land: 30, skid: 80, crash: 130, swap: 20, static: 20, reload: 24, reloadDone: 24, hitmark: 40, confirm: 40 };
   var SCALES = { minor: [0, 2, 3, 5, 7, 8, 10], major: [0, 2, 4, 5, 7, 9, 11], dorian: [0, 2, 3, 5, 7, 9, 10] };
   var ROOTS = [110, 87.31, 65.41, 73.42];   // A2, F2, C2, D2: one key per station slot (bass octave)
   // engine profiles per vehicle class: idle / max fundamental (Hz), lowpass base, sub mix, idle lump depth, gears
@@ -346,6 +347,30 @@
     hiss(out, t, { dur: 0.2, g: 0.5, bp: 1800, fc1: 900, q: 0.8, a: 0.005 });
     blip(out, t, { type: 'sine', f: 1200, f1: 300, dur: 0.08, g: 0.12, a: 0.002 });
     return 0.25;
+  };
+  SFX.reload = function (out, t) {  // the magazine out (a catch click, a hollow drop) and the new one slapped in
+    hiss(out, t, { dur: 0.025, g: 0.45, bp: 2600, q: 3, a: 0.001 });
+    blip(out, t + 0.02, { type: 'sine', f: 180, f1: 90, dur: 0.09, g: 0.3, a: 0.002 });
+    hiss(out, t + 0.22, { dur: 0.04, g: 0.5, bp: 1400, q: 2.5, a: 0.001 });
+    blip(out, t + 0.22, { type: 'square', f: 260, f1: 200, dur: 0.05, g: 0.12, a: 0.001, lp: 1800 });
+    return 0.4;
+  };
+  SFX.reloadDone = function (out, t) {  // the bolt home: a sharp metallic snap with a short ring
+    hiss(out, t, { dur: 0.02, g: 0.55, hp: 3000, a: 0.001 });
+    blip(out, t, { type: 'square', f: 420, f1: 300, dur: 0.04, g: 0.14, a: 0.001, lp: 2600 });
+    blip(out, t + 0.01, { type: 'triangle', f: 2900, dur: 0.12, g: 0.08, a: 0.001 });
+    return 0.2;
+  };
+  SFX.hitmark = function (out, t) {  // the hit tick under the crosshair: a dry high click
+    blip(out, t, { type: 'triangle', f: 2400, dur: 0.035, g: 0.22, a: 0.001 });
+    hiss(out, t, { dur: 0.015, g: 0.2, hp: 4000, a: 0.001 });
+    return 0.08;
+  };
+  SFX.confirm = function (out, t) {  // the kill confirm: two falling notes, the second held a little
+    blip(out, t, { type: 'sine', f: 1760, dur: 0.09, g: 0.22, a: 0.002 });
+    blip(out, t + 0.08, { type: 'sine', f: 1174.7, dur: 0.22, g: 0.22, a: 0.002 });
+    blip(out, t + 0.08, { type: 'triangle', f: 2349.3, dur: 0.16, g: 0.06, a: 0.002 });
+    return 0.35;
   };
 
   // --------------------------------------------------------------- engine --
