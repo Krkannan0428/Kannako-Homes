@@ -65,4 +65,34 @@ No bug in `qa_r1_bugs.json`, `qa_a.json`, `qa_b.json` or `qa_c.json` points at 0
 
 ## Full suite on the merged build
 
-See the run recorded at the end of this file.
+`node tests/all.js` on this branch (merged with `65dc2b7`); every failing file was then re-run on a clean worktree of
+`65dc2b7` (the base, without this track's round-1 changes). The full run hit the 2 h cap; the files it did not reach
+were run as a second batch.
+
+**This track's files: all pass.** `vehicles.js`, `audio.js`, `radio.js` (the radio track's test of 03_audio) pass, and
+so do `render.js`, `smoke.js`, `tune.js` and `world.js`.
+
+**Failing, identical on the base (not caused by this track):**
+
+| File | First failing assert | Owner / evidence |
+|---|---|---|
+| bosses | b01_goldplate not beaten in 360 s (`hits: 0`, pistol dealing damage the boss never takes) | bosses / combat; same numbers on base |
+| campaign | m01b_airport has no marker (`no marker for m01b_airport: m01c_both_sides`) | story / missions; the m01c insert changed the chain |
+| characters | the aimed rifle's grip is at `gripY 2.75`, the left hand off the barrel | models / animation |
+| combat | `[` on the weapon wheel does not step past an unowned segment | combat / UI |
+| feel | the save expects m03 lit after m02; `m01c_both_sides` is lit as well | story (m01c chain) |
+| interiors | 12 weapons have no rack mesh (megaphone, flare_gun, minigun, carbine, rifle...) | interiors / models |
+| missions | `17 base missions (25 with the expansion), got 17 / 61` | missions test count stale vs. the content |
+| newplayer | `GTP.World.route` missing, so no GPS route; later steps follow | world / UI |
+| perf | sim speed 549 steps/s (base 417), below the 600 bar while another suite ran alongside | load; not a regression |
+| saves | m01c_both_sides comes back lit | story (m01c chain) |
+| story | m01_van: no next mission, GPS or call | story (m01c chain) |
+| strands | the race car is not entered at lr_01 (`inCar: false`); a fresh boot enters it fine, so it depends on earlier sections | strands (09_missions) |
+| strangers | strand run problems | strangers |
+| systems | `tables` (the golf course table) | systems |
+| ui | "the mattress ad runs at minute 20 on every station": it does on all 6 (`[true x6]`); the test still expects 4 stations | UI test vs. the radio track's 6 stations |
+
+**ui_v03**: on the base it fails at the mod shop BUY (`money1 20000, applied null`). Fixed here (see "The UI mod shop's
+BUY" above): the paint step passes on this branch (`money 20000 -> 19700`, `ev: 'mod'`). It now fails one step later,
+at the wardrobe: the UI reads the content track's clothing (`Content.parity` `top_tee_table` first) while the test
+expects the UI's own fallback list (`top_quarterzip` second). That is a UI / content-parity mismatch, not this track's.
