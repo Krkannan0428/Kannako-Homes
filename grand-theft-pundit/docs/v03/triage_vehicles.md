@@ -53,8 +53,8 @@ No bug in `qa_r1_bugs.json`, `qa_a.json`, `qa_b.json` or `qa_c.json` points at 0
   kazoo` all have voices in 03_audio), and the content track's modshop table (`Content.parity.modshop`: level arrays,
   `horns`, the `turbo` object, `paint.finishes` and `primaryPrice` / `secondaryPrice`) prices the catalog.
   **The exact call:** `GTP.Vehicles.buyMod(vehicle, categoryId, value, shownPrice)` -> `{ok: true, price, mods}` (it has
-  charged `player.money`, applied the mod, rebuilt the mesh and emitted `shop:buy {item: 'mod:<cat>:<value>', price,
-  vehicle}`; the UI must not charge again) or `{ok: false, reason: 'funds' | 'owned' | 'unknown part'}`.
+  charged `player.money`, applied the mod, rebuilt the mesh and emitted `shop:buy {item: {id: 'mod:<cat>:<value>', kind:
+  'mod', category, value, name}, price, vehicle, player}` (the UI's own item shape); the UI must not charge again) or `{ok: false, reason: 'funds' | 'owned' | 'unknown part'}`.
 - **The vehicle HUD (UI track)**: the UI reads `hud().heading` in radians (its tape converts with `* 180 / PI`); 06b
   returned degrees. `heading` is now radians (0 = north, clockwise), like `pitch` / `roll`, plus `headingDeg`.
   **For the UI track:** `vehCat()` in 11_ui.js tests `/plane|jet|.../` before `/boat|jetski|.../`, so the jet ski gets

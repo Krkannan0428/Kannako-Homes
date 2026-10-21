@@ -1403,7 +1403,7 @@
     var p = player(); if (!p || !v) return { ok: false, reason: 'no vehicle' };
     if (part === 'repair') {
       var rp = repairPrice(v); if (p.money < rp) return { ok: false, reason: 'funds', price: rp };
-      p.money -= rp; repair(v); sfx('modWrench', v.x, v.z, 0.8); emit('shop:buy', { item: 'mod:repair', price: rp, vehicle: v }); return { ok: true, price: rp };
+      p.money -= rp; repair(v); sfx('modWrench', v.x, v.z, 0.8); emit('shop:buy', { item: { id: 'mod:repair', kind: 'mod', category: 'repair', value: true, name: 'repair' }, price: rp, vehicle: v, player: p }); return { ok: true, price: rp };
     }
     // the UI's categories: primary / secondary (a colour) and finish are paint; its price (4th argument) is the one it showed
     var paintCat = part === 'primary' || part === 'secondary' || part === 'finish';
@@ -1419,7 +1419,9 @@
     var r = mod(v, patch);
     if (!r.ok) { p.money += price; return r; }
     p.stats.modsBought = (p.stats.modsBought || 0) + 1;
-    emit('shop:buy', { item: 'mod:' + part + ':' + (typeof value === 'object' ? JSON.stringify(value) : value), price: price, vehicle: v });
+    // the UI mod shop's item shape: {id, kind: 'mod', category, value, name}
+    var vs = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    emit('shop:buy', { item: { id: 'mod:' + part + ':' + vs, kind: 'mod', category: part, value: value, name: part + ': ' + vs }, price: price, vehicle: v, player: p });
     return { ok: true, price: price, mods: v.mods };
   }
 

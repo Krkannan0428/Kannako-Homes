@@ -421,7 +421,7 @@ H.run('vehicles', async (t) => {
     const hp0 = car.hp; car.applyDamage(50, null, 'test'); out.armorTook = +(hp0 - car.hp).toFixed(1); car.hp = car.maxHp;
     out.catalog = V.modCatalog(car).length;
     // a purchase: the money moves and shop:buy fires
-    p.money = 10000; const buys = []; const fn = (e) => buys.push(e.item); GTP.Events.on('shop:buy', fn);
+    p.money = 10000; const buys = []; const fn = (e) => buys.push(e.item && e.item.kind === 'mod' ? e.item.id : '?'); GTP.Events.on('shop:buy', fn);
     const car2 = window._car2 = g.debug.spawnVehicle(rw.x + 60, rw.z - 4, 'sedan', { yaw: 0 });
     const b1 = V.buyMod(car2, 'engine', 2), b2 = V.buyMod(car2, 'engine', 2), b3 = V.buyMod(car2, 'paint', { primary: '#d22f2f', finish: 'matte' });
     p.money = 10; const b4 = V.buyMod(car2, 'armor', 5);

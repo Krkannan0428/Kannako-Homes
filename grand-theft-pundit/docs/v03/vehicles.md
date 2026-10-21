@@ -81,7 +81,9 @@ GTP.Vehicles = {
           tint: 0..3, engine: 0..4, brakes: 0..3, armor: 0..5, turbo: bool, horn: 'stock'|'air'|'clown'|'fanfare'|'gavel'|'trombone'})
      -> {ok, mods, reason}            // sets v.mods, a per-vehicle copy of the class stats, then GTP.Render.rebuildEntityMesh(v)
   modCatalog(v) -> [{part, value, name, price, current, owned, stat}]   // aircraft / boats: engine, armour, paint, repair
-  buyMod(v, part, value) -> {ok, price, reason: 'money'|'owned'|'unknown part'}   // charges player.money, emits shop:buy {item: 'mod:<part>:<value>', price}
+  buyMod(v, part, value, shownPrice?) -> {ok, price, mods} | {ok: false, reason: 'funds'|'owned'|'unknown part'}
+      // part also takes the UI's paint categories primary / secondary / finish; shownPrice (the UI's price) is what is charged;
+      // charges player.money, emits shop:buy {item: {id: 'mod:<part>:<value>', kind: 'mod', category, value, name}, price, vehicle, player}
   repair(v), repairPrice(v), priceOf(part, value), parts, defaultMods,
   store(propertyId, v) -> {ok, slot, record, reason: 'full'|'wrecked'|'not storable'|...}   // the driver steps out, the vehicle leaves the world
   retrieve(propertyId, slot) -> Vehicle | null   // spawns at landmark(propertyId).points.garage | bay | car | door, mods re-applied
@@ -118,7 +120,7 @@ empties them.
 Emitted: `vehicle:crash {vehicle, cause: 'ground'|'wall'|'rotor'|'water'}`, `aircraft:takeoff {vehicle}`,
 `aircraft:land {vehicle}`, `vehicle:stall {vehicle}`, `parachute:deploy {vehicle, from}` (the bail),
 `parachute:open {vehicle}`, `parachute:land {vehicle, ped, x, z, open, hard, water}`, `moto:thrown {vehicle, ped, cause}`,
-`stunt:wheelie {vehicle, seconds}`, `vehicle:mod {vehicle, mods}`, `shop:buy {item: 'mod:...', price, vehicle}`,
+`stunt:wheelie {vehicle, seconds}`, `vehicle:mod {vehicle, mods}`, `shop:buy {item: {id: 'mod:...', kind: 'mod', ...}, price, vehicle, player}`,
 `modshop:open {vehicle, shop, catalog}`, `modshop:close {shop}`, `garage:store {propertyId, slot, record}`,
 `garage:retrieve {propertyId, slot, vehicle}`. The existing `vehicle:enter` / `vehicle:exit` fire for every type.
 

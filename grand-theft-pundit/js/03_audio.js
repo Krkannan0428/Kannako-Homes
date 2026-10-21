@@ -1027,7 +1027,7 @@
       specials[ev.id] = { active: !!ev.active, meter: +ev.meter || 0 };
     });
     // the Combat shop plays its own 'cash' (its payload carries the player); the mod shop plays its wrench and spray
-    E.on('shop:buy', function (ev) { if (ev && (ev.player || (typeof ev.item === 'string' && ev.item.indexOf('mod:') === 0))) return; cue('shopBuy', 0.8); });
+    E.on('shop:buy', function (ev) { if (ev && (ev.player || (typeof ev.item === 'string' && ev.item.indexOf('mod:') === 0) || (ev.item && ev.item.kind === 'mod'))) return; cue('shopBuy', 0.8); });
     E.on('shop:deny', function () { cue('shopDeny', 0.6); });
     ['shop:open', 'armory:inspect', 'clothing:open', 'barber:open', 'property:open', 'heist:board'].forEach(function (n) { E.on(n, function () { cue('shopBrowse', 0.5); }); });
     E.on('heist:plan', function () { cue('specialReady', 0.7); });
