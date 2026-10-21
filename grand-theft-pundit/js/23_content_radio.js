@@ -1606,18 +1606,25 @@
     var np = RADIO.nowPlaying(st.id); if (!np) return null;
     return { kind: 'song', id: np.song, station: st.id, title: np.title, artist: np.artist, section: np.section };
   };
+  // Each feed is a getter; assigning a value overrides it (a mission or a test
+  // can put its own lines on air) and assigning null hands it back.
+  function feed(st, name, compute) {
+    var over;
+    Object.defineProperty(st, name, {
+      enumerable: false, configurable: true,
+      get: function () { return over != null ? over : compute(); },
+      set: function (v) { over = v; }
+    });
+  }
   var bulletinCache = {};
   STATIONS.forEach(function (st) {
-    Object.defineProperty(st, 'nowPlaying', { enumerable: false, configurable: true, get: function () { return RADIO.onAir(st.id); } });
-    Object.defineProperty(st, 'bulletins', {
-      enumerable: false, configurable: true,
-      get: function () {
-        var b = RADIO.bulletin(st.id), key = st.id + '|' + b.text, c = bulletinCache[st.id];
-        if (!c || c.key !== key) c = bulletinCache[st.id] = { key: key, list: [{ text: b.text, headline: b.headlines[0], stage: b.stage, hour: b.hour }] };
-        return c.list;
-      }
+    feed(st, 'nowPlaying', function () { return RADIO.onAir(st.id); });
+    feed(st, 'bulletins', function () {
+      var b = RADIO.bulletin(st.id), key = st.id + '|' + b.text, c = bulletinCache[st.id];
+      if (!c || c.key !== key) c = bulletinCache[st.id] = { key: key, list: [{ text: b.text, headline: b.headlines[0], stage: b.stage, hour: b.hour }] };
+      return c.list;
     });
-    if (st.id === CALLIN.station) Object.defineProperty(st, 'callers', { enumerable: false, configurable: true, get: function () { return RADIO.callers(); } });
+    if (st.id === CALLIN.station) feed(st, 'callers', function () { return RADIO.callers(); });
   });
   // The UI asks GTP.Audio.radio.nowPlaying() first; the engine returns only a
   // station string. Wrapped: while a station plays it returns a string that

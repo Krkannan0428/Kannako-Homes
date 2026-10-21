@@ -59,7 +59,8 @@ Exposed on `GTP.Content.radio` (all existing fields are kept: `napMinute`, `defa
 - `errors`: authoring problems found while compiling the songs. It is always empty, and the tests assert that.
 - Stations carry `color` (the UI may use it instead of its own id → colour map) and `district` (campus / loop) as hints.
 - **UI ticker feed (integration round 1, the shapes `docs/v03/ui.md` reads).** All are non-enumerable getters on
-  each station:
+  each station. Assigning a value overrides a feed (a mission or a test can put its own lines on air), and assigning
+  `null` restores the live one:
   - `station.nowPlaying`: `{kind:'song', id, title, artist, section}` on music stations, `{kind:'show', id, title:
     'Uproar at Large: <segment>', text, host}` on WAIL 101 (`RADIO.onAir(id)`).
   - `station.bulletins`: `[{text, headline, stage, hour}]`, the story-reactive bulletin for this game hour in the
