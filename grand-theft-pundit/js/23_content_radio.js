@@ -46,8 +46,8 @@
  * this hour's story-reactive bulletin) and, on WAIL 101, `callers` ([{caller,
  * text}] of the call-in segment on air) with `dj` holding the host's lines for
  * that segment (segments rotate every game hour; `djAll` lists every line).
- * GTP.Audio.radio.nowPlaying() is wrapped to return the same object (its
- * toString() is still the engine's station text). News data: `news`;
+ * GTP.Audio.radio.nowPlaying() is wrapped to put the song or show title in
+ * front of the engine's station text (still a plain string). News data: `news`;
  * GTP.Content.radio.bulletin() builds a bulletin and 'radio:news' fires at
  * the top of each game hour in a car. `ticker` stays a plain array. Every
  * string obeys CONTENT_RULES.md.
@@ -1619,9 +1619,10 @@
     });
     if (st.id === CALLIN.station) Object.defineProperty(st, 'callers', { enumerable: false, configurable: true, get: function () { return RADIO.callers(); } });
   });
-  // The UI asks GTP.Audio.radio.nowPlaying() first; the engine returns a
-  // station string. Wrapped: while a station plays it returns RADIO.onAir()
-  // with toString() giving the engine's text, so string users keep working.
+  // The UI asks GTP.Audio.radio.nowPlaying() first; the engine returns only a
+  // station string. Wrapped: while a station plays it returns a string that
+  // names the song (or WAIL's show) ahead of the engine's station text, so it
+  // stays a plain string for every caller and the ticker line changes per song.
   if (GTP.Audio && GTP.Audio.radio && typeof GTP.Audio.radio.nowPlaying === 'function' && !GTP.Audio.radio._radioWrapped) {
     var engineNowPlaying = GTP.Audio.radio.nowPlaying;
     GTP.Audio.radio.nowPlaying = function () {
@@ -1631,8 +1632,7 @@
       try { cur = GTP.Audio.radio.current ? GTP.Audio.radio.current() : null; } catch (e) { cur = null; }
       var o = cur && RADIO.onAir(cur.id);
       if (!o) return text;
-      o.toString = function () { return String(text); };
-      return o;
+      return o.title + (o.artist ? '  \u00b7  ' + o.artist : '') + '  \u00b7  ' + text;
     };
     GTP.Audio.radio._radioWrapped = true;
   }

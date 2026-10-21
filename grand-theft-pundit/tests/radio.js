@@ -233,7 +233,7 @@ H.run('radio', async (t) => {
     }
     out.feed = feed;
     const np = A.radio.nowPlaying();
-    out.np = { kind: np && np.kind, title: np && np.title, str: String(np) };
+    out.np = { str: String(np), type: typeof np, onAir: Rd.onAir('loop_174') };
     // on foot: no bulletin event
     const vv = p.inVehicle; if (vv) { vv.speed = 0; vv.vx = 0; vv.vz = 0; } GTP.game.advance(0.1);
     press('enter'); GTP.game.advance(0.6);
@@ -251,10 +251,10 @@ H.run('radio', async (t) => {
   t.assert(hl.tickerIsArray, 'the ticker is still a plain array after every content file loaded');
   t.assert(hl.eventsInCar.length === 1 && hl.eventsInCar[0].station === 'quiet_signal' && /^A BULLETIN HAS BEEN ISSUED/.test(hl.eventsInCar[0].text), 'the top of the hour emits one radio:news bulletin in the station voice');
   const F = hl.feed;
-  t.assert(F.pennant_fm.some((l) => /^NOW PLAYING: .+  ·  .+/.test(l)) && F.loop_174.some((l) => /^NOW PLAYING: /.test(l)), 'the ticker names the song and artist on music stations');
+  t.assert(F.pennant_fm.some((l) => /^(NOW PLAYING|ON AIR): .+  ·  .+  ·  Pennant FM/.test(l)) && F.loop_174.some((l) => /^(NOW PLAYING|ON AIR): .+  ·  .+  ·  Loop 174/.test(l)), 'the ticker names the song and artist on music stations');
   t.assert(F.pennant_fm.some((l) => /^NEWS 14:00: PENNANT FM NEWS/.test(l)) && F.loop_174.some((l) => /^NEWS 14:00: LOOP 174 NEWS/.test(l)), 'the hourly bulletin shows in each station voice');
-  t.assert(F.wail_101.some((l) => /^ON AIR: Uproar at Large: /.test(l)) && F.wail_101.some((l) => /^CALLER: .+ on the line: /.test(l)) && F.wail_101.some((l) => /^NEWS 14:00: WAIL 101 NEWS/.test(l)), 'WAIL 101 shows the show on air, callers and the bulletin');
-  t.assert(hl.np.kind === 'song' && /Loop 174/.test(hl.np.str), 'Audio.radio.nowPlaying() returns the song object and still reads as the station text: ' + JSON.stringify(hl.np));
+  t.assert(F.wail_101.some((l) => /^ON AIR: Uproar at Large: .+WAIL 101/.test(l)) && F.wail_101.some((l) => /^CALLER: .+ on the line: /.test(l)) && F.wail_101.some((l) => /^NEWS 14:00: WAIL 101 NEWS/.test(l)), 'WAIL 101 shows the show on air, callers and the bulletin');
+  t.assert(hl.np.type === 'string' && hl.np.str.indexOf(hl.np.onAir.title + '  ·  ' + hl.np.onAir.artist) === 0 && /Loop 174/.test(hl.np.str), 'Audio.radio.nowPlaying() is a string naming the song, then the station: ' + JSON.stringify(hl.np));
   t.assert(hl.onFoot && hl.eventsTotal === 1 && hl.shownTotal === 0, 'no bulletin on foot, and nothing pushed past the UI');
   t.assert(hl.errors.length === 0, 'headless errors: ' + hl.errors.join('\n'));
   const herrs = await t.errors(hctx);

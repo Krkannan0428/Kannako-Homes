@@ -85,10 +85,15 @@ Consumed:
   ignored. Since integration round 1 the UI shows the bulletin from `station.bulletins`, so the wrapper no longer pushes
   ticker lines (unless `GTP.UI.radioNews === false`).
 - **`GTP.Audio.radio.nowPlaying`** is wrapped, guarded by `GTP.Audio.radio._radioWrapped`. The UI asks it before
-  `station.nowPlaying`, and the engine returns only a station string. While a station plays, the wrapper returns
-  `RADIO.onAir(id)` with `toString()` set to the engine's text, so string users (`tests/audio.js`' `/Pennant/` check,
-  concatenation) keep working. When nothing plays, it returns `''` as before. Integration can move this into
-  `03_audio.js` (return `GTP.Content.radio.onAir(st.id)`) and drop the wrapper.
+  `station.nowPlaying`, and the engine returns only a station string. While a station plays, the wrapper returns a
+  plain string: `Title  ·  Artist  ·  <engine text>`, or `Uproar at Large: <segment>  ·  <engine text>` on WAIL.
+  The UI shows it as an ON AIR line that changes with every song and segment. When nothing plays, it returns `''`.
+  - **Why it returns a string:** an earlier version returned the `onAir` object with a custom `toString()`. That broke
+    `tests/audio.js`, because Playwright serializes the object without the function, so its `/Pennant/.test()`
+    threw.
+  - **For integration:** to get the UI's NOW PLAYING tag with the structured object, the UI should prefer
+    `station.nowPlaying` over `Audio.radio.nowPlaying()`. Alternatively, `03_audio.js` could return
+    `GTP.Content.radio.onAir(id)` and update its test. Then this wrapper can go.
 
 ## Decisions
 
@@ -167,9 +172,9 @@ NODE_PATH=/opt/node-tools/node_modules node tests/audio.js   # the engine's own 
    news stages, call-in rotation, and every runtime string run through `tests/content_audit.js` (its own patterns,
    on a virtual file).
 2. A headless game boot. R cycles through all six stations. At the top of the hour in a car, `radio:news` fires
-   once, and never on foot. The real UI ticker then shows `NOW PLAYING: title  ·  artist`, `NEWS 14:00: <station
-   voice>…` and, on WAIL, `ON AIR: Uproar at Large: …` plus `CALLER: … on the line: …`.
-   `Audio.radio.nowPlaying()` returns the song object, and `String()` of it is still the station text.
+   once, and never on foot. The real UI ticker then shows `ON AIR: title  ·  artist  ·  station`, `NEWS 14:00:
+   <station voice>…` and, on WAIL, `ON AIR: Uproar at Large: …` plus `CALLER: … on the line: …`.
+   `Audio.radio.nowPlaying()` stays a string.
 3. A live page (`headless=0`, a click unlocks audio): each station plays in a car for 6 to 10 real seconds through
    the current engine.
 4. Offline renders of all 26 songs.
