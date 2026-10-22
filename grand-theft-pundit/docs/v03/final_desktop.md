@@ -139,14 +139,51 @@ On GitHub (pushes to `v03/desktop`):
   - Linux and Windows keep the strict checks; Linux was re-run locally in strict mode and passed.
   - Result: see "macOS result" below.
 
-### macOS result
+### macOS result: run 39850720305 is green on every platform
 
-(filled in below once the run for 45fbdff finishes)
+**Run 39850720305** is on 2676fcb, which has the same code as 45fbdff plus the README. The run for
+45fbdff was cancelled by that newer push. **Every job is green:**
+- macOS
+- Windows
+- Linux
+- Linux smoke
+- the release job was skipped, as it should be on this branch
+
+What each one checked:
+- **macOS:**
+  - Builds both DMGs and zips, the zip blockmaps and `latest-mac.yml`.
+  - The DMG art check finds `.background.tiff` and `.DS_Store`.
+  - Fuses are correct on both apps.
+  - `codesign --verify --deep --strict` reports both apps "valid on disk" and "satisfies its
+    Designated Requirement". This is the ad-hoc re-sign after the fuse flip.
+  - Apple Silicon launch, passed in 10.9 s: page up in 1.4 s, booted, title, loading done, splash
+    closed, window visible, mods loaded, navigation lock (script and file drop), crash log clean,
+    saved window size used, broken mod reported, window state saved on quit.
+  - The runner VM still had no WebGL even with `--disable-gpu-sandbox`, so `--webgl-optional`
+    skipped the picture checks and 602 errors caused by the missing context.
+- **Windows:**
+  - Builds the installer + blockmap, the portable exe and `latest.yml`.
+  - Fuses are correct.
+  - The launch test passed with strict checks (picture, no errors, mods, navigation lock, window
+    state, broken mod).
+  - Artifacts uploaded.
+- **Linux:** the AppImage and `latest-linux.yml` are built, fuses are correct, and the smoke test
+  goes from the title through New Game and the opening cutscene to the first objective, strict.
+
+The DMG art fix was checked locally on fake volume folders under `bash -eo pipefail` (pass with art,
+fail without) and with actionlint. All shell steps in this round ran; none was skipped for
+permissions.
 
 ## Known issues
 
-- No one has looked at the DMG window or the app on a real Mac. CI mounts each DMG, checks the art
-  and the layout file, verifies the code signature and boots the arm64 app on a macOS runner.
+- No one has looked at the DMG window or the game's 3D view on a real Mac. CI mounts each DMG,
+  checks the art and the layout file, verifies the code signatures and boots the arm64 app on a
+  macOS runner, but that runner has no WebGL, so on macOS rendering is only covered by Linux and
+  Windows.
+- The game itself throws on every frame when WebGL cannot be created: the renderer is null and
+  `GTP.game.step` keeps running. That is game code (`js/30_game.js`, `js/10_render.js`), not
+  desktop; it only matters on machines without WebGL. A "WebGL is not available" screen would be
+  the fix.
 - Unsigned macOS builds cannot update themselves (Squirrel.Mac requires a signature); they get the
   release-page notice. Adding the existing signing secrets switches them to in-place updates.
 - 0.2.0 players have no updater; they download 0.3.0 once by hand.
