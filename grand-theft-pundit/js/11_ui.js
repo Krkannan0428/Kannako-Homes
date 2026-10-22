@@ -1249,10 +1249,12 @@
     }
     // v0.3 radio: what is on air (Audio.radio.nowPlaying() or station.nowPlaying: a string or {kind, title, artist,
     // caller, text}), the top-of-hour news bulletin (station.bulletins / station.news), call-in lines (station.callers)
+    // the station's own feed first (23_content_radio: a getter, {kind:'song'|'show', title, artist, text}, an assigned
+    // override wins); then an object from GTP.Audio (its string is "Title · Artist · Station - tagline", which the
+    // station feed already covers: the song would come out under ON AIR)
     var np = null, A = GTP.Audio;
-    try { np = A && A.radio && typeof A.radio.nowPlaying === 'function' ? A.radio.nowPlaying() : null; } catch (e) { np = null; }
-    if (np && typeof np !== 'object') np = null;   // GTP.Audio's nowPlaying() is the "Station - tagline" string: the chip already says it
-    if (!np && st.nowPlaying) np = typeof st.nowPlaying === 'function' ? st.nowPlaying() : st.nowPlaying;
+    try { np = st.nowPlaying ? (typeof st.nowPlaying === 'function' ? st.nowPlaying() : st.nowPlaying) : null; } catch (e) { np = null; }
+    if (!np) { try { np = A && A.radio && typeof A.radio.nowPlaying === 'function' ? A.radio.nowPlaying() : null; } catch (e) { np = null; } if (np && typeof np !== 'object') np = null; }
     if (!np && R && typeof R.nowPlaying === 'function' && st.songs && st.songs.length) { try { np = R.nowPlaying(st.id); } catch (e) { np = null; } if (np) np = { kind: 'song', id: np.song, title: np.title, artist: np.artist }; }   // the radio track: Content.radio.nowPlaying(id)
     if (np) {
       var npo = typeof np === 'string' ? { text: np } : np, key = sidKey(st) + '|' + (npo.id || npo.title || npo.text || '');
@@ -1275,10 +1277,11 @@
   function sidKey(st) { return st ? String(st.id || st.name || '') : ''; }
   function radioLine(o, st) {
     var kind = String(o.kind || o.type || '').toLowerCase(), text = o.text || o.line || '';
-    if (kind === 'song' || kind === 'music' || (!text && o.title)) return { text: (o.title || '') + (o.artist ? '  ·  ' + o.artist : ''), tag: 'NOW PLAYING', color: stationColor(st) };
+    var on = st && st.name ? '  ·  ' + String(st.name).replace(/\s*".*"$/, '') : '';   // song and show lines name the station
+    if (kind === 'song' || kind === 'music' || (!text && o.title)) return { text: (o.title || '') + (o.artist ? '  ·  ' + o.artist : '') + on, tag: 'NOW PLAYING', color: stationColor(st) };
     if (kind === 'news' || kind === 'bulletin') return { text: text || o.headline || o.title, tag: 'NEWS', color: COL.red };
     if (kind === 'caller' || kind === 'call') return { text: (o.caller || o.name ? (o.caller || o.name) + ' on the line: ' : 'Caller: ') + text, tag: 'CALLER', color: COL.lime };
-    if (kind === 'show' || kind === 'host') return { text: (o.title ? o.title + '  ·  ' : '') + text, tag: 'ON AIR', color: stationColor(st) };
+    if (kind === 'show' || kind === 'host') return { text: (o.title ? o.title + '  ·  ' : '') + text + on, tag: 'ON AIR', color: stationColor(st) };
     return { text: text || o.title || '', tag: 'ON AIR', color: stationColor(st) };
   }
   function updateTicker(dt) {
@@ -4431,7 +4434,7 @@
     if (e.state === 'done' || e.state === 'ended') { if (b && b.id === e.id) ui.boss = null; return; }
     if (!b || b.id !== e.id) b = ui.boss = { id: e.id, name: e.name || String(e.id || 'BOSS'), phase: e.phase || 1, phases: e.phases || null, hp: e.hp, maxHp: e.maxHp || e.hp || 1, trail: e.hp, trailT: 0, t: 0, flashT: 0.8 };
     else {
-      if (e.phase != null && e.phase !== b.phase) b.flashT = 1.6;
+      if (e.phase != null && e.phase !== b.phase) { b.flashT = 1.6; b.announce = { text: 'PHASE ' + e.phase + (e.phases || b.phases ? ' / ' + (e.phases || b.phases) : ''), t: 0 }; }   // 08b skips its banner when the UI's bar is up
       if (e.hp != null && e.hp < b.hp) b.trailT = 0.6;
       if (e.name) b.name = e.name;
       if (e.phase != null) b.phase = e.phase;
@@ -4440,6 +4443,7 @@
       if (e.hp != null) b.hp = e.hp;
     }
     if (e.shield !== undefined) b.shield = !!e.shield;
+    if (e.shieldText !== undefined) b.shieldText = e.shieldText || b.shieldText || '';
     if (e.hint !== undefined) b.hint = e.hint || '';
     if (e.state) b.state = e.state;
     if (b.hp > b.trail) b.trail = b.hp;
@@ -4482,6 +4486,10 @@
     if (line) txt(ctx, line, r.x + r.w / 2, r.y + bh + px(14), { font: F(11, 'bold'), color: '#d0d4dc', align: 'center', maxW: r.w });
     if (hint) txt(ctx, hint, r.x + r.w / 2, r.y + bh + px(line ? 28 : 14), { font: F(11, 'bold'), color: line ? COL.gold : COL.lime, align: 'center', maxW: r.w });
     ctx.restore();
+    if (b.announce) {   // PHASE n / N over the arena
+      var ak = b.announce.t / 2, aa = ak < 0.1 ? ak / 0.1 : ak > 0.7 ? (1 - ak) / 0.3 : 1;
+      txt(ctx, b.announce.text, W / 2, H * 0.36, { font: F(portrait ? 28 : 40, '900', FONT_DISPLAY), color: COL.amber, align: 'center', lw: px(6), alpha: clamp01(aa) });
+    }
   }
   function drawBossDown(ctx) {
     var d = ui.bossDown, k = d.t / 4.5, a = k < 0.06 ? k / 0.06 : k > 0.8 ? (1 - k) / 0.2 : 1, sc = 1 + (1 - ease(Math.min(1, d.t / 0.35))) * 1.2;
@@ -5246,7 +5254,7 @@
     { id: 'top', name: 'Tops', items: [{ id: 'top_tee_white', name: 'Plain Tee (White)', price: 40, color: '#e9ecf2' }, { id: 'top_quarterzip', name: 'Quarter-Zip of Authority', price: 180, color: '#2a3550' }, { id: 'top_blazer', name: 'Debate Blazer', price: 450, color: '#3a2a4a' }, { id: 'top_hoodie', name: 'Podcast Hoodie', price: 120, color: '#ff3fa4' }, { id: 'top_vest', name: 'Fleece Vest (Finance)', price: 260, color: '#4a5a6a' }] },
     { id: 'bottom', name: 'Bottoms', items: [{ id: 'bottom_chinos', name: 'Chinos', price: 90, color: '#b8a27a' }, { id: 'bottom_jeans', name: 'Relatable Jeans', price: 120, color: '#3a5a8a' }, { id: 'bottom_slacks', name: 'Cable-Hit Slacks', price: 220, color: '#2a2a33' }] },
     { id: 'shoes', name: 'Shoes', items: [{ id: 'shoes_loafers', name: 'Loafers', price: 160, color: '#5a3a22' }, { id: 'shoes_sneakers', name: 'Hype Sneakers', price: 300, color: '#f0f0f0' }] },
-    { id: 'hat', name: 'Hats', items: [{ id: 'hat_none', name: 'No hat', price: 0 }, { id: 'hat_cap', name: 'Ball Cap (No Slogan)', price: 35, color: '#d7262e' }, { id: 'hat_beanie', name: 'Studio Beanie', price: 45, color: '#1a1d2b' }, { id: 'hat_fedora', name: 'Fedora (Regrettable)', price: 120, color: '#3a2a22' }, { id: 'hat_beret', name: 'Beret (Thinkpiece)', price: 80, color: '#7a3fd1' }] },
+    { id: 'hat', name: 'Hats', items: [{ id: 'hat_none', name: 'No hat', price: 0 }, { id: 'hat_cap', name: 'Ball Cap', price: 35, color: '#2b6cb0' }, { id: 'hat_beanie', name: 'Studio Beanie', price: 45, color: '#1a1d2b' }, { id: 'hat_fedora', name: 'Fedora (Regrettable)', price: 120, color: '#3a2a22' }, { id: 'hat_beret', name: 'Beret (Thinkpiece)', price: 80, color: '#7a3fd1' }] },
     { id: 'glasses', name: 'Glasses', items: [{ id: 'glasses_none', name: 'No glasses', price: 0 }, { id: 'glasses_round', name: 'Thinkpiece Rounds', price: 95 }, { id: 'glasses_aviator', name: 'Aviators (Bold)', price: 140 }, { id: 'glasses_thick', name: 'Thick Frames (Credible)', price: 110 }] }
   ];
   var BARBER_DEFAULT = [
@@ -6003,7 +6011,7 @@
   // ----------------------------------------------------------------- API ----
   var UI = GTP.UI = {
     // the other tracks' fallbacks stand down when these are set: GTP.Interiors' DOM fade, GTP.Bosses' plain boss bar and special meters
-    interiorFade: true, drawsBossBar: true, drawsSpecials: true,
+    interiorFade: true, drawsBossBar: true, drawsSpecials: true, drawsBossShield: true, handlesBossEnd: true,
     drawsBarks: true,
     minigames: { debate: debate, ratio: ratio },
     init: function () {

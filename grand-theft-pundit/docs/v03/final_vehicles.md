@@ -1,7 +1,7 @@
 # Vehicles track: final notes (v0.3.0)
 
-Branch `v03/vehicles`, merged with `origin/game/grand-theft-pundit` at `10ba585` (the environment and world tracks);
-no newer base commits at the time of the last push. Owned files: `js/06b_vehicles_air_sea.js`, `js/03_audio.js`,
+Branch `v03/vehicles`, at `origin/game/grand-theft-pundit` `a94bf77` (every track's latest head; the branch
+fast-forwarded to it, since it already contained this branch) plus the round-3 fixes below. Owned files: `js/06b_vehicles_air_sea.js`, `js/03_audio.js`,
 `tests/vehicles.js`, `tests/audio.js`, `docs/v03/vehicles.md` (the interface notes), `docs/v03/triage_vehicles.md`
 (round 1), this file.
 
@@ -29,8 +29,10 @@ The world and environment merge broke or left open these, all fixed and covered 
     the door ring, clear of every drive-in door.
   - `store` refuses aircraft, boats and strand or mission vehicles.
   - Refusals carry a readable `reason`, which 07_ai toasts as is, plus a `code`. `canStore()` was added.
-- **The mod shop opened twice** per drive-in (06b's bay and 07_ai's door), and 06b's ignored the mission gating.
-  06b now stands down where a world door exists. The 12 m close and the wrench follow any `modshop:open`.
+- **The mod shop opened twice** per drive-in (06b's bay and 07_ai's door). Both tracks fixed it, each by deferring to
+  the other, which on `a94bf77` meant neither opened it (round 3 below). Final arrangement: 07_ai's door stands down
+  while `GTP.Vehicles.modshop` exists, and 06b's bay opens every shop (and never a second time while one is open). The
+  12 m close and the wrench follow any `modshop:open`.
 - **The mod shop on the preview path:**
   - `mod()` played the 1.8 s install jingle and rebuilt the mesh on every UI preview step. An unchanged set is now a
     no-op, and only `buyMod` plays the install.
@@ -67,7 +69,30 @@ The world and environment merge broke or left open these, all fixed and covered 
   - **QA stab-QA-D-03** (released roadblock sirens) and **stab-QA-D-09** (the leaving police heli going silent) are
     mitigated on the audio side.
 
+## Round 3 (the `a94bf77` merge of every track)
+
+- **`tests/audio.js` "Enter starts play: cutscene":** the story track plays the opening after NEW GAME. The live pages
+  now boot with `?opening=0` (none of them is about the opening), and the skip loop skips a cutscene as it comes up.
+- **"every SFX name makes a voice; failed: phoneRing, gps"** (reported by the radio session): those names had just
+  been played by the wiring section (MIN_GAP). It did not reproduce here after `_clearGaps()`, but the check now gives
+  any name that fails the first pass one more try on its own after clearing the limits (`retried: []` in the run).
+- **A one-sample click from the radio's hats:** `hiss()` and `blip()` created their gain node at its default of 1 and
+  the envelope's first event came at `t0`. Both now start the gain at 0.
+- **Nobody opened the mod shop:** the world track's latest `07_ai` door defers to `GTP.Vehicles.modshop`
+  (07_ai.js:2241), while 06b's bay deferred to the world door. 06b's bay now opens every shop.
+  `tests/vehicles.js` 6c and the world track's `tests/events.js` both pass (one `modshop:open`).
+
 ## Still open (other tracks; not changed here: outside this track)
+
+- **Radio / UI: `tests/radio.js` "the ticker names the song and artist on music stations" fails on `a94bf77`**
+  (identically on a clean worktree of the base). The radio track's wrapper makes `GTP.Audio.radio.nowPlaying()` return
+  `Title  ·  Artist  ·  <station text>`, and its test expects `NOW PLAYING: <title>  ·  <artist>  ·  Pennant FM`.
+  The UI (11_ui.js:1254) drops any string from `Audio.radio.nowPlaying()` and builds the line from the content
+  record, which has no station: `NOW PLAYING: Ten Out of Ten (Theme)  ·  The Goldplate Pops Orchestra`. One of these
+  two fixes is needed:
+  - The UI appends the station name in `radioLine` for songs (`'  ·  ' + st.name`).
+  - The UI shows the wrapper's string as an ON AIR line instead of dropping it.
+  03_audio's `nowPlaying()` is unchanged.
 
 A review pass over the merged build reported these. The ones marked *checked* I confirmed in the code; the rest are
 the reviewer's reading, with the exact change it proposed.
@@ -113,7 +138,13 @@ Not done in this track (low impact, noted for later): boat bob and pitch are not
 swells (render-only), and a few 06b hot paths still allocate small objects per step (`readAxes`, `riderPose`, the
 first-person camera vector).
 
-## Test results (this branch, final state)
+## Test results (this branch, final state, on `a94bf77`)
+
+- Round 3, on the merged build: `tests/audio.js` PASS, `tests/vehicles.js` PASS, `tests/events.js` PASS (it failed on
+  both earlier bases), `tests/content_audit.js` OK (256 files, 0 hits). `tests/radio.js` fails on the base and here
+  alike (above).
+
+Round 2, on `10ba585`:
 
 - `tests/vehicles.js`: PASS. It adds a 6c section on the real world doors and spots:
   - the fleet on the pads, apron and slips;
@@ -121,7 +152,7 @@ first-person camera vector).
   - the real Spin Doctor door opening the shop once;
   - aircraft refusals, the canopy hit and the no-op preview;
   - the `fly_to` GPS line to a helipad.
-- `tests/audio.js`: PASS (new counts for every audio fix above). `tests/radio.js`: PASS.
+- `tests/audio.js`: PASS (new counts for every audio fix above). `tests/radio.js`: PASS (on `10ba585`).
 - `tests/content_audit.js`: OK (238 files, 0 hits).
 - Other tracks' tests that touch these paths, run on this branch. Each failure was compared with a clean worktree of the
   base `10ba585`:

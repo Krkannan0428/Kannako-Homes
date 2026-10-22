@@ -1699,8 +1699,9 @@
     modshop.shops = (Wd.landmarks || []).filter(function (lm) { return lm.kind === 'modshop' || /^spin_doctor/.test(lm.id || '') || /spin doctor/i.test(lm.name || ''); });
     return modshop.shops;
   }
-  // 07_ai's door markers open the shops that have a World.doors 'modshop' door (with the mission / wanted gating); this
-  // bay only serves a shop without one. Either way the shop closes once the car leaves (12 m) and the wrench sounds once.
+  // 07_ai's door markers open the shops that have a World.doors 'modshop' door (doorTrigger, with the mission and wanted
+  // gating); this bay only serves a shop without one, so there is one modshop:open per drive-in. Either way the shop
+  // closes once the car leaves (12 m) and the wrench sounds once.
   function worldDoorShop(lm) {
     if (!(GTP.AI && GTP.AI.doors)) return false;
     var ds = W().doors || [];

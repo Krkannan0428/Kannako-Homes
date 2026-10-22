@@ -477,7 +477,9 @@
     var t = this.tilt || 0;
     var lying = this.knockedDown || !this.alive;
     if (lying) y += 0.16 * Math.abs(Math.sin(t));
-    else if (this.swimming) y -= 0.12;
+    // swimming: ped.y is WATER_Y + 0.25 and the tilt pivots at the feet; sink the body so the chest (1.23 m up the
+    // rig, scaled) sits at the surface whatever the tilt: torso and legs in the water, head and shoulders out
+    else if (this.swimming) y -= 0.22 + 1.23 * Math.cos(t) * ((this.look && this.look.scale) || 1);
     var d2 = camDist2(x, z), lod = GTP.Models.lodFor(Math.sqrt(d2));
     GTP.Models.setLod(m, lod);
     // far peds animate at a third of the frame rate (their phase still runs)

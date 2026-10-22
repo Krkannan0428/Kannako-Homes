@@ -326,7 +326,7 @@
   Game.prototype._handleGlobalInput = function () {
     var In = GTP.Input;
     // the UI gets the frame first: title / pause / phone / dialogue menus consume their keys and return true
-    // a key the UI took as its confirm (Enter, Space) is not also the player's 'enter' / 'jump' in this step, and stays dead until
+    // a key the UI took as its confirm key (Enter or Space) is not also the player's 'enter' / 'jump' in this step, and stays dead until
     // released: RESUME or a dialogue line no longer throws the player out of the car or makes them jump (QA-B-FE-03)
     if (GTP.UI && GTP.UI.handleInput) { try { if (GTP.UI.handleInput(this.state)) { if (In.latch && In.pressed('confirm')) In.latch(['enter', 'jump']); return; } } catch (e) { U.reportError(e, 'ui.handleInput'); } }
     if (this.state === 'title') {

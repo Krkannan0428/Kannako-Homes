@@ -212,6 +212,16 @@
   function vehicleSpot(cx, cz, rMax, prefer, others, length) {
     var Wd = W(), T = Wd.T, M = Wd.M, TILE = C.TILE, best = null, bestS = 1e9;
     var rr = Math.ceil(rMax / TILE), tx0 = Math.floor(cx / TILE), tz0 = Math.floor(cz / TILE);
+    // the solid props around (trees, lamps, hydrants on the kerb): a bay whose way straight out is blocked by one ranks last
+    var near = (Wd.props || []).filter(function (pr) { return pr.solid && Math.abs(pr.x - cx) < rMax + 12 && Math.abs(pr.z - cz) < rMax + 12; });
+    function exitBlocked(x, z, yaw) {
+      var f = U.yawToDir(yaw), ax = x + f.x * 2, az = z + f.z * 2, bx = x + f.x * 10, bz = z + f.z * 10, ddx = bx - ax, ddz = bz - az, L2 = ddx * ddx + ddz * ddz;
+      for (var q = 0; q < near.length; q++) {
+        var pr = near[q], tt = U.clamp(((pr.x - ax) * ddx + (pr.z - az) * ddz) / L2, 0, 1), qx = ax + ddx * tt - pr.x, qz = az + ddz * tt - pr.z;
+        if (qx * qx + qz * qz < Math.pow(1.4 + (pr.r || 0.3), 2)) return true;
+      }
+      return false;
+    }
     for (var dz = -rr; dz <= rr; dz++) for (var dx = -rr; dx <= rr; dx++) {
       var tx = tx0 + dx, tz = tz0 + dz;
       if (!Wd.inBounds(tx, tz)) continue;
@@ -235,6 +245,7 @@
       // out (nose-in, a new driver's first job in m01 was a reverse out of a tight lot)
       else if (bW || bE) { yaw = bW ? -Math.PI / 2 : Math.PI / 2; x += bW ? over : (bE ? -over : 0); }
       else { yaw = bN ? Math.PI : 0; z += bN ? over : (bS ? -over : 0); }
+      if (kind === 'parking' && (bN || bS || bW || bE) && exitBlocked(x, z, yaw)) { s += 40; if (s >= bestS) continue; }   // a new driver's first job should not be a three-point turn round a tree
       best = { x: x, z: z, y: Wd.heightAt(x, z, 0), yaw: yaw, kind: kind, tx: tx, tz: tz }; bestS = s;
     }
     if (!best) { var rp = Wd.nearestRoadPoint(cx, cz); if (rp) best = { x: rp.x, z: rp.z, y: 0, yaw: U.dirToYaw(rp.dx, rp.dz), kind: 'road' }; }
@@ -442,7 +453,8 @@
   // Arms stopped a player 1.95 m from the 1.9 m light) and of the shops' door rings, off the road, 3 m or more out from the facade (a shop's walk-in door
   // stays its own trigger; never nearer than the door point already is) and not on another light. The door point first, then toward the building, then along the sidewalk
   function lightSpot(pt, landmarkId) {
-    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [], doors = Wd.doors || [];
+    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [], doors = Wd.doors || [], stores = [];
+    try { var CS = GTP.Combat && GTP.Combat.shop; stores = CS && typeof CS.stores === 'function' ? CS.stores() || [] : []; } catch (e) { stores = []; }
     var ix = 0, iz = 0;   // toward the building
     if (b) { var cx = U.clamp(pt.x, b.x, b.x + b.w), cz = U.clamp(pt.z, b.z, b.z + b.d), dl = U.dist2d(pt.x, pt.z, cx, cz); if (dl > 0.01) { ix = (cx - pt.x) / dl; iz = (cz - pt.z) / dl; } }
     else if (lm) { var ll = U.dist2d(pt.x, pt.z, lm.x, lm.z); if (ll > 0.01) { ix = (lm.x - pt.x) / ll; iz = (lm.z - pt.z) / ll; } }
@@ -458,6 +470,9 @@
       // a shop or safehouse door ring (World.doors, run by GTP.AI): stepping into it walks into the interior, so the light keeps
       // clear of it (the m01c light on the armory's own ring took the player inside before the mission could start)
       for (var q = 0; q < doors.length; q++) if (U.dist2d(doors[q].x, doors[q].z, x, z) < (doors[q].r || 1.4) + K.markerRadius + 0.6) return false;
+      // nor on Combat's green store light (3.2 m along the wall from a gun shop's door): the two 0.5 s holds raced, and the old
+      // shop page could open instead of m01c
+      for (var q2 = 0; q2 < stores.length; q2++) if (U.dist2d(stores[q2].x, stores[q2].z, x, z) < 2 * K.markerRadius + 0.8) return false;
       for (var k = 0; k < props.length; k++) { var pr = props[k]; if (pr.solid && Math.abs(pr.x - x) < 4 && Math.abs(pr.z - z) < 4 && U.dist2d(pr.x, pr.z, x, z) - (pr.r || 0.3) < clear) return false; }
       return true;
     }
@@ -2790,6 +2805,12 @@
     take: function (v, mode, opts) {
       opts = opts || {};
       if (!v || v.kind !== 'vehicle' || v.removed) return null;
+      // a race leg through a building gets car A* corners in between (GTP.AI.routeVias; folded from 07's hookStrands wrapper,
+      // which stands down on the _worldRoute flag set below)
+      var AIx = GTP.AI;
+      if (mode === 'route' && Array.isArray(opts.route) && opts.route.length > 1 && AIx && typeof AIx.routeVias === 'function') {
+        try { opts = Object.assign({}, opts, AIx.routeVias(opts.route, !!opts.loop, opts.onCheckpoint)); } catch (e) { U.reportError(e, 'strands.raceRoute'); }
+      }
       if (v._chauf) drivers.release(v);
       if (v.ai && GTP.AI && GTP.AI.release) GTP.AI.release(v);
       var drvWas = v.driver && v.driver.alive ? !!v.driver.persistent : !!(run && opts.track !== false);   // what release gives back (QAC-34)
@@ -2889,6 +2910,7 @@
       v.setControls(throttle, steer, false, throttle < 0 ? 0.5 : 0);
     }
   };
+  drivers.take._worldRoute = true;   // 07_ai's hookStrands checks this and leaves take alone (the A* corners are added above)
 
   // ------------------------------------------------------------------------------- stunts --
   // The ten striped wedges (World.stuntRamps). A jump counts when the player's car leaves one and lands on its wheels inside

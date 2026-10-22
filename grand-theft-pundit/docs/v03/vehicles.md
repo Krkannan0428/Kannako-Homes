@@ -117,11 +117,13 @@ paint). Aircraft, boats and the parachute take engine, armour, paint and repairs
 `buyMod` refuses them (`unknown part`). Maxing engine, brakes and armour on one car counts `stats.maxedCars` and calls
 `GTP.Systems.unlock('spin_doctored')` (the content achievement; 14_systems reads `stat` / `condition`, not `trigger`).
 
-Spin Doctor Customs: the world track's door markers (07_ai, `World.doors` kind `modshop`) open the two real shops,
-with their mission / wanted gating; 06b's own bay stands down for any shop with such a door and only serves a
-`modshop` landmark without one (its `points.bay`, else its door; stopping within 6 m under 2.5 m/s). Whoever emits
-`modshop:open {vehicle, shop, landmark?, catalog?}`, 06b plays the wrench and emits `modshop:close {shop}` once the car is
-12 m from where the shop opened. The UI draws the shop and calls `buyMod` (or `mod` for previews).
+Spin Doctor Customs: 06b's drive-in bay opens every shop (any landmark with `kind: 'modshop'`, an id starting
+`spin_doctor` or "Spin Doctor" in its name; its `points.bay`, else its door; stopping within 6 m under 2.5 m/s; refused
+with stars on). The world track's door marker (07_ai, `World.doors` kind `modshop`) stands down while
+`GTP.Vehicles.modshop` exists (07_ai.js doorTrigger), so there is one `modshop:open` per drive-in; the bay never opens a
+second time while a shop is open. Whoever emits `modshop:open {vehicle, shop, landmark?, catalog?}`, 06b plays the
+wrench and emits `modshop:close {shop}` once the car is 12 m from where the shop opened. The UI draws the shop and
+calls `buyMod` (or `mod` for previews).
 
 Garages: driving into an owned safehouse's garage door (07_ai, `World.doors` kind `garage`) calls `store` (refusals
 are toasted from `reason`). Taking a car out: on foot within the door ring (plus 1.5 m) of an owned garage that holds

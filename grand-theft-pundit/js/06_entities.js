@@ -34,6 +34,9 @@
   var WATER_Y = C.WATER_Y;
   var STEP_WALL = 0.5;   // a wheel rising more than this in one step meets a wall (the ped step-up)
   var scratch = [], scratch2 = [], contactBuf = [];   // contactBuf: a vehicle step's one contact query (vehicles + peds)
+  // per-step scratch for the hot vehicle helpers (QA QAC-48): a heading and a local point filled in place, not allocated
+  var DIR = { x: 0, z: 0 }, LOC = { r: 0, f: 0 };
+  function dirInto(yaw, o) { o.x = -Math.sin(yaw); o.z = -Math.cos(yaw); return o; }
 
   function W() { return GTP.World; }
   function fx(o) { if (GTP.Render && GTP.Render.fx) { try { GTP.Render.fx.add(o); } catch (e) { /* fx are optional */ } } }
@@ -197,7 +200,8 @@
       if (this.lineTime > 0) { this.lineTime -= dt; if (this.lineTime <= 0) this.line = null; }
       if (this.exitLock > 0) this.exitLock -= dt;
       // body tilt for the mesh: face down when knocked flat or dead, prone when swimming
-      var tiltTarget = this.inVehicle ? 0 : (this.knockedDown || !this.alive) ? -Math.PI / 2 : (this.swimming ? -(Math.PI / 2 - 0.22) : 0);
+      // (treading water stands more upright, head up; swimming lies prone)
+      var tiltTarget = this.inVehicle ? 0 : (this.knockedDown || !this.alive) ? -Math.PI / 2 : (this.swimming ? -(Math.PI / 2 - 0.22) * U.clamp(0.45 + (this.speed || 0) / 1.5, 0.45, 1) : 0);
       this.tilt = U.damp(this.tilt, tiltTarget, 9, dt);
       if (this.inVehicle) {
         // the vehicle moves us; keep the hash and the interpolation in step
@@ -506,6 +510,8 @@
     localToWorld(lr, lf) { var f = U.yawToDir(this.yaw); return { x: this.x + (-f.z) * lr + f.x * lf, z: this.z + f.x * lr + f.z * lf }; }
     worldToLocal(x, z) { var f = U.yawToDir(this.yaw), dx = x - this.x, dz = z - this.z; return { r: dx * (-f.z) + dz * f.x, f: dx * f.x + dz * f.z }; }
     occupants() { var o = []; if (this.driver) o.push(this.driver); for (var i = 0; i < this.passengers.length; i++) o.push(this.passengers[i]); return o; }
+    // worldToLocal into the module scratch (valid until the next call): the per-step paths below
+    _local(x, z) { var f = dirInto(this.yaw, DIR), dx = x - this.x, dz = z - this.z; LOC.r = dx * (-f.z) + dz * f.x; LOC.f = dx * f.x + dz * f.z; return LOC; }
     hasPlayer() { var p = player(); return !!p && p.inVehicle === this; }
     setControls(throttle, steer, handbrake, brake) { this.throttle = throttle || 0; this.steer = steer || 0; this.handbrake = !!handbrake; this.brake = brake || 0; }
     honk() { if (this.honkT <= 0) { this.honkT = 0.6; sfx('horn', this.x, this.z, 0.8); GTP.Events.emit('honk', { vehicle: this }); } }
@@ -522,14 +528,14 @@
       return Math.min(U.dist2d(px, pz, a.x, a.z), U.dist2d(px, pz, b.x, b.z), this.edgeDistance(px, pz) + 0.4);
     }
     edgeDistance(px, pz) {
-      var l = this.worldToLocal(px, pz), dr = Math.max(0, Math.abs(l.r) - this.hw), df = Math.max(0, Math.abs(l.f) - this.hl);
+      var l = this._local(px, pz), dr = Math.max(0, Math.abs(l.r) - this.hw), df = Math.max(0, Math.abs(l.f) - this.hl);
       return Math.sqrt(dr * dr + df * df);
     }
     // circle vs this oriented box: {px, pz, nx, nz, depth} push-out for the circle or null
     pushCircle(cx, cz, r) {
-      var l = this.worldToLocal(cx, cz), hw = this.hw + r, hl = this.hl + r;
+      var l = this._local(cx, cz), hw = this.hw + r, hl = this.hl + r;
       if (Math.abs(l.r) >= hw || Math.abs(l.f) >= hl) return null;
-      var dr = hw - Math.abs(l.r), df = hl - Math.abs(l.f), f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x, nx, nz, depth;
+      var dr = hw - Math.abs(l.r), df = hl - Math.abs(l.f), f = DIR, rx = -f.z, rz = f.x, nx, nz, depth;
       if (dr < df) { var s = l.r < 0 ? -1 : 1; nx = rx * s; nz = rz * s; depth = dr; }
       else { var s2 = l.f < 0 ? -1 : 1; nx = f.x * s2; nz = f.z * s2; depth = df; }
       return { px: nx * (depth + 0.01), pz: nz * (depth + 0.01), nx: nx, nz: nz, depth: depth };
@@ -683,8 +689,8 @@
         if (this.wreck) { this.wreckT += dt; if (this.wreckT > PH.wreckSeconds && !this.persistent) this.destroy(); }
         return;
       }
-      // frame
-      var f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x;
+      // frame (the heading in a per-vehicle scratch: QA QAC-48)
+      var f = dirInto(this.yaw, this._fU || (this._fU = { x: 0, z: 0 })), rx = -f.z, rz = f.x;
       var vf = this.vx * f.x + this.vz * f.z, vl = this.vx * rx + this.vz * rz;
       var tile = Wd.tileAt(this.x, this.z), T = Wd.T;
       this.offroad = tile === T.GRASS || tile === T.SAND;
@@ -759,7 +765,7 @@
       this._collideVehicles(near);
       this._collidePeds(near);
       // re-derive the decomposition
-      f = U.yawToDir(this.yaw); rx = -f.z; rz = f.x;
+      f = dirInto(this.yaw, f); rx = -f.z; rz = f.x;
       this.speed = this.vx * f.x + this.vz * f.z; this.lateral = this.vx * rx + this.vz * rz;
       if (Math.abs(this.speed) < 0.15 && Math.abs(this.lateral) < 0.15 && !throttle && this.onGround) { this.vx = this.vz = 0; this.speed = 0; this.lateral = 0; }
       this.reversing = this.speed < -0.8;
@@ -778,10 +784,11 @@
       void x0; void z0;
     }
     _sampleWheels() {
-      var Wd = W(), hw = this.hw * 0.9, hl = this.hl * 0.75, f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x, y = this.y;
-      var pts = [[-hw, hl], [hw, hl], [-hw, -hl], [hw, -hl]], h = this.wheelY, mx = -1e9;
+      var Wd = W(), hw = this.hw * 0.9, hl = this.hl * 0.75, f = dirInto(this.yaw, DIR), rx = -f.z, rz = f.x, y = this.y;
+      var h = this.wheelY, mx = -1e9;
       for (var i = 0; i < 4; i++) {
-        var px = this.x + rx * pts[i][0] + f.x * pts[i][1], pz = this.z + rz * pts[i][0] + f.z * pts[i][1];
+        var lr = (i & 1) ? hw : -hw, lf = i < 2 ? hl : -hl;   // front left, front right, rear left, rear right
+        var px = this.x + rx * lr + f.x * lf, pz = this.z + rz * lr + f.z * lf;
         h[i] = Wd.heightAt(px, pz, y);
         if (h[i] > mx) mx = h[i];
       }
@@ -791,7 +798,9 @@
       var c = n ? sum / n : mx;
       var hf = (Math.max(h[0], mx - 1.6) + Math.max(h[1], mx - 1.6)) / 2, hr = (Math.max(h[2], mx - 1.6) + Math.max(h[3], mx - 1.6)) / 2;
       var hL = (Math.max(h[0], mx - 1.6) + Math.max(h[2], mx - 1.6)) / 2, hR = (Math.max(h[1], mx - 1.6) + Math.max(h[3], mx - 1.6)) / 2;
-      return { c: c, pitch: Math.atan2(hf - hr, 2 * hl), roll: Math.atan2(hR - hL, 2 * hw) };
+      var o = this._wheelS || (this._wheelS = { c: 0, pitch: 0, roll: 0 });
+      o.c = c; o.pitch = Math.atan2(hf - hr, 2 * hl); o.roll = Math.atan2(hR - hL, 2 * hw);
+      return o;
     }
     // after _sampleWheels: the wheels that rose more than STEP_WALL since the last spot (x0, z0, heading f0), summed as
     // local offsets {r, f, n}; null when none did (a slope rises a few cm a step, a wedge face 1.3 m at once)
@@ -808,9 +817,8 @@
       return n ? { r: sr, f: sf, n: n } : null;
     }
     _syncOccupants() {
-      var occ = this.occupants();
-      for (var i = 0; i < occ.length; i++) {
-        var o = occ[i];
+      for (var i = -1; i < this.passengers.length; i++) {
+        var o = i < 0 ? this.driver : this.passengers[i]; if (!o) continue;
         o.x = this.x; o.y = this.y; o.z = this.z; o.yaw = this.yaw; o.vx = this.vx; o.vz = this.vz; o.vy = this.vy;
         if (o.kind === 'player') o.stats.distanceDriven = (o.stats.distanceDriven || 0) + this.speed2d() * C.STEP;
         if (o._sh) GTP.Entities.hash.update(o);
@@ -819,7 +827,7 @@
 
     // --- buildings, props, barriers, map edge: oriented box points vs the world ---
     _collideWorld(dt) {
-      var Wd = W(), PH = C.PHYS, pts = this._coll.pts, f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x;
+      var Wd = W(), PH = C.PHYS, pts = this._coll.pts, f = dirInto(this.yaw, this._fC || (this._fC = { x: 0, z: 0 })), rx = -f.z, rz = f.x;
       var I = (this.cls.length * this.cls.length + this.cls.width * this.cls.width) / 12;
       var impactMax = 0, ix = 0, iz = 0, inx = 0, inz = 0, hit = false;
       for (var i = 0; i < pts.length; i++) {

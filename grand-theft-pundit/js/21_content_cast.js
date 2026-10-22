@@ -64,7 +64,7 @@
     player: member('player', 'Bryce Takesworth', 'Campus pundit, host of Loud & Correct', 'smug',
       'Prefaces every insult with "Respectfully," and then is not; calls himself a journalist; he is not.',
       P.player, '#ff3fa4',
-      'Left class in week two to table outside it. Believes he is the protagonist, which is the problem.',
+      'Took one public-speaking elective and never stopped. Believes he is the protagonist, which is the problem.',
       '#f4f4f4', '#2a2f4a'),
 
     sloane: member('sloane', 'Sloane Vexley', 'Producer', 'clipped',
@@ -118,7 +118,7 @@
     warbanner: member('warbanner', 'PM Hollis Warbanner', 'Prime Minister of Bravadia, an invented allied nation', 'podium',
       'Every sentence, including condolences, ends "and that\'s why we need the jets."',
       P.warbanner, '#3d6fcf',
-      'Leads a country of eleven million citizens and forty million press releases (motto: Volume Is Policy). Buys ads, sells scooters, wants jets.',
+      'Leads a country of four hundred thousand citizens and forty million press releases (motto: Volume Is Policy). Buys ads, sells scooters, wants jets.',
       '#2a3a6a', '#1a2444'),
 
     velvetine: member('velvetine', 'Baron Velvetine', 'Music mogul, Velvetine Records', 'toast',

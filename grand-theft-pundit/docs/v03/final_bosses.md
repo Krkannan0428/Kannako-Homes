@@ -1,7 +1,8 @@
 # v0.3 final: bosses (js/08b_bosses.js, tests/bosses.js)
 
-Branch `v03r1/bosses`, from `game/grand-theft-pundit` at 10ba585 (the base had not moved at the final push, so there was
-nothing to merge). Details, decisions and the patches requested from other files: `docs/v03/triage_bosses.md`.
+Branch `v03r1/bosses`. The last round fast-forwarded to `game/grand-theft-pundit` a94bf77 (the merge of every head), then
+applied this track's own content patches to `js/25_content_parity.js`, which has no owner now. Details, decisions and the
+patches requested from other files: `docs/v03/triage_bosses.md`.
 
 ## Fixed
 
@@ -37,21 +38,26 @@ nothing to merge). Details, decisions and the patches requested from other files
   - Combat's native step hook marks `Combat.update._bosses`, so this file's tick wrapper stands down and nothing ticks twice.
 - **Scooters** stay class `bike`: the `moto` is a sport bike with a thrown-rider path that leaves guards idle.
 
+- **Boss mission text** (`25_content_parity.js`, last round):
+  - the six missions now say what the fights do: spools then the teleprompter (b01); four speaker stacks the roadies rebuild
+    (b02); a flying jet, three Defense Scooters and press releases instead of the cutout truck in the sea (b03); the black
+    [REDACTED] patch that goes gray (b04); fists only, Dunk's four cards and five tables (b05); three debate rounds and two
+    security waves (b06);
+  - the approach goals already go through `GTP.Bosses.arenaTarget(id)` (the `arena()` helper); its fallback table now has
+    Goldplate's new arena;
+  - b01's reward and anything golf-related were left as they are (a human decision).
+
 ## Still open (other owners; patches in triage_bosses.md)
 
-- **ui (11_ui.js)**:
-  - weak points are labelled WEATHER BALLOON (should read `entity.label`) and show on the minimap's helicopter X;
-  - `boss:end` and the shield state aren't handled (08b covers both from its side until the UI sets `handlesBossEnd` /
-    `drawsBossShield`).
+- **ui (11_ui.js)**: done on a94bf77 (weak-point labels, no minimap X for parts, `boss:end`).
 - **combat**: re-lock after a hard-locked target goes down is on `v03r1/combat` ("hop off a downed hard lock"); no crime for
   hitting a boss part. 08b's wrapper on `AI.wanted.crime` still covers it.
 - **story**: Game.step ticking the bosses is done on `v03r1/combat` instead (fine). A public checkpoint API is still wanted;
   08b edits `Missions.debug.run().checkpoint` in place.
-- **content (25_content_parity.js, no owner)**:
-  - point the b01 and b06 approach goals at `GTP.Bosses.arenaTarget(id)`;
-  - drop the golf framing and the putter reward from b01 (a human decision);
-  - mission text doesn't match the fights (spool, speaker and table counts; Dunk's cards; the Panel's rounds).
-- **audio**: reset the boss stinger on `boss:end`.
+- **content**: done in this round (above). A human should still look at the b01 reward and setting against CONTENT_RULES 2.
+- **audio (03_audio.js, not this track's file)**: the seen-boss list still resets on `load:begin` / `mission:fail(ed)` /
+  `failed` / `player:wasted` but not on `boss:end` (≈1092). Add `'boss:end'` to that list so a fight that ended and starts
+  again plays `bossStinger`.
 - **QA, debate minigame** (b06): Escape plays DEFINE TERMS; no gamepad SHOUT; no pause during a debate.
 - **Balance to watch**:
   - Warbanner is the hardest fight for the bot on the trial merge (3 retries, mostly the guards' and the PM's pistols in
@@ -60,6 +66,25 @@ nothing to merge). Details, decisions and the patches requested from other files
     (armor from phase 2), and RETRY resumes at the phase.
 
 ## Test results
+
+Final round, on a94bf77 + this round's commits:
+- `tests/bosses.js`: PASS.
+
+  | Fight | Play time | hp lost | Retries |
+  |---|---|---|---|
+  | Goldplate | 119 s | 10 | 0 |
+  | Velvetine | 134 s | 7 | 0 |
+  | Warbanner | 129 s | 199 | 1 |
+  | Redacted | 124 s | 138 | 0 |
+  | Dunk | 89 s | 0 | 0 |
+  | Panel | 120 s | 266 | 1 |
+
+  The rules, checkpoint, specials and lifecycle sections pass.
+- `tests/content_parity.js`: 6106 checks, 0 failed. `tests/content_audit.js`: OK (256 files, 0 hits).
+- `tests/campaign.js` with `CAMPAIGN_FROM=b01_goldplate CAMPAIGN_TO=b06_panel`: PASS. Every boss mission starts from its giver's
+  light, plays its intro cutscene and completes, with the story missions between them.
+
+Earlier rounds:
 
 - `tests/bosses.js` on `v03r1/bosses` (seed 7, all six in one page): PASS.
 

@@ -44,8 +44,9 @@
   var SCOPE = ['muzzle', 'mag', 'optic', 'grip'];
   function un(mission) { return mission ? { mission: mission } : null; }
   // a boss fight's arena as a mission target: the bosses track's own centre when 08b is loaded, else the same numbers
-  // copied from docs/v03/bosses.md (offsets in metres). The fight fails if the player stays 150 m away for 10 s.
-  var ARENAS = { b01_goldplate: ['stadium', -40, 30], b02_velvetine: ['afterparty_yacht', -10, 10], b03_warbanner: ['airport_runway', 0, 26],
+  // the fallback when GTP.Bosses is missing (offsets in metres; 08b_bosses.js loads first, so arenaTarget answers). A
+  // mission's fight waits until the player is within 70 m of the arena, then fails if they stay 150 m away for 10 s.
+  var ARENAS = { b01_goldplate: ['stadium', 20, 60], b02_velvetine: ['afterparty_yacht', -10, 10], b03_warbanner: ['airport_runway', 0, 26],
     b04_redacted: ['balloon_depot', 50, 10], b05_dunk: ['campus_quad', 0, -20], b06_panel: ['protest_plaza', 100, 40] };
   function arena(id) {
     var B = GTP.Bosses, t = B && typeof B.arenaTarget === 'function' ? B.arenaTarget(id) : null, a = ARENAS[id];
@@ -123,8 +124,8 @@
       pellets: 7, vehicleMul: 0.6, knock: 3, driveBy: true, flavor: 'Cut for time. Still loud.' },
     { id: 'doublebarrel', name: 'The Both-Sider', class: 'shotgun', dmg: 105, rate: 2.4, mag: 2, reserve: 40, reload: 1.8, spread: 0.1, bloom: null, recoil: 4.0, range: 9, projectile: 'hitscan', hold: 'two', price: 900, unlock: un('b01_goldplate'), attachments: ['light'],
       pellets: 8, vehicleMul: 0.65, knock: 3.5, flavor: "Fell out of a gold helicopter. One barrel for each side. Both rated a ten." },
-    { id: 'autoshotgun', name: 'Town Hall', class: 'shotgun', dmg: 50, rate: 3, mag: 12, reserve: 72, reload: 2.4, spread: 0.09, bloom: null, recoil: 2.0, range: 12, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('b05_dunk'), attachments: SHOTTY,
-      auto: true, pellets: 6, vehicleMul: 0.6, knock: 2.2, flavor: "Dunk's favorite. Everyone gets a question, very fast. Nobody read the questions." },
+    { id: 'autoshotgun', name: 'Reply All', class: 'shotgun', dmg: 50, rate: 3, mag: 12, reserve: 72, reload: 2.4, spread: 0.09, bloom: null, recoil: 2.0, range: 12, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('b05_dunk'), attachments: SHOTTY,
+      auto: true, pellets: 6, vehicleMul: 0.6, knock: 2.2, flavor: 'Goes to everyone at once. Nobody asked for it, and it keeps going.' },
     // ---- snipers
     { id: 'marksman', name: 'The Peer Reviewer', class: 'sniper', dmg: 70, rate: 2.0, mag: 10, reserve: 60, reload: 2.4, spread: 0.05, bloom: null, recoil: 2.4, range: 120, projectile: 'hitscan', hold: 'two', price: 5200, unlock: un('m13_thursday'), attachments: SCOPE,
       scope: true, scopedSpread: 0.004, headMul: 2.5, vehicleMul: 0.9, noAuto: true, flavor: 'Semi-automatic review. Accepted with revisions. Ten of them.' },
@@ -356,7 +357,7 @@
       reacts: { m11_trustless: -0.8, m13b_ratio: 4.0, m14_grift: -0.5 } },
     { ticker: 'TYNX', name: 'The Yell Network', price: 64, vol: 0.03, flavor: 'Twenty-four hours, zero days of reporting, steady margins.',
       reacts: { m04_hit: 0.03, b04_redacted: 0.1, b06_panel: 0.12, m14_grift: 0.2, m15b_liveread: -0.3 } },
-    { ticker: 'BSAR', name: 'Both Sides Arms', price: 75, vol: 0.02, flavor: 'Goes up whenever anything happens to anyone. Balanced.',
+    { ticker: 'BSAR', name: 'Both Sides Arms', price: 75, vol: 0.02, flavor: 'Goes up whenever anyone shouts. Balanced.',
       reacts: { m01c_both_sides: 0.02, b01_goldplate: 0.03, b03_warbanner: 0.05, b05_dunk: 0.03, h03_job: 0.06, m13_thursday: 0.08 } }
   ];
   P.stockApp = { name: 'Liquidity', by: 'Kyler Moonsworth', tagline: 'Trade trustlessly. That means trust us.', fee: 0.01 };
@@ -640,11 +641,11 @@
         { who: 'player', text: "He has a helicopter?" },
         { who: 'sloane', text: "He has one. The roof sign says two. That's why the ticker says both." },
         { who: 'goldplate', radio: true, text: "Takesworth! Look up! THE GOLDPLATE HOUR WITH GOLDPLATE. The ribbon's a ten. You're a guest." },
-        { who: 'gus', text: "The ribbon's on four spools under the skids. Shoot the spools. I'm sound, but even I can hear that's physics." }
+        { who: 'gus', text: "The ribbon's on spools under the skids. Shoot them and it lands. Then the teleprompter. I'm sound. That's physics." }
       ],
       objectives: [
-        { type: 'goto', target: arena('b01_goldplate'), radius: 160, text: 'Get under the gold helicopter, over the stadium lots' },
-        { type: 'boss', bossId: 'b01_goldplate', text: 'Shoot the four ribbon spools under the gold helicopter to ground it' },
+        { type: 'goto', target: arena('b01_goldplate'), radius: 160, text: 'Get under the gold helicopter, east of the stadium' },
+        { type: 'boss', bossId: 'b01_goldplate', text: 'Shoot the ribbon spools to ground the gold helicopter, then wreck his teleprompter' },
         { type: 'dialogue', lines: [
           { who: 'goldplate', text: "I'm landing. On purpose. It's a ten-point landing. In my own parking lot. On purpose." },
           { who: 'player', text: "Respectfully, sir, you're across four spaces." },
@@ -669,7 +670,7 @@
       intro: [
         { who: 'gus', text: "The Baron's yacht has forty speakers and none of them are on. That offends me professionally." },
         { who: 'player', text: "The Baron pinned the warehouse on me and parked me at customs." },
-        { who: 'gus', text: "So we turn them on. Too loud. Six of them blow. He hides behind the silence. No silence, no Baron." },
+        { who: 'gus', text: "So we wreck the stacks. All four. The roadies rebuild, we wreck again. No silence, no Baron." },
         { who: 'velvetine', text: "To silence! To the absence of the drop! Nobody touch the speakers, they've never been used, they're vintage!" },
         { who: 'kip', text: "I'm the DJ tonight. I'm reading a spreadsheet. Is this paid?" }
       ],
@@ -699,16 +700,16 @@
       intro: [
         { who: 'roz', text: "WE'RE NOT HERE TO STOP THE PARADE. We're here to stand in front of it. Loudly." },
         { who: 'warbanner', text: "The Bravadian Volume Day Flyover. Today the jet flies, low, over the runway. And that's why we need the jets." },
-        { who: 'player', text: "The jet is a cutout on a truck." },
-        { who: 'warbanner', text: "The new jet is a cutout on a faster truck. Forty Defense Scooters ride alongside. And that's why we need the jets." },
+        { who: 'player', text: "Last year the jet was a cutout on a truck." },
+        { who: 'warbanner', text: "This year it flies. Low. Probably. Three Defense Scooters guard the podium. And that's why we need the jets." },
         { who: 'sloane', text: "Runway. Dodge the flyover, wreck the scooter column. Two minutes. One." }
       ],
       objectives: [
         { type: 'goto', target: arena('b03_warbanner'), radius: 160, text: 'Get to Runway 10/10 before the flyover. Drive; it is across the bay' },
         { type: 'boss', bossId: 'b03_warbanner', text: 'Dodge the jet flyover and wreck the Defense Scooter column' },
         { type: 'dialogue', lines: [
-          { who: 'warbanner', text: "The jet has landed. On its side. In the sea. Plural jets, now. And that's why we need the jets." },
-          { who: 'roz', text: "WE'RE NOT HERE TO CHEER! HOORAY, HOORAY, THE JET'S IN THE BAY!" }
+          { who: 'warbanner', text: "The jets came. They papered the wrong podium. Mine. Plural jets, now. And that's why we need the jets." },
+          { who: 'roz', text: "WE'RE NOT HERE TO CHEER! HOORAY, HOORAY, THE PRESS RELEASE WON THE DAY!" }
         ] },
         { type: 'escape_wanted', setWanted: 3, text: 'Airport security rates the flyover a three. Lose them' }
       ],
@@ -717,7 +718,7 @@
         { who: 'player', text: "Respectfully, I'm not paying for scooters I wrecked." },
         { who: 'warbanner', text: "Then Bravadia gifts you a carbine. Gifts are tax-free. And that's why we need the jets." },
         { who: 'roz', text: "NO JETS TODAY, MORE JETS TOMORROW! WE'RE NOT HERE TO BE CONSISTENT, WE'RE HERE TO BORROW!" },
-        { who: 'kip', text: "I was on the truck. With the jet. In the sea. Is this paid?" }
+        { who: 'kip', text: "I was handing out the press releases. The jets took them back. Is this paid?" }
       ],
       failOn: ['player_dead'],
       onComplete: { unlockWeapon: 'carbine', setFlag: 'flyover_grounded' }
@@ -729,13 +730,13 @@
       intro: [
         { who: 'kip', text: "I'm in the balloon. I'm not supposed to be in the balloon. There is a balloon. It's huge. Is this paid?" },
         { who: 'redacted', text: "You found the [REDACTED]. It is a weather balloon. It has never measured weather. It measures [REDACTED]." },
-        { who: 'player', text: "It's shaped like my face." },
-        { who: 'redacted', text: "Everything we [REDACTED] is shaped like your face. The vans circle. The vans always circle." },
-        { who: 'gus', text: "It's got panels. Each one pops at about ninety decibels. Pop them all. You'll be peaking." }
+        { who: 'player', text: "It says weather balloon on it. Officially." },
+        { who: 'redacted', text: "Everything we [REDACTED] says that on it. The vans circle. The vans always circle." },
+        { who: 'gus', text: "One soft spot: the black patch. It moves. When it goes gray, wait. Pop it enough and she runs out of balloon." }
       ],
       objectives: [
         { type: 'goto', target: arena('b04_redacted'), radius: 160, text: 'Get into the depot lot, under the balloon' },
-        { type: 'boss', bossId: 'b04_redacted', text: 'Pop the giant weather balloon panel by panel while the vans circle' },
+        { type: 'boss', bossId: 'b04_redacted', text: 'Shoot the black [REDACTED] patch on the balloon while the vans circle' },
         { type: 'dialogue', lines: [
           { who: 'redacted', text: "The [REDACTED] has been [REDACTED]." },
           { who: 'player', text: "It's popped. You can say popped." },
@@ -745,7 +746,7 @@
       ],
       outro: [
         { who: 'redacted', text: "Good. The [REDACTED] will be blamed on the weather. The weather will be blamed on you." },
-        { who: 'player', text: "Respectfully, it was a balloon of my face." },
+        { who: 'player', text: "Respectfully, it was a balloon." },
         { who: 'redacted', text: "It was a [REDACTED] of your [REDACTED]. Take this. It sticks. Like everything you say." },
         { who: 'kip', text: "I came down with the balloon. Slowly. It was nice. Is this paid?" }
       ],
@@ -853,21 +854,21 @@
         { who: 'dunk', text: "Didn't read the calendar. Thursday's over. Replied anyway. Table to table, Takesworth. Bring cards." },
         { who: 'player', text: "Respectfully, Ptolemy, we're both on the list. Everyone's on the list." },
         { who: 'dunk', text: "Didn't read the list." },
-        { who: 'gus', text: "He plays cards: shove, slam, flip. Counter the card, then hit him. He telegraphs. He's peaking." }
+        { who: 'gus', text: "Fists only. He holds up a card: DIDN'T READ, RATIO, QUOTE POST, BLOCKED. Counter it, then hit him." }
       ],
       objectives: [
         { type: 'goto', target: arena('b05_dunk'), radius: 160, text: "Get to Dunk's table on the Quad" },
         { type: 'boss', bossId: 'b05_dunk', text: "Brawl table to table: counter Dunk's cards, then hit back" },
         { type: 'dialogue', lines: [
           { who: 'dunk', text: "Didn't read it. Lost anyway." },
-          { who: 'player', text: "You fought across nine tables." },
-          { who: 'dunk', text: "Eight. The ninth was the Clip Joint's chair. The only chair. Didn't read the sign." }
+          { who: 'player', text: "You fought across five tables." },
+          { who: 'dunk', text: "Four. The fifth was the Clip Joint's chair. The only chair. Didn't read the sign." }
         ] }
       ],
       outro: [
         { who: 'dunk', text: "Ratio'd. By a folding table. My chat is clipping it. My chat is clipping me losing. Engagement's up." },
         { who: 'player', text: "Respectfully, you were the content." },
-        { who: 'dunk', text: "Everyone's the content. Take the Town Hall. Everyone gets a question. Didn't read the questions." },
+        { who: 'dunk', text: "Fine. You out-talked me. Merle put something in the back with your name on it. Didn't read the receipt." },
         { who: 'kip', text: "I sold nine tickets. Standing room. Is this paid?" }
       ],
       failOn: ['player_dead'],
@@ -878,25 +879,25 @@
       id: 'b06_panel', story: true, title: 'The Undercard', act: 3,
       giver: 'chyron', marker: 'protest_plaza', requires: ['m13b_ratio'], reward: 3500,
       intro: [
-        { who: 'chyron', text: "BREAKING. Undercard. Outdoor set. Five rounds. Between rounds: the audience." },
-        { who: 'player', text: "The audience?" },
-        { who: 'chyron', text: "Everyone's goons. Debate a round, survive a wave, debate a round. WE'LL HAVE TO LEAVE IT THERE. Eventually." },
+        { who: 'chyron', text: "BREAKING. Undercard. Outdoor set. Three debate rounds. Between rounds: security." },
+        { who: 'player', text: "Security?" },
+        { who: 'chyron', text: "Everyone's goons. Debate, survive a wave, debate. Last round, all five at once. WE'LL HAVE TO LEAVE IT THERE." },
         { who: 'sloane', text: "It's a rehearsal for tonight. Rehearsals are live now. Everything's live. Go." },
         { who: 'kip', text: "I'm the floor manager. Nobody told me. Is this paid?" }
       ],
       objectives: [
         { type: 'goto', target: arena('b06_panel'), radius: 160, text: "Get to The Yell Network's outdoor set past the plaza" },
-        { type: 'boss', bossId: 'b06_panel', text: 'Win the undercard: debate rounds and audience waves, alternating' },
+        { type: 'boss', bossId: 'b06_panel', text: 'Win the undercard: debate rounds and security waves, alternating' },
         { type: 'dialogue', lines: [
           { who: 'chyron', text: "BREAKING. Kid wins the undercard. The main event is tonight." },
           { who: 'goldplate', text: "I rate the undercard a ten. I was on it. I lost. I rate losing a ten." }
         ] }
       ],
       outro: [
-        { who: 'chyron', text: "Five guests, five rounds, five waves. Ratings: yes. Tonight it's the real panel. Same guests. Same memo." },
+        { who: 'chyron', text: "Five guests, three rounds, two waves. Ratings: yes. Tonight it's the real panel. Same guests. Same memo." },
         { who: 'player', text: "Respectfully, they all said the same thing every round." },
         { who: 'chyron', text: "That's the format. Take the Spin Machine, from props. Always on message. WE'LL HAVE TO LEAVE IT THERE." },
-        { who: 'kip', text: "I counted the waves. Five. Is this paid?" }
+        { who: 'kip', text: "I counted the waves. Two. It felt like five. Is this paid?" }
       ],
       failOn: ['player_dead'],
       onComplete: { unlockWeapon: 'spin', setFlag: 'undercard_won' }

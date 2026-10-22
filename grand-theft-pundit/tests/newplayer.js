@@ -175,6 +175,7 @@ function installPlayer(budget) {
           const f = U.yawToDir(v0.yaw); let ahead = 0; for (let d = 3; d <= 12; d += 1) if (roadAt(v0.x + f.x * d, v0.z + f.z * d)) { ahead = d; break; }
           // someone on the pavement in front (the giver, Kip, a passer-by): wait for them, a few seconds at most, never drive through
           const inPath = (v) => { const fd = U.yawToDir(v.yaw); return GTP.Entities.near(v.x, v.z, 9).some((e) => e !== v && e !== p && !e.removed && ((e.kind === 'ped' && e.alive && !e.inVehicle) || e.kind === 'vehicle') && (() => { const dx = e.x - v.x, dz = e.z - v.z, al = dx * fd.x + dz * fd.z, sd = Math.abs(dx * -fd.z + dz * fd.x); return al > 1 && al < 6.5 && sd < 1.9; })()); };
+          if (ahead && !NP.clearSeg(v0, { x: v0.x + f.x * (ahead + 2), z: v0.z + f.z * (ahead + 2) })) ahead = 0;   // a tree or a lamp in the way out: follow the line instead
           if (ahead) { let waited = 0; for (let k = 0; k < 240 && p.inVehicle && !roadAt(p.inVehicle.x, p.inVehicle.z) && !stop(); k++) { const blocked = inPath(p.inVehicle); if (blocked) { waited += 1 / 30; if (waited > 4) break; } NP.hold('forward', !blocked && p.inVehicle.speed < 5); NP.hold('back', false); NP.hold('jump', blocked); NP.adv(1 / 30); t += 1 / 30; } NP.releaseAll(); NP.notes.pulledOut = (NP.notes.pulledOut || 0) + 1; if (waited) NP.notes.pullOutWaited = +((NP.notes.pullOutWaited || 0) + waited).toFixed(1); }
         } }
       let route = getRoute(), i = 0, lastProg = t, best = 1e9, rev = 0, reroutes = 0, aheadT = 0, passT = 0;
@@ -184,7 +185,9 @@ function installPlayer(budget) {
         const v = p.inVehicle; if (!v) { NP.releaseAll(); return { ok: false, why: 'not in a vehicle' }; }
         const pts = route.pts;
         while (i < pts.length - 1 && U.dist2d(v.x, v.z, pts[i].x, pts[i].z) < 6) i++;
-        let k = i; while (k < pts.length - 1 && U.dist2d(v.x, v.z, pts[k].x, pts[k].z) < 9) k++;
+        // look ahead along the line only as far as the straight way there is clear (a building corner, a kerb tree, a lamp):
+        // cutting the corner of the GPS line put the van against a kerb tree for a minute
+        let k = i; while (k < pts.length - 1 && U.dist2d(v.x, v.z, pts[k].x, pts[k].z) < 9 && NP.clearSeg(v, pts[k + 1])) k++;
         const tg = pts[k], d = U.dist2d(v.x, v.z, tg.x, tg.z), last = pts[pts.length - 1];
         const dEnd = U.dist2d(v.x, v.z, last.x, last.z);
         const err = U.wrapAngle(U.dirToYaw(tg.x - v.x, tg.z - v.z) - v.yaw);
@@ -227,6 +230,19 @@ function installPlayer(budget) {
       NP.releaseAll();
       const vv = p.inVehicle;
       return { ok: stop(), t, why: (NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s') + (vv ? ' at ' + Math.round(vv.x) + ',' + Math.round(vv.z) + (aheadT > 0 ? ', blocked ahead' : '') + ', overtakes ' + (NP.notes.overtakes || 0) : '') };
+    },
+    // a straight drive from a to b passes no building and no solid prop (a van is about 2 m wide)
+    clearSeg(a, b) {
+      const W = GTP.World;
+      if (W.segmentClear && !W.segmentClear(a.x, a.z, b.x, b.z, a.y || 0)) return false;
+      const props = W.props || [], minX = Math.min(a.x, b.x) - 2, maxX = Math.max(a.x, b.x) + 2, minZ = Math.min(a.z, b.z) - 2, maxZ = Math.max(a.z, b.z) + 2;
+      const dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1;
+      for (const pr of props) {
+        if (!pr.solid || pr.x < minX || pr.x > maxX || pr.z < minZ || pr.z > maxZ) continue;
+        const tt = Math.max(0, Math.min(1, ((pr.x - a.x) * dx + (pr.z - a.z) * dz) / L2)), qx = a.x + dx * tt - pr.x, qz = a.z + dz * tt - pr.z;
+        if (qx * qx + qz * qz < Math.pow(1.3 + (pr.r || 0.3), 2)) return false;
+      }
+      return true;
     },
     // the nearest objective blip on the minimap (pickups show one blip each), else the HUD arrow's point
     objectivePoint() {
@@ -274,6 +290,9 @@ function installPlayer(budget) {
         const txt = text0.toLowerCase();
         // the shooting range (m01c: "bronze at the range"): shoot the targets that pop up until range:end
         if (NP.rangeActive() || (NP.inArmory() && /range|target|medal|bronze|silver|gold/.test(txt) && NP.rangeTargets().length)) { const r = NP.shootRange(90); NP.say('range: ' + JSON.stringify(r)); continue; }
+        // a round ended short of the medal: the range says STEP OFF AND back on for another go
+        { const RG = GTP.Interiors && GTP.Interiors.range; if (RG && RG.needLeave && !RG.running && NP.inArmory() && /range|medal|bronze/.test(txt)) {
+          const bt = RG.booth || NP.arrow(); if (bt) { const away = { x: bt.x + 3, z: bt.z + 2.5 }; NP.walk(() => ({ pts: [away] }), () => !RG.needLeave || U.dist2d(p.x, p.z, away.x, away.z) < 0.8, 6); NP.notes.rangeRetries = (NP.notes.rangeRetries || 0) + 1; continue; } } }
         // a shop counter open (the armory UI): buy what the objective names
         NP.wantShop = /\bbuy\b|purchase|ammo box|shop/.test(txt);
         if (NP.shopUiOpen() || (NP.inArmory() && /\bbuy\b|purchase|pick up a|ammo box/.test(txt) && NP.tryOpenCounter())) { const r = NP.buyFromUi(txt); NP.say('buy: ' + JSON.stringify(r)); NP.adv(0.5); continue; }
@@ -399,10 +418,13 @@ function installPlayer(budget) {
       });
       return out;
     },
+    // the crosshair is the camera's own forward line (the shoulder camera need not look exactly along rig.yaw / rig.pitch): turn
+    // the view by how far that line is off the target
     aimAt(x, y, z) {
-      const cam = GTP.Render.camera, rig = GTP.Render.rig, sens = (GTP.C.CAMERA && GTP.C.CAMERA.lookSens) || 0.0032;
-      const dx = x - cam.position.x, dz = z - cam.position.z, dist = Math.hypot(dx, dz) || 1;
-      const yawErr = U.wrapAngle(U.dirToYaw(dx, dz) - rig.yaw), pitchErr = Math.atan2(cam.position.y - y, dist) - rig.pitch;
+      const cam = GTP.Render.camera, sens = (GTP.C.CAMERA && GTP.C.CAMERA.lookSens) || 0.0032;
+      const o = new THREE.Vector3(), f = new THREE.Vector3(); cam.getWorldPosition(o); cam.getWorldDirection(f);
+      const dx = x - o.x, dz = z - o.z, dist = Math.hypot(dx, dz) || 1;
+      const yawErr = U.wrapAngle(U.dirToYaw(dx, dz) - U.dirToYaw(f.x, f.z)), pitchErr = Math.atan2(o.y - y, dist) - Math.atan2(-f.y, Math.hypot(f.x, f.z));
       In.setLook(-Math.max(-0.3, Math.min(0.3, yawErr)) / sens, Math.max(-0.3, Math.min(0.3, pitchErr)) / sens);
       return Math.abs(yawErr) + Math.abs(pitchErr);
     },
