@@ -1,8 +1,9 @@
 # v0.3 final: bosses (js/08b_bosses.js, tests/bosses.js)
 
-Branch `v03r1/bosses`. The last round fast-forwarded to `game/grand-theft-pundit` a94bf77 (the merge of every head), then
-applied this track's own content patches to `js/25_content_parity.js`, which has no owner now. Details, decisions and the
-patches requested from other files: `docs/v03/triage_bosses.md`.
+Branch `v03r1/bosses`. The last round merged `game/grand-theft-pundit` 9f7c65c (every head plus the coordinator's
+content-rules pass, which keeps the President in the cockpit during b01's ground phase) and rebalanced Redacted on it. The
+round before fast-forwarded to a94bf77 and applied this track's own content patches to `js/25_content_parity.js`. Details,
+decisions and the patches requested from other files: `docs/v03/triage_bosses.md`.
 
 ## Fixed
 
@@ -37,6 +38,12 @@ patches requested from other files: `docs/v03/triage_bosses.md`.
     retries on the trial merge.
   - Combat's native step hook marks `Combat.update._bosses`, so this file's tick wrapper stands down and nothing ticks twice.
 - **Scooters** stay class `bike`: the `moto` is a sport bike with a thrown-rider path that leaves guards idle.
+- **Redacted on 9f7c65c** (`tests/bosses.js` failed twice there: three deaths in phase 3, 217 pistol and 190 van damage):
+  - the phase-3 gunman runs this file's gunner brain (`EP.gunnerBrain`: holds 8 to 14 m off, fires every 2.6 to 3.4 s
+    (`gunEvery`), never at a player on the floor) instead of the missions' brain (a shot every 1.6 s);
+  - the vans lap at 9 m/s (`vanSpeed`, was 11) and brake for a player on foot in their path instead of running them over;
+  - from phase 2 every popped patch drops a 20 hp health crate (`popHp`) under the balloon.
+- **Goldplate with the cockpit change** passes: no ped on the ground, the teleprompter takes the hits, nobody to hit.
 
 - **Boss mission text** (`25_content_parity.js`, last round):
   - the six missions now say what the fights do: spools then the teleprompter (b01); four speaker stacks the roadies rebuild
@@ -67,7 +74,21 @@ patches requested from other files: `docs/v03/triage_bosses.md`.
 
 ## Test results
 
-Final round, on a94bf77 + this round's commits:
+Last round, on 9f7c65c + the Redacted rebalance: `tests/bosses.js` PASS.
+
+| Fight | Play time | hp lost | Retries |
+|---|---|---|---|
+| Goldplate | 119 s | 23 | 0 |
+| Velvetine | 139 s | 0 | 0 |
+| Warbanner | 109 s | 162 | 1 |
+| Redacted | 194 s | 62 | 0 |
+| Dunk | 139 s | 0 | 0 |
+| Panel | 80 s | 114 | 0 |
+
+The rules, checkpoint, specials and lifecycle sections pass. Before the rebalance, Redacted failed on 9f7c65c (364 s, five
+retries, 550 hp lost).
+
+Round before, on a94bf77 + the content patches:
 - `tests/bosses.js`: PASS.
 
   | Fight | Play time | hp lost | Retries |
