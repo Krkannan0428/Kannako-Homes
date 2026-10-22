@@ -156,10 +156,16 @@
   // hover selects only while the mouse is the active pointer (it moved since the last key / pad navigation): a resting
   // cursor never steals the keyboard or pad selection (QA-B-FE-02)
   function hovering(x, y, w, h) { var m = GTP.Input && GTP.Input.mouse; return !!m && ui.mouseActive && !ui.touch.visible && m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h; }
-  function trackPointer() {
+  // a mouse that moved takes the menus' hover back (checked on the step and on the draw, so a move between two draws
+  // counts before the next step); a key or the pad gives the selection to the keys again (QA-B-FE-02)
+  function trackMouseMove() {
     var In = GTP.Input; if (!In || !In.mouse) return;
     var m = In.mouse, lm = ui.lastMouse;
     if (lm.x !== m.x || lm.y !== m.y) { if (lm.seen) ui.mouseActive = true; lm.x = m.x; lm.y = m.y; lm.seen = true; }
+  }
+  function trackPointer() {
+    var In = GTP.Input; if (!In || !In.mouse) return;
+    trackMouseMove();
     if (In.pressed('forward') || In.pressed('back') || In.pressed('left') || In.pressed('right') || In.pressed('confirm') || In.pressed('tabNext') || In.pressed('weaponNext') || In.pressed('weaponPrev') || In.lastDevice === 'gamepad') ui.mouseActive = false;
   }
   function sfx(name, gain) { var p = player(); if (GTP.Audio && GTP.Audio.play) { try { GTP.Audio.play(name, { x: p ? p.x : 0, z: p ? p.z : 0, gain: gain == null ? 0.5 : gain }); } catch (e) { /* audio optional */ } } }
@@ -3509,6 +3515,7 @@
     ui.hit.length = 0;
     var g = game(); if (!g) return;
     var st = g.state;
+    trackMouseMove();
     try {
       if (g.loading && g.loading.active) { drawLoading(ctx); return; }
       if (st === 'title') { drawTitle(ctx); drawConfirm(ctx); drawToasts(ctx); return; }
