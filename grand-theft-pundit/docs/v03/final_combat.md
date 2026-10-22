@@ -11,9 +11,10 @@ Branch `v03r1/combat`. Detail, root causes and every proposal for other areas: `
   uses Anim's grip at scale 1). The rifle's stock no longer pokes out through the back while aiming. Guns render in their real
   dark gunmetal (the weapon kit's colours were not converted from sRGB).
 - **Rifle grip** (`characters.js`): grip at chest height in `handR`, the left hand on the foregrip.
-- **One arsenal, 47 weapons**: every `GTP.Content.parity.weapons` id, no duplicates (11 fallback weapons that duplicated a parity
-  weapon now resolve to it, saves migrate), the parity rows' engine fields (spin-up, stun, fuse, sticky, smoke, mobility) work,
-  meshes for the ten parity weapons that had none, own effects for the stun weapons.
+- **One arsenal**: the shooting and content tracks had invented overlapping weapons (two miniguns, two "Filibuster"s ...). On
+  a94bf77 the content table uses the shooting ids: 36 weapons plus fists, every parity id present, no duplicates. Combat also
+  maps the other generation of ids (11 aliases, saves migrate), copies the parity rows' engine fields (spin-up, stun, fuse,
+  sticky, smoke, mobility), and has meshes for the ten weapons of the other table.
 - **Weapon wheel**: an unowned slot shows its original weapon; slot 2 is "Specials".
 - **Armory racks**: the whole arsenal once each, grouped by class (long guns on the east wall by row, heavy and specials on the
   feature wall behind Merle, melee on the west pegboard, handguns in the glass counter, thrown in the island cases); the counter

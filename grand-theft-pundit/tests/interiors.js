@@ -65,14 +65,14 @@ H.run('interiors', async (t) => {
       if (want[cls] && want[cls] !== at) layout.wrong.push(it.weaponId + ':' + cls + '@' + at); });
     const enterEv = window.__ev.find((e) => e.n === 'interior:enter');
     return { ok, mid, active: I.active, cur: I.current && { id: I.current.id, kind: I.current.kind, store: I.current.store, branch: I.current.branch }, ev, enterEv: enterEv && enterEv.e, items: items.length, distinct: ids.size, ids: Array.from(ids), order: GTP.Combat.ORDER.filter((id) => id !== 'fist' && !ids.has(id)),
-      meshes, layout, wall, floor, inside, counter, stopped, merle: merle.length, merleName: merle[0] && merle[0].name, pos: { x: p.x - r.ox, z: p.z - r.oz, y: p.y }, outside, ctlAfter: p.controlEnabled, district: (W.districtAt(p.x, p.z) || {}).id };
+      meshes, layout, arsenal: GTP.Combat.ORDER.length, wall, floor, inside, counter, stopped, merle: merle.length, merleName: merle[0] && merle[0].name, pos: { x: p.x - r.ox, z: p.z - r.oz, y: p.y }, outside, ctlAfter: p.controlEnabled, district: (W.districtAt(p.x, p.z) || {}).id };
   });
   console.log('  enter: ' + JSON.stringify(enter));
   t.assert(enter.ok && enter.mid.active === false && enter.mid.control === false, 'enter starts a fade with the player held');
   t.assert(enter.active && enter.cur.id === 'armory' && enter.cur.store === 'both_sides_strip' && enter.cur.branch === 'strip', 'inside the Strip armory');
   t.assert(enter.ev.indexOf('interior:fade') >= 0 && enter.ev.indexOf('interior:enter') > enter.ev.indexOf('interior:fade') && enter.enterEv.id === 'armory' && enter.enterEv.store === 'both_sides_strip', 'interior:fade then interior:enter {id, kind, store}');
   t.assert(enter.ctlAfter === true, 'control comes back after the fade');
-  t.assert(enter.items >= 40 && enter.distinct >= 11 && enter.order.length === 0 && enter.meshes === enter.items - 1, 'racks stocked with every weapon as a real mesh: ' + enter.items + ' items, ' + enter.distinct + ' weapons, missing ' + enter.order);
+  t.assert(enter.distinct >= 11 && enter.order.length === 0 && enter.meshes === enter.items - 1 && enter.distinct === enter.arsenal - 1, 'racks stocked with every weapon of the arsenal as a real mesh: ' + enter.items + ' items, ' + enter.distinct + ' weapons of ' + (enter.arsenal - 1) + ', missing ' + enter.order);
   t.assert(enter.distinct === enter.items - 1, 'each weapon hangs once (no repeats): ' + enter.items + ' items, ' + enter.distinct + ' weapons');
   t.assert(enter.layout.wrong.length === 0, 'grouped by class: long guns on the east wall, handguns in the counter, heavy and specials behind it, melee on the west wall, thrown in the cases: ' + JSON.stringify(enter.layout.wrong));
   t.assert(enter.wall === true && enter.floor === 0 && enter.inside === false && enter.counter === true, 'room collision: walls solid, floor at 0, open floor walkable, counter solid');

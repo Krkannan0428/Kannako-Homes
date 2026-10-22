@@ -25,7 +25,12 @@ so:
   fuse, `smokeSeconds` -> `smoke`; a `heavy` rifle is a machine gun, a `heavy` special keeps its base class (the minigun stays
   in the Heavy slot); a lobbed thing that only shoves (the merch cannon) knocks over what it lands on instead of exploding.
   `w.mobility` overrides the class mobility.
-- Result: 47 weapons, every `GTP.Content.parity.weapons` id present, no duplicates (checked in the browser).
+- Result on 10ba585: 47 weapons, every `GTP.Content.parity.weapons` id present, no duplicates (checked in the browser).
+- **Update on a94bf77** (every track's latest head): the content track resolved the same overlap from its side, its parity
+  table now uses the shooting track's 37 ids (`spin`, `battlerifle`, `stickynote` ...). The arsenal is 37 entries (36 weapons
+  and fists), every parity id present, nothing to alias: `LEGACY` / `ALIAS` stay as a compatibility layer for a table (or a
+  save) that still uses the other ids, and the ten extra meshes (`clipboard`, `golf_club`, `mic_stand`, `pocket`, `micro_smg`,
+  `flare_gun`, `flashbang`, `grenade_launcher`, `merch_cannon`, `mute_button`) are ready if those weapons come back.
 - Stun weapons (`flare_gun`, `flashbang`, `merch_cannon`, hitscan `mute_button`) use their own radius, text and effect (a
   pink flare, a white flash, a puff of shirts) instead of the Hot Take's fire burst.
 - `05b_assets_weapons.js`: meshes for the ten parity weapons that had none (`clipboard`, `golf_club`, `mic_stand`, `pocket`,
