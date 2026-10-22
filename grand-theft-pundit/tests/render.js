@@ -513,4 +513,250 @@ H.run('render', async (t) => {
   const crErr = await t.errors(cr);
   t.assert(crErr.length === 0, 'camera rig errors:\n' + crErr.join('\n'));
   await cp.close();
+  // ==== integration round 2, render-look (branch envw2/render-look): depth of field, mission markers, night lights,
+  // scorch decals, sky, roofs, signs, weather repaint, post target limits, projectile geometry. One high-preset boot. ====
+  const rl = await t.boot({ seed: 7, quality: 'high', weather: 'clear' });
+  const rp = rl.page;
+  // a luminance probe of the GL canvas: mean |dL/dx| (detail) inside a box, and the blue share of the frame
+  await rp.evaluate(() => {
+    window.__rlProbe = (box) => {
+      const cv = document.getElementById('gl'), off = document.createElement('canvas'); off.width = cv.width; off.height = cv.height;
+      const ctx = off.getContext('2d'); GTP.game.render(); ctx.drawImage(cv, 0, 0);
+      const W = off.width, H = off.height, x0 = Math.floor(box[0] * W), x1 = Math.floor(box[2] * W), y0 = Math.floor(box[1] * H), y1 = Math.floor(box[3] * H);
+      const d = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data, w = x1 - x0; let g = 0, n = 0, blue = 0, m = 0;
+      for (let y = 0; y < y1 - y0; y += 2) for (let x = 0; x < w - 1; x++) {
+        const i = (y * w + x) * 4, l = d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11, l2 = d[i + 4] * 0.3 + d[i + 5] * 0.59 + d[i + 6] * 0.11;
+        g += Math.abs(l2 - l); n++; if (d[i + 2] > d[i] + 25 && d[i + 2] > d[i + 1] + 5) blue++; m++;
+      }
+      return { detail: +(g / n).toFixed(2), blue: +(blue / m).toFixed(3) };
+    };
+    // what the marker group adds to the frame: shown vs hidden, the mean |difference| and the mean blue shift (b - r)
+    window.__rlTint = () => {
+      const R = GTP.Render, cv = document.getElementById('gl'), off = document.createElement('canvas'); off.width = cv.width; off.height = cv.height;
+      const ctx = off.getContext('2d'), grab = () => { GTP.game.render(); ctx.drawImage(cv, 0, 0); return ctx.getImageData(0, 0, off.width, off.height).data; };
+      R.markerGroup.visible = false; grab(); const a = grab().slice(0); R.markerGroup.visible = true; grab(); const b = grab();
+      let s = 0, sb = 0, n = 0;
+      for (let i = 0; i < a.length; i += 16) { s += (Math.abs(b[i] - a[i]) + Math.abs(b[i + 1] - a[i + 1]) + Math.abs(b[i + 2] - a[i + 2])) / 3; sb += (b[i + 2] - a[i + 2]) - (b[i] - a[i]); n++; }
+      return { diff: +(s / n).toFixed(2), blueShift: +(sb / n).toFixed(2) };
+    };
+  });
+  // (P1a) DoF: a two-shot 4.5 m from the player. The focal plane keeps its detail, the frame is not smeared (coordinator:
+  // the speakers and the backgrounds were a smear), and DoF stays off outside a cutscene
+  const dof = await rp.evaluate(() => {
+    const R = GTP.Render, CS = GTP.Cutscenes, p = GTP.game.player, out = {};
+    GTP.game.debug.setClock(15); GTP.Render.weather.set('clear', true);
+    GTP.game.debug.teleport(327, 340); GTP.game.advance(0.3);
+    GTP.game.debug.freeCam(p.x + 3.2, p.y + 1.7, p.z + 3.2, p.x, p.y + 1.3, p.z);
+    for (let i = 0; i < 6; i++) GTP.game.render();
+    // the speaker's torso and head (the camera looks at the chest), and the whole frame
+    const centre = [0.475, 0.28, 0.525, 0.62], frame = [0.02, 0.05, 0.98, 0.95];
+    out.offC = __rlProbe(centre); out.offF = __rlProbe(frame);
+    // CS.active without a script: Render auto-focuses on the screen centre, here the player's chest (as the fx3 check does)
+    window.__rlWasCs = CS.active;
+    CS.active = true;
+    for (let i = 0; i < 6; i++) GTP.game.render();
+    out.onC = __rlProbe(centre); out.onF = __rlProbe(frame); out.ran = GTP.PostFX.stats.dof; out.focus = +R.dofFocus.toFixed(2);
+    out.aperture = R.dofAperture; out.band = R.dofBand;
+    out.keepC = +(out.onC.detail / Math.max(0.01, out.offC.detail)).toFixed(2); out.keepF = +(out.onF.detail / Math.max(0.01, out.offF.detail)).toFixed(2);
+    return out;
+  });
+  await t.shot(rp, 'render_look_dof_twoshot');
+  Object.assign(dof, await rp.evaluate(() => {
+    const out = {}; GTP.Cutscenes.active = window.__rlWasCs; GTP.game.render(); out.after = GTP.PostFX.stats.dof;
+    GTP.game.debug.followCam(); GTP.game.advance(0.2); GTP.game.render(); out.street = GTP.PostFX.stats.dof;
+    return out;
+  }));
+  console.log('  render-look dof: ' + JSON.stringify(dof));
+  t.assert(dof.ran && !dof.after && !dof.street && dof.aperture <= 0.8 && dof.band > 0, 'DoF runs in the cutscene only, with a gentle aperture and a crisp band: ' + JSON.stringify(dof));
+  // the speaker box also holds a little of the softened background round his silhouette (measured 0.65 / 0.72 on high)
+  t.assert(dof.keepC >= 0.55, 'the focal plane stays crisp under DoF (detail kept on the speaker): ' + JSON.stringify(dof));
+  t.assert(dof.keepF >= 0.6, 'DoF is a subtle background blur, not a smear of the frame: ' + JSON.stringify(dof));
+  // (P1b) the mission marker: a narrow light column (< 1 m), normal blending, faded near the camera; standing in it or
+  // aiming beside it does not turn the frame blue (before: blue share 0.67 standing in it, 0.95 aiming)
+  const mk = await rp.evaluate(() => {
+    const R = GTP.Render, out = {};
+    const g = R.markerMesh(0x2f6cff), mesh = g.userData.mesh, pos = mesh.geometry.attributes.position, col = mesh.geometry.attributes.gtpCol;
+    let rc = 0, rr = 0; for (let i = 0; i < pos.count; i++) { const r = Math.hypot(pos.getX(i), pos.getZ(i)); if (col.getX(i) > 0.5) rc = Math.max(rc, r); else rr = Math.max(rr, r); }
+    out.columnWidth = +(rc * 2).toFixed(2); out.ring = +rr.toFixed(2); out.additive = mesh.material.blending === THREE.AdditiveBlending; out.fade = !!mesh.material.userData.gtpFade;
+    // a beacon added afterwards (09_missions addBeacon) gets the fade too
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 1.2, 40, 8, 1, true), new THREE.MeshBasicMaterial({ transparent: true })); g.add(beam); out.beaconFade = !!beam.material.userData.gtpFade;
+    R.removeMarker(g);
+    GTP.game.debug.setClock(16);
+    const list = GTP.Missions && GTP.Missions.markers ? GTP.Missions.markers() : [];
+    let m = list[0], own = null;
+    if (!m) { own = R.markerMesh(0x2f6cff); R.addMarker(own); own.position.set(110, 0.15, 270); m = { x: 110, z: 270 }; }
+    GTP.game.debug.followCam(); GTP.game.debug.teleport(m.x, m.z + 0.2); GTP.game.player.yaw = 0; GTP.game.advance(0.8);
+    out.inside = __rlTint();
+    GTP.game.debug.teleport(m.x + 1.6, m.z + 0.4); GTP.game.player.yaw = 0; GTP.game.advance(0.3);
+    for (let i = 0; i < 30; i++) { GTP.Input.set('aim', true); GTP.game.player.aiming = true; GTP.game.advance(1 / 60); }
+    out.aim = __rlTint();
+    GTP.game.debug.teleport(m.x + 6, m.z + 16); GTP.game.advance(0.3);
+    GTP.game.debug.freeCam(m.x, 2.2, m.z + 14, m.x, 2, m.z); out.far = __rlTint(); GTP.game.debug.followCam();
+    GTP.Input.set('aim', false); GTP.game.player.aiming = false; GTP.game.advance(0.3);
+    if (own) R.removeMarker(own);
+    return out;
+  });
+  console.log('  render-look marker: ' + JSON.stringify(mk));
+  t.assert(mk.columnWidth < 1 && mk.ring >= 1 && !mk.additive && mk.fade && mk.beaconFade, 'the marker is a narrow soft column over a ground ring, faded near the camera: ' + JSON.stringify(mk));
+  t.assert(mk.inside.diff < 5 && mk.inside.blueShift < 3 && mk.aim.diff < 5 && mk.aim.blueShift < 3, 'standing in or aiming beside a marker does not tint the frame blue: ' + JSON.stringify(mk));
+  t.assert(mk.far.diff > 0.05, 'the marker is still seen from 14 m: ' + JSON.stringify(mk.far));
+  // (QA-A-NGT-06, CMB-04, heli) entering a car at night compiles nothing and changes no light count; the muzzle and the
+  // helicopter searchlight are resident at intensity 0
+  const ngt6 = await rp.evaluate(() => {
+    const R = GTP.Render, L = R.lights, p = GTP.game.player, out = {};
+    GTP.game.debug.setClock(22); GTP.game.debug.teleport(327, 364); GTP.game.advance(0.3);
+    const lightCount = () => { let n = 0; R.scene.traverse((o) => { if (o.isLight && o.visible) n++; }); return n; };
+    const d = GTP.util.yawToDir(p.yaw), v = GTP.game.debug.spawnVehicle(p.x + d.x * 3, p.z + d.z * 3, 'sedan', {});
+    for (let i = 0; i < 4; i++) { GTP.game.advance(1 / 30); GTP.game.render(); }
+    out.progBefore = R.renderer.info.programs.length; out.lightsBefore = lightCount();
+    v.enter(p, 0); GTP.game.advance(1 / 30); GTP.game.render(); GTP.game.advance(1 / 30); GTP.game.render();
+    out.progAfter = R.renderer.info.programs.length; out.lightsAfter = lightCount(); out.headI = L.headlight.intensity; out.owner = L.headlightOwner === v;
+    v.exit && v.exit(p); GTP.game.advance(0.3); GTP.game.render();
+    out.headOff = L.headlight.intensity; out.lightsOut = lightCount();
+    out.heli = !!L.heli && L.heli.isSpotLight && L.heli.parent === R.scene && L.heli.intensity === 0;
+    out.muzzle = !!R.muzzleLight && R.muzzleLight.parent === R.scene;
+    return out;
+  });
+  console.log('  render-look headlight: ' + JSON.stringify(ngt6));
+  t.assert(ngt6.progAfter === ngt6.progBefore && ngt6.lightsAfter === ngt6.lightsBefore && ngt6.lightsOut === ngt6.lightsBefore, 'entering a car at night compiles no shader and keeps the light count (QA-A-NGT-06): ' + JSON.stringify(ngt6));
+  t.assert(ngt6.owner && ngt6.headI > 1 && ngt6.headOff === 0, 'the player headlight is driven by intensity: ' + JSON.stringify(ngt6));
+  t.assert(ngt6.heli && ngt6.muzzle, 'Render.lights.heli and the muzzle light are resident (CMB-04, the police searchlight)');
+  // (QA-A-NGT-05) lamp light slots fade in and out as the focus walks down an avenue (no full-brightness pop)
+  const ngt5 = await rp.evaluate(() => {
+    const R = GTP.Render, L = R.lights, p = GTP.game.player, out = { maxDrop: 0, maxRise: 0, frames: 0, lit: 0 };
+    GTP.game.debug.followCam(); GTP.game.debug.setClock(22); GTP.game.debug.teleport(327, 380); GTP.game.advance(0.5); GTP.game.render();
+    let prev = L.points.map((l) => l.intensity), prevPos = L.points.map((l) => l.position.clone());
+    // the pool runs in Render.frame; here it is stepped directly (120 high-preset renders took minutes under SwiftShader)
+    for (let f = 0; f < 120; f++) {
+      GTP.game.debug.teleport(327, 380 - f * 0.9); GTP.game.advance(1 / 30); R._updateLightPool(1 / 30); out.frames++;
+      L.points.forEach((l, i) => {
+        if (!l.visible) return;
+        const moved = l.position.distanceTo(prevPos[i]) > 0.5, dI = l.intensity - prev[i];
+        // a slot that changes lamp must have faded to ~0 first; on the same lamp the intensity moves by its fade rate only
+        if (moved && prev[i] > 0.05) out.maxDrop = Math.max(out.maxDrop, prev[i]);
+        if (!moved) { out.maxDrop = Math.max(out.maxDrop, -dI); out.maxRise = Math.max(out.maxRise, dI); }
+        if (l.intensity > 0.3) out.lit++;
+        prev[i] = l.intensity; prevPos[i].copy(l.position);
+      });
+    }
+    out.maxDrop = +out.maxDrop.toFixed(3); out.maxRise = +out.maxRise.toFixed(3);
+    return out;
+  });
+  console.log('  render-look lamp pool: ' + JSON.stringify(ngt5));
+  t.assert(ngt5.lit > 120 && ngt5.maxDrop < 0.35 && ngt5.maxRise < 0.35, 'street lamp lights fade in and out of the pool (QA-A-NGT-05): ' + JSON.stringify(ngt5));
+  await t.shot(rp, 'render_look_night_avenue');
+  // (QA-A-ENT-05) decals are soft round marks, skids stay rectangles
+  const ent5 = await rp.evaluate(() => {
+    const F = GTP.Render.fx, p = GTP.game.player;
+    const dcl = F.add({ type: 'decal', x: p.x + 2, y: 0.12, z: p.z, size: 5, color: 0x181818 }), sk = F.add({ type: 'skid', x: p.x - 2, y: 0.12, z: p.z, size: 0.3, size2: 2 });
+    return { decal: F._decalShape.array[dcl.slot], skid: F._decalShape.array[sk.slot] };
+  });
+  t.assert(ent5.decal > 0 && ent5.skid === 0, 'explosion scorches are round soft marks, skids stay rectangles (QA-A-ENT-05): ' + JSON.stringify(ent5));
+  // (QA-A-VIS-03) the dusk sky has no hard arc: the sky canvas column under the sun changes smoothly row to row
+  const vis3 = await rp.evaluate(() => {
+    const R = GTP.Render, out = {};
+    for (const c of [18.6, 6.8]) {
+      GTP.game.debug.setClock(c); R._envClock = null; GTP.game.render();
+      const cv = GTP.Assets.skyCanvas, ctx = cv.getContext('2d'), d = R.lights.sunDir, sm = R._sunModel(c);
+      const u = Math.round((Math.atan2(sm.dir.z, sm.dir.x) / (Math.PI * 2) + 0.5) * cv.width) % cv.width;
+      // the sky above the sun disc (its own 7-13 px glow is steep by design); the old arc sat at 0.3 of the height
+      const sv = (1 - (Math.asin(Math.max(-1, Math.min(1, sm.dir.y))) / Math.PI + 0.5)) * cv.height;
+      const col = ctx.getImageData(u, 0, 1, Math.max(8, Math.floor(Math.min(sv - 18, cv.height * 0.48)))).data; let jump = 0;
+      for (let y = 1; y < col.length / 4; y++) { const l0 = col[(y - 1) * 4] + col[(y - 1) * 4 + 1] + col[(y - 1) * 4 + 2], l1 = col[y * 4] + col[y * 4 + 1] + col[y * 4 + 2]; jump = Math.max(jump, Math.abs(l1 - l0) / 3); }
+      out[c] = +jump.toFixed(1); void d;
+    }
+    return out;
+  });
+  t.assert(vis3['18.6'] < 8 && vis3['6.8'] < 8, 'the dusk / dawn sky has no hard band edge (QA-A-VIS-03): ' + JSON.stringify(vis3));
+  // (QA-A-VIS-01) flat roof gravel has square texels; (QA-A-VIS-06) sign textures keep their letters' proportions
+  const vis16 = await rp.evaluate(() => {
+    const R = GTP.Render, A = GTP.Assets, quads = [], out = {};
+    const g = { quad: (a, b, c, d, uv) => quads.push({ a, b, c, d, uv }), box() {}, cylinder() {}, sphere() {} };
+    R._roof(g, { roof: 'flat', w: 30, d: 20, seed: 3, style: 'campus', floors: 3 }, A, 0, 0, 30, 20, 10, null);
+    const gq = quads.filter((q) => q.a[1] === 10 && q.b[1] === 10 && q.c[1] === 10 && Array.isArray(q.uv));
+    let worst = 1;
+    gq.forEach((q) => {
+      const dx = q.d[0] - q.a[0], dz = q.b[2] - q.a[2], du = Math.abs(q.uv[3][0] - q.uv[0][0]), dv = Math.abs(q.uv[1][1] - q.uv[0][1]);
+      const pxX = du * 512 / dx, pxZ = dv * 1280 / dz, r = Math.max(pxX / pxZ, pxZ / pxX); worst = Math.max(worst, r);
+    });
+    out.roofQuads = gq.length; out.roofStretch = +worst.toFixed(2);
+    let signs = 0, bad = 0, maxS = 1;
+    R.chunks.forEach((ch) => ch.group.traverse((o) => {
+      if (o.name !== 'sign' || !o.material || !o.material.map || !o.geometry.parameters) return;
+      const im = o.material.map.image, pa = o.geometry.parameters.width / o.geometry.parameters.height; if (!im || !im.width || pa < 1) return;
+      const s = Math.max(pa / (im.width / im.height), (im.width / im.height) / pa); signs++; if (s > 1.25) bad++; maxS = Math.max(maxS, s);
+    }));
+    out.signs = signs; out.signsStretched = bad; out.signMaxStretch = +maxS.toFixed(2);
+    return out;
+  });
+  console.log('  render-look roofs / signs: ' + JSON.stringify(vis16));
+  t.assert(vis16.roofQuads >= 8 && vis16.roofStretch < 1.15, 'flat roof gravel has square texels (QA-A-VIS-01): ' + JSON.stringify(vis16));
+  t.assert(vis16.signs > 10 && vis16.signsStretched === 0, 'no sign stretches its lettering by more than 25 % (QA-A-VIS-06): ' + JSON.stringify(vis16));
+  // (QAC-24) a weather transition repaints the sky in steps, not every frame; (stab-QA-D-08) projectiles share geometry
+  const qac24 = await rp.evaluate(() => {
+    const R = GTP.Render, orig = R._paintSky; let n = 0;
+    R._paintSky = function () { n++; return orig.apply(this, arguments); };
+    R.weather.set('clear', true); GTP.game.render(); n = 0;
+    R.weather.set('rain', false);
+    // Render.frame's weather and sky steps without the draw (60 high-preset renders are slow under SwiftShader)
+    for (let i = 0; i < 60; i++) { GTP.game.advance(1 / 60); R.weather.update(1 / 60); const ck = GTP.game.time.clock; if (Math.abs(ck - (R._envClock == null ? -99 : R._envClock)) > 0.02) { R._envClock = ck; R.updateEnvironment(ck); } }
+    R._paintSky = orig; R.weather.set('clear', true);
+    const a = R.buildEntityMesh({ kind: 'projectile', weaponId: 'hottake' }), b = R.buildEntityMesh({ kind: 'projectile', weaponId: 'hottake' }), c = R.buildEntityMesh({ kind: 'projectile', weaponId: 'pistol' });
+    return { repaints: n, shared: a.geometry === b.geometry && !!a.geometry.userData.shared && c.geometry !== a.geometry };
+  });
+  t.assert(qac24.repaints <= 10, 'a weather transition repaints the sky at most every few frames (QAC-24): ' + JSON.stringify(qac24));
+  t.assert(qac24.shared, 'projectile meshes share their sphere geometry (stab-QA-D-08)');
+  // (QAC-26) the post targets stay within the GPU limits on a huge canvas; the frame is not black
+  const qac26 = await rp.evaluate(() => {
+    const F = GTP.PostFX, r = GTP.Render.renderer, gl = r.getContext(), cap = Math.min(r.capabilities.maxTextureSize, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+    F.resize(cap * 3, 3000); const size = [F.width, F.height]; GTP.game.render();
+    const ok = F.enabled && F.width <= cap && F.height <= cap;
+    GTP.Render.resize(); GTP.game.render();
+    return { cap, size, ok, back: [F.width, F.height], err: gl.getError() };
+  });
+  t.assert(qac26.ok && qac26.err === 0, 'PostFX clamps its targets to the GPU limits (QAC-26): ' + JSON.stringify(qac26));
+  // (priority 3) stars to the zenith, the moon on the moonlight, puddles round the focus and inside sidewalk tiles, no rain
+  // under the Loop deck, a knocked-over lamp goes dark, a context restore rebuilds the environment, no rain indoors
+  const p3 = await rp.evaluate(() => {
+    const R = GTP.Render, W = GTP.World, C = GTP.C, L = R.lights, sk = R.sky, out = {};
+    const sp = sk.stars.geometry.attributes.position; let top = 0; for (let i = 0; i < sp.count; i++) top = Math.max(top, Math.asin(sp.getY(i) / 1000) * 180 / Math.PI); out.starTop = +top.toFixed(1);
+    out.moon = [];
+    for (const c of [22, 1, 3]) { GTP.game.debug.setClock(c); GTP.game.render(); const m = sk.moon.position.clone().sub(sk.dome.position).normalize(); out.moon.push({ c, ang: +(Math.acos(Math.min(1, m.dot(L.sunDir))) * 180 / Math.PI).toFixed(1), x: +m.x.toFixed(2) }); }
+    // puddles in the rain round (326, 422): some south of the focus, sidewalk discs inside their tile
+    R.weather.set('rain', true); GTP.game.debug.setClock(22); GTP.game.debug.followCam(); GTP.game.debug.teleport(326, 422); GTP.game.advance(0.3); R.weather._pudSeed = null; GTP.game.render();
+    const im = R.weather._puddles, fx = R.focusPoint(), m4 = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    let south = 0, n = 0, over = 0;
+    for (let i = 0; i < im.count; i++) {
+      im.getMatrixAt(i, m4); m4.decompose(p, q, s); if (s.x === 0) continue; n++;
+      if (p.z > fx.z + 8) south++;
+      const tx = Math.floor(p.x / C.TILE), tz = Math.floor(p.z / C.TILE);
+      if (W.tile(tx, tz) === W.T.SIDEWALK) { const r = Math.max(s.x, s.z); if (p.x - r < tx * C.TILE - 0.01 || p.x + r > (tx + 1) * C.TILE + 0.01 || p.z - r < tz * C.TILE - 0.01 || p.z + r > (tz + 1) * C.TILE + 0.01) over++; }
+    }
+    out.puddles = { n, south, over, opacityNight: +im.material.opacity.toFixed(2) };
+    // rain under the Loop deck (186, 402)
+    GTP.game.debug.freeCam(186, 2, 402, 186, 2, 380); GTP.game.render();
+    const rp2 = R.weather._rain.geometry.attributes.position, used = R.weather._rain.geometry.drawRange.count; let underDeck = 0;
+    for (let i = 0; i < Math.min(used, rp2.count); i++) { const x = rp2.getX(i), y = rp2.getY(i), z = rp2.getZ(i); if (y > 0 && y < C.DECK_Y - C.DECK_THICK && Math.hypot(x - 186, z - 402) < 12 && W.deckAt(Math.floor(x / C.TILE), Math.floor(z / C.TILE))) underDeck++; }
+    out.underDeck = underDeck; out.deckHere = W.deckAt(Math.floor(186 / C.TILE), Math.floor(402 / C.TILE));
+    // indoors: no rain streaks, no puddles (folded from 13_interiors)
+    const I = GTP.Interiors; if (I) { const was = I.active; I.active = true; GTP.game.render(); out.indoorRain = R.weather._rain.visible; out.indoorPuddles = R.weather._puddles.visible; I.active = was; }
+    R.weather.set('clear', true); GTP.game.debug.followCam();
+    // a knocked lamp: its glow sprite drops out of sight
+    let lamp = null, chk = null;
+    R.chunks.forEach((ch) => { if (lamp || !ch.glowPts || ch.glowPts.name === 'edgelights') return; const l = (W.props || []).find((pp) => pp.kind === 'lamp' && pp._glowCh === ch && !pp.fallen); if (l) { lamp = l; chk = ch; } });
+    if (lamp) { const i = lamp._glowI; lamp.fallen = { t: GTP.game.time.t, dx: 1, dz: 0 }; R.knockProp(lamp); out.lampSpriteY = +chk.glowPts.geometry.attributes.position.getY(i).toFixed(1); out.lampPoolY = +chk.glow.geometry.attributes.position.getY(i * 4).toFixed(1); }
+    // a context restore drops the PMREM and repaints: the next frame refreshes the environment
+    const env0 = R.stats.envRefreshes; R.canvas.dispatchEvent(new Event('webglcontextrestored')); GTP.game.render(); out.envAfterRestore = R.stats.envRefreshes - env0;
+    return out;
+  });
+  console.log('  render-look p3: ' + JSON.stringify(p3));
+  t.assert(p3.starTop > 75, 'stars reach the zenith (QA-A-NGT-08): ' + p3.starTop);
+  t.assert(p3.moon.every((m) => m.ang < 3) && p3.moon[0].x !== p3.moon[2].x, 'the moon sits on the moonlight and moves through the night (QA-A-NGT-04): ' + JSON.stringify(p3.moon));
+  t.assert(p3.puddles.n >= 10 && p3.puddles.south >= 2 && p3.puddles.over === 0, 'puddles lie all round the focus, none overhang a kerb (QA-A-NGT-02 / 03): ' + JSON.stringify(p3.puddles));
+  t.assert(!p3.deckHere || p3.underDeck === 0, 'no rain under the Loop deck (QA-A-NGT-07): ' + JSON.stringify([p3.deckHere, p3.underDeck]));
+  if (p3.indoorRain != null) t.assert(!p3.indoorRain && !p3.indoorPuddles, 'no rain or puddles indoors (the folded interiors rule)');
+  if (p3.lampSpriteY != null) t.assert(p3.lampSpriteY < 0 && p3.lampPoolY < 0, 'a knocked-over lamp loses its glow (QA-A-ENT-03): ' + JSON.stringify(p3));
+  t.assert(p3.envAfterRestore >= 1, 'a WebGL context restore rebuilds the environment map (QAC-50): ' + p3.envAfterRestore);
+  const rlE = await t.errors(rl);
+  t.assert(rlE.length === 0, 'render-look errors:\n' + rlE.join('\n'));
 });
