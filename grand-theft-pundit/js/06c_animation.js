@@ -54,15 +54,21 @@
 
   // weapon facts: hold class, length, upright / melee / thrown
   var MELEE = { tableleg: 1, fist: 1 }, THROWN = { hottake: 1, hotmic: 1 };
+  function fitFor(id) {
+    var A = GTP.Assets, CB = GTP.Combat, w = CB && CB.WEAPONS && CB.WEAPONS[id];
+    if (!id || id === 'fist' || !A) return null;
+    if (A.weaponFitFor) { try { return A.weaponFitFor(id, w ? w.cls : null); } catch (e) { return null; } }
+    return (A.weaponFit && A.weaponFit[id]) || null;
+  }
   function weaponInfo(id) {
-    var A = GTP.Assets, fit = A && A.weaponFit && A.weaponFit[id], CB = GTP.Combat, w = CB && CB.WEAPONS && CB.WEAPONS[id];
+    var A = GTP.Assets, fit = fitFor(id), CB = GTP.Combat, w = CB && CB.WEAPONS && CB.WEAPONS[id];
     var par = GTP.Content && GTP.Content.parity && GTP.Content.parity.weapons, pw = null;
     if (par) { if (Array.isArray(par)) { for (var i = 0; i < par.length; i++) if (par[i] && par[i].id === id) { pw = par[i]; break; } } else pw = par[id] || null; }
-    var hold = (pw && pw.hold) || (w && w.hold) || null;
+    var hold = (pw && pw.hold) || (CB && CB.holdOf && w ? CB.holdOf(id) : null) || (w && w.hold) || null;
     var len = (fit && fit.len) || (w && w.len) || 0.4;
     if (!hold) hold = (!id || id === 'fist') ? 'none' : (id === 'pistol' || id === 'revolver' || id === 'megaphone' || THROWN[id] || id === 'tableleg' || len < 0.4) ? 'one' : 'two';
     var cls = (pw && pw.class) || (w && w.class) || '';
-    return { hold: hold, len: len, upright: fit ? !!fit.upright : (id === 'megaphone' || !!THROWN[id]), melee: !!MELEE[id] || /melee/.test(cls), thrown: !!THROWN[id] || (pw && pw.projectile === 'lobbed' && hold === 'one') };
+    return { hold: hold, len: len, upright: fit ? !!fit.upright : (id === 'megaphone' || !!THROWN[id]), melee: !!MELEE[id] || /melee/.test(cls) || !!(w && w.melee) || !!(fit && (fit.melee || fit.knuckle)), thrown: !!THROWN[id] || (pw && pw.projectile === 'lobbed' && hold === 'one') || cls === 'thrown' };
   }
   var WI = {};
   function winfo(id) { return WI[id] || (WI[id] = weaponInfo(id)); }
@@ -215,7 +221,7 @@
 
     // ---- the upper body
     var pitch = clamp(P.aimPitch || 0, -1.2, 1.2), aimW = st.aimW;
-    var twist = clamp(U.wrapAngle((P.aimYaw != null ? P.aimYaw : p.yaw) - p.yaw), -0.8, 0.8) * aimW;
+    var twist = combatOwns() ? 0 : clamp(U.wrapAngle((P.aimYaw != null ? P.aimYaw : p.yaw) - p.yaw), -0.8, 0.8) * aimW;
     if (aimW > 0.01) {
       B.torso.rotation.x += pitch * 0.38 * aimW; B.chest.rotation.x += pitch * 0.38 * aimW;
       B.torso.rotation.y += twist * 0.4; B.chest.rotation.y += twist * 0.6;
@@ -232,7 +238,7 @@
 
     var mel = P.melee && alive ? P.melee : null;
     var ikOK = lod < 2 && B.chest;
-    if (armed && ikOK) holdPose(p, B, P, st, wi, pitch, rk, mel);
+    if (armed && ikOK) { if (!combatHold(p, B, P, st, wi, m)) holdPose(p, B, P, st, wi, pitch, rk, mel); }
     else if (mel && ikOK && !armed) fistPose(p, B, P, st, mel);
     else if (P.aim && !armed && ikOK && wl === 0 && alive) fistPose(p, B, P, st, null);
     else if (armed) {   // far: a cheap FK hold
@@ -253,7 +259,74 @@
   }
   function mixRot(b, x, y, z, w) { var r = b.rotation; r.set(r.x + (x - r.x) * w, r.y + (y - r.y) * w, r.z + (z - r.z) * w); }
 
-  // weapons: targets in the chest frame, both arms by IK, the gun re-parented to the right hand
+  // ------------------------------------------------ v0.3: Combat places the gun --
+  // Combat.postSync (after this syncMesh) puts the held weapon on the ped's root from Combat's gunFrame (raised: the shoulder
+  // pocket, the two-handed pistol stance, a launcher on the shoulder; a long gun at low ready across the chest) or on this
+  // rig's handR bone (one-handers at the side, melee, thrown). The same frame is computed here, from the same interpolated
+  // body, so both hands land on the gun this frame: the right hand on the grip, the left on the support point (Combat's
+  // handTargets, without its one-frame lag).
+  var FR = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }, _mw = new THREE.Matrix4(), _mi = new THREE.Matrix4(), _mb = new THREE.Matrix4(), _qRoot = new THREE.Quaternion(), _tR = new THREE.Vector3(), _tL = new THREE.Vector3(), _sc = new THREE.Vector3(), _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _qL = new THREE.Quaternion();
+  var IDENT = new THREE.Matrix4();
+  function combatOwns() { var CB = GTP.Combat; return !!(CB && CB.postSync && CB.debug && CB.debug.gunFrame && CB.WEAPONS); }
+  function raisedOf(p, fit, w) {
+    var r = !p.knockedDown && !p._melee && !fit.melee && !fit.knuckle && (!!p.aiming || p.firePoseT > 0 || !!p._cook || !!(p.cover && (p.cover.peek || p.cover.blindT > 0)) || (p.kind !== 'player' && !!p.hostile && !w.melee));
+    if (p.reloadT > 0 && !fit.upright) r = false;
+    return r;
+  }
+  function combatHold(p, B, P, st, wi, m) {
+    if (!combatOwns()) return false;
+    var CB = GTP.Combat, id = p._held ? (p._heldId || p.weapon) : null, w = id && CB.WEAPONS[id], fit = id && fitFor(id);
+    if (!id || !w || !fit) return true;                    // drawn nothing (an AI's gun still holstered): the free arms
+    var raised = raisedOf(p, fit, w), hold = CB.holdOf ? CB.holdOf(id) : wi.hold;
+    st.raised = raised;
+    if (!raised && (fit.melee || fit.knuckle || wi.melee)) return false;   // a bat follows the hand: the swing poses below
+    if (!raised && (fit.upright || hold !== 'two')) {
+      // in the right hand at the side (Combat orients it from handR): a relaxed carry, the elbow a little bent
+      rot(B.armR, 0.12 + 0.3 * st.aimW, 0, 0.12); rot(B.lowerArmR, 0.42, 0, 0); rot(B.handR, 0.15, 0, -0.1);
+      return true;
+    }
+    var fr = CB.debug.gunFrame(p, id, raised, FR, m.rotation.y, raised ? (p._aimPitch || 0) : 0);
+    var ox = m.position.x - p.x, oy = m.position.y - p.y, oz = m.position.z - p.z, s = fr.s;
+    if (!raised && p.reloadT > 0) { var rk = 1 - p.reloadT / (p.reloadTotal || 1); oy += 0.12 * (rk < 0.5 ? rk / 0.5 : 1 - (rk - 0.5) / 0.5); }
+    function fp(pt, out) { return out.set(fr.gx + (fr.X[0] * pt[0] + fr.Y[0] * pt[1] + fr.Z[0] * pt[2]) * s + ox, fr.gy + (fr.X[1] * pt[0] + fr.Y[1] * pt[1] + fr.Z[1] * pt[2]) * s + oy, fr.gz + (fr.X[2] * pt[0] + fr.Y[2] * pt[1] + fr.Z[2] * pt[2]) * s + oz); }
+    var oneH = hold === 'one' && !fit.upright, leftOn = false;
+    if (raised && oneH) fp([-0.012, -0.05, 0], _tR); else fp([0, 0, 0], _tR);
+    if (raised) { if (oneH) { fp([-0.02, -0.075, 0.04], _tL); leftOn = true; } else if (fit.support) { fp(fit.support, _tL); leftOn = true; } }
+    else if (fit.support) { fp(p.reloadT > 0 && fit.mag ? fit.mag : fit.support, _tL); leftOn = true; }
+    // Combat draws guns 1.2x (1.46x handguns) for the v0.2 rig, so the support point sits ~0.8 m ahead of the shoulder: blade
+    // the torso, lean in and bring the left shoulder forward (a real shooter's stance) so a 0.62 m arm reaches it
+    if (leftOn) {
+      var far = oneH ? 0.5 : U.clamp(((fit.support && fit.support[0]) || 0.3) / 0.4, 0.4, 1.1);
+      B.torso.rotation.y -= 0.22 * far; B.chest.rotation.y -= 0.26 * far; B.torso.rotation.x -= 0.08 * far;
+      B.armL.position.z -= 0.07 * far; B.armL.position.x += 0.03 * far; B.armL.position.y -= 0.01 * far;
+    }
+    // world -> the rig's root frame (R): the root's world matrix (scale included), and its world rotation
+    m.updateMatrix(); _mw.multiplyMatrices(m.parent ? m.parent.matrixWorld : IDENT, m.matrix); _mi.copy(_mw).invert();
+    _mw.decompose(_sc, _qRoot, _ax); _qRoot.invert();
+    _tR.applyMatrix4(_mi); if (leftOn) _tL.applyMatrix4(_mi);
+    // the right hand's orientation: the gun's X (barrel) along the hand's -z, its Y up the hand, Z across (Q_BARREL)
+    _ax.set(fr.Z[0], fr.Z[1], fr.Z[2]); _ay.set(fr.Y[0], fr.Y[1], fr.Y[2]); _az.set(-fr.X[0], -fr.X[1], -fr.X[2]);
+    if (fit.upright) { _ax.set(fr.X[0], fr.X[1], fr.X[2]); _az.set(-fr.Y[0], -fr.Y[1], -fr.Y[2]); _ay.crossVectors(_az, _ax); }
+    _mb.makeBasis(_ax, _ay, _az); _qHand.setFromRotationMatrix(_mb).premultiply(_qRoot);
+    chestFrame(B, _m, _qChest);
+    armIK(B.armR, B.lowerArmR, B.handR, _m, _qChest, _tR, _qHand, POLE_R, 1.0);
+    if (leftOn && !oneH) {
+      // beyond reach (the 1.2x guns): slide the support hand back along the handguard toward the grip, so it stays on the gun
+      var S = _v3.copy(B.armL.position).applyMatrix4(_m), reachMax = (L1 + L2) * 0.985 + 0.07;
+      if (S.distanceTo(_tL) > reachMax) {
+        _v4.copy(_tL);
+        for (var kk = 1; kk <= 10; kk++) { var tt = 1 - kk * 0.07; _tL.lerpVectors(_tR, _v4, tt); if (S.distanceTo(_tL) <= reachMax || tt <= 0.3) break; }
+      }
+    }
+    if (leftOn) {
+      // the support hand under the handguard / cupping the pistol grip: the right hand's frame turned palm-up a little
+      _q2.setFromAxisAngle(_v2.set(0, 0, 1), oneH ? -0.6 : -1.2); _qL.copy(_qHand).multiply(_q2);
+      armIK(B.armL, B.lowerArmL, B.handL, _m, _qChest, _tL, _qL, oneH ? POLE_L : POLE_LIN, 1.0);
+    }
+    return true;
+  }
+
+  // weapons (no v0.3 Combat): targets in the chest frame, both arms by IK, the gun re-parented to the right hand
   function holdPose(p, B, P, st, wi, pitch, rk, mel) {
     var aimW = st.aimW, two = wi.hold === 'two', t = p.animTime || 0;
     // the gun's orientation (chest frame) and the grip point
@@ -364,7 +437,7 @@
   // the gun Combat hangs on armR (and re-poses every step for the v0.2 arm) sits in the right hand at the grip
   function applyHeld(p, st) {
     var held = p._held, hand = st.B.handR;
-    if (!held || !held.parent) return;
+    if (!held || !held.parent || combatOwns()) return;   // v0.3: Combat.postSync places the gun on the root itself
     if (held.parent !== hand) hand.add(held);
     held.position.copy(GRIP); held.scale.setScalar(1);
     if (st.heldSet) held.quaternion.copy(st.heldQ);
@@ -480,11 +553,11 @@
     var d2 = camDist2(x, z), lod = GTP.Models.lodFor(Math.sqrt(d2));
     GTP.Models.setLod(m, lod);
     // far peds animate at a third of the frame rate (their phase still runs)
+    m.position.set(x, y, z);
+    m.rotation.set(t, yaw, 0, 'YXZ');
     st.skip = (st.skip || 0) + 1;
     if (lod < 2 || st.skip >= 3 || st.lastLying !== lying) { st.skip = 0; animate(this, m, st, P, lod); st.lastLying = lying; }
     else applyHeld(this, st);
-    m.position.set(x, y, z);
-    m.rotation.set(t, yaw, 0, 'YXZ');
   }
   // a car seat (visible through the glass when the vehicle record has seats), the scooter's saddle
   // Vehicle.enter numbers passengers by the list length and exit never renumbers: derive the seat from the lists

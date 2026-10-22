@@ -509,7 +509,8 @@
     function faceUV(x, y, z) {
       // the front half takes a planar projection of the face cell; the back maps to plain skin inside the cell
       var u = 0.5 + x / FS, v = 0.5 + (y - hy) / FS;
-      if (z - hz > 0) { u = x < 0 ? 0.13 : 0.87; v = U.clamp(v, 0.13, 0.87); }
+      // the back half: the same u (continuous with the front at the sides), v pinned to the plain band above the brows
+      if (z - hz > 0) v = 0.95;
       u = U.clamp(u, 0.04, 0.96); v = U.clamp(v, 0.04, 0.96);
       return [cu.u0 + u / 8, cu.v0 + v / 8];
     }
@@ -602,11 +603,13 @@
       opts = opts || {};
       var base = sb.n, i, j, latMin = opts.latMin != null ? opts.latMin : -1.2, S = opts.segs || segs, Rr = opts.rows || rows;
       for (i = 0; i <= Rr; i++) {
-        var lat0 = Math.PI / 2 - (Math.PI / 2 - latMin) * i / Rr;
         for (j = 0; j < S; j++) {
-          var az = j / S * TAU, la = Math.max(lat0, lineFn(az)), s = scaleFn(la, az), cl = Math.cos(la);
+          // rows run from the crown down to this column's own hairline, so neighbouring columns never fold over each other
+          var az = j / S * TAU, line = Math.max(latMin, lineFn(az)), la = Math.PI / 2 - (Math.PI / 2 - line) * i / Rr, s = scaleFn(la, az), cl = Math.cos(la);
           if (i === 0) cl = 0;
           var x = Math.sin(az) * cl * H.rx * s, y = H.hy + Math.sin(la) * H.ry * s, z = H.hz - Math.cos(az) * cl * H.rz * s;
+          // follow the skull's occiput bulge (headDeform: the back above the nape is 7 % deeper), so it never pokes through
+          if (z > H.hz) { var ob = U.clamp((Math.sin(la) + 0.35) / 0.25, 0, 1); z = H.hz + (z - H.hz) * (1 + 0.075 * ob); }
           if (opts.deform) { var pp = [x, y, z]; opts.deform(pp, la, az); x = pp[0]; y = pp[1]; z = pp[2]; }
           sb.v(x, y, z, WUV[0], WUV[1], typeof col === 'function' ? col(la, az) : col, b0 == null ? HEAD : b0);
         }
@@ -815,6 +818,12 @@
       if (PARENT[i] >= 0) bones[PARENT[i]].add(b);
       bones.push(b);
     }
+    // the hands' grip anchors: Combat (08) finds 'handR' / 'handL' by name and holds a weapon at that node's origin, so the
+    // names sit on children at the palm (the grip point), the bones themselves are 'wristR' / 'wristL'
+    [HL, HR].forEach(function (bi) {
+      var bn = bones[bi]; bn.name = bi === HR ? 'wristR' : 'wristL';
+      var grip = new THREE.Object3D(); grip.name = bi === HR ? 'handR' : 'handL'; grip.position.set(0, -0.075, -0.012); grip.userData.grip = true; bn.add(grip);
+    });
     var mesh = new THREE.SkinnedMesh(entry.lods[1], pedMaterial());
     mesh.name = 'skin'; mesh.castShadow = true; mesh.receiveShadow = false;
     mesh.add(bones[0]);

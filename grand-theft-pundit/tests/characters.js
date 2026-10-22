@@ -71,26 +71,34 @@ H.run('characters', async (t) => {
     out.walk = { legs, knee: +B.lowerLegL.rotation.x.toFixed(2) };
     // run leans forward and bends the elbows
     w.state = 'run'; w.speed = 5.5; w.animPhase = 1; sync(); out.run = { lean: +B.torso.rotation.x.toFixed(2), elbow: +B.lowerArmR.rotation.x.toFixed(2) };
-    // aim a rifle: the gun sits in the right hand, the barrel points the way the ped faces, the left hand on the foregrip
-    const a = mk(-1, 0); a.weapon = 'rifle'; a.aiming = true; a.yaw = 0; a.aimYaw = 0; a.snap();
+    // aim a rifle: Combat places the gun on the root (shoulder pocket); the hands' grip anchors land on Combat's hand targets
+    const CB = GTP.Combat, gap = (node, tg) => { if (!tg) return 9; const w = new THREE.Vector3(); node.getWorldPosition(w); return +w.distanceTo(new THREE.Vector3(tg.x, tg.y, tg.z)).toFixed(3); };
+    const a = mk(-1, 0); a.weapon = 'rifle'; a.weapons = { fist: Infinity, rifle: 90 }; a.aiming = true; a.yaw = 0; a.aimYaw = 0; a.snap();
     for (let k = 0; k < 30; k++) { GTP.game.advance(1 / 60); sync(); }
-    const held = a._held, AB = a.mesh.userData.bones;
+    const held = a._held, gR = a.mesh.getObjectByName('handR'), gL = a.mesh.getObjectByName('handL');
     a.mesh.updateMatrixWorld(true);
     const v = new THREE.Vector3(1, 0, 0), q = new THREE.Quaternion(); held.getWorldQuaternion(q); v.applyQuaternion(q);
-    const f = GTP.util.yawToDir(a.yaw), grip = new THREE.Vector3(), lh = new THREE.Vector3(); held.getWorldPosition(grip); AB.handL.getWorldPosition(lh);
-    out.rifle = { parent: held && held.parent && held.parent.name, dot: +(v.x * f.x + v.z * f.z).toFixed(2), y: +v.y.toFixed(2), gripY: +(grip.y - a.y).toFixed(2), leftToBarrel: +(lh.clone().sub(grip).cross(v).length()).toFixed(3), leftAhead: +lh.clone().sub(grip).dot(v).toFixed(2) };
-    // the pose contract: aimPitch up raises the barrel, a reload moves the left hand away from the foregrip
-    a.pose = { aim: true, aimPitch: 0.6, hold: 'two', weaponId: 'rifle' };
-    for (let k = 0; k < 10; k++) sync();
-    a.mesh.updateMatrixWorld(true); held.getWorldQuaternion(q); const vu = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-    out.pitchUp = +vu.y.toFixed(2);
-    a.pose = { aim: true, aimPitch: 0, hold: 'two', weaponId: 'rifle', reload: 0.45 }; sync(); a.mesh.updateMatrixWorld(true);
-    const lh2 = new THREE.Vector3(); AB.handL.getWorldPosition(lh2); out.reloadMove = +lh2.distanceTo(lh).toFixed(2);
-    // pistol aim: both hands forward
-    const ps = mk(-2, 0); ps.weapon = 'pistol'; ps.aiming = true; ps.yaw = 0; ps.aimYaw = 0; ps.snap();
+    const f = GTP.util.yawToDir(a.yaw), grip = new THREE.Vector3(); held.getWorldPosition(grip);
+    let ht = CB.handTargets(a);
+    // the left hand on the gun: its distance from the line through the grip and the support point, between the two
+    const onGun = (ht, b) => { if (!ht || !ht.left) return 9; const g0 = new THREE.Vector3(ht.right.x, ht.right.y, ht.right.z), g1 = new THREE.Vector3(ht.left.x, ht.left.y, ht.left.z), w = new THREE.Vector3(); gL.getWorldPosition(w); const d = g1.clone().sub(g0), l = d.length(); d.normalize(); const tt = w.clone().sub(g0).dot(d); const c = g0.clone().addScaledVector(d, Math.max(0.1 * l, Math.min(l, tt))); return +w.distanceTo(c).toFixed(3); };
+    out.rifle = { onRoot: held.parent === a.mesh, raised: ht && ht.raised, dot: +(v.x * f.x + v.z * f.z).toFixed(2), y: +v.y.toFixed(2), gripY: +(grip.y - a.y).toFixed(2), right: gap(gR, ht && ht.right), left: onGun(ht), leftTarget: gap(gL, ht && ht.left) };
+    // aim pitch up (Combat aims the gun by ped._aimPitch): the barrel rises and the hands follow it
+    a._aimPitch = 0.6; for (let k = 0; k < 4; k++) sync();
+    a.mesh.updateMatrixWorld(true); held.getWorldQuaternion(q); const vu = new THREE.Vector3(1, 0, 0).applyQuaternion(q); ht = CB.handTargets(a);
+    out.pitch = { up: +vu.y.toFixed(2), right: gap(gR, ht && ht.right), left: onGun(ht) };
+    a._aimPitch = 0;
+    // a reload drops to low ready with the support hand on the magazine
+    const lh = new THREE.Vector3(); sync(); a.mesh.updateMatrixWorld(true); gL.getWorldPosition(lh);
+    a.reloadT = 0.5; a.reloadTotal = 1; sync(); a.mesh.updateMatrixWorld(true); ht = CB.handTargets(a);
+    const lh2 = new THREE.Vector3(); gL.getWorldPosition(lh2); out.reload = { moved: +lh2.distanceTo(lh).toFixed(2), left: gap(gL, ht && ht.left), right: gap(gR, ht && ht.right) };
+    a.reloadT = 0;
+    // pistol aim: both hands forward on the grip (the left cupping under it)
+    const ps = mk(-2, 0); ps.weapon = 'pistol'; ps.weapons = { fist: Infinity, pistol: 40 }; ps.aiming = true; ps.yaw = 0; ps.aimYaw = 0; ps.snap();
     for (let k = 0; k < 30; k++) { GTP.game.advance(1 / 60); sync(); }
-    ps.mesh.updateMatrixWorld(true); const PB = ps.mesh.userData.bones, pr = new THREE.Vector3(), pl = new THREE.Vector3(); PB.handR.getWorldPosition(pr); PB.handL.getWorldPosition(pl);
-    out.pistol = { fwdR: +((pr.x - ps.x) * f.x + (pr.z - ps.z) * f.z).toFixed(2), hands: +pr.distanceTo(pl).toFixed(2), y: +(pr.y - ps.y).toFixed(2) };
+    ps.mesh.updateMatrixWorld(true); const pR = ps.mesh.getObjectByName('handR'), pL = ps.mesh.getObjectByName('handL'), pr = new THREE.Vector3(), pl = new THREE.Vector3(); pR.getWorldPosition(pr); pL.getWorldPosition(pl);
+    const pt = CB.handTargets(ps);
+    out.pistol = { fwdR: +((pr.x - ps.x) * f.x + (pr.z - ps.z) * f.z).toFixed(2), hands: +pr.distanceTo(pl).toFixed(2), y: +(pr.y - ps.y).toFixed(2), right: gap(pR, pt && pt.right), left: gap(pL, pt && pt.left) };
     // melee jab: the right hand reaches forward at mid-swing
     const m = mk(2, 0); m.yaw = 0; m.snap(); m.pose = { melee: { type: 'light', t: 0.35 } }; sync(); m.mesh.updateMatrixWorld(true);
     const mh = new THREE.Vector3(); m.mesh.userData.bones.handR.getWorldPosition(mh); out.jab = +((mh.x - m.x) * f.x + (mh.z - m.z) * f.z).toFixed(2);
@@ -118,11 +126,11 @@ H.run('characters', async (t) => {
   console.log('  anim: ' + JSON.stringify(anim));
   t.assert(Math.max(...anim.walk.legs) > 0.2 && Math.min(...anim.walk.legs) < -0.2, 'walking swings the legs: ' + anim.walk.legs);
   t.assert(anim.run.lean < -0.08 && anim.run.elbow > 1.0, 'running leans and bends the elbows: ' + JSON.stringify(anim.run));
-  t.assert(anim.rifle.parent === 'handR' && anim.rifle.dot > 0.9 && Math.abs(anim.rifle.y) < 0.25 && anim.rifle.gripY > 1.1 && anim.rifle.gripY < 1.6, 'aimed rifle: in the right hand, barrel along the facing at chest height: ' + JSON.stringify(anim.rifle));
-  t.assert(anim.rifle.leftToBarrel < 0.12 && anim.rifle.leftAhead > 0.1, 'left hand on the foregrip ahead of the grip: ' + JSON.stringify(anim.rifle));
-  t.assert(anim.pitchUp > 0.35, 'pose.aimPitch raises the barrel: ' + anim.pitchUp);
-  t.assert(anim.reloadMove > 0.1, 'reload moves the support hand: ' + anim.reloadMove);
-  t.assert(anim.pistol.fwdR > 0.35 && anim.pistol.hands < 0.15 && anim.pistol.y > 1.1, 'pistol held out in both hands: ' + JSON.stringify(anim.pistol));
+  t.assert(anim.rifle.onRoot && anim.rifle.raised && anim.rifle.dot > 0.9 && Math.abs(anim.rifle.y) < 0.25 && anim.rifle.gripY > 1.1 && anim.rifle.gripY < 1.7, 'aimed rifle: placed by Combat, barrel along the facing at chest height: ' + JSON.stringify(anim.rifle));
+  t.assert(anim.rifle.right < 0.06 && anim.rifle.left < 0.06, 'both hands on the rifle (right on the grip, left on the handguard): ' + JSON.stringify(anim.rifle));
+  t.assert(anim.pitch.up > 0.35 && anim.pitch.right < 0.08 && anim.pitch.left < 0.08, 'aiming up: the barrel rises and the hands follow: ' + JSON.stringify(anim.pitch));
+  t.assert(anim.reload.moved > 0.1 && anim.reload.left < 0.08 && anim.reload.right < 0.08, 'reload: low ready, the support hand on the magazine: ' + JSON.stringify(anim.reload));
+  t.assert(anim.pistol.fwdR > 0.35 && anim.pistol.hands < 0.15 && anim.pistol.y > 1.1 && anim.pistol.right < 0.06 && anim.pistol.left < 0.06, 'pistol held out in both hands on the grip: ' + JSON.stringify(anim.pistol));
   t.assert(anim.jab > 0.4, 'a jab reaches forward: ' + anim.jab);
   t.assert(anim.crouch < -0.25, 'low cover crouches: ' + anim.crouch);
   t.assert(Math.abs(anim.tilt + Math.PI / 2) < 0.01, 'knockdown tilt on the mesh: ' + anim.tilt);
@@ -183,10 +191,10 @@ H.run('characters', async (t) => {
     out.refs = [refs0, ud.entry.refs, ud.released];
     // far gun: aim a rifle at LOD 2 and check the gun's local rotation on an animated and a skipped frame
     const f = new GTP.Ped({ x: p.x + 60, z: p.z, look: { skin: 2, hair: 'short' }, persistent: true }); f.y = W.heightAt(f.x, f.z, p.y); f.snap(); E.add(f);
-    f.weapon = 'rifle'; f.aiming = true; GTP.game.debug.freeCam(p.x, p.y + 2, p.z, f.x, f.y + 1, f.z);
+    f.weapon = 'rifle'; f.weapons = { fist: Infinity, rifle: 90 }; f.aiming = true; GTP.game.debug.freeCam(p.x, p.y + 2, p.z, f.x, f.y + 1, f.z);
     const qs = [];
     for (let i = 0; i < 6; i++) { GTP.game.advance(1 / 60); E.sync(1); if (f._held) qs.push(f._held.quaternion.toArray().map((v) => +v.toFixed(3)).join(',')); }
-    out.farLod = f.mesh.userData.lod; out.gunStable = new Set(qs).size === 1; out.gunParent = f._held && f._held.parent && f._held.parent.name;
+    out.farLod = f.mesh.userData.lod; out.gunStable = new Set(qs).size === 1; out.gunOnRoot = !!(f._held && f._held.parent === f.mesh);
     // seats: two passengers, the first leaves, a third boards: all three occupants on distinct seats
     const v = new GTP.Vehicle({ type: 'sedan', x: p.x - 8, z: p.z + 3 }); v.y = W.heightAt(v.x, v.z, p.y); v.snap(); E.add(v);
     const mk = () => { const q = new GTP.Ped({ x: v.x, z: v.z, look: { skin: 3, hair: 'short' }, persistent: true }); E.add(q); return q; };
@@ -200,7 +208,7 @@ H.run('characters', async (t) => {
   });
   console.log('  review regressions: ' + JSON.stringify(reg));
   t.assert(reg.refs[1] === reg.refs[0] && reg.refs[2] === false, 'detach + attach keeps the look referenced: ' + JSON.stringify(reg.refs));
-  t.assert(reg.farLod === 2 && reg.gunStable && reg.gunParent === 'handR', 'a far ped holds its gun steady in the hand: ' + JSON.stringify(reg));
+  t.assert(reg.farLod === 2 && reg.gunStable && reg.gunOnRoot, 'a far ped holds its gun steady: ' + JSON.stringify(reg));
   t.assert(reg.seatsDistinct, 'occupants keep distinct seats: ' + reg.seats.join(' | '));
   t.assert(reg.sameRec, 'mods {} shares the base vehicle record');
 
