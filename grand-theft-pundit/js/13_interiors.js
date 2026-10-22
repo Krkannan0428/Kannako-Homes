@@ -1012,18 +1012,21 @@
     };
     Wd.heightAt._interiors = Wd.solidAt._interiors = Wd.resolveCapsule._interiors = true;
   }
+  // Combat.fire asks Interiors.canFire before a player shot and calls Interiors.onPlayerShot after one, and Combat.update runs
+  // Interiors.update every step (08_combat.js); this installer only wraps a Combat that predates those hooks
   function wrapCombat() {
     var CB = GTP.Combat; if (!CB || wrapped.combat || !CB.fire) return;
     wrapped.combat = true;
+    if (CB.fire._interiors) { wrapped.update = !!(CB.update && CB.update._interiors); return; }
     var oFire = CB.fire;
     CB.fire = function (ped, weaponId) {
-      if (ped && ped.kind === 'player' && S.active && !canShoot(ped)) { var I0 = In(); if (I0 && I0.down && I0.down('shoot')) muzzleLine(); return false; }   // E (action) also reaches fire: interacting is not shooting
+      if (ped && ped.kind === 'player' && S.active && !Interiors.canFire(ped)) return false;
       var r = oFire.apply(this, arguments);
-      if (r && ped && ped.kind === 'player' && RANGE.running && S.room && S.room.range) { try { rangeShot(ped); } catch (e) { report(e, 'rangeShot'); } }
+      if (r && ped && ped.kind === 'player') Interiors.onPlayerShot(ped);
       return r;
     };
     CB.fire._interiors = true;
-    if (CB.update) {
+    if (CB.update && !CB.update._interiors) {
       var oU = CB.update;
       CB.update = function (dt) { var r = oU.apply(this, arguments); try { Interiors.update(dt); } catch (e) { report(e, 'update'); } return r; };
       wrapped.update = true;
@@ -1643,6 +1646,13 @@
       if (!shown) hidePrompt();
     },
     // tests / tools
+    // Combat's hooks: may the player shoot here (no, except on the range; pulling the trigger earns Merle's line), and a shot taken
+    canFire: function (p) {
+      if (!S.active || canShoot(p)) return true;
+      var I0 = In(); if (I0 && I0.down && I0.down('shoot')) muzzleLine();   // E (action) also reaches fire: interacting is not shooting
+      return false;
+    },
+    onPlayerShot: function (p) { if (RANGE.running && S.room && S.room.range) { try { rangeShot(p); } catch (e) { report(e, 'rangeShot'); } } },
     rooms: function () { return S.rooms; },
     room: function () { return S.room; },
     roomAt: roomAt,

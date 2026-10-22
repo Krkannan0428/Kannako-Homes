@@ -151,7 +151,7 @@ H.run('actors', async (t) => {
     GTP.game.advance(0.05);
     const hp0 = v.hp;
     let peak = 0, shake = 0, inside = 0, minSpeedAfterPeak = 1e9, hitAt = -1, imp = null, sparks = 0;
-    GTP.Events.on('vehicle:impact', (e) => { if (!imp) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });
+    GTP.Events.on('vehicle:impact', (e) => { if (!imp && e.vehicle === v) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });   // this car's impact, not traffic's anywhere on the map
     GTP.Input.set('forward', true);
     for (let i = 0; i < 240; i++) {
       GTP.game.advance(1 / 60);
@@ -160,7 +160,7 @@ H.run('actors', async (t) => {
       shake = Math.max(shake, GTP.Render.rig.shakeAmt);
       if (v.x > b.x && v.x < b.x + b.w && v.z > b.z && v.z < b.z + b.d) inside++;
       if (imp && hitAt < 0) { hitAt = i; GTP.Input.set('forward', false); }
-      if (hitAt >= 0) { minSpeedAfterPeak = Math.min(minSpeedAfterPeak, sp); sparks = Math.max(sparks, GTP.Render.fx.list.filter((f) => f.type === 'spark').length); }
+      if (hitAt >= 0) { minSpeedAfterPeak = Math.min(minSpeedAfterPeak, sp); sparks = Math.max(sparks, GTP.Render.fx.list.filter((f) => f.type === 'spark' && Math.hypot(f.x - v.x, f.z - v.z) < 8).length); }
       if (hitAt >= 0 && i > hitAt + 6) break;
     }
     GTP.Input.set('forward', false);

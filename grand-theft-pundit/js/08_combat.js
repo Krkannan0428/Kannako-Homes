@@ -473,7 +473,7 @@
       if (e === shooter || e.removed || (shooter && e === shooter.inVehicle)) continue;   // never your own car
       if (e.kind === 'ped' || e.kind === 'player') { if (!e.alive || e.inVehicle) continue; t = rayPed(o, d, e, bestT); if (t >= 0 && t < bestT) zone = lastZone; }
       else if (e.kind === 'vehicle') { if (e.sinking) continue; t = rayVehicle(o, d, e, bestT); }
-      else if (e.kind === 'heli') { if (e.down) continue; t = raySphere(o, d, e.x, e.y, e.z, 3.4, bestT); }
+      else if (e.kind === 'heli') { if (e.down) continue; t = raySphere(o, d, e.x, e.y, e.z, e.hitRadius || (e.radius ? e.radius + 0.4 : 3.4), bestT); }   // the police helicopter 3.4 m, a boss weak point its own size
       else continue;
       if (t >= 0 && t < bestT) { bestT = t; hitE = e; hb = null; out.ground = false; out.water = false; if (e.kind !== 'ped' && e.kind !== 'player') zone = null; }
     }
@@ -606,7 +606,7 @@
   // ------------------------------------------------------------ aim mode --
   var aim = {
     active: false, target: null, hover: null, point: null, screen: null, targetScreen: null, weapon: 'fist', inRange: false, lockT: 0, zone: null, range: 0,
-    hip: false, assist: true, snapT: 0, wasActive: false, crosshair: null
+    hip: false, assist: true, snapT: 0, wasActive: false, crosshair: null, hop: false
   };
   function lockValid(p, e, cd, range) {
     if (!validTarget(e, p, true)) return false;
@@ -659,7 +659,7 @@
     aim.active = active;
     var range = w.melee ? 7 : Math.max(w.range, 8);
     if (!active) {
-      aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0;
+      aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0; aim.hop = false;
       aim.hip = !!(p.alive && !p.inVehicle && !w.melee && !w.cone && p.weapon !== 'fist');
       if (aim.hip) {
         // the hip crosshair: a dot where a hip shot would go (the UI draws it from hud().crosshair)
@@ -674,10 +674,16 @@
     var cur = p.lockTarget;
     if (scope.active) cur = null;   // the scope is a pure sight: no lock-on magnetism
     else {
-      if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) cur = null;
-      var cycle = In.pressed('lockOn') && !wheel.open;
-      if ((rising && settings.aimAssist) || cycle) {
-        var cands = lockCandidates(p, cd, range, (rising ? 20 : 45) * DEG, candBuf, !!w.rocket);
+      if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) {
+        // a hard lock (kind 'heli': the police helicopter, a boss weak point) whose target went down hands over like a fresh aim
+        // press: it dragged the rig up to the pitch limit, where the 6-degree crosshair re-acquire below never finds a body again
+        if (cur.kind === 'heli' && (cur.removed || cur.down)) aim.hop = true;
+        cur = null;
+      }
+      if (aim.hop && In.look && (In.look.dx || In.look.dy)) aim.hop = false;   // the player took the camera back
+      var cycle = In.pressed('lockOn') && !wheel.open, hop = !!aim.hop && !cur && !cycle && settings.aimAssist;
+      if ((rising && settings.aimAssist) || cycle || hop) {
+        var cands = lockCandidates(p, cd, range, (rising || hop ? 20 : 45) * DEG, candBuf, !!w.rocket);
         if (cands.length) {
           if (cycle && cur) {
             cands.sort(function (a, b) { return a.ang - b.ang; });
@@ -689,9 +695,11 @@
             for (var k = 1; k < cands.length; k++) if (cands[k].score < best.score) best = cands[k];
             cur = best.e;
           }
+          aim.hop = false;
           if (cur !== p.lockTarget) { aim.lockT = simT(); aim.snapT = 0; sfx('ui', p.x, p.z, 0.2); emit('aim:assist', { target: cur }); }
         } else if (cycle) cur = null;
-      } else if (!cur && settings.aimAssist) {
+      }
+      if (!cur && !rising && !cycle && settings.aimAssist) {
         // held aim re-acquires: a body the crosshair passes over (within 6°), or the helicopter anywhere in the cone (the rig cannot
         // look up at it)
         var cr0 = cameraRay(), cs = lockCandidates(p, cd, range * (w.rocket ? 1 : 1.9), 20 * DEG, candBuf, !!w.rocket), pick = null;
@@ -699,7 +707,7 @@
           var ce = cs[q].e; if (ce.kind !== 'heli' && cs[q].d > range) continue;
           if (ce.kind === 'heli' || (cr0 && rayAngleTo(cr0, ce.x, chestY(ce), ce.z) < 6 * DEG)) { if (!pick || cs[q].score < pick.score) pick = cs[q]; }
         }
-        if (pick) { cur = pick.e; aim.lockT = simT(); aim.snapT = 0.31; }   // no snap: it is already under the sight
+        if (pick) { cur = pick.e; aim.lockT = simT(); aim.snapT = 0.31; aim.hop = false; }   // no snap: it is already under the sight
       }
     }
     // the assist: a snap onto the lock (0.3 s), then a light stickiness while the crosshair stays near it; looking well away
@@ -840,7 +848,7 @@
     var base = w.spread || 0;
     if (w.scope) base = scope.active ? (w.scopedSpread || 0) : w.spread;
     else if (w.aimSpread != null && p.aiming) base = w.aimSpread;
-    if (hip) base = base * 1.6 + 0.004;   // from the hip: looser
+    if (hip) base = locked ? base * 1.1 + 0.002 : base * 1.6 + 0.004;   // from the hip: looser (the assist's target still gets a near-aimed cone)
     if (p.cover && p.cover.blind) base = base * 2.5 + 0.03;   // blind fire over or around cover
     if (w.pointShots && bloom.burst < w.pointShots && !hip) return base;   // the first rounds of a burst from rest: the "point"
     return base + bloom.cone * (locked ? 0.5 : 1);   // a lock-on is an aim assist: half the bloom lands on a locked target
@@ -1010,7 +1018,7 @@
   }
   function hitscan(ped, w, id, ctx) {
     var pellets = w.pellets || 1, isPlayer = ped.kind === 'player';
-    var spread = isPlayer ? playerSpread(ped, w, !!(ped.aiming && ctx.target && ctx.target === aim.target), ctx.hip) : (w.spread || 0) * 2.2 + 0.03;
+    var spread = isPlayer ? playerSpread(ped, w, !!(ctx.target && ((ped.aiming && ctx.target === aim.target) || (ctx.hip && assistable(ctx.target, ped)))), ctx.hip) : (w.spread || 0) * 2.2 + 0.03;
     var o = ctx.origin, pelletHits = null, range = reachFor(ctx.target || aim.hover, w.range), volley = { counted: false };
     if (isPlayer && ctx.target && ctx.dist > range && ctx.target === aim.target) range = ctx.dist + 1;   // a locked target is in reach of the shot
     if (!isPlayer && smokeBetween(o.x, o.z, ctx.point.x, ctx.point.z)) spread = spread * 4 + 0.08;   // shooting blind through smoke
@@ -1417,17 +1425,30 @@
   }
   // the hottake's 5 m stun
   var TAKE_TEXT = { flashbang: 'BREAKING NEWS', flare_gun: 'SIGNAL BOOST', merch_cannon: 'FREE SHIRT' };
+  var TAKE_FX = {
+    flashbang: { flash: 0xffffff, size: 5.5, life: 0.25, ring: 0xe8f0ff, bits: 'spark', bit: 0xffffff, bitSize: 0.3 },
+    flare_gun: { flash: 0xff3fa4, size: 2.6, life: 0.6, ring: 0xff6fb8, bits: 'spark', bit: 0xff9ad0, bitSize: 0.35 },
+    merch_cannon: { flash: 0xf4ecd8, size: 1.4, life: 0.3, ring: 0xff3fa4, bits: 'puff', bit: 0xf4ecd8, bitSize: 0.5 }
+  };
   function takeBlast(proj, owner) {
     var pw = WEAPONS[proj.weaponId], w = pw && pw.stun ? pw : WEAPONS.hottake, r = R(), pid = pw ? proj.weaponId : 'hottake';
     var x = proj.x, y = proj.y, z = proj.z, Wd = W();
     var gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
     var rad = w.stun || 5, i;
-    fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: 3.2, life: 0.5, color: 0xff8a30 });
-    fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.55, color: 0xff9a40 });
-    for (i = 0; i < 6; i++) fx({ type: 'fire', x: x + r.range(-0.5, 0.5), y: y + 0.3 + r.range(0, 0.6), z: z + r.range(-0.5, 0.5), vx: r.range(-2, 2), vy: r.range(1.5, 4), vz: r.range(-2, 2), size: r.range(0.8, 1.5), life: r.range(0.3, 0.6) });
-    for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: 0x553322 });
-    for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: 0xffb060 }); }
-    fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
+    var look = TAKE_FX[pid];
+    if (look) {
+      // a non-explosive stun: the merch cannon's shirts, the flare's pink light, the flashbang's white flash
+      fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: look.size, life: look.life, color: look.flash });
+      fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.5, color: look.ring });
+      for (i = 0; i < 8; i++) { var la = r.random() * Math.PI * 2, ls = r.range(2, 6); fx({ type: look.bits, x: x, y: y + 0.4, z: z, vx: Math.cos(la) * ls, vy: r.range(1.5, 4.5), vz: Math.sin(la) * ls, size: look.bitSize, life: r.range(0.4, 0.9), color: look.bit }); }
+    } else {
+      fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: 3.2, life: 0.5, color: 0xff8a30 });
+      fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.55, color: 0xff9a40 });
+      for (i = 0; i < 6; i++) fx({ type: 'fire', x: x + r.range(-0.5, 0.5), y: y + 0.3 + r.range(0, 0.6), z: z + r.range(-0.5, 0.5), vx: r.range(-2, 2), vy: r.range(1.5, 4), vz: r.range(-2, 2), size: r.range(0.8, 1.5), life: r.range(0.3, 0.6) });
+      for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: 0x553322 });
+      for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: 0xffb060 }); }
+      fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
+    }
     textFx(TAKE_TEXT[pid] || 'RESPECTFULLY.', x, y + 1.6, z, '#ff7a20', 1.3);
     var list = E().hash.query(x, z, rad + 2.5, scratch);
     for (i = 0; i < list.length; i++) {
@@ -1714,6 +1735,12 @@
   function holeClear() { for (var i = 0; i < holes.list.length; i++) holeRelease(holes.list[i]); holes.list.length = 0; }
   var holeHandler = { add: holeAdd, update: holeUpdate, sync: function () { }, clear: holeClear, state: holes };
   var hooked = { rig: false };
+  function afterStep(dt) {
+    var B = GTP.Bosses, Sp = GTP.Specials, I = GTP.Interiors;
+    if (B && B.update) { try { B.update(dt); } catch (e) { U.reportError(e, 'bosses.tick'); } }
+    if (Sp && Sp.update) { try { Sp.update(dt); } catch (e2) { U.reportError(e2, 'specials.tick'); } }
+    if (I && I.update) { try { I.update(dt); } catch (e3) { U.reportError(e3, 'interiors.update'); } }
+  }
   function ensureHooks() {
     var Rd = GTP.Render, F = Rd && Rd.fx;
     if (F && F.register && F.extensions) {
@@ -3113,7 +3140,12 @@
     counter: function (p) { return tryCounter(p || player()); },
     counterReady: function (p) { p = p || player(); return !!p && p.alive && !p.inVehicle && !p.cover && !p.knockedDown && !!counterCandidate(p); },
     setAimAssist: function (on) { settings.aimAssist = !!on; return settings.aimAssist; },
+    // the per-step tick (Game.step calls it in play, cutscenes, minigames and the death cards); after Combat's own work it runs the
+    // modules that hang off the combat step: the bosses and the specials (08b), then the interiors (13), in that order, every step
     update: function (dt) {
+      try { Combat._update(dt); } finally { afterStep(dt); }
+    },
+    _update: function (dt) {
       ensureHooks();
       var g = GTP.game, p = player(); if (!g || !p) return;
       var st = g.state;
@@ -3139,7 +3171,15 @@
     },
 
     // Fire the ped's weapon toward its target. Rate-limited per ped; the player spends ammo (and reloads an empty magazine).
+    // Inside a shop the interiors module decides whether the player may shoot at all (only on the range), and scores range shots.
     fire: function (ped, weaponId) {
+      var I = GTP.Interiors, me = !!ped && ped.kind === 'player';
+      if (me && I && I.active && I.canFire && !I.canFire(ped)) return false;
+      var r = Combat._fire(ped, weaponId);
+      if (r && me && I && I.onPlayerShot) { try { I.onPlayerShot(ped); } catch (e) { U.reportError(e, 'interiors.shot'); } }
+      return r;
+    },
+    _fire: function (ped, weaponId) {
       if (!ped || !ped.alive || ped.knockedDown || ped.entering || ped.swimming || ped._vault) return false;
       var id = weaponId || ped.weapon || 'fist', w0 = WEAPONS[id]; if (!w0) return false;
       var isPlayer = ped.kind === 'player', w = isPlayer ? eff(ped, id) : w0;
@@ -3332,6 +3372,8 @@
       arsenal: arsenal, normalize: normalize, findCover: findCover, probeCover: probeCover, gunFrame: gunFrame, puddles: puddles, steerCamera: steerCamera
     }
   };
+  // the hooks above are native: the bosses' and the interiors' load-time installers see these marks and leave the functions alone
+  Combat.update._bosses = true; Combat.update._interiors = true; Combat.fire._interiors = true;
 
   // ------------------------------------------------------------- events --
   GTP.Events.on('damage', function (e) {
