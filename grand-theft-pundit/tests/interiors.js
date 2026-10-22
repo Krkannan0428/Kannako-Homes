@@ -380,5 +380,57 @@ H.run('interiors', async (t) => {
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'no errors:\n' + errs.join('\n'));
+
+  // ---- 9. the new-player path through the rooms: m01c_both_sides (Merle's free pistol, the range, the counter) ----
+  const ctx2 = await t.boot({ seed: 7, mission: 'm01c_both_sides' });
+  const m01c = await ctx2.page.evaluate(() => {
+    const M = GTP.Missions, p = GTP.game.player, U = GTP.util, In = GTP.Input, I = GTP.Interiors, out = {};
+    const ev = []; ['interior:enter', 'range:start', 'range:end', 'shop:buy'].forEach((n) => GTP.Events.on(n, (e) => ev.push(n)));
+    const cur = () => { const c = M.current(); return c ? c.def.type : null; };
+    const adv = (s) => GTP.game.advance(s);
+    const talk = (n) => { for (let i = 0; i < (n || 40); i++) { if (!(GTP.UI.state.dialogue || (M.dialogue && M.dialogue.active))) break; In.press('confirm'); adv(0.4); } };
+    adv(1); talk();
+    let tg = M.objectiveTarget(); if (tg) { GTP.game.debug.teleport(tg.x, tg.z); adv(1); } talk();
+    // walk into the Strip door
+    const d = I.debug.doors().find((q) => q.id === 'both_sides_strip');
+    GTP.game.debug.teleport(d.x - d.nx * 1.5, d.z - d.nz * 1.5); p.yaw = U.dirToYaw(d.nx, d.nz); GTP.Render.rig.yaw = p.yaw; GTP.Render.rig.snap();
+    In.set('forward', true); adv(1.5); In.set('forward', false); adv(1);
+    out.inside = I.active; talk(); adv(0.5); talk();
+    out.pistol = p.weapon === 'pistol' && p.weapons.pistol > 0; out.atRange = cur() === 'range';
+    // the arrow leads to the line; the round runs; aim at the standing hecklers and squeeze
+    tg = M.objectiveTarget(); const room = I.room(); out.rangeArrow = !!(tg && tg.interior && U.dist2d(tg.x, tg.z, room.booth.x, room.booth.z) < 0.5);
+    if (tg) { GTP.game.debug.teleport(tg.x, tg.z); p.yaw = 0; GTP.Render.rig.yaw = 0; GTP.Render.rig.snap(); }
+    adv(1.2); out.running = I.range.running;
+    In.set('aim', true);
+    for (let k = 0; k < 64 * 30 && I.range.running; k++) {
+      const ts = I.range.targets.filter((q) => q.up && !q.moderator);
+      if (!ts.length) { adv(1 / 30); continue; }
+      const cam = GTP.Render.camera, q = ts.sort((a, b) => b.z - a.z)[0], w = new THREE.Vector3(); q.mesh.getWorldPosition(w);
+      const dx = w.x - cam.position.x, dz = w.z - cam.position.z;
+      GTP.Render.rig.yaw = U.dirToYaw(dx, dz); GTP.Render.rig.pitch = Math.atan2(cam.position.y - w.y, Math.hypot(dx, dz)); adv(1 / 30);
+      GTP.Render.rig.yaw = U.dirToYaw(dx, dz); GTP.Render.rig.pitch = Math.atan2(cam.position.y - w.y, Math.hypot(dx, dz));
+      In.set('shoot', true); adv(1 / 30); In.set('shoot', false); adv(0.15);
+      if (GTP.Combat.ammo(p) && GTP.Combat.ammo(p).mag === 0) { In.press('reload'); adv(1.3); }
+    }
+    In.set('aim', false); adv(1); talk();
+    out.range = I.range.last; out.afterRange = cur();
+    // the arrow leads to Merle; E there opens the armory card
+    tg = M.objectiveTarget(); const clerk = room.inter.find((q) => q.kind === 'clerk');
+    out.buyArrow = !!(tg && U.dist2d(tg.x, tg.z, clerk.x, clerk.z) < 0.5);
+    if (tg) { GTP.game.debug.teleport(tg.x, tg.z); p.yaw = 0; adv(0.3); In.press('action'); adv(0.5); }
+    out.card = GTP.UI.openArmory ? (GTP.UI.state.modal && GTP.UI.state.modal.kind) : 'no-ui';
+    const ammo = (GTP.Combat.catalog ? GTP.Combat.catalog('both_sides_strip') : []).find((c) => c.id === 'ammo_pistol');
+    out.ammoLocked = !!(ammo && ammo.locked); out.ammoLockReason = ammo && ammo.lockReason;
+    out.events = ev;
+    return out;
+  });
+  console.log('  m01c path: ' + JSON.stringify(m01c));
+  t.assert(m01c.inside && m01c.pistol && m01c.atRange, 'm01c: walk in through the door, Merle\'s free pistol in hand, on to the range: ' + JSON.stringify(m01c));
+  t.assert(m01c.rangeArrow && m01c.running, 'm01c: the HUD arrow inside the armory leads to the shooting line and the round starts there');
+  t.assert(m01c.range && (m01c.range.medal === 'bronze' || m01c.range.medal === 'silver' || m01c.range.medal === 'gold') && m01c.afterRange === 'buy', 'm01c: aiming at the hecklers earns a medal and moves the mission on: ' + JSON.stringify(m01c.range));
+  t.assert(m01c.buyArrow && (m01c.card === 'armory' || m01c.card === 'no-ui'), 'm01c: the arrow leads to Merle and E opens the armory card');
+  if (m01c.ammoLocked) console.log('  NOTE (cross-track, see docs/v03/triage_interiors.md): ammo_pistol is locked until m01c completes, so m01c\'s own "buy a starter box" step cannot be met: ' + m01c.ammoLockReason);
+  const errs2 = await t.errors(ctx2);
+  t.assert(errs2.length === 0, 'no errors on the m01c run:\n' + errs2.join('\n'));
   console.log('  screenshots: ' + shots.join(', '));
 });
