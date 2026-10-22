@@ -55,8 +55,16 @@ the per-preset numbers are in `environment.md` → Performance.
 | tests/events.js | PASS |
 | tests/content_audit.js | PASS (256 files, 0 hits) |
 | tests/vehicles.js (not ours) | PASS on this branch, including "the real Spin Doctor door opens the shop once" |
+| tests/actors.js (not ours) | PASS after merging 9f7c65c ("the headlight spot lights the road ahead": on 72.5, off 44.3) |
 
 Run them one at a time: with several Playwright files in parallel on 4 cores the perf numbers drop into the 400s.
+
+## Last fix (on top of 9f7c65c)
+`tests/actors.js` failed "the headlight spot lights the road ahead" (on 72.5 = off 72.5). The QA-A-NGT-06 fix keeps the
+player's headlight spot visible and drives it by intensity, but `Render.syncVehicle` rewrote that intensity on every
+sync, so the render inside the test switched it straight back on. The intensity now changes only when the lights
+switch on or off, or the owning car changes. The light count still never changes, and a per-frame write is gone.
+`actors.js` and `render.js` pass, each run alone.
 
 ## Still open
 - **Ours:** QAC-20 and QAC-21 (A* steps sideways onto ramp tiles; A* ignores solid props) were not reached. QA-A-DRV-05 leaves a 4 m

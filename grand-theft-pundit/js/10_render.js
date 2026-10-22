@@ -2211,8 +2211,10 @@
         // the player's car throws a real spotlight at night (the spot stays visible; off is intensity 0, QA-A-NGT-06)
         var L = Render.lights;
         if (L && L.headlight && v.hasPlayer()) {
+          // the intensity follows the on/off edge (and a new owner), not every sync: a cutscene or a test that dims the
+          // spot keeps it dimmed until the lights actually switch
+          if (L.headlightOwner !== v || L._headOn !== lightsOn) { L.headlight.intensity = lightsOn ? HEADLIGHT_I : 0; L._headOn = lightsOn; }
           L.headlightOwner = v;
-          L.headlight.intensity = lightsOn ? HEADLIGHT_I : 0;
           if (lightsOn) {
             var p = v.localToWorld(0, v.cls.length / 2 - 0.1), t = v.localToWorld(0, v.cls.length / 2 + 14);
             L.headlight.position.set(p.x, v.y + rec.lightPoints.head.y, p.z);
