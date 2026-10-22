@@ -435,10 +435,14 @@
   // --------------------------------------------------------------- parts --
   // A boss weak point (a ribbon spool, a speaker, the redacted patch, a talking point): kind 'heli' so the existing hitscan,
   // the lock-on and the blasts reach it (Combat's trace takes a 3.4 m sphere around it). Not a vehicle, never a crime.
+  var PART_HIT = { spool: 3.0, patch: 3.2, speaker: 2.6, scooter: 2.4, talkingpoint: 2.4, prompter: 1.6 };
   class BossPart extends GTP.Entity {
     constructor(enc, o) {
       super({ kind: 'heli', x: o.x, y: o.y, z: o.z, radius: o.radius || 1.2, height: o.height || 1.6, hp: o.hp || 50, persistent: true });
       this.boss = enc; this.bossPart = o.kind || 'part'; this.label = o.label || 'WEAK POINT';
+      // Combat's trace takes `hitRadius` for a kind 'heli' sphere (else radius + 0.4; it was a fixed 3.4 m when the fights were
+      // tuned): generous for what hangs in the air or rides by, tight for the teleprompter so it never wraps the President
+      this.hitRadius = o.hitRadius || PART_HIT[this.bossPart] || 2.4;
       // the lock-on ranks hostiles first (Combat's hostileRole reads `hostile`): a weak point competes with the goons around it
       this.hostile = true;
       this.down = false; this.leaving = false; this.invuln = false; this.invulnText = o.invulnText || 'NO EFFECT';
