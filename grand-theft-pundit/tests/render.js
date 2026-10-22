@@ -320,6 +320,29 @@ H.run('render', async (t) => {
   t.assert(v3r.v3_strip_rain_night_high.warm > 0.01, 'the strip in the rain has warm light and neon: ' + v3r.v3_strip_rain_night_high.warm);
   t.assert(v3r.v3_park_noon_high.green > 0.1, 'the park reads green (grass, trees): ' + v3r.v3_park_noon_high.green);
   t.assert(v3r.v3_marina_noon_high.blue > 0.1, 'the marina shows sea and sky: ' + v3r.v3_marina_noon_high.blue);
+
+  // ---- envw2 assets: builders in js/05_assets.js (QA-A-NGT-01, the v0.3 place props folded in from 20_content_world) ----
+  const as2 = await vp.evaluate(() => {
+    const A = GTP.Assets, W = GTP.World, U = GTP.util, out = {};
+    // NGT-01: the lamp head, turned by the instance's yaw about +y, lands where the glow / pool / point light go (yawToDir * 1.4)
+    const pos = A.prop('lamp').geometry.attributes.position; let sx = 0, sz = 0, n = 0;
+    for (let i = 0; i < pos.count; i++) if (pos.getY(i) > 5.8 && Math.abs(pos.getZ(i)) > 0.9) { sx += pos.getX(i); sz += pos.getZ(i); n++; }
+    sx /= n; sz /= n; out.lampWorst = 0;
+    W.props.filter((p) => p.kind === 'lamp').forEach((p) => {
+      const c = Math.cos(p.rot || 0), s = Math.sin(p.rot || 0), d = U.yawToDir(p.rot || 0);
+      const hx = p.x + sx * c + sz * s, hz = p.z - sx * s + sz * c;
+      out.lampWorst = Math.max(out.lampWorst, Math.hypot(hx - (p.x + d.x * 1.4), hz - (p.z + d.z * 1.4)));
+    });
+    // the six v0.3 place props are native builders: not the crate fallback, no wrapper left on Assets.prop
+    const crate = A.prop('crate').geometry.attributes.position.count;
+    out.folded = ['helipad', 'teebox', 'barberpole', 'mannequin', 'pontoon', 'tirestack'].map((k) => { const r = A.prop(k); return { k, verts: r.geometry.attributes.position.count, crate: r.geometry.attributes.position.count === crate, wrapped: !!r._world, shadow: r.castShadow }; });
+    out.wrapper = !!A.prop._worldProps;
+    return out;
+  });
+  console.log('  envw2 assets: ' + JSON.stringify(as2));
+  t.assert(as2.lampWorst < 0.3, 'every lamp head sits over its glow, pool and light (QA-A-NGT-01): worst ' + as2.lampWorst.toFixed(2) + ' m');
+  t.assert(!as2.wrapper && as2.folded.every((f) => !f.crate && !f.wrapped && f.verts > 30), 'the helipad, teebox, barber pole, mannequin, pontoon and tyre stack are 05_assets builders: ' + JSON.stringify(as2.folded));
+  t.assert(as2.folded.filter((f) => !f.shadow).map((f) => f.k).join() === 'helipad,teebox', 'the flush helipad and teebox cast no shadow: ' + JSON.stringify(as2.folded));
   const v3e = await t.errors(v3);
   t.assert(v3e.length === 0, 'v0.3 errors:\n' + v3e.join('\n'));
 });

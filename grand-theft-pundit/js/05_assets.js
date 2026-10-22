@@ -722,7 +722,7 @@
         g._glow.forEach(function (rg) { for (var i = rg[0]; i < rg[1]; i++) arr[i] = rg[2]; });
         geo.setAttribute('glow', new THREE.BufferAttribute(arr, 1));
       }
-      var rec = Assets._props[kind] = { geometry: geo, material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' && kind !== 'edgelight' && kind !== 'beacon' };
+      var rec = Assets._props[kind] = { geometry: geo, material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' && kind !== 'edgelight' && kind !== 'beacon' && kind !== 'helipad' && kind !== 'teebox' };
       return rec;
     },
     // Foliage: leaf cards cut out of a leaf-cluster canvas (alpha tested, so the shadow map cuts the same holes), the
@@ -2197,10 +2197,12 @@
     lamp: function (g) {
       g.cylinder(0, 0, 0, 0.16, 0.1, 6.2, 8, METAL, null, false);
       g.cylinder(0, 0, 0, 0.2, 0.17, 0.5, 8, METAL, null, false);                // the base collar
-      g.box(-0.06, 6.0, -0.06, 0.12, 0.12, 1.6, GB.UV0, METAL);   // arm reaching over the road (+z = toward the road at rot 0)
-      g.box(-0.05, 5.5, -0.05, 0.1, 0.1, 0.1, GB.UV0, METAL); g.quad([-0.025, 5.55, 0.05], [0.025, 5.55, 0.05], [0.025, 6.0, 1.2], [-0.025, 6.0, 1.2], GB.UV0, METAL); g.quad([-0.025, 6.0, 1.2], [0.025, 6.0, 1.2], [0.025, 5.55, 0.05], [-0.025, 5.55, 0.05], GB.UV0, METAL);   // the stay (a two-sided strip; never coincide a quad's first two corners: a zero normal is NaN lighting)
-      g.box(-0.24, 5.85, 1.05, 0.48, 0.22, 0.8, GB.UV0, LAMP);      // head
-      glowing(g, 1.3, function () { g.box(-0.17, 5.82, 1.15, 0.34, 0.04, 0.55, GB.UV0, c(PAL.lampGlow)); });   // the lens, lit
+      // the arm reaches over the road along local -z: the instance turns it by rot about +y, which sends -z to
+      // U.yawToDir(rot), the direction world gen points at the road and the glow, light pool and point light use (QA-A-NGT-01)
+      g.box(-0.06, 6.0, -1.54, 0.12, 0.12, 1.6, GB.UV0, METAL);
+      g.box(-0.05, 5.5, -0.05, 0.1, 0.1, 0.1, GB.UV0, METAL); g.quad([-0.025, 5.55, -0.05], [0.025, 5.55, -0.05], [0.025, 6.0, -1.2], [-0.025, 6.0, -1.2], GB.UV0, METAL); g.quad([-0.025, 6.0, -1.2], [0.025, 6.0, -1.2], [0.025, 5.55, -0.05], [-0.025, 5.55, -0.05], GB.UV0, METAL);   // the stay (a two-sided strip; never coincide a quad's first two corners: a zero normal is NaN lighting)
+      g.box(-0.24, 5.85, -1.85, 0.48, 0.22, 0.8, GB.UV0, LAMP);      // head
+      glowing(g, 1.3, function () { g.box(-0.17, 5.82, -1.70, 0.34, 0.04, 0.55, GB.UV0, c(PAL.lampGlow)); });   // the lens, lit
       g.box(-0.25, 0, -0.25, 0.5, 0.25, 0.5, GB.UV0, CONCD);
     },
     signal: function (g) {
@@ -2559,6 +2561,46 @@
       for (var k = 0; k < 8; k += 2) g.box(-2 + k * 0.5, 0.15, -2, 0.5, 0.03, 2, GB.UV0, [0.35, 0.35, 0.38]);
       g.box(-2.05, -0.3, -2.05, 4.1, 0.3, 0.1, GB.UV0, white);
       g.box(-1.9, -2.6, -0.06, 0.08, 2.6, 0.08, GB.UV0, METAL); g.box(1.82, -2.6, -0.06, 0.08, 2.6, 0.08, GB.UV0, METAL);
+    },
+    // ---- v0.3 places (moved here from the js/20_content_world.js wrapper on Assets.prop) ----
+    // a 12 m concrete pad with a yellow ring and a white H (flush with the ground: y is the surface; casts no shadow)
+    helipad: function (g) {
+      var conc = c('#8d9096'), yel = c('#f2c230'), wht = [0.95, 0.95, 0.95];
+      g.cylinder(0, 0, 0, 6, 6, 0.06, 28, conc);
+      for (var i = 0; i < 28; i++) { var a = i / 28 * TAU, b = (i + 0.6) / 28 * TAU; g.quad([Math.cos(a) * 5.1, 0.075, Math.sin(a) * 5.1], [Math.cos(b) * 5.1, 0.075, Math.sin(b) * 5.1], [Math.cos(b) * 5.5, 0.075, Math.sin(b) * 5.5], [Math.cos(a) * 5.5, 0.075, Math.sin(a) * 5.5], GB.UV0, yel); }
+      g.box(-2, 0.06, -2.6, 0.8, 0.02, 5.2, GB.UV0, wht); g.box(1.2, 0.06, -2.6, 0.8, 0.02, 5.2, GB.UV0, wht); g.box(-1.2, 0.06, -0.4, 2.4, 0.02, 0.8, GB.UV0, wht);
+      for (var k = 0; k < 4; k++) { var q = k / 4 * TAU + Math.PI / 4; g.box(Math.cos(q) * 5.9 - 0.15, 0, Math.sin(q) * 5.9 - 0.15, 0.3, 0.3, 0.3, GB.UV0, yel); }
+    },
+    // a tee box: two gold tee markers on a mown square (casts no shadow)
+    teebox: function (g) {
+      g.box(-1.6, 0, -1.6, 3.2, 0.03, 3.2, GB.UV0, c('#4f9a3c'));
+      g.box(-1.2, 0, -0.2, 0.35, 0.3, 0.35, GB.UV0, c('#e8b53a')); g.box(0.85, 0, -0.2, 0.35, 0.3, 0.35, GB.UV0, c('#e8b53a'));
+    },
+    // the barber's pole: a striped cylinder on a bracket (instance scale 1, 2.4 m tall)
+    barberpole: function (g) {
+      var red = c('#d33a3a'), wht = [0.95, 0.95, 0.95], blu = c('#2f56b0');
+      g.cylinder(0, 0, 0, 0.12, 0.12, 0.9, 8, c('#3a3d44'));
+      for (var i = 0; i < 8; i++) g.cylinder(0, 0.9 + i * 0.15, 0, 0.16, 0.16, 0.15, 10, i % 3 === 0 ? red : i % 3 === 1 ? wht : blu);
+      g.sphere(0, 2.15, 0, 0.18, 8, 5, c('#e8b53a'));
+    },
+    // a shop-window mannequin in a blazer
+    mannequin: function (g) {
+      g.box(-0.3, 0, -0.3, 0.6, 0.06, 0.6, GB.UV0, c('#2a2a2e'));
+      g.cylinder(0, 0.06, 0, 0.03, 0.03, 0.8, 5, c('#2a2a2e'));
+      g.box(-0.22, 0.86, -0.13, 0.44, 0.62, 0.26, GB.UV0, c('#2c3e7a'));
+      g.box(-0.05, 1.3, -0.14, 0.1, 0.18, 0.02, GB.UV0, c('#e8b53a'));   // the lanyard tag
+      g.sphere(0, 1.65, 0, 0.13, 8, 5, c('#e6e1d8'));
+    },
+    // a floating pontoon slip: planks on drums with two cleats (sits at the water line)
+    pontoon: function (g) {
+      var wood = c('#8a6a44');
+      for (var i = 0; i < 8; i++) g.box(-0.9, 0.3, -4 + i * 1.0, 1.8, 0.12, 0.9, GB.UV0, i % 2 ? wood : c('#7a5c3a'));
+      for (var k = 0; k < 4; k++) g.cylinder(k % 2 ? 0.55 : -0.55, 0, -3 + (k >> 1) * 6, 0.3, 0.3, 0.3, 8, c('#d8d8d8'));
+      g.box(0.6, 0.42, -3.6, 0.2, 0.15, 0.4, GB.UV0, c('#3a3d44')); g.box(0.6, 0.42, 3.2, 0.2, 0.15, 0.4, GB.UV0, c('#3a3d44'));
+    },
+    // a stack of tyres outside the mod shop
+    tirestack: function (g) {
+      for (var i = 0; i < 4; i++) { g.cylinder(0, i * 0.24, 0, 0.42, 0.42, 0.24, 12, c('#1d1d20')); g.cylinder(0, i * 0.24 + 0.005, 0, 0.2, 0.2, 0.235, 10, c('#4a4a50')); }
     }
   };
   function CONCL() { return c(PAL.concreteLight); }
