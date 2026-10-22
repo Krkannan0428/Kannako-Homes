@@ -175,6 +175,7 @@ function installPlayer(budget) {
           const f = U.yawToDir(v0.yaw); let ahead = 0; for (let d = 3; d <= 12; d += 1) if (roadAt(v0.x + f.x * d, v0.z + f.z * d)) { ahead = d; break; }
           // someone on the pavement in front (the giver, Kip, a passer-by): wait for them, a few seconds at most, never drive through
           const inPath = (v) => { const fd = U.yawToDir(v.yaw); return GTP.Entities.near(v.x, v.z, 9).some((e) => e !== v && e !== p && !e.removed && ((e.kind === 'ped' && e.alive && !e.inVehicle) || e.kind === 'vehicle') && (() => { const dx = e.x - v.x, dz = e.z - v.z, al = dx * fd.x + dz * fd.z, sd = Math.abs(dx * -fd.z + dz * fd.x); return al > 1 && al < 6.5 && sd < 1.9; })()); };
+          if (ahead && !NP.clearSeg(v0, { x: v0.x + f.x * (ahead + 2), z: v0.z + f.z * (ahead + 2) })) ahead = 0;   // a tree or a lamp in the way out: follow the line instead
           if (ahead) { let waited = 0; for (let k = 0; k < 240 && p.inVehicle && !roadAt(p.inVehicle.x, p.inVehicle.z) && !stop(); k++) { const blocked = inPath(p.inVehicle); if (blocked) { waited += 1 / 30; if (waited > 4) break; } NP.hold('forward', !blocked && p.inVehicle.speed < 5); NP.hold('back', false); NP.hold('jump', blocked); NP.adv(1 / 30); t += 1 / 30; } NP.releaseAll(); NP.notes.pulledOut = (NP.notes.pulledOut || 0) + 1; if (waited) NP.notes.pullOutWaited = +((NP.notes.pullOutWaited || 0) + waited).toFixed(1); }
         } }
       let route = getRoute(), i = 0, lastProg = t, best = 1e9, rev = 0, reroutes = 0, aheadT = 0, passT = 0;

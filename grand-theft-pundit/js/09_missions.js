@@ -212,6 +212,16 @@
   function vehicleSpot(cx, cz, rMax, prefer, others, length) {
     var Wd = W(), T = Wd.T, M = Wd.M, TILE = C.TILE, best = null, bestS = 1e9;
     var rr = Math.ceil(rMax / TILE), tx0 = Math.floor(cx / TILE), tz0 = Math.floor(cz / TILE);
+    // the solid props around (trees, lamps, hydrants on the kerb): a bay whose way straight out is blocked by one ranks last
+    var near = (Wd.props || []).filter(function (pr) { return pr.solid && Math.abs(pr.x - cx) < rMax + 12 && Math.abs(pr.z - cz) < rMax + 12; });
+    function exitBlocked(x, z, yaw) {
+      var f = U.yawToDir(yaw), ax = x + f.x * 2, az = z + f.z * 2, bx = x + f.x * 10, bz = z + f.z * 10, ddx = bx - ax, ddz = bz - az, L2 = ddx * ddx + ddz * ddz;
+      for (var q = 0; q < near.length; q++) {
+        var pr = near[q], tt = U.clamp(((pr.x - ax) * ddx + (pr.z - az) * ddz) / L2, 0, 1), qx = ax + ddx * tt - pr.x, qz = az + ddz * tt - pr.z;
+        if (qx * qx + qz * qz < Math.pow(1.4 + (pr.r || 0.3), 2)) return true;
+      }
+      return false;
+    }
     for (var dz = -rr; dz <= rr; dz++) for (var dx = -rr; dx <= rr; dx++) {
       var tx = tx0 + dx, tz = tz0 + dz;
       if (!Wd.inBounds(tx, tz)) continue;
@@ -235,6 +245,7 @@
       // out (nose-in, a new driver's first job in m01 was a reverse out of a tight lot)
       else if (bW || bE) { yaw = bW ? -Math.PI / 2 : Math.PI / 2; x += bW ? over : (bE ? -over : 0); }
       else { yaw = bN ? Math.PI : 0; z += bN ? over : (bS ? -over : 0); }
+      if (kind === 'parking' && (bN || bS || bW || bE) && exitBlocked(x, z, yaw)) { s += 40; if (s >= bestS) continue; }   // a new driver's first job should not be a three-point turn round a tree
       best = { x: x, z: z, y: Wd.heightAt(x, z, 0), yaw: yaw, kind: kind, tx: tx, tz: tz }; bestS = s;
     }
     if (!best) { var rp = Wd.nearestRoadPoint(cx, cz); if (rp) best = { x: rp.x, z: rp.z, y: 0, yaw: U.dirToYaw(rp.dx, rp.dz), kind: 'road' }; }
