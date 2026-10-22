@@ -397,7 +397,7 @@ H.run('ui_v03', async (t) => {
     // the real GTP.Strangers: open the first strand by completing its gate for the duration of the check
     const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = Sg.list()[0].id, first = Sg.missions(sid)[0], added = [];
     (first.requires || []).forEach((id) => { if (!Ms.state.completed.has(id)) { Ms.state.completed.add(id); added.push(id); } });
-    window.__strAdded = added;
+    window.__strAdded = added; if (Ms.refreshMarkers) Ms.refreshMarkers();   // Missions caches the available list
     const mk = GTP.UI.allMarkers().find((m) => m.missionId === first.id) || {};
     if (mk.x != null) { p.x = mk.x - 30; p.z = mk.z; T_.lookAt(mk.x, mk.z); }
     T_.adv(0.1); GTP.game.render();
@@ -410,7 +410,7 @@ H.run('ui_v03', async (t) => {
   await shot('strangers_phone');
   const strangers2 = await page.evaluate(() => { const rows = T_.ui.pause.rows || [], r = rows.find((x) => x.kind === 'stranger'); GTP.UI._v3.missionRowActivate(r); const G = T_.ui.gps; GTP.UI.closePause(); T_.adv(0.1); GTP.game.render(); return { gps: G && G.kind }; });
   await shot('strangers_map');
-  await page.evaluate(() => { (window.__strAdded || []).forEach((id) => GTP.Missions.state.completed.delete(id)); GTP.Events.emit('gps:clear'); });
+  await page.evaluate(() => { (window.__strAdded || []).forEach((id) => GTP.Missions.state.completed.delete(id)); if (GTP.Missions.refreshMarkers) GTP.Missions.refreshMarkers(); GTP.Events.emit('gps:clear'); });
   console.log('  strangers: ' + JSON.stringify([strangers, strangers2]));
   t.assert(strangers.kind === 'stranger' && strangers.icon === 'stranger' && strangers.labels >= 1 && strangers.row && strangers2.gps === 'stranger', 'stranger missions get a label, a phone row and a GPS route: ' + JSON.stringify([strangers, strangers2]));
 
