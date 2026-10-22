@@ -27,8 +27,10 @@ in `desktop/README.md`; this file is for integration.
   failures); crashReporter with local minidumps only; *Help > Open Crash Log*. A dead game process
   now shows Restart / Open Crash Log / Quit instead of quitting.
 - **Menus**: macOS app menu + Help menu; Windows/Linux a hidden menu bar (Alt) with Game and Help.
-  Shortcuts handled in `before-input-event` only: F11 / Cmd-Ctrl+F full screen (as before),
-  Cmd/Ctrl+Shift+M mods folder, Cmd+Option+I / Ctrl+Shift+I devtools. Menu accelerators are
+  Shortcuts handled in `before-input-event` only: F11 (and Cmd+F on macOS) full screen,
+  Cmd+Shift+M mods folder on macOS (Windows/Linux: Alt menu > Game), Cmd+Option+I / Ctrl+Shift+I
+  devtools. Windows/Linux have no Ctrl+F or Ctrl+Shift+M since round 2: the game uses Ctrl to
+  shoot, Shift to run, F for vehicles and M for the map. Menu accelerators are
   display-only (`registerAccelerator: false`) so no other key is taken from the game. About shows
   the version on every platform.
 - **DMG background** `desktop/build/background.png` (+@2x) rendered by
@@ -118,3 +120,31 @@ SwiftShader). macOS and Windows use `backgroundColor` natively and never showed 
 - GitHub warns that `actions/*@v4` run on Node 24 instead of the deprecated Node 20; harmless now,
   bump to the next major of each action when convenient.
 - The title footer still says `v0.2.0` (in `js/`, not desktop-owned); the app is 0.3.0.
+
+## Round 2 (final, merged with game/grand-theft-pundit at 10ba585)
+
+Summary and verification: `docs/v03/final_desktop.md`. In short:
+- **QA-C findings fixed:**
+  - QAC-05: fuses, plus `test/check-fuses.js`.
+  - QAC-06: read-only token, write only in the release job, no persisted credentials.
+  - QAC-29: navigation lock, mods only on the game page.
+  - QAC-30: tag via env, validated.
+  - QAC-43: mod syntax errors reported; the DevTools shortcut already existed since round 0.
+- **Not done:** SHA-pinning of the actions; QAC-31 (CSP in `index.html`, not desktop-owned).
+- **Audit:** six review dimensions, each finding traced by a second pass; all confirmed findings
+  fixed:
+  - Updater: install mode only where it can apply, dialogs only at title/pause, silent NSIS
+    restart, a fallback `app-update.yml`, notifications retained, the menu check always answers.
+  - Crash-log throttling.
+  - Shortcut conflicts with game keys.
+  - Window lifecycle: second launch during the splash, crash-restart during boot, OOM `killed`,
+    window state on `closed`, maximized while minimized.
+  - CI: concurrency for publishing runs, tag/version check, DMG art location, job time limits.
+  - Smoke-test robustness: CDP timeouts and watchdog, a drop check with proof, a screen-size-safe
+    window test.
+  - check-fuses parsing.
+- **New interfaces consumed (read-only):** `GTP.game.state` (`'title'`/`'paused'`) for update
+  dialog timing.
+- **CI on `v03/desktop`:** the push trigger includes this branch; it builds and tests every
+  platform but never publishes (the `[release]` condition requires `refs/heads/game/grand-theft-pundit`).
+  Integration may keep or drop that trigger line.
