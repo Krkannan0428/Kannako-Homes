@@ -161,7 +161,8 @@
   function trackMouseMove() {
     var In = GTP.Input; if (!In || !In.mouse) return;
     var m = In.mouse, lm = ui.lastMouse;
-    if (lm.x !== m.x || lm.y !== m.y) { if (lm.seen) ui.mouseActive = true; lm.x = m.x; lm.y = m.y; lm.seen = true; }
+    if (!lm.seen) { lm.x = m.x; lm.y = m.y; lm.seen = true; return; }   // the first look is the baseline (both start at 0, 0)
+    if (lm.x !== m.x || lm.y !== m.y) { ui.mouseActive = true; lm.x = m.x; lm.y = m.y; }
   }
   function trackPointer() {
     var In = GTP.Input; if (!In || !In.mouse) return;
