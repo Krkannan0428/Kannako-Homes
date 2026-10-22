@@ -31,7 +31,17 @@ QA findings that point at this track).
 
 ## Test results (current head)
 
-RESULTS_PLACEHOLDER
+All runs on the merged build (v03/ui with game/grand-theft-pundit 10ba585), Chromium via Playwright, `NODE_PATH=/opt/node-tools/node_modules`.
+
+| Test | Result |
+|---|---|
+| `tests/content_audit.js` | PASS (239 files, 0 hits) |
+| `tests/ui_v03.js` | PASS (every v0.3 screen on the real modules) |
+| `tests/ui.js` | PASS (the v0.2 UI suite, incl. the minute-20 mattress ad on all six stations) |
+| QA-B regressions (`tests/regress/qa_b_*.js`, mirror with the v0.3 helper fixes, see `triage_ui.md`) | every UI-owned test passes on the current code: FE-01..05, FE-12, HUD-01, HUD-03, HUD-08, HUD-10, NP-01, NP-02, NP-04, NP-05, TCH-01..06, TCH-08, TCH-11, TCH-12, TXT-07 (TCH-04 / TCH-09 / FE-06 through mirrors with the v0.3 tab order / the drawn glyph). Still failing, other tracks': FE-08, NP-03, TCH-07, TXT-01 (content line length), TXT-02/03/05/09/10, TXT-04 (test harness), TXT-08 (content `castIds`). |
+| `tests/newplayer.js` | Flaky in this container: across four runs of the same build the bot passes title, story start, GPS, m00, m01_van, armory, cover and save in most runs; m01c fails in every run (its first objective is a walk to the armory door, which auto-enters the interior; `v03r1/story` reports m01c reworked and newplayer 12/12 on its branch). A/B on the same build: this branch 8/12 (m01c not started from its light this time, so no pistol / aim), the integration UI 9/12 (m01c started, then stuck; manual save not reached). Visual check of the flow (screenshots): title (v0.3.0), opening, first objective with the GPS line and arrow, the call, the armory with the INDOORS minimap and no outdoor GPS, aim / cover prompts, the save. |
+| `tests/all.js` (at 5a4eb69, before the last round of fixes) | 32 files, 15 pass (ai, artifact, content_audit, content_parity, cover, cutscenes, feel2, perf, radio, render, smoke, tune, ui, ui_v03, world), 17 fail. The failures are other tracks' (no UI file in them; actors, combat and events re-run with the integration branch's `11_ui.js` / `02_input.js` swapped in fail identically): actors (crash damage), audio (the test's own rate-limited phoneRing / gps cue), bosses (b01 not beaten), campaign / feel / saves / story (the m01b / m01c chain), characters (rifle grip), combat (scoped shot), events (two mod-shop opens), interiors (rack meshes), missions (count with the expansion), newplayer (see above), strands (race start), strangers (strand runs), systems (tables), vehicles (jet ski lean). Most also failed in the coordinator's merged run (`docs/v03/merge1_all*.log`); ui and ui_v03 failed there and pass now. |
+
 
 ## Still open (outside this track's files; evidence in `ui.md` / `triage_ui.md`)
 
