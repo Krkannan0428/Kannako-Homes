@@ -15,11 +15,18 @@
  *            page in the browser. Used for unsigned macOS builds, the Windows portable exe and
  *            Linux runs that are not an AppImage (unpacked folders, extracted AppImages).
  *
- * Messages use Electron dialogs and native notifications, never alert/confirm in the page. The
- * first check after launch speaks up with a dialog (the player is on the title screen); later
- * background checks use a notification that opens the same dialog when clicked, so a dialog never
- * pops up in the middle of a chase. "Check for Updates..." in the menu always answers, even with
- * "you are up to date".
+ * Messages use Electron dialogs and native notifications, never alert/confirm in the page. An
+ * update the player did not ask about opens a dialog only while the game is on its title screen or
+ * paused; in the middle of play it shows a notification (click it for the dialog) and the dialog
+ * waits until the player next pauses or goes back to the title, so a dialog never pops up in the
+ * middle of a chase (where Enter, the game's confirm key, would press its default button).
+ * "Check for Updates..." in the menu always answers, even with "you are up to date".
+ *
+ * Install mode is used only where the update can really be applied: a genuine AppImage (the
+ * process runs inside $APPDIR and $APPIMAGE is a file in a writable folder; an APPIMAGE variable
+ * inherited from some other program does not count), the NSIS-installed game on Windows (its
+ * uninstaller sits next to the exe), and a Developer-ID-signed macOS app that is not running from
+ * the disk image or a translocated path. Everything else gets notify mode.
  *
  * Both modes read the same metadata electron-builder writes and the release workflow attaches to
  * every release: latest.yml (Windows), latest-mac.yml, latest-linux.yml. Notify mode fetches the
@@ -50,10 +57,13 @@ let mode = 'off';
 let autoUpdater = null;    // electron-updater, loaded only in install mode
 let checking = false;
 let manualCheck = false;   // the current check came from the menu
-let firstCheck = true;     // the current check is the one right after launch
 let readyVersion = null;   // downloaded and waiting for a restart
+let downloadingVersion = null; // found and downloading in the background
 let announced = new Set(); // versions already announced this session (notify mode and notifications)
 let timer = null;
+let pendingOffer = null;   // a dialog waiting for the player to pause or return to the title
+let pendingTimer = null;
+const notifications = new Set(); // shown notifications, kept referenced so their click handler survives GC
 
 function log(message) {
   try {
@@ -102,13 +112,38 @@ function macSignedWithDeveloperId() {
   });
 }
 
+function writable(dir) {
+  try { fs.accessSync(dir, fs.constants.W_OK); return true; } catch (_e) { return false; }
+}
+
+/* A genuine AppImage run: AppRun sets APPDIR to the mount point the binary runs from and APPIMAGE to
+ * the .AppImage file. An APPIMAGE inherited from another program (a terminal opened from some other
+ * AppImage) must not make the updater delete that program's file. */
+function realAppImage() {
+  const file = process.env.APPIMAGE, dir = process.env.APPDIR;
+  if (!file || !dir || !path.isAbsolute(file)) return false;
+  if (!process.execPath.startsWith(path.resolve(dir) + path.sep)) return false;
+  try { if (!fs.statSync(file).isFile()) return false; } catch (_e) { return false; }
+  return writable(path.dirname(file));
+}
+
 async function pickMode() {
   const forced = String(process.env.GTP_UPDATES || '').toLowerCase();
   if (forced === 'off' || forced === 'notify' || forced === 'install') return forced;
   if (!app.isPackaged) return 'off';
-  if (process.platform === 'win32') return process.env.PORTABLE_EXECUTABLE_DIR ? 'notify' : 'install';
-  if (process.platform === 'linux') return process.env.APPIMAGE ? 'install' : 'notify';
-  if (process.platform === 'darwin') return (await macSignedWithDeveloperId()) ? 'install' : 'notify';
+  if (process.platform === 'win32') {
+    // only the NSIS-installed game can run the next installer; the portable exe and unpacked or
+    // copied folders have no uninstaller next to the exe
+    if (process.env.PORTABLE_EXECUTABLE_DIR) return 'notify';
+    return fs.existsSync(path.join(path.dirname(process.execPath), 'Uninstall ' + PRODUCT + '.exe')) ? 'install' : 'notify';
+  }
+  if (process.platform === 'linux') return realAppImage() ? 'install' : 'notify';
+  if (process.platform === 'darwin') {
+    const bundle = path.resolve(process.execPath, '..', '..', '..');
+    // run from the disk image, or moved by Gatekeeper's App Translocation: Squirrel cannot swap it
+    if (/^\/Volumes\//.test(bundle) || /\/AppTranslocation\//.test(bundle) || !writable(path.dirname(bundle))) return 'notify';
+    return (await macSignedWithDeveloperId()) ? 'install' : 'notify';
+  }
   return 'notify';
 }
 
@@ -137,17 +172,56 @@ function newer(a, b) {
   return x.pre > y.pre;
 }
 
-/* Ask once with a dialog now, or with a notification that opens the dialog when clicked. */
-function announce(version, asDialog, openDialog) {
-  if (asDialog || !Notification.isSupported()) {
+/* Is the player at a point where a dialog interrupts nothing: the game window is visible and the
+ * game is on its title screen or paused? (Answers false if the page is too busy to say within 2 s.) */
+async function gameAtRest() {
+  const win = mainWindow();
+  if (!win || !win.isVisible()) return false;
+  const state = await Promise.race([
+    win.webContents.executeJavaScript('(window.GTP && GTP.game && GTP.game.state) || ""', true).catch(() => ''),
+    new Promise((resolve) => setTimeout(() => resolve(''), 2000))
+  ]);
+  return state === 'title' || state === 'paused';
+}
+
+/* Show the offer the next time the player pauses or goes back to the title (checked every 5 s). */
+function offerWhenAtRest(openDialog) {
+  pendingOffer = openDialog;
+  if (pendingTimer) return;
+  pendingTimer = setInterval(async () => {
+    if (!pendingOffer || !(await gameAtRest())) return;
+    const open = pendingOffer;
+    pendingOffer = null;
+    clearInterval(pendingTimer);
+    pendingTimer = null;
+    open();
+  }, 5000);
+  if (pendingTimer.unref) pendingTimer.unref();
+}
+
+/* Tell the player about an update: a dialog now if they asked (menu) or are on the title/paused,
+ * otherwise a notification now and the dialog at their next pause. */
+async function announce(version, asked, openDialog) {
+  if (asked || (await gameAtRest())) {
+    pendingOffer = null;
     openDialog();
     return;
   }
+  offerWhenAtRest(openDialog);
+  if (!Notification.isSupported()) return;
   const body = readyVersion
     ? 'Version ' + version + ' is downloaded. Click to restart now, or it installs when you quit.'
     : 'Version ' + version + ' is available. Click for details.';
   const n = new Notification({ title: PRODUCT + ' update', body, silent: true });
-  n.on('click', openDialog);
+  notifications.add(n);
+  const forget = () => notifications.delete(n);
+  n.on('click', () => {
+    forget();
+    pendingOffer = null;
+    openDialog();
+  });
+  n.on('close', forget);
+  n.on('failed', forget);
   n.show();
 }
 
@@ -189,7 +263,7 @@ async function checkNotify() {
   }
   if (!manualCheck && announced.has(rel.version)) return;
   announced.add(rel.version);
-  announce(rel.version, firstCheck || manualCheck, () => offerDownload(rel.version, rel.url));
+  await announce(rel.version, manualCheck, () => offerDownload(rel.version, rel.url));
 }
 
 // ------------------------------------------------------------------------------ install mode
@@ -204,7 +278,9 @@ function offerRestart(version) {
     defaultId: 0,
     cancelId: 1
   }).then(({ response }) => {
-    if (response === 0) setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    // silent + run after: the Windows installer installs without its wizard and starts the game
+    // again; on macOS and the AppImage the new version starts as well
+    if (response === 0) setImmediate(() => autoUpdater.quitAndInstall(true, true));
   });
 }
 
@@ -221,13 +297,26 @@ function initInstallMode() {
     warn: (m) => log('WARN ' + m),
     error: (m) => log('ERROR ' + m)
   };
-  autoUpdater.setFeedURL(feed.url ? { provider: 'generic', url: feed.url } : { provider: 'github', owner: feed.owner, repo: feed.repo });
+  const provider = feed.url ? { provider: 'generic', url: feed.url } : { provider: 'github', owner: feed.owner, repo: feed.repo };
+  // electron-updater reads resources/app-update.yml for its download cache folder even when the
+  // feed is set in code; builds made without a publish config (npm run dist:* locally) have none,
+  // so write the equivalent into the data folder for them
+  if (!fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))) {
+    const file = path.join(app.getPath('userData'), 'app-update.yml');
+    const yml = Object.entries(Object.assign({}, provider, { updaterCacheDirName: 'grand-theft-pundit-updater' }))
+      .map(([k, v]) => k + ': ' + JSON.stringify(String(v))).join('\n') + '\n';
+    fs.writeFileSync(file, yml);
+    autoUpdater.updateConfigPath = file;
+    log('no app-update.yml in this build; using ' + file);
+  }
+  autoUpdater.setFeedURL(provider);
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
 
   autoUpdater.on('update-available', (info) => {
+    downloadingVersion = info.version;
     if (manualCheck) {
       showBox({ type: 'info', title: PRODUCT + ' update', message: 'Downloading version ' + info.version, detail: 'It downloads in the background; you will be asked to restart when it is ready.', buttons: ['OK'] });
     }
@@ -239,12 +328,14 @@ function initInstallMode() {
   autoUpdater.on('update-downloaded', (info) => {
     setProgress(-1);
     readyVersion = info.version;
+    downloadingVersion = null;
     if (announced.has('ready:' + info.version) && !manualCheck) return;
     announced.add('ready:' + info.version);
-    announce(info.version, firstCheck || manualCheck, () => offerRestart(info.version));
+    announce(info.version, manualCheck, () => offerRestart(info.version));
   });
   autoUpdater.on('error', (err) => {
     setProgress(-1);
+    downloadingVersion = null;
     fail('install-mode update failed: ' + (err && err.stack || err));
   });
 }
@@ -255,8 +346,10 @@ async function checkInstall() {
     return;
   }
   const result = await autoUpdater.checkForUpdates();
+  // null: electron-updater considers itself inactive here (not packaged, no APPIMAGE, ...)
+  if (!result) throw new Error('the updater is not active in this copy of the game');
   // the download continues in the background; wait for it so errors land in our catch
-  if (result && result.downloadPromise) await result.downloadPromise;
+  if (result.downloadPromise) await result.downloadPromise;
 }
 
 // ------------------------------------------------------------------------------------ shared
@@ -268,8 +361,14 @@ function upToDate() {
 async function check(manual) {
   if (mode === 'off') return;
   if (checking) {
-    // a background check is running; let its result answer the menu click
-    if (manual) manualCheck = true;
+    if (!manual) return;
+    if (downloadingVersion) {
+      // a background download is under way; say so now rather than when it finishes
+      showBox({ type: 'info', title: PRODUCT + ' update', message: 'Downloading version ' + downloadingVersion, detail: 'It downloads in the background; you will be asked to restart when it is ready.', buttons: ['OK'] });
+    } else {
+      // a background check is running; let its result answer the menu click
+      manualCheck = true;
+    }
     return;
   }
   checking = true;
@@ -294,7 +393,6 @@ async function check(manual) {
   } finally {
     checking = false;
     manualCheck = false;
-    firstCheck = false;
   }
 }
 

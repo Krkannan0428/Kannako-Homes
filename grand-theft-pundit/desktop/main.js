@@ -315,7 +315,8 @@ const MODS_README = [
   '  images (png, jpg, webp, gif, up to 8 MB each) become data URLs in',
   '         window.GTP_MODS.images["your-file.png"] for your scripts to use',
   '',
-  'Script errors are collected in window.GTP_MODS.errors and shown in the developer console',
+  'Script errors (syntax errors too, with their line number) are collected in window.GTP_MODS.errors,',
+  'written to logs/crash.log next to this folder and shown in the developer console',
   '(press Ctrl+Shift+I, or Cmd+Option+I on a Mac).',
   'Delete or rename a file (for example to .js.off) to turn it off. Restart the game after changes.',
   ''
