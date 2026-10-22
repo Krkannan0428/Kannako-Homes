@@ -129,6 +129,9 @@ H.run('events', async (t) => {
     const v = new GTP.Vehicle({ x: ms.x + 9, z: ms.z, type: 'sedan' }); v.y = W.heightAt(v.x, v.z, 0); v.snap(); E.add(v); p.enterVehicle(v, 0); g.advance(1);
     v.x = ms.x; v.z = ms.z; v.vx = v.vz = 0; v.speed = 0; v.snap(); g.advance(0.5);
     out.modshop = evs.filter((e) => e[0] === 'modshop:open');
+    // the UI's mod shop card is up now: close it (an open card keeps the aim button off, and the cower shot below aims)
+    out.modshopCard = !!(GTP.UI && GTP.UI.modal && GTP.UI.modal());
+    if (GTP.UI && GTP.UI.closeModal) GTP.UI.closeModal();
     if (p.inVehicle) p.exitVehicle(); v.destroy();
     GTP.Interiors = I0; GTP.Systems = S0;
     out.errors = GTP.errors.map((e) => e.where + ': ' + e.message);
@@ -201,4 +204,106 @@ H.run('events', async (t) => {
   console.log('  screenshot: ' + shot);
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
+  await page.close();
+
+  // ---- 6. the police around a chase (integration fixes; a fresh page) ----
+  const ctx2 = await t.boot({ seed: 7 });
+  const p2 = ctx2.page;
+  const pol = await p2.evaluate(() => {
+    const AI = GTP.AI, W = GTP.World, E = GTP.Entities, g = GTP.game, R = GTP.Render, info = R.renderer.info, out = {};
+    const hit = () => { const p = g.player; const c = AI.spawner.spawnPed(p.x + 1.5, p.z, 'civ'); c.maxHp = c.hp = 1000; const h0 = AI.wanted.heat; c.applyDamage(5, p, 'fist'); const dh = AI.wanted.heat - h0; c.destroy(); AI.wanted.clear(); return +dh.toFixed(2); };
+    // QAC-02 / QAC-37: the heat throttle and the helicopter's respawn wait belong to one session; the wait runs without stars
+    g.time.t = 1800; g.advance(1); out.lateHit = hit();
+    AI.police.heliT = 45; g.advance(5); out.heliTNoStars = AI.police.heliT;
+    g.newGame(7); out.heliTNew = AI.police.heliT; g.advance(2); out.newHit = hit();
+    // QAC-23 / stab-QA-D-04 / QAC-32: the first helicopter recompiles no lit material (its searchlight is resident from
+    // boot) and changes no light count; helicopters share their geometry
+    const p = g.player; g.debug.teleport(578, 214); g.advance(0.5); g.render(); g.render();
+    const lit = () => { let n = 0; R.scene.traverse((o) => { if (o.isLight && o.visible) n++; }); return n; };
+    const progs0 = new Set(info.programs.map((q) => q.cacheKey)), l0 = lit();
+    const h = new AI.Heli(); E.add(h); AI.police.heli = h; g.render();
+    const lamp = R.scene.getObjectByName('heliSpot') || (R.lights && R.lights.heli);
+    out.heli = { added: info.programs.filter((q) => !progs0.has(q.cacheKey)).map((q) => q.name), lights: [l0, lit()], lamp: lamp ? +lamp.intensity.toFixed(1) : null };
+    h.destroy(); E.remove(h); AI.police.heli = null; g.render();
+    out.heli.lampOff = lamp ? lamp.intensity : null;
+    const geo1 = info.memory.geometries;
+    for (let k = 0; k < 4; k++) { const hh = new AI.Heli(); E.add(hh); g.render(); hh.destroy(); E.remove(hh); g.render(); }
+    out.heli.geo = [geo1, info.memory.geometries];
+    // stab-QA-D-09: the rotor keeps sounding while the helicopter flies off
+    const h2 = new AI.Heli(); E.add(h2); AI.police.heli = h2; g.advance(1);
+    const calls = [], AH = GTP.Audio.heli; GTP.Audio.heli = function (on) { calls.push(on); return AH.apply(this, arguments); };
+    h2.leave(); g.advance(3); GTP.Audio.heli = AH;
+    out.rotor = { calls, leaving: h2.leaving, gone: h2.removed };
+    h2.destroy(); AI.police.heli = null; g.advance(0.5);
+    // QAC-36: the plaza's marchers and the precinct's door guards come back after a trip just past the despawn radius
+    const pp = W.landmark('protest_plaza'), hq = W.landmark('police_hq').door;
+    const marchers = () => E.list.filter((e) => e.kind === 'ped' && !e.removed && e.role === 'protester' && e.ai && e.ai.home && Math.hypot(e.ai.home.x - pp.x, e.ai.home.z - pp.z) < 1).length;
+    const guards = () => E.list.filter((e) => e.kind === 'ped' && !e.removed && e.role === 'cop' && e.ai && e.ai.home && Math.hypot(e.ai.home.x - hq.x, e.ai.home.z - hq.z) < 1).length;
+    out.trip = {};
+    g.debug.teleport(pp.x + 20, pp.z); g.advance(2); out.trip.marchers = [marchers()];
+    g.debug.teleport(pp.x + 250, pp.z); g.advance(3); out.trip.marchers.push(marchers());
+    g.debug.teleport(pp.x + 20, pp.z); g.advance(3); out.trip.marchers.push(marchers());
+    g.debug.teleport(hq.x + 5, hq.z + 5); g.advance(2); out.trip.guards = [guards()];
+    g.debug.teleport(hq.x + 240, hq.z); g.advance(3); out.trip.guards.push(guards());
+    g.debug.teleport(hq.x + 5, hq.z + 5); g.advance(3); out.trip.guards.push(guards());
+    // QAC-35 / stab-QA-D-03: a roadblock run at three stars, the car stopped, the roadblock released: its parked, driverless
+    // cruisers are no pursuit; when the stars go, every police car nobody drives goes quiet and dark
+    g.debug.teleport(236, 281); g.advance(0.1);
+    const v = g.debug.spawnVehicle(238.4, 282, 'sedan', { yaw: -Math.PI / 2 });
+    GTP.Input.set('enter', true); g.advance(0.05); GTP.Input.set('enter', false); g.advance(0.6);
+    p.hp = p.maxHp = 100000; g.debug.setWanted(3); GTP.Input.set('forward', true);
+    for (let s = 0; s < 20 && !AI.police.roadblocks.length; s++) { p.hp = p.maxHp; g.advance(0.5); GTP.Input.set('forward', v.speed < 14); }
+    GTP.Input.set('forward', false);
+    const rb = AI.police.roadblocks[0];
+    out.rb = { placed: !!rb };
+    if (rb) {
+      v.setControls(0, 0, true, 1); for (let k = 0; k < 8; k++) { v.vx *= 0.3; v.vz *= 0.3; v.speed *= 0.3; g.advance(0.1); }
+      rb.t = 999; g.advance(0.1);
+      const manned = E.list.filter((c) => c.kind === 'vehicle' && !c.removed && !c.wreck && !c.sinking && c.type === 'cop' && c.ai && c.ai.kind !== 'parked' && c.ai.mode !== 'parked' && c.ai.mode !== 'roadblock' && c.driver && c.driver.alive && !c.hasPlayer()).length;
+      out.rb.counted = AI.debug.counts().cruisers; out.rb.manned = manned;
+      out.rb.parked = rb.cars.filter((c) => !c.removed && c.ai.mode === 'parked' && !c.driver).length;
+      AI.wanted.clear(); g.advance(2);
+      out.rb.loud = E.list.filter((c) => c.kind === 'vehicle' && !c.removed && !c.persistent && !c.hasPlayer() && c.siren).map((c) => c.type + ':' + (c.ai && c.ai.mode) + ':' + !!c.driver);
+      out.rb.lit = rb.cars.filter((c) => !c.removed && !c.driver && (c.siren || c.lights)).length;
+    }
+    if (p.inVehicle) p.exitVehicle();
+    g.advance(0.5);
+    // QA-B-TXT-06: AI.bustFine is the fine the bust charges ($800 at three stars, never over 15% of the cash)
+    const home = W.landmark('campus_quad').door; g.debug.teleport(home.x, home.z); g.advance(0.2);
+    out.fine = { table: [AI.bustFine(1, 10000), AI.bustFine(3, 10000), AI.bustFine(3, 250)] };
+    p.money = 10000; p.hp = p.maxHp; g.debug.setWanted(3);
+    const cop = g.debug.spawnPed(p.x + 1, p.z, null, 'cop');
+    let ev = null; const on = (e) => { ev = e.fine; }; GTP.Events.on('busted', on);
+    for (let s = 0; s < 24 && g.state === 'playing'; s++) { p.hp = p.maxHp; g.debug.setWanted(3); g.advance(0.25); }
+    out.fine.state = g.state; out.fine.event = ev; out.fine.level = GTP.Combat.death ? GTP.Combat.death.level : null;
+    g.advance(5); GTP.Events.off('busted', on); cop.destroy();
+    out.fine.charged = 10000 - p.money; out.fine.after = g.state;
+    // the boss-fight heat rule (folded from 08b_bosses): no heat while an encounter runs
+    const B0 = GTP.Bosses, h0 = AI.wanted.heat;
+    GTP.Bosses = Object.assign(Object.create(B0 || {}), { fighting: () => true });
+    AI.wanted.addHeat(5, 'test'); AI.wanted.crime('killPed', 'test');
+    out.bossHeat = AI.wanted.heat - h0; GTP.Bosses = B0;
+    AI.wanted.addHeat(1, 'test'); out.heatAfterBoss = AI.wanted.heat - h0; AI.wanted.clear();
+    // the v0.2 cowering wrapper on Ped.prototype.syncMesh stays out while the animation module is loaded
+    out.cower = { anim: !!GTP.Anim, wrapper: !!GTP.Ped.prototype.syncMesh._cower };
+    out.errors = GTP.errors.map((e) => e.where + ': ' + e.message);
+    return out;
+  });
+  console.log('  police: ' + JSON.stringify(pol));
+  t.assert(pol.lateHit > 0 && pol.newHit > 0, 'an assault earns heat in a new game after a long session (QAC-02): ' + JSON.stringify([pol.lateHit, pol.newHit]));
+  t.assert(pol.heliTNoStars <= 41 && pol.heliTNew === 0, 'the helicopter wait runs without stars and New Game clears it (QAC-37): ' + JSON.stringify([pol.heliTNoStars, pol.heliTNew]));
+  t.assert(pol.heli.lights[0] === pol.heli.lights[1] && pol.heli.added.every((n) => n === 'MeshBasicMaterial') && pol.heli.added.length <= 2, 'the first helicopter compiles no lit material and adds no light (QAC-23, stab-QA-D-04): ' + JSON.stringify(pol.heli));
+  t.assert(pol.heli.lamp > 0 && pol.heli.lampOff === 0, 'the resident searchlight follows the helicopter and goes dark with it: ' + JSON.stringify(pol.heli));
+  t.assert(pol.heli.geo[1] <= pol.heli.geo[0], 'four more helicopters leak no geometry (QAC-32): ' + JSON.stringify(pol.heli.geo));
+  t.assert(pol.rotor.leaving && !pol.rotor.gone && pol.rotor.calls.length >= 4 && pol.rotor.calls.every((c) => c === true || c > 0), 'the rotor sounds while the helicopter flies off (stab-QA-D-09): ' + JSON.stringify(pol.rotor));
+  t.assert(pol.trip.marchers[0] >= 4 && pol.trip.marchers[1] === 0 && pol.trip.marchers[2] >= 4, 'the plaza marchers come back after a 250 m trip (QAC-36): ' + JSON.stringify(pol.trip));
+  t.assert(pol.trip.guards[0] === 2 && pol.trip.guards[1] === 0 && pol.trip.guards[2] === 2, 'the precinct guards come back after a 240 m trip (QAC-36): ' + JSON.stringify(pol.trip));
+  t.assert(pol.rb.placed && pol.rb.parked >= 1 && pol.rb.counted === pol.rb.manned, 'released roadblock cars are no pursuit cruisers (QAC-35): ' + JSON.stringify(pol.rb));
+  t.assert(pol.rb.loud.length === 0 && pol.rb.lit === 0, 'no siren or lightbar once the stars are gone (stab-QA-D-03): ' + JSON.stringify(pol.rb));
+  t.assert(pol.fine.table.join(',') === '500,800,37' && pol.fine.state === 'busted' && pol.fine.level === 3 && pol.fine.event === 800 && pol.fine.charged === 800 && pol.fine.after === 'playing', 'the busted fine is AI.bustFine, the one charged (QA-B-TXT-06): ' + JSON.stringify(pol.fine));
+  t.assert(pol.bossHeat === 0 && pol.heatAfterBoss > 0, 'no heat during a boss fight: ' + JSON.stringify([pol.bossHeat, pol.heatAfterBoss]));
+  t.assert(pol.cower.anim && !pol.cower.wrapper, 'no v0.2 cowering wrapper with the animation module: ' + JSON.stringify(pol.cower));
+  t.assert(pol.errors.length === 0, 'no game errors: ' + pol.errors.join('; '));
+  const errs2 = await t.errors(ctx2);
+  t.assert(errs2.length === 0, 'errors:\n' + errs2.join('\n'));
 });
