@@ -93,7 +93,7 @@
   };
   // the twelve wheel slots (the wheel shows one weapon per slot; R cycles a slot's weapons while the wheel is open)
   var SLOTS = [
-    { id: 'hand', name: 'Unarmed' }, { id: 'melee', name: 'Melee' }, { id: 'special', name: 'Megaphone' }, { id: 'pistol', name: 'Pistols' },
+    { id: 'hand', name: 'Unarmed' }, { id: 'melee', name: 'Melee' }, { id: 'special', name: 'Specials' }, { id: 'pistol', name: 'Pistols' },
     { id: 'heavypistol', name: 'Heavy Pistols' }, { id: 'smg', name: 'SMGs & MGs' }, { id: 'rifle', name: 'Rifles' }, { id: 'shotgun', name: 'Shotguns' },
     { id: 'sniper', name: 'Snipers' }, { id: 'thrown', name: 'Thrown' }, { id: 'explosive', name: 'Explosives' }, { id: 'heavy', name: 'Heavy' }
   ];
@@ -450,12 +450,21 @@
     var b = Wd.raycastBuildings(o.x, o.y, o.z, d.x, d.y, d.z, range);
     if (b) { bestT = b.t; hb = b; }
     if (d.y < -1e-4) {
-      var ex = o.x + d.x * bestT, ez = o.z + d.z * bestT, gy = Wd.heightAt(ex, ez, o.y);
-      var tg = (o.y - gy) / (-d.y);
-      if (tg > 0 && tg < bestT) {
-        var gx2 = o.x + d.x * tg, gz2 = o.z + d.z * tg; gy = Wd.heightAt(gx2, gz2, o.y); tg = (o.y - gy) / (-d.y);
-        if (tg > 0 && tg < bestT) { bestT = tg; hb = null; out.ground = true; out.water = gy <= (C.WATER_Y != null ? C.WATER_Y : -1.2) + 0.05; }
+      // march the ground along the ray (a shoreline, a kerb or a ramp edge between the gun and a target below it stops the shot;
+      // the camera's hover trace runs the same test, so the sight never shows a hit the bullet cannot make)
+      var step = Math.max(1.5, bestT / 90), prevT = 0, tg = -1, gy = 0;
+      for (var st = step; ; st += step) {
+        var tt = Math.min(st, bestT), sy = o.y + d.y * tt;
+        gy = Wd.heightAt(o.x + d.x * tt, o.z + d.z * tt, o.y);
+        if (sy <= gy) {
+          // the crossing is in (prevT, tt]: two bisections are plenty at this step
+          var lo = prevT, hi = tt;
+          for (var bi = 0; bi < 4; bi++) { var mid = (lo + hi) * 0.5; if (o.y + d.y * mid <= Wd.heightAt(o.x + d.x * mid, o.z + d.z * mid, o.y)) hi = mid; else lo = mid; }
+          tg = hi; gy = Wd.heightAt(o.x + d.x * tg, o.z + d.z * tg, o.y); break;
+        }
+        prevT = tt; if (tt >= bestT) break;
       }
+      if (tg > 0 && tg < bestT) { bestT = tg; hb = null; out.ground = true; out.water = gy <= (C.WATER_Y != null ? C.WATER_Y : -1.2) + 0.05; }
     }
     var mx = o.x + d.x * bestT * 0.5, mz = o.z + d.z * bestT * 0.5;
     var list = E().hash.query(mx, mz, bestT * 0.5 + 4, scratch);
@@ -2751,7 +2760,13 @@
     var X = GTP.Content && GTP.Content.expansion && GTP.Content.expansion.shop, ext = X && X.items;
     if (ext && ext.length) for (i = 0; i < ext.length; i++) {
       var it = ext[i], found = false;
-      for (var k = 0; k < out.length; k++) if (out[k].id === it.id) { out[k] = Object.assign(out[k], it); found = true; break; }
+      for (var k = 0; k < out.length; k++) if (out[k].id === it.id) {
+        // the v0.2 expansion rows add pitch lines and art; a weapon from the parity table keeps its own unlock, name and price
+        // (the v0.3 story moved some unlocks: the pistol now comes with m01c_both_sides)
+        var keep = out[k].tab === 'weapons' && WEAPONS[it.id] && WEAPONS[it.id].parity ? { unlock: out[k].unlock, name: out[k].name, price: out[k].price } : null;
+        out[k] = Object.assign(out[k], it); if (keep) Object.assign(out[k], keep);
+        found = true; break;
+      }
       if (!found) out.push(Object.assign({}, it));
     }
     return out;

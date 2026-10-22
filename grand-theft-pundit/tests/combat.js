@@ -630,9 +630,11 @@ H.run('combat', async (t) => {
   const scope = await page.evaluate(({ EAST, spot }) => {
     const p = GTP.game.player, CB = GTP.Combat, R = GTP.Render;
     GTP.game.debug.setClock(14);
-    T_.setup(spot, EAST); GTP.AI.wanted.clear();
+    // the 40 m target needs dry, level ground the whole way (the arena's own strip is 18 m; past it can be a shoreline)
+    const far = T_.openSpot(spot.x, spot.z, 44) || spot;
+    T_.setup(far, EAST); GTP.AI.wanted.clear();
     p.weapons = { fist: Infinity }; p.ammo = {}; GTP.game.debug.giveWeapon('sniper', 10);
-    const ped = T_.freeze(GTP.game.debug.spawnPed(spot.x + 40, spot.z, null, 'thug')); ped.yaw = Math.PI / 2; ped.hp = ped.maxHp = 1000; ped.hostile = true;
+    const ped = T_.freeze(GTP.game.debug.spawnPed(far.x + 40, far.z, null, 'thug')); ped.yaw = Math.PI / 2; ped.hp = ped.maxHp = 1000; ped.hostile = true;
     GTP.game.advance(0.2);
     const ev = []; GTP.Events.on('scope', (e) => ev.push([e.active, e.zoom]));
     const fov0 = R.camera.fov, cam0 = p.cameraMode;
@@ -746,7 +748,7 @@ H.run('combat', async (t) => {
     if (!lm) { lm = { id: 'both_sides_test', name: 'Both Sides Arms (Test)', kind: 'gunshop', x: spot.x + 6, z: spot.z + 8, door: { x: spot.x + 6, z: spot.z + 3, y: 0 }, flagship: true }; W.landmarks.push(lm); W._lm[lm.id] = lm; }
     const stores = CB.shop.refresh().map((s) => s.id);
     p.weapons = { fist: Infinity }; p.ammo = {}; p.weapon = 'fist'; p.money = 2000; p.hp = 40; p.armor = 0;
-    GTP.Missions.state.completed.add('m03b_range');
+    GTP.Missions.state.completed.add('m03b_range'); GTP.Missions.state.completed.add('m01c_both_sides');   // v0.3: the pistol comes with m01c
     const items = CB.shop.items();
     const pistolItem = items.filter((i) => i.id === 'pistol')[0], sniperItem = items.filter((i) => i.id === 'sniper')[0];
     const buys = {};
@@ -774,7 +776,7 @@ H.run('combat', async (t) => {
   }, { EAST, spot });
   console.log('  shop: ' + JSON.stringify(shop));
   t.assert(shop.stores.indexOf(shop.lmId) >= 0 && shop.entry.markers >= 1, 'every gunshop landmark is a store with a door marker: ' + JSON.stringify(shop.stores));
-  t.assert(shop.pistolItem.price === 450 && !shop.pistolItem.locked && !shop.pistolItem.owned && shop.pistolItem.stats, 'the pistol is listed at $450 and unlocked after m03b: ' + JSON.stringify(shop.pistolItem));
+  t.assert(shop.pistolItem.price === 450 && !shop.pistolItem.locked && !shop.pistolItem.owned && shop.pistolItem.stats, 'the pistol is listed at $450 and unlocked after m01c: ' + JSON.stringify(shop.pistolItem));
   t.assert(shop.buys.pistol.ok && shop.buys.pistolState.money === 1550 && shop.buys.pistolState.ammo === 24 && shop.buys.pistolState.weapon === 'pistol' && shop.buys.pistolState.mag === 12, 'buying the pistol costs $450 and gives a magazine and a spare: ' + JSON.stringify(shop.buys.pistolState));
   t.assert(shop.buys.again === 'owned' && shop.buys.sniper.reason === 'locked' && shop.sniperItem.locked && typeof shop.sniperItem.lockedBy === 'string', 'an owned weapon and a locked one refuse with reasons: ' + JSON.stringify([shop.buys.again, shop.buys.sniper.reason, shop.sniperItem]));
   t.assert(shop.buys.ammo.ok && shop.buys.ammoState.ammo === 48 && shop.buys.ammoState.money === 1490, 'pistol rounds: 24 for $60: ' + JSON.stringify(shop.buys.ammoState));
