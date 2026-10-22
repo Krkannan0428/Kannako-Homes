@@ -656,7 +656,7 @@
       ],
       // Lo-fi: swung boom-bap on the soft kit, an electric piano (the sine lead)
       // arpeggiating seventh chords, a round triangle bass, vamps of i7 IV7 and
-      // descending sequences; each song has a drop-out and one key lift.
+      // descending sequences, a keys-only drop-out, and a key lift in three songs.
       songs: [
         {
           id: 'didnt_read', title: 'Didn\'t Do the Reading', artist: 'syllabus (unread)',
@@ -675,7 +675,7 @@
             },
             Out: { c: [0, 0], l: ['0 . . . . . . . . . . . . . . .', R0], h: ['x.x.x.x.x.x.x.x.', 'x...x...........'] }
           },
-          form: 'In A A B A! B B^1 A Out'
+          form: 'In A A B A In! B B^1 A Out'
         },
         {
           id: 'raccoon', title: 'Lot C Raccoon', artist: 'the raccoon of lot c',
@@ -684,7 +684,7 @@
             In: { c: [0, 6], rb: true, b: [R0, '. . . . . . . . . . . . . . 4 .'], l: ['. . 4 . . 2 . . 0 . . . . . . .', '. . 3 . . 1 . . 6 . . . . . . .'] },
             A: {
               c: [0, 6, 2, 3], rb: true, b: '0 . . . . . 0 . . . 2 . . . 4 .',
-              l: ['. . 4 . . 2 . . 0 . . . . . . .', '. . 3 . . 1 . . 6 . . . . . . .', '. . 4 . . 2 . . 6 . . . . . . .', '. . 5 . . 3 . . 7 . . . 9 . . .'],
+              l: ['. . 6 . . 4 . . 2 . . . . . . .', '. . 5 . . 3 . . 1 . . . . . . .', '. . 8 . . 6 . . 4 . . . . . . .', '. . 5 . . 3 . . 7 . . . 9 . . .'],
               k: 'x.....x.x.......', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
             },
             B: {
@@ -723,7 +723,7 @@
           sections: {
             In: { c: [3, 2], rb: true, b: [R0, '. . . . . . . . 0 . 4 . . . . .'], h: 'x.x.x.x.x.x.x.x.' },
             A: {
-              c: [3, 2, 1, 0], rb: true, b: '0 . . 0 . . . . 0 . 4 . . . . .',
+              c: [3, 2, 1, 0], rb: true, b: ['0 . . 0 . . . . 0 . 4 . . . . .', '0 . . 0 . . . . 0 . 4 . . . . .', '0 . . 0 . . . . 0 . 2 . . . . .', '0 . . 0 . . . . 0 . 4 . . . . .'],
               l: ['7 . . 9 . 10 . . . 9 . 7 . . . .', '6 . . 8 . 9 . . . 8 . 6 . . . .', '5 . . 7 . 8 . . . 7 . 5 . . . .', '4 . . 6 . 7 . . . 6 . 4 . . . .'],
               k: 'x......x..x.....', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
             },
@@ -779,7 +779,8 @@
       ],
       // Drum and bass: an atmospheric intro, a snare-roll build, a two-step drop
       // with a rolling bass and square stabs, a breakdown with bell melodies, a
-      // second build, an amen-style drop that lifts a third (shift 2), an outro.
+      // second build, an amen-style drop that ends a third up (shift 2), an outro.
+      // The other climaxes shift down (heavier, lower), never into shrill stabs.
       songs: [
         {
           id: 'legally_a_party', title: 'Legally a Party', artist: 'Painted Median',
@@ -806,12 +807,12 @@
             D2: {
               c: [0, 0, 5, 4], rb: true,
               b: ['0 . . 0 . . 0 . . . 0 . . . 6 .', '0 . . 0 . . 0 . . . 0 . 4 . 2 .', '0 . . 0 . . 0 . . . 0 . . . 4 .', '0 . 0 . 0 . 0 . 4 . 4 . 2 . 1 .'],
-              l: ['14 . . . 13 . . . 11 . . . . . . .', '. . 10 . . 11 . . 13 . . . 11 . . .', '12 . . . 11 . . . 9 . . . . . . .', '. . 8 . . 11 . . 15 . . . 14 . . .'],
+              l: ['7 . . . 6 . . . 4 . . . . . . .', '. . 3 . . 4 . . 6 . . . 4 . . .', '5 . . . 4 . . . 2 . . . . . . .', '. . 1 . . 4 . . 8 . . . 7 . . .'],
               k: ['x.x.......xx....', 'x.x.......xx....', 'x.x.......xx....', 'x.x.......x.....'], s: ['....x..x.x..x..x', '....x..x.x..x..x', '....x..x.x..x..x', '....x..x.x....x.'], h: 'x.x.x.x.x.x.x.x.'
             },
             Out: { c: [0, 0, 5, 4], rb: true, sus: 3, wave: { bass: 'sawtooth', lead: 'sine' }, b: '0 . . . . . . . . . . . . . . .', l: ['11 . . . . . . . . . . . . . . .', R0, R0, R0], k: ['x.........x.....', 'x.........x.....', D0, D0], h: 'x.x.x.x.x.x.x.x.' }
           },
-          form: 'In In U D D D D! Br Br U D2^2 D2^2 D2 D2! Out'
+          form: 'In In U D D D D! Br Br U D2 D2 D2^2 D2^2! Out'
         },
         {
           id: 'speed_limit', title: 'Speed Limit (Suggested)', artist: 'The Zipper Merge Society',
@@ -819,15 +820,15 @@
           sections: {
             In: { c: [0, 5, 2, 6], sus: 3, wave: { bass: 'sawtooth', lead: 'triangle' }, h: 'x.x.x.x.x.x.x.x.', l: ['. . . . . . . . . . . . 7 . . .', R0, '. . . . . . . . . . . . 9 . . .', '. . . . . . . . 10 . . . . . . .'] },
             U: {
-              c: [0, 5, 2, 6], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: [R0, R0, '11 . . . 11 . . . 11 . . . 11 . . .', '13 . 13 . 13 . 13 . 13 . 13 . 13 13 13 13'],
+              c: [0, 5, 2, 6], rb: true, b: ['0 . . . . . . . 0 . . . . . . .', '0 . . . . . . . 0 . . . . . . .', R0, R0], l: [R0, R0, '11 . . . 11 . . . 11 . . . 11 . . .', '13 . 13 . 13 . 13 . 13 . 13 . 13 13 13 13'],
               k: [D0, 'x.......x.......', 'x...x...x...x...', 'x...x...x...x...'], s: ['................', '....x.......x...', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.xxxx'], h: 'xxxxxxxxxxxxxxxx'
             },
             D: {
               // the reese: a sawtooth retriggered in a tresillo, under hoover stabs on the one
               c: [0, 5, 2, 6], rb: true, sus: 3,
               b: ['0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . 0 . . . 2 . . 2 . .', '0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . . . 2 . . . 4 . . .'],
-              l: ['7 . . . . . . . . . . . . . . .', '9 . . . . . . . . . . . 7 . . .', '9 . . . . . . . . . . . . . . .', '10 . . . . . . . 8 . . . 6 . . .'],
-              k: ['x.........x.....', 'x.........x.x...'], s: ['....x.......x...', '....x..x....x...'], h: 'x.xxx.x.x.xxx.x.'
+              l: ['7 . . . . . . . . . . . . . . .', '. . . 9 . . . . . . . . 7 . . .', '9 . . . . . . . . . . . . . . .', '. . . 10 . . . . 8 . . . 6 . . .'],
+              k: ['x.........x.....', 'x.........x.x...'], s: ['....x.......x...', '....x..x....x...'], h: '..xxx.x.x.xxx.x.'
             },
             Br: {
               c: [0, 5, 2, 6], sus: 3, wave: { bass: 'triangle', lead: 'sine' }, b: '0 . . . . . . . . . . . . . . .', rb: true,
@@ -835,7 +836,7 @@
             },
             Out: { c: [0, 5, 2, 6], sus: 3, wave: { bass: 'sawtooth', lead: 'triangle' }, rb: true, b: '0 . . . . . . . . . . . . . . .', k: ['x.........x.....', D0], h: 'x.x.x.x.x.x.x.x.' }
           },
-          form: 'In U D D D D! Br U D D^4 D^4! Out'
+          form: 'In U D D D D! Br U D D^-3 D^-3! Out'
         },
         {
           // liquid: bells throughout, half-time drums under the first drop, then the roller
@@ -843,7 +844,7 @@
           wave: { bass: 'sawtooth', lead: 'sine' }, sustain: 2,
           fill: { k: 'x...............', s: '....x.xxx.xxxxxx', h: 'x.x.x.x.x.x.x.x.' },
           sections: {
-            In: { c: [0, 6, 5, 4], rb: true, sus: 3, b: [R0, '0 . . . . . . . . . . . . . . .'], l: ['14 . . . . . . . 13 . . . . . . .', '13 . . . . . . . 11 . . . . . . .', '12 . . . . . . . 11 . . . . . . .', '11 . . . . . . . . . . . . . . .'], h: 'x.x.x.x.x.x.x.x.' },
+            In: { c: [0, 6, 5, 4], rb: true, sus: 3, b: [R0, '0 . . . . . . . . . . . . . . .'], l: ['7 . . . . . 11 . . . . . 13 . . .', '6 . . . . . 10 . . . . . 12 . . .', '5 . . . . . 9 . . . . . 11 . . .', '4 . . . . . 8 . . . . . 10 . . .'], h: 'x.x.x.x.x.x.x.x.' },
             H: {
               c: [0, 6, 5, 4], rb: true, b: '0 . . . . . . . 0 . . . 4 . . .',
               l: ['7 . 11 . 14 . . . 11 . . . 7 . . .', '6 . 10 . 13 . . . 10 . . . 6 . . .', '5 . 9 . 12 . . . 9 . . . 5 . . .', '4 . 8 . 11 . . . 8 . . . 11 . . .'],
@@ -856,7 +857,7 @@
             },
             Out: { c: [0, 6, 5, 4], rb: true, sus: 3, b: '0 . . . . . . . . . . . . . . .', l: ['14 . . . . . . . . . . . . . . .', R0, R0, R0], h: ['x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x...x...x...x...', D0] }
           },
-          form: 'In H H D D D! In D^5 D^5! Out'
+          form: 'In H H D D D! In D^-2 D^-2! Out'
         },
         {
           // amen-heavy breakbeat; the lead is a two-tone siren
@@ -871,12 +872,12 @@
             },
             B: {
               c: [5, 5, 4, 4], rb: true, b: '0 . . . . . 0 . . . 0 . . . . .',
-              l: ['. . 12 . . 12 . . 14 . . . 12 . . .', '. . 12 . . 12 . . 16 . . . 14 . . .', '. . 11 . . 11 . . 13 . . . 11 . . .', '. . 11 . . 11 . . 15 . . . 14 . . .'],
+              l: ['. . 5 . . 5 . . 7 . . . 5 . . .', '. . 5 . . 5 . . 9 . . . 7 . . .', '. . 4 . . 4 . . 6 . . . 4 . . .', '. . 4 . . 4 . . 8 . . . 7 . . .'],
               k: 'x.........x.....', s: '....x.......x...', h: 'xxxxxxxxxxxxxxxx'
             },
             Out: { c: [0, 0, 6, 6], sus: 3, l: ['11 . . . . . . . . . . . . . . .', R0, R0, R0], k: ['x.x.......xx....', D0, D0, D0], s: ['....x..x.x..x..x', D0, D0, D0], h: 'x.x.x.x.x.x.x.x.' }
           },
-          form: 'In In A A! B B! A^4 A^4! B A! Out'
+          form: 'In In A A! B B In! A^-3 A^-3! B A! Out'
         }
       ]
     }
