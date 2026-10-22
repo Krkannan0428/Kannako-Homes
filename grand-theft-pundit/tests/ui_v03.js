@@ -243,10 +243,10 @@ H.run('ui_v03', async (t) => {
   // ---- 9. property ----
   const prop = await page.evaluate(() => { const p = GTP.game.player; p.money = 100000; GTP.Events.emit('property:open', { id: 'safe_brownstone' }); T_.adv(0.3); GTP.game.render(); return { modal: T_.ui.modal && T_.ui.modal.kind }; });
   await shot('property');
-  const prop2 = await page.evaluate(() => { const p = GTP.game.player; T_.press('confirm'); GTP.game.render(); const a = { money: p.money, ev: T_.last('property:buy'), owned: p.properties && p.properties.safe_brownstone }; return a; });
+  const prop2 = await page.evaluate(() => { const p = GTP.game.player; T_.press('confirm'); GTP.game.render(); const S = GTP.Systems && GTP.Systems.properties, a = { money: p.money, ev: T_.last('property:buy'), owned: !!((S && S.owned && S.owned('safe_brownstone')) || (p.properties && p.properties.safe_brownstone)), label: T_.ui.modal && T_.ui.modal.msg && T_.ui.modal.msg.text }; return a; });
   await shot('property_owned');
   await page.evaluate(() => { T_.press('cancel'); });
-  t.assert(prop.modal === 'property' && prop2.money === 15000 && prop2.ev && prop2.ev.id === 'safe_brownstone' && prop2.owned, 'the property card buys The Brownstone: ' + JSON.stringify(prop2));
+  t.assert(prop.modal === 'property' && prop2.ev && prop2.ev.id === 'safe_brownstone' && prop2.money === 100000 - prop2.ev.price && prop2.owned, 'the property card buys the brownstone through Systems.properties.buy: ' + JSON.stringify(prop2));
 
   // ---- 10. heist board ----
   await page.evaluate(() => { GTP.Events.emit('heist:board', { missionId: 'h01_casing', approaches: GTP.Heist && GTP.Heist.approaches(), crew: GTP.Heist && GTP.Heist.crewList() }); T_.adv(0.3); GTP.game.render(); });
@@ -268,6 +268,7 @@ H.run('ui_v03', async (t) => {
   const prompts = await page.evaluate(() => {
     const g = GTP.game, p = g.player, CB = GTP.Combat;
     g.debug.giveWeapon('pistol', 24); p.weapon = 'pistol';
+    T_.ui.aimTutor.n = 0; T_.ui.aimTutor.shown = 0; if (GTP.Hints && GTP.Hints.dismiss) GTP.Hints.dismiss();   // the tutor retires after the first aim
     CB.cover = Object.assign(CB.cover || {}, { available: () => ({ low: true }) });
     T_.adv(0.2); g.render();
     const a = { foot: T_.ui.prompts.slice() };

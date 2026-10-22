@@ -1817,7 +1817,7 @@
       }
     }
     txt(ctx, 'A parody. All characters are fictional.', W / 2, H - safe.b - px(34), { font: F(12, 'bold'), color: COL.ink, align: 'center' });
-    txt(ctx, 'Grievance City: two time zones, one opinion.  v' + (GTP.VERSION || '') + (GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected() ? '  ·  gamepad connected' : ''), W / 2, H - safe.b - px(14), { font: F(10), color: COL.muted, align: 'center' });
+    txt(ctx, 'Grievance City: two time zones, one opinion.  v' + gameVersion() + (GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected() ? '  ·  gamepad connected' : ''), W / 2, H - safe.b - px(14), { font: F(10), color: COL.muted, align: 'center' });
   }
   // NEW GAME's slot picker / LOAD GAME's cards on the title (ui.title.slotMode = 'new' | 'load'), the seed field under them
   function slotHint() { var d = device(); return d === 'gamepad' ? 'LS picks · A chooses · B back' : d === 'touch' ? 'tap a button' : '← → pick  ·  Enter choose  ·  Esc back'; }
@@ -1847,6 +1847,14 @@
     if (r.slots && r.slots[tt.slotSel]) r.slots[tt.slotSel]._sel = true;
     tt._slotInfo = r;
   }
+  // the version on the title: GTP.VERSION (00_util.js) still reads 0.2.0 in the v0.3 build; the UI shows the release it
+  // belongs to (desktop/package.json: 0.3.0) unless GTP.VERSION is newer
+  var RELEASE = '0.3.0';
+  function gameVersion() {
+    var v = String(GTP.VERSION || ''), a = v.split('.').map(Number), b = RELEASE.split('.').map(Number);
+    for (var i = 0; i < 3; i++) { if ((a[i] || 0) > b[i]) return v; if ((a[i] || 0) < b[i]) return RELEASE; }
+    return v || RELEASE;
+  }
   function chosenSeed() { var g = game(), s = parseInt(ui.title.seed, 10); return isFinite(s) && ui.title.seed !== '' ? s : (g ? g.seed : 7); }
   function beginNewGame(slot, seed, opening) {
     var g = game(); if (!g) return;
@@ -1859,7 +1867,7 @@
     g.setState('playing');
     // the slot is claimed at once so CONTINUE and the cards know the game exists (quiet; the autosave takes over after)
     try { if (g.saveSlot) g.saveSlot(slot || 1, { quiet: true, reason: 'new' }); } catch (e) { /* storage optional */ }
-    toast('New game in slot ' + (slot || 1) + '. Minds changed: zero.');
+    if (!opening) toast('New game in slot ' + (slot || 1) + '. Minds changed: zero.');   // with the opening it would surface under the first prompts
   }
   function titleSlotActivate(action, slot) {
     var g = game(), tt = ui.title; if (!g) return;
@@ -4130,7 +4138,8 @@
   function coverHud() { var CB = GTP.Combat, h = CB && CB.hud ? call(CB.hud, CB, [], null) : null; return h && h.cover ? h.cover : null; }
   function coverAvailable(p) {
     var CB = GTP.Combat, cv = CB && CB.cover, ch = coverHud();
-    if (ch) return ch.active ? null : (ch.near ? { high: ch.nearHigh } : null);
+    if (ch && ch.active) return null;
+    if (ch && ch.near) return { high: ch.nearHigh };
     if (p && p._coverNear) return p._coverNear;
     if (p && p.coverHint) return p.coverHint;
     if (!cv) return null;
@@ -4139,7 +4148,7 @@
     if (typeof cv.candidate === 'function') return call(cv.candidate, cv, [p], null);
     return null;
   }
-  function inCover(p) { var ch = coverHud(); if (ch) return !!ch.active; return !!((p && (p.cover || (p.pose && p.pose.cover))) || ui.cover.on); }
+  function inCover(p) { var ch = coverHud(); if (ch && ch.active) return true; return !!((p && (p.cover || (p.pose && p.pose.cover))) || ui.cover.on); }
   function promptList() {
     var p = player(), g = game(), out = []; if (!p || !g || g.state !== 'playing' || ui.modal || ui.shopOpen || ui.dialogue) return out;
     var CB = GTP.Combat, hud = CB && CB.hud ? CB.hud() : null, w = hud && hud.weapon, aiming = !!(CB && CB.aim && CB.aim.active), v = p.inVehicle;
@@ -4164,7 +4173,8 @@
     var ca = coverAvailable(p);
     if (ca) out.push({ keys: [glyph('cover')], label: 'TAKE COVER', color: COL.cyan });
     var ranged = w && !w.infinite && w.id !== 'fist' && w.cls !== 'melee';
-    if (ranged && !aiming && ui.aimTutor.n < 3 && ui.aimTutor.shown < 40) {
+    var hintUp = GTP.Hints && GTP.Hints.current ? GTP.Hints.current() : null;
+    if (ranged && !aiming && ui.aimTutor.n < 1 && ui.aimTutor.shown < 15 && !(hintUp && hintUp.id === 'h_aim')) {   // the h_aim card already says it
       out.push({ keys: [glyph('aim')], label: 'AIM' });
       out.push({ keys: [glyph('shoot')], label: 'FIRE' });
     }
@@ -5888,11 +5898,25 @@
     if (ui.chapter) { ui.chapter.t += dt; if (ui.chapter.t > ui.chapter.dur) ui.chapter = null; }
     if (ui.placeCard) { ui.placeCard.t += dt; if (ui.placeCard.t > 3.6) ui.placeCard = null; }
     if (ui.vehName) { ui.vehName.t += dt; if (ui.vehName.t > 3) ui.vehName = null; }
-    // the aim tutor: counts aims, retires after three or 40 s on screen
+    // the aim tutor: counts aims, retires after the first aim or 15 s on screen
     var CB = GTP.Combat, aiming = !!(CB && CB.aim && CB.aim.active);
     if (aiming && !ui.aimTutor.was) ui.aimTutor.n++;
     ui.aimTutor.was = aiming;
     if (ui.prompts && ui.prompts.indexOf('AIM') >= 0) ui.aimTutor.shown += dt;
+    hintActed(dt, aiming);
+  }
+  // a GTP.Hints card leaves a second after the player has done what it asks (it otherwise stays its full six seconds:
+  // the coordinator's run saw "Hold the right mouse button to aim" linger after the player had aimed)
+  function hintActed(dt, aiming) {
+    var Hs = GTP.Hints, h = Hs && Hs.current ? Hs.current() : null, In = GTP.Input, p = player(), g = game();
+    if (!h || !Hs.dismiss || !p || !g) { ui.hintDone = null; return; }
+    if (!ui.hintDone || ui.hintDone.id !== h.id) ui.hintDone = { id: h.id, acted: false };
+    var mv = In && In.move, w = GTP.Combat && GTP.Combat.hud ? (call(GTP.Combat.hud, GTP.Combat, [], null) || {}).weapon : null;
+    var acted = (h.id === 'h_aim' && aiming) || (h.id === 'h_move' && mv && Math.abs(mv.x) + Math.abs(mv.z) > 0.3) ||
+      (h.id === 'h_look' && In && In.lastLookTime > g.time.t - (h.t || 0) + 0.05) || (h.id === 'h_reload' && w && w.reloading) ||
+      (h.id === 'h_wheel' && GTP.Combat && GTP.Combat.wheel && GTP.Combat.wheel.open) || (h.id === 'h_map' && g.state === 'paused' && ui.pause.page === 'phone');
+    if (acted) ui.hintDone.acted = true;
+    if (ui.hintDone.acted && (h.t || 0) > 1) { Hs.dismiss(); ui.hintDone = null; }
   }
   // world-space labels and HUD pieces drawn while playing (the core HUD is drawn first)
   function drawPlayV3(ctx) {
