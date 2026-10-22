@@ -46,6 +46,8 @@ function installBot() {
     let nearAdd = null, nd = enc.id === 'b05_dunk' ? 4 : 8;
     for (const a of enc.adds) { if (!a.alive || a.removed || a.knockedDown || a.fled || a.inVehicle) continue; const d = Math.hypot(a.x - p.x, a.z - p.z); if (d < nd) { nd = d; nearAdd = a; } }
     if (nearAdd) tg = nearAdd;
+    // enc.target() is {x, y, z, entity}; an add is the entity itself
+    const tgE = tg ? (tg.entity !== undefined ? tg.entity : tg) : null;
     In.set('run', true);
     let mx = 0, mz = 0, dodging = false;
     // telegraphs: step out of an armed circle / strip, jump an incoming ring
@@ -73,21 +75,28 @@ function installBot() {
     const dx = tg.x - p.x, dz = tg.z - p.z, dist = Math.hypot(dx, dz);
     GTP.Render.rig.yaw = U.dirToYaw(dx, dz);
     const melee = enc.id === 'b05_dunk';
-    let want = melee ? 1.1 : (enc.id === 'b01_goldplate' && tg.kind === 'heli' ? 7 : 9);
+    let want = melee ? 1.1 : (enc.id === 'b01_goldplate' && tgE && tgE.kind === 'heli' ? 7 : 9);
     let attack = true;
     if (melee) {
       const card = enc.data.card, mode = enc.data.mode;
       if (card === 'blocked' || mode === 'block') attack = false;
-      if (tg === enc.ped && mode !== 'stunned') { want = 5; attack = false; }
-      if (tg !== enc.ped) { want = 1.1; attack = true; }
+      if (tgE === enc.ped && mode !== 'stunned') { want = 5; attack = false; }
+      if (tgE !== enc.ped) { want = 1.1; attack = true; }
     }
     if (!dodging) {
       if (dist > want + 1.5) { mx = dx; mz = dz; }
       else if (dist < want - 2.5) { mx = -dx; mz = -dz; }
     }
     moveDir(mx, mz);
-    In.set('aim', attack);
-    In.set('shoot', attack && (melee ? dist < 2.2 : dist < 32));
+    // a player re-aims at a new target: looks at it and presses aim again (the lock-on takes what is in front on the press;
+    // a held aim only re-acquires what passes under the crosshair, and the camera may still be tilted up at the helicopter)
+    let aimOn = attack;
+    if (attack && !melee && tgE && tgE.kind && p.lockTarget !== tgE) {
+      if (!(tgE.y > p.y + 4)) GTP.Render.rig.pitch = 0.15;
+      if (p.aiming && bot.stats.steps - (bot.reaimAt || -99) > 6) { bot.reaimAt = bot.stats.steps; bot.stats.reaims = (bot.stats.reaims || 0) + 1; aimOn = false; }
+    }
+    In.set('aim', aimOn);
+    In.set('shoot', aimOn && (melee ? dist < 2.2 : dist < 32));
   };
   bot.run = function (seconds, every) {
     const n = Math.round(seconds * 60);
