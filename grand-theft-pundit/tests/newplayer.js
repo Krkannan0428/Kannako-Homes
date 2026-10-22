@@ -364,11 +364,12 @@ function installPlayer(budget) {
     rangeActive() { const e = NP.events; return e.rangeStart != null && e.rangeStart >= (e.range.length ? e.range[e.range.length - 1].t : -1); },
     rangeTargets() {
       const I = GTP.Interiors, out = [];
-      const lists = I ? [I.range && I.range.targets, I.current && I.current.targets, I.current && I.current.range && I.current.range.targets, I.targets] : [];
+      const room = I && I.current && I.current.room;
+      const lists = I ? [I.range && I.range.targets, I.current && I.current.targets, I.current && I.current.range && I.current.range.targets, room && room.range && room.range.targets, I.targets] : [];
       for (const L of lists) if (Array.isArray(L)) for (const tg of L) {
-        if (!tg || tg.down || tg.hit || tg.dead || tg.up === false || tg.active === false) continue;
-        const m = tg.mesh || tg.obj || tg; const wp = new THREE.Vector3();
-        if (m && m.getWorldPosition) { if (m.visible === false) continue; m.getWorldPosition(wp); } else if (typeof tg.x === 'number') wp.set(tg.x, tg.y || 1.2, tg.z); else continue;
+        if (!tg || tg.down || tg.hit || tg.dead || tg.up === false || tg.active === false || (typeof tg.state === 'string' && tg.state !== 'up')) continue;
+        const m = tg.mesh || tg.obj || tg.board || tg.pivot || tg; const wp = new THREE.Vector3();
+        if (m && m.getWorldPosition) { if (m.visible === false || (tg.pivot && tg.pivot.visible === false)) continue; m.getWorldPosition(wp); if (tg.board) wp.y += 1.2; } else if (typeof tg.x === 'number') wp.set(tg.x, tg.y || 1.2, tg.z); else continue;   // a cardboard board: its origin is at the feet, aim at the chest
         out.push({ x: wp.x, y: wp.y, z: wp.z, ref: tg });
       }
       if (!out.length && GTP.Render && GTP.Render.scene) GTP.Render.scene.traverse((o) => {   // a mesh tagged as a range target
@@ -401,13 +402,38 @@ function installPlayer(budget) {
       return { shots, end: last && last.t >= t0 ? { score: last.score, medal: last.medal } : null, targetsSeen: NP.rangeTargets().length };
     },
     // ---- the counter: open it with E at Merle, pick the row the objective names, buy it ----
-    shopUiOpen() { const ui = GTP.UI.state; return !!(ui.shopOpen || (ui.armory && (ui.armory.open || ui.armory.active))); },
+    shopUiOpen() { const ui = GTP.UI.state; return !!(ui.shopOpen || (ui.armory && (ui.armory.open || ui.armory.active)) || (ui.modal && ui.modal.kind === 'armory')); },
+    // the v0.3 armory counter (a modal): weapon rows on the left, tabs PURCHASE / AMMO / ... and their items on the right, as drawn
+    // (GTP.UI._v3.armoryState is the state the panel draws from). W / S move, D / Enter go right, Enter buys
+    buyFromArmory(txt) {
+      const ui = GTP.UI.state, m = ui.modal, st = () => GTP.UI._v3.armoryState();
+      if (!m || m.kind !== 'armory' || !GTP.UI._v3 || !GTP.UI._v3.armoryState) return null;
+      const wantAmmo = /ammo|rounds|box|bullets/.test(txt), wantWeapon = /pistol/.test(txt) ? /pistol/i : null;
+      const rowName = (r) => String(r && (r.name || r.label || r.weaponId || r.id) || '');
+      let S2 = st();
+      if (wantWeapon) for (let i = 0; i < S2.rows.length + 1; i++) { if (wantWeapon.test(rowName(S2.row)) || (S2.row && S2.row.weaponId === 'pistol')) break; if (m.focus !== 0) NP.press('cancel'); NP.press('back'); S2 = st(); }
+      if (m.focus === 0) NP.press('confirm');
+      S2 = st();
+      if (wantAmmo) for (let i = 0; i < 6 && S2.tabs[m.tab] !== 'AMMO'; i++) { NP.press('right'); S2 = st(); }
+      const itemOk = (it) => it && !it.locked && !it.owned && (wantAmmo ? (it.kind === 'ammo' || /ammo|rounds|box/i.test(String(it.name || ''))) : true);
+      for (let i = 0; i < S2.items.length + 1 && !itemOk(S2.item); i++) { NP.press('back'); S2 = st(); }
+      const pick = S2.item ? { name: S2.item.name, kind: S2.item.kind, price: S2.item.price } : null;
+      if (itemOk(S2.item)) { NP.press('confirm'); NP.adv(0.4); }
+      return { row: rowName(S2.row), tab: S2.tabs[m.tab], item: pick };
+    },
     tryOpenCounter() {
       const p = NP.p(), a = NP.arrow(); if (a && U.dist2d(p.x, p.z, a.x, a.z) > 2.5) return false;
       NP.press('action'); NP.adv(0.6); return NP.shopUiOpen();
     },
     buyFromUi(txt) {
       const ui = GTP.UI.state, n0 = NP.events.buy.length;
+      const arm = NP.buyFromArmory(txt);
+      if (arm) {
+        const ok = NP.events.buy.length > n0;
+        if (!ok) NP.warn('m01c buy: the armory counter did not sell ' + JSON.stringify(arm));
+        for (let i = 0; i < 4 && NP.shopUiOpen(); i++) { NP.press('cancel'); NP.adv(0.3); }
+        if (ok) return { bought: true, how: 'armory counter: ' + JSON.stringify(arm) };
+      }
       const want = /ammo/.test(txt) ? /ammo|rounds|box/i : /armor|vest/.test(txt) ? /armor|vest/i : null;
       // the UI's list as it is drawn: armory.items or the v0.2 shop rows; walk it with S / Down until the highlighted row matches
       const rows = () => { const A = ui.armory; if (A && Array.isArray(A.items)) return { items: A.items, sel: () => A.sel }; const S = ui.shop; if (S && Array.isArray(S.items)) return { items: S.items, sel: () => S.sel }; return null; };

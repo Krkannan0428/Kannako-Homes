@@ -438,22 +438,25 @@
     }
   }
   // where a mission light goes at a landmark's door point: clear of solid props (a street lamp on the kerb in front of Both Sides
-  // Arms stopped a player 1.95 m from the 1.9 m light), off the road, 3 m or more out from the facade (a shop's walk-in door
+  // Arms stopped a player 1.95 m from the 1.9 m light) and of the shops' door rings, off the road, 3 m or more out from the facade (a shop's walk-in door
   // stays its own trigger; never nearer than the door point already is) and not on another light. The door point first, then toward the building, then along the sidewalk
   function lightSpot(pt, landmarkId) {
-    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [];
+    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [], doors = Wd.doors || [];
     var ix = 0, iz = 0;   // toward the building
     if (b) { var cx = U.clamp(pt.x, b.x, b.x + b.w), cz = U.clamp(pt.z, b.z, b.z + b.d), dl = U.dist2d(pt.x, pt.z, cx, cz); if (dl > 0.01) { ix = (cx - pt.x) / dl; iz = (cz - pt.z) / dl; } }
     else if (lm) { var ll = U.dist2d(pt.x, pt.z, lm.x, lm.z); if (ll > 0.01) { ix = (lm.x - pt.x) / ll; iz = (lm.z - pt.z) / ll; } }
     function face(x, z) { return b ? U.dist2d(x, z, U.clamp(x, b.x, b.x + b.w), U.clamp(z, b.z, b.z + b.d)) : 1e9; }
     var minFace = Math.min(3, face(pt.x, pt.z) - 0.01);   // never nearer the facade than the door point itself already is
-    var sx = -iz, sz = ix, clear = K.markerRadius + 0.45, offs = [[0, 0], [1, 0], [1.5, 0], [2, 0], [2.5, 0], [0, 1.5], [0, -1.5], [1.5, 1.5], [1.5, -1.5], [0, 3], [0, -3], [1.5, 3], [1.5, -3], [0, 4.5], [0, -4.5], [-1, 0], [-1.5, 0], [-1, 1.5], [-1, -1.5]];
+    var sx = -iz, sz = ix, clear = K.markerRadius + 0.45, offs = [[0, 0], [1, 0], [1.5, 0], [2, 0], [2.5, 0], [0, 1.5], [0, -1.5], [1.5, 1.5], [1.5, -1.5], [0, 3], [0, -3], [1.5, 3], [1.5, -3], [0, 4.5], [0, -4.5], [1.5, 4.5], [1.5, -4.5], [0, 6], [0, -6], [-1, 0], [-1.5, 0], [-1, 1.5], [-1, -1.5]];
     function ok(x, z) {
       var t = Wd.tileAt ? Wd.tileAt(x, z) : null;
       if (t === T.BUILDING || t === T.ROAD || t === T.WATER || t === T.VOID || t === T.HIGHWAY) return false;
       if (Wd.solidAt(x, z, 0.5)) return false;
       if (face(x, z) < minFace) return false;
       for (var j = 0; j < avail.length; j++) if (U.dist2d(avail[j].x, avail[j].z, x, z) < 3) return false;
+      // a shop or safehouse door ring (World.doors, run by GTP.AI): stepping into it walks into the interior, so the light keeps
+      // clear of it (the m01c light on the armory's own ring took the player inside before the mission could start)
+      for (var q = 0; q < doors.length; q++) if (U.dist2d(doors[q].x, doors[q].z, x, z) < (doors[q].r || 1.4) + K.markerRadius + 0.6) return false;
       for (var k = 0; k < props.length; k++) { var pr = props[k]; if (pr.solid && Math.abs(pr.x - x) < 4 && Math.abs(pr.z - z) < 4 && U.dist2d(pr.x, pr.z, x, z) - (pr.r || 0.3) < clear) return false; }
       return true;
     }
@@ -1365,6 +1368,14 @@
     var ks = INTERIOR_KINDS[want] || [want];
     return e.id === want || e.kind === want || ks.indexOf(e.kind) >= 0 || ks.indexOf(e.id) >= 0;
   }
+  // a spot inside the room the player stands in (GTP.Interiors rooms list their interactables in world coordinates): the range
+  // booth, Merle at the counter. The HUD arrow points there; there is no GPS line indoors
+  function roomSpot(kinds) {
+    var I = GTP.Interiors, room = I && I.active && typeof I.room === 'function' ? I.room() : null, pl = player();
+    if (!room || !room.inter) return null;
+    for (var i = 0; i < room.inter.length; i++) { var q = room.inter[i]; if (q && kinds.indexOf(q.kind) >= 0) return { x: q.x, z: q.z, y: pl ? pl.y : 0 }; }
+    return null;
+  }
   // interior: {interior:'armory'|'clothing'|..., store?, landmark?} completes on interior:enter. Without GTP.Interiors (the
   // interiors track not merged) reaching the door on foot counts, so the story never waits on a room that does not exist
   H.interior = {
@@ -1396,10 +1407,34 @@
     if (it && typeof it === 'object' && (it.tab === want || it.kind === want || it.weapon === want || it.weaponId === want)) return true;
     return typeof id === 'string' && id.indexOf(want + '_') === 0;
   }
+  // A mission may ask the player to buy what it unlocks itself (m01c: Merle's pistol rounds carry unlock: 'm01c_both_sides'). While
+  // such a buy objective runs, that mission counts as unlocked for the shop: Missions.isUnlocked(id) says so, and so does
+  // state.completed.has(id) for the shop's own check (GTP.Combat unlocked(): Ms.completed.has(item.unlock)) through an
+  // instance override that the objective's cleanup removes. Nothing else reads completed during the objective.
+  function shopItemsMatching(want) {
+    var CB = GTP.Combat, list = [];
+    try { list = (CB && CB.shop && typeof CB.shop.items === 'function') ? CB.shop.items() : (CB && typeof CB.catalog === 'function' ? CB.catalog() : []); } catch (e) { list = []; }
+    return (list || []).filter(function (it) { return it && buyMatches(want, { item: it }); });
+  }
+  function provisionalUnlock(c, id) {
+    if (!run || !id) return;
+    run.unlocks = run.unlocks || {}; run.unlocks[id] = true; c.unlocked = id;
+    var set = state.completed;
+    if (set && !Object.prototype.hasOwnProperty.call(set, 'has')) set.has = function (k) { return (run && run.unlocks && run.unlocks[k] === true) || Set.prototype.has.call(this, k); };
+  }
+  function provisionalDrop(c) {
+    if (!c.unlocked) return;
+    if (run && run.unlocks) delete run.unlocks[c.unlocked];
+    var set = state.completed; if (set && Object.prototype.hasOwnProperty.call(set, 'has') && !(run && run.unlocks && Object.keys(run.unlocks).length)) delete set.has;
+    c.unlocked = null;
+  }
   H.buy = {
     start: function (o, c) {
       var p = player();
       c.want = o.item || 'any'; c.done = false;
+      // the item this mission unlocks itself is sold during it
+      var mine = run ? shopItemsMatching(c.want).filter(function (it) { return it.unlock === run.id; }) : [];
+      if (mine.length) provisionalUnlock(c, run.id);
       if (o.fund && p && p.money < o.fund) { p.money = o.fund | 0; toast('Gus spotted you ' + U.fmtMoney(o.fund) + '. He wants it back. He will not ask.'); }
       listen(c, 'shop:buy', function (e) { if (buyMatches(c.want, e)) c.done = true; });
       if (o.target || o.landmark) { c.target = resolvePoint(o.target || { landmark: o.landmark }); if (c.target) c.marker = addObjMarker(c.target, null); }
@@ -1407,9 +1442,9 @@
       if (!GTP.Combat || (!GTP.Combat.buy && !(GTP.Combat.shop && GTP.Combat.shop.buy))) c.done = true;
     },
     check: function (o, c) { return c.done ? 'done' : null; },
-    hint: function (o, c) { return c.want === 'any' ? 'Buy something at the counter' : 'Buy it at the counter'; },
-    target: function (o, c) { return c.target || null; },
-    cleanup: function (o, c) { unlisten(c); }
+    hint: function (o, c) { return roomSpot(['clerk']) ? 'Talk to Merle at the counter to buy it' : (c.want === 'any' ? 'Buy something at the counter' : 'Buy it at the counter'); },
+    target: function (o, c) { return c.target || roomSpot(['clerk', 'counter', 'shop']); },
+    cleanup: function (o, c) { unlisten(c); provisionalDrop(c); }
   };
   // range: {medal:'bronze'|'silver'|'gold'} completes on range:end with that medal or better; a worse run says go again.
   // Without a range runtime (no GTP.Interiors) it passes after a beat, with a toast
@@ -1429,8 +1464,8 @@
       if (c.fallback && c.t > 1) { toast('The range is closed for repainting. Merle signs you off anyway.'); return 'done'; }
       return null;
     },
-    hint: function (o, c) { return c.tries ? 'Beat the clock for a ' + (o.medal || 'bronze') : 'Step up to the range'; },
-    target: function (o, c) { return c.target || null; },
+    hint: function (o, c) { return c.tries ? 'Beat the clock for a ' + (o.medal || 'bronze') : 'Stand on the line in the back room to start the range'; },
+    target: function (o, c) { var I = GTP.Interiors; return c.target || (I && I.range && I.range.running ? null : roomSpot(['range'])); },
     cleanup: function (o, c) { unlisten(c); }
   };
   // heist_board: opens the planning board (emits heist:board {missionId}) and completes on heist:plan {approach, crew}.
@@ -2032,7 +2067,9 @@
   function objectiveGps() {
     var o = run && run.obj; if (!o) return;
     var t = null;
-    if (GPS_TYPES[o.def.type] && o.h.target) { try { t = o.h.target(o.def, o.c, player()); } catch (e) { t = null; } }
+    // inside a room (GTP.Interiors) there are no streets to route along: the HUD arrow does the pointing
+    var indoors = !!(GTP.Interiors && GTP.Interiors.active);
+    if (!indoors && GPS_TYPES[o.def.type] && o.h.target) { try { t = o.h.target(o.def, o.c, player()); } catch (e) { t = null; } }
     if (t) setGps(gpsPayload(t.x, t.z, o.def.text || run.m.title, 'objective', { missionId: run.id }));
     else clearGps();
   }
@@ -2289,6 +2326,8 @@
     // other modules add objective types: def = {start(o, c, p), check(o, c, p) -> 'done'|'fail'|null, update?, cleanup?, hint?,
     // target?, progress?}; a file that loads before this one can leave them in GTP.ObjectiveTypes[name] instead
     registerObjectiveType: function (name, def) { return registerObjectiveType(name, def); },
+    // a shop item with unlock: <missionId> is for sale: the mission is complete, or it is running a buy objective for it
+    isUnlocked: function (id) { return !id || !!(state && Set.prototype.has.call(state.completed, id)) || !!(run && run.unlocks && run.unlocks[id]); },
     objectiveTypes: function () { var out = Object.keys(H); for (var k in pluginTypes) if (out.indexOf(k) < 0) out.push(k); return out; },
     retry: function () {
       if (!Missions.canRetry()) return false;
