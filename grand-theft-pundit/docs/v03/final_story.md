@@ -4,7 +4,8 @@ Details, the per-bug table and the patches other tracks still need: `docs/v03/tr
 `docs/v03/story.md`.
 
 ## Fixed
-- **The v0.3 bar (`tests/newplayer.js`) passes, all twelve steps, 448 s of the 600 s budget.** A New Game from the title starts
+- **The v0.3 bar (`tests/newplayer.js`) passes, all twelve steps: 441 s of the 600 s budget on this branch merged with the latest
+  base (448 s before that merge).** A New Game from the title starts
   m00 by itself, the GPS line leads to the first objective, and m00, m01_van and m01c (the armory: Merle's free pistol, bronze on
   the range, rounds bought at the counter) are played from what the screen shows. Then the player holds a visible pistol in the
   armory, aims, takes cover and saves from the pause menu.
@@ -18,7 +19,7 @@ Details, the per-bug table and the patches other tracks still need: `docs/v03/tr
   `tests/cutscenes.js` drives the real keys.
 - 83 QA bugs with a hint in my files were re-verified: 50 fixed in this round, 25 already fixed, 8 partly or wholly another
   track's.
-- Wrappers folded: 14's on `Missions.update`/`init`, 26's duplicate-giver cleanup, 09's `Events.on`/`off` listener count, and
+- Wrappers folded: 14's on `Missions.update`/`init`, 07's on `Strands.drivers.take`, 26's duplicate-giver cleanup, 09's `Events.on`/`off` listener count, and
   30's `Input` swap (replaced by `Input.latch`). There are opt-in hooks in 30 for the `Combat.update` wrappers and hook/registry
   double loads.
 
@@ -26,25 +27,24 @@ Details, the per-bug table and the patches other tracks still need: `docs/v03/tr
 - **World:** the pedestrian GPS line runs over the ramp by Dorm 4B (it costs a new player 90 s in m00). The car route from the pod
   garage runs through the car park.
 - **Combat:** `unlocked()` should call `GTP.Missions.isUnlocked`; then 09's bridge goes.
-- **Interiors:** pass the store id to `UI.openArmory`.
 - **UI:**
-  - export `pauseItems()`;
   - guard `meta` on unreadable slots;
   - the label overlaps on the HUD;
   - a faster typewriter for the opening;
   - the pad and touch cutscene skip;
-  - the timer label;
   - pause in a minigame.
 - **Audio:** `radio.force` for cutscene stations.
-- **AI:** export `routeVias`.
 - **Content:** timer labels, hint text and glyphs, one cutscene camera.
 - **Tests:**
   - `tests/world.js`: stop the car and heal between stunt jumps. It goes red on this branch only because a softer landing moves an
     existing death into sj_10's boarding.
   - `tests/audio.js`: flaky against the game's own phone and GPS cues.
 
-## Test results
+## Test results (this branch merged with game/grand-theft-pundit a94bf77)
 - My files: `missions`, `cutscenes`, `saves`, `campaign`, `story`, `strands`, `feel`, `smoke` and `newplayer` all pass, as do
   `content_audit` and `artifact`.
-- Full suite: 19 of 32 files pass. The other 13 are in other tracks' areas: 11 fail the same way on the untouched base,
-  `audio.js` is flaky in this environment, and `world.js` is the test fragility above.
+- The coordinator's four findings on a94bf77 (campaign's m05 unlock, newplayer, story's payout check, strands' race start) are
+  fixed in the tests and pass on the merged build; strands.js now closes a property screen a for-sale marker can open under the
+  player (the systems track's `disarmNear()` on `strand:end` is the game-side fix).
+- Other tracks' failing files fail the same way on a clean base worktree, with two exceptions noted in triage_story.md:
+  `audio.js` is flaky, and `world.js` is the stunt-test fragility above.

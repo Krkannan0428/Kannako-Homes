@@ -132,8 +132,8 @@ or `{from, lines}`. Without that data the call uses one of four generic giver li
   `GTP.Interiors` from `Game.step` when their owner sets `stepFromGame = true` in the same change that drops the
   `Combat.update` wrapper (08b, 13). A `SaveHooks` entry with `registry: '<key>'` is skipped on a v4 load that carries that
   registry key, so a module with both paths loads once (06b, 13, 14).
-- **Still installed by others on story modules:** `07_ai` `hookStrands` wraps `GTP.Strands.drivers.take` with A* corners for
-  race legs through buildings. It works; folding needs `routeVias` exported from 07 (see triage_story.md).
+- **Also folded:** `07_ai`'s `hookStrands` wrapper on `GTP.Strands.drivers.take`. `take` itself adds `GTP.AI.routeVias`
+  corners to race legs through buildings and sets `take._worldRoute`, which `hookStrands` checks before wrapping.
 - `GTP.ObjectiveTypes` (files loading before 09 leaving types) is unused on the combined build; `08b` and `06b` register
   through `GTP.Missions.registerObjectiveType`.
 

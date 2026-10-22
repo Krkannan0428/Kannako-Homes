@@ -9,10 +9,10 @@ Notes on the APIs and the folded wrappers are in `docs/v03/story.md` ("Wrappers"
 All twelve steps pass. A New Game from the title, with scripted inputs that only follow the screen, gets into m00 at 0.9 s,
 follows the GPS line to the first objective, finishes m00, m01_van and m01c (Merle's free pistol, bronze on the range, a box
 of rounds bought at the counter UI), then holds a visible pistol inside the armory, aims, takes cover and saves from the pause
-menu. The final run on this branch: **448 s of the 600 s bar** (m00 122 s, m01_van 125 s, m01c 88 s). Earlier runs during the
-work ranged from 512 to 730 s; the spread came from the bot's driving (a van parked facing a kerb tree, corners cut into props,
-waiting behind stopped traffic), fixed by backing mission cars out of blocked bays and by a bot that steers along clear lines.
-m00's third table piece still costs the bot 90-100 s on every run: the GPS line runs over a ramp (World, below).
+menu. **The final run, on this branch merged with the latest `game/grand-theft-pundit` (a94bf77): 441 s of the 600 s bar**
+(m00 28 s, m01_van 199 s, m01c 86 s with a gold on the range). Before that merge the branch ran it in 448 s; runs during the
+work ranged from 441 to 751 s, the spread coming from the bot's driving in traffic. m00 went from about 125 s to 28 s with the
+world track's routing fixes on the latest base.
 
 What stood between the combined build and the bar (all fixed in 09/12/30 unless noted):
 - **The story skipped m01c, the bosses and the heist.** The content track appends its ten missions to `expansion.missions`, and
@@ -46,27 +46,27 @@ step. `tests/cutscenes.js` section 9 drives it through `page.keyboard` on a non-
 The opening's pace (31 s of game time for cs_opening, the first objective at 52 s with every line read) is unchanged; the
 typewriter is the UI's (see UI below).
 
-## Test results (final, this branch)
+## Test results (final: this branch merged with game/grand-theft-pundit a94bf77)
 
-My files: `missions.js`, `cutscenes.js`, `saves.js`, `campaign.js` (the 35-mission story, both endings, every strand),
-`story.js`, `strands.js`, `feel.js`, `smoke.js`, `newplayer.js` (448 s) all pass; `content_audit.js` and `artifact.js` pass.
-The full suite (`tests/all.js`) on this branch: 16 of 32 files passed in the suite run; `artifact.js` (a comment that read as a
-`confirm(` call), `strands.js` (the save's new `cooldowns` key) and `newplayer.js` (the bot) failed there and pass after the
-fixes that followed, each re-run on its own: 19 of 32. The other 13, all in other tracks' areas:
-- the same as on the untouched base (checked on a clean worktree of 10ba585, or the same message as the merge-round log):
-  `actors.js` (crash damage 0), `bosses.js` (b01 not beaten in 360 s), `characters.js` (rifle grip), `combat.js` (scoped shot at
-  40 m), `events.js` (mod shop fires twice), `interiors.js` (rack meshes missing), `strangers.js`, `systems.js` (tables),
-  `ui.js` (mattress ad), `ui_v03.js` (paint preview), `vehicles.js` (jet ski lean);
-- `audio.js`: flaky in this environment (the merge-round log fails it on `phoneRing`; on this branch `phoneRing` or `gps`, on a clean
-  base run it passed once). The test plays every SFX name 150 ms of real time after game steps; a phone ring or the story GPS cue
-  fired by the game inside the per-name rate limit makes that name return false. The test should wait out the game's own cues
-  (or call `A.play` with a force flag);
-- `world.js` "all ten stunt jumps can be landed": the test bails out of every landed car at about 30 m/s, and each bail costs the
-  player 6-14 hp ("bail" damage), so the player dies partway through the ten jumps on the base too (at jump 8 there, early enough
-  to respawn before sj_10). With QA-A-DRV-06's capped lift, sj_01 no longer deals 15 hp of landing crash damage, the death moves
-  to the ninth bail and lands on sj_10's boarding. Fix in `tests/world.js` (world track), in the loop before
-  `if (p.inVehicle) p.exitVehicle();`: `v.vx = v.vz = 0; v.speed = 0; p.hp = Math.max(p.hp, 100);` (stop the car before getting
-  out, heal between jumps).
+My files pass on the merged code: `missions.js`, `cutscenes.js`, `saves.js`, `campaign.js` (the 35-mission story, both endings,
+every strand), `story.js`, `strands.js`, `feel.js`, `smoke.js`, `newplayer.js` (441 s); `content_audit.js` and `artifact.js` pass.
+The latest base needed three test updates in my files: the heist payout check takes Gus's cut from the content (it changed),
+m05_peer's unlock comes from the content's retune (now the Op-Ed Compact), `strands.js` closes a property screen a for-sale
+marker can open under the player as the Sponsor Run ends (docs/v03/triage_strangers.md; the game-side fix is the systems track's
+`disarmNear()` on `strand:end`), and the newplayer bot aims along the camera's own
+forward line (the shoulder camera no longer looks exactly along `rig.yaw`) and steps off the range line to go again.
+In the full suite run before that merge, every other failing file was in another track's area and failed the same way on a
+clean worktree of the base (or with the merge-round log's message): `actors`, `bosses`, `characters`, `combat`, `events`,
+`interiors`, `strangers`, `systems`, `ui`, `ui_v03`, `vehicles`; on the latest base `ai.js` (QA-A-TRF-02 swerve) fails
+identically on the clean base too. Two need a word:
+- `audio.js`: flaky in this environment (the merge-round log fails it on `phoneRing`; this branch failed on `phoneRing` or `gps`,
+  a clean base run passed once). It plays every SFX name 150 ms of real time after game steps; a phone ring or the story GPS cue
+  fired by the game inside the per-name rate limit makes that name return false. The test should wait out the game's own cues.
+- `world.js` "all ten stunt jumps can be landed": the test bails out of every landed car at about 30 m/s; each bail costs 6-14 hp,
+  so the player dies partway through the ten jumps (on the old base at jump 8, early enough to respawn before sj_10). With
+  QA-A-DRV-06's capped lift (already on the latest base) sj_01 no longer deals 15 hp of landing damage, the death moves to the ninth
+  bail and lands on sj_10's boarding; the latest base fails it the same way. Fix in `tests/world.js` (world track), before
+  `if (p.inVehicle) p.exitVehicle();` in that loop: `v.vx = v.vz = 0; v.speed = 0; p.hp = Math.max(p.hp, 100);`.
 
 ## Failing tests in my files on the combined build, all fixed
 
@@ -215,14 +215,13 @@ Totals: 50 fixed, 25 already-fixed, 4 other track, 2 fixed (12 part), 1 partly-f
   10ba585); not from this branch.
 
 **Interiors (`js/13_interiors.js`)**
-- `activate()` (clerk): `GTP.UI.openArmory({store, landmark, counter})` passes an object where the UI expects a store id, so the
-  armory modal's `store` and the `storeId` handed to `GTP.Combat.buy` are that object. Pass `store` (the id string).
+- (Done on the latest base: the clerk now opens `GTP.UI.openArmory(sid, null)` with the store id.)
 - `Interiors.update` ticks from a wrapper on `Combat.update`. To move it into `Game.step`: drop the wrapper and set
   `Interiors.stepFromGame = true` in the same change; 30's `_stepModules` then ticks it. The same for `08b` (Bosses, Specials).
 - SaveHooks entries that duplicate a registry entry (06b, 13, 14): add `registry: '<key>'` to the hook, and 30 loads it once.
 
 **UI (`js/11_ui.js`, `js/02_input.js`)**
-- Export `GTP.UI.pauseItems()` (PAUSE_ITEMS with labels). `newplayer.js` now finds SAVE by what confirming opens.
+- (Done on the latest base: `GTP.UI.pauseItems()`, `GTP.UI.chip`, the timer label in the objective panel.)
 - With unreadable slots now counted as occupied (QA-SAVE-05), guard `s.meta` before OVERWRITE / the slot card reads it.
 - The long-range story marker label is drawn over the special meters at the top left (newplayer_04 screenshot); the chapter card
   is drawn over the mission title card when m00 starts (newplayer_01). Clamp the labels below the HUD block; delay the title card
@@ -231,11 +230,10 @@ Totals: 50 fixed, 25 already-fixed, 4 other track, 2 fixed (12 part), 1 partly-f
   read. A faster typewriter or shorter read time in the dialogue box would bring that down; the content could also drop a line.
 - QA-B-FE-05: `_padContext` should return the menu map in cutscenes and while a dialogue or the failed card is up (12 already
   skips a shot on cancel). QA-B-TCH-02: a cutscene branch in `handleTouch` (hold = confirm held, tap = cancel). QA-B-NP-01:
-  `drawObjective` prints `timer.label || 'TIME LEFT'` (09 now sends the label). QA-B-NP-02: draw mission and objective dots
+  done on the latest base (09 sends the label). QA-B-NP-02: draw mission and objective dots
   last in the minimap and the map. QA-B-TXT-04: lock-on and scope labels through a display name. QA-B-FE-14: do not save a URL
   quality preset into the settings. pers-QA-SAVE-14: Esc / P pause from a minigame. QA-B-HUD-01 (optional): a car `action`
   button on touch; the horn hold now starts a cab shift or a patrol on every device.
-- `GTP.UI.chip(text)`: 09 calls it for the race start prompt; without it the prompt is a toast.
 
 **World and AI (`js/04_world.js`, `js/07_ai.js`, `js/06_entities.js`)**
 - `World.route` (ped mode) sends a pedestrian up the elevated ramp at x 140-149, z 228-235 (beside Dorm 4B) and expects them to
@@ -243,8 +241,8 @@ Totals: 50 fixed, 25 already-fixed, 4 other track, 2 fixed (12 part), 1 partly-f
   walkable sideways in the ped graph.
 - `World.route` (car mode) from the pod garage bay runs through the car park interior instead of out to the road; a kerb tree
   (78, 321.3) and a lamp (306, 419.35, in front of Both Sides Arms' door) stand in the way. The mission light now avoids the lamp.
-- `07_ai.js` `hookStrands` wraps `Strands.drivers.take`. Export `routeVias` (for example `GTP.AI.routeVias`) and 09 folds it
-  into `drivers.take` with the `_worldRoute` flag that `hookStrands` already checks.
+- `07_ai.js` `hookStrands`: folded. With `GTP.AI.routeVias` exported on the latest base, 09's `drivers.take` adds the A* corners
+  itself and sets `_worldRoute`, so the wrapper stands down; `hookStrands` can be deleted.
 - QA-A-DRV-06 (rest): `Vehicle._collideWorld` treats the World.bounds clamp over open sea as a damaging wall impact.
 
 **Audio (`js/03_audio.js`)**: `updateRadio` plays only for a player in a car. Add `Audio.radio.force(station)`; 12 already

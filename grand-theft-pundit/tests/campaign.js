@@ -15,7 +15,7 @@
  *  - stars left over from a mission (a destroy objective's blast) are lost before the next light, lying low far from the police
  *  - the act cutscenes (cs_act2, cs_act3, cs_twist, cs_ending_a, cs_ending_b) are verified to start after MISSION PASSED and skipped
  *  - asserts per mission: completed, the reward paid (minus respray costs, plus cash picked up), onComplete flags, weapon
- *    unlocks in the GDD order as v0.3 retunes it (pistol m01c, megaphone m03, table leg m03b, pocket pistol m05, revolver m05b, rifle m08b, hottake m09, hot mic m09b,
+ *    unlocks in the GDD order as v0.3 retunes it (pistol m01c, megaphone m03, table leg m03b, Op-Ed Compact m05, revolver m05b, rifle m08b, hottake m09, hot mic m09b,
  *    smg m11, sniper m12b, launcher m13b; the shotgun only as a pickup after m11), the subscribers counter (reward x 5) and its
  *    tier, the credits hook on both endings, GTP.errors empty
  *  - after the endings: one cycle of every side strand (Loud Cab, HOA Patrol, Sponsor Runs, a Ratio Rampage, ten Monday Memos,
@@ -30,8 +30,8 @@ const ORDER = ['m00_intro', 'm01_van', 'm01b_airport', 'm02_read', 'm03_ratio', 
   'm07_listen', 'm07b_ferry', 'm08_scooters', 'm08b_jets', 'm09_balloon', 'm09b_hotmic', 'm10_pellets', 'm11_trustless', 'm12_memo', 'm12b_scope',
   'm13_thursday', 'm13b_ratio', 'm14_grift', 'm15a_primetime', 'm15b_liveread'];
 // expected unlocks per the GDD (and GDD_EXPANSION §2 / §3), as v0.3 retunes them: Merle's free pistol moves to m01c_both_sides
-// (the armory tutorial) and m05_peer hands over the Footnote pocket pistol instead (25_content_parity.js retune)
-const UNLOCKS = { m01c_both_sides: 'pistol', m03_ratio: 'megaphone', m03b_range: 'tableleg', m05_peer: 'pocket', m05b_provenance: 'revolver', m08b_jets: 'rifle', m09_balloon: 'hottake',
+// (the armory tutorial) and m05_peer hands over the Op-Ed Compact instead (25_content_parity.js retune; read at run time below)
+const UNLOCKS = { m01c_both_sides: 'pistol', m03_ratio: 'megaphone', m03b_range: 'tableleg', m05_peer: 'oped', m05b_provenance: 'revolver', m08b_jets: 'rifle', m09_balloon: 'hottake',
   m09b_hotmic: 'hotmic', m11_trustless: 'smg', m12b_scope: 'sniper', m13b_ratio: 'ratio' };
 // the act cutscenes that follow a completion (GDD_EXPANSION §4.1)
 const AFTER = { m04_hit: 'cs_act2', m11_trustless: 'cs_act3', m12_memo: 'cs_twist', m15a_primetime: 'cs_ending_a', m15b_liveread: 'cs_ending_b' };
@@ -836,6 +836,10 @@ H.run('campaign', async (t) => {
 
   const results = {};
   let expectedMoney = 250, lastCash = 0, lastSpent = 0, expectedSubs = 0, lastTier = 0;
+  // v0.3 retunes m05's unlock (25_content_parity.js retune.m05_peer: the pocket pistol, then the Op-Ed Compact): the table takes
+  // the content's retune value, the GDD's pistol otherwise
+  const retuned = await page.evaluate(() => { const R = GTP.Content.parity && GTP.Content.parity.retune, m5 = R && R.m05_peer; const u = (m5 || []).find((x) => x.path === 'onComplete.unlockWeapon'); return u ? u.value : null; });
+  if (retuned) UNLOCKS.m05_peer = retuned;
   const missionDefs = await page.evaluate(() => { const o = {}; GTP.Missions.allMissions().forEach((m) => { o[m.id] = { reward: m.reward, onComplete: m.onComplete || {}, title: m.title, giver: m.giver, intro: m.intro.length, objectives: m.objectives.length, act: m.act || null }; }); return o; });
   const tiers = await page.evaluate(() => (GTP.Content.expansion.subscriberTiers || []).map((x) => ({ subs: x.subs | 0, name: x.name })));
   const tierFor = (n) => { let k = 0; tiers.forEach((x, i) => { if (n >= x.subs) k = i; }); return k; };
