@@ -94,21 +94,22 @@
     _px = dx / d * push; _pz = dz / d * push;
     return true;
   }
-  // circle out of a solid prop: a circle of radius pr.r, or (pr.bx / pr.bz set) a box of half extents bx (local x) by bz
-  // (local z) turned by pr.rot the way the renderer turns it (three.js rotation.y)
-  function propPush(pr, x, z, r) {
-    var ddx = x - pr.x, ddz = z - pr.z;
-    if (pr.bx) {
-      var c = pr._cos, s = pr._sin, lx = c * ddx - s * ddz, lz = s * ddx + c * ddz;   // into the prop's frame
-      if (!boxPush(-pr.bx, -pr.bz, 2 * pr.bx, 2 * pr.bz, lx, lz, r)) return false;
-      var wx = c * _px + s * _pz, wz = -s * _px + c * _pz;   // back out
+  // circle out of solid prop collider `id` (World._buildColliders): a circle of radius r, or (bx set) a box of half
+  // extents bx (local x) by bz (local z) turned by the prop's rot the way the renderer turns it (three.js rotation.y)
+  var cStart = null, cList = null, cData = null, cSt = null, cProp = null;
+  function colPush(id, x, z, r) {
+    var o = id * 8, ddx = x - cData[o], ddz = z - cData[o + 1], bx = cData[o + 4];
+    if (bx > 0) {
+      var c = cData[o + 6], s = cData[o + 7], bz = cData[o + 5], lx = c * ddx - s * ddz, lz = s * ddx + c * ddz;   // into the prop's frame
+      if (!boxPush(-bx, -bz, 2 * bx, 2 * bz, lx, lz, r)) return false;
+      var wx = c * _px + s * _pz, wz = -s * _px + c * _pz;   // and back out
       _px = wx; _pz = wz;
       return true;
     }
-    var rr = r + pr.r, d2 = ddx * ddx + ddz * ddz;
+    var rr = r + cData[o + 2], d2 = ddx * ddx + ddz * ddz;
     if (d2 >= rr * rr) return false;
     if (d2 < 1e-12) {   // dead centre: no direction to push along, so take one from the prop's index (QAC-56)
-      var a = U.hash2(pr.index | 0, 17, 29) * Math.PI * 2;
+      var a = U.hash2(cProp[id].index | 0, 17, 29) * Math.PI * 2;
       _px = Math.cos(a) * (rr + 0.001); _pz = Math.sin(a) * (rr + 0.001);
       return true;
     }
@@ -439,13 +440,13 @@
               if (boxPush(rx, rz, TILE, TILE, x, z, r)) { x += _px; z += _pz; moved = true; if (Math.abs(_px) > Math.abs(_pz)) { hitX = true; nx = _px > 0 ? 1 : -1; nz = 0; } else { hitZ = true; nz = _pz > 0 ? 1 : -1; nx = 0; } }
             }
           }
-          // solid props
-          var pl = World._propTile[i] ? World._propGrid.get(i) : null;   // a byte test before the Map lookup (most tiles hold no solid prop)
-          if (pl) for (var k = 0; k < pl.length; k++) {
-            var pr = pl[k];
-            if (pr._st === stamp) continue; pr._st = stamp;
-            if (pr.fallen || y > pr.y + (pr.h || 3) - 0.1) continue;
-            if (!propPush(pr, x, z, r)) continue;
+          // solid props (World._buildColliders' flat arrays)
+          if (cStart !== null) for (var k = cStart[i], ke = cStart[i + 1]; k < ke; k++) {
+            var id = cList[k];
+            if (cSt[id] === stamp) continue; cSt[id] = stamp;
+            if (y > cData[id * 8 + 3]) continue;
+            if (!colPush(id, x, z, r)) continue;
+            var pr = cProp[id]; if (pr.fallen) continue;   // knocked over (Vehicle._knockProp): read only when it would push
             x += _px; z += _pz; moved = true; res.prop = pr;
             if (Math.abs(_px) > Math.abs(_pz)) { hitX = true; nx = _px > 0 ? 1 : -1; nz = 0; } else { hitZ = true; nz = _pz > 0 ? 1 : -1; nx = 0; }
           }
@@ -667,7 +668,7 @@
       World.lowerLoopName = (CW.streets && CW.streets.lowerHighway) || (L.loop && L.loop.lowerName) || 'The Lower Loop';
       World._seed = seed;
       World.bounds = { x0: 0, z0: 0, x1: w * TILE, z1: h * TILE };
-      World._propGrid = new Map(); World._propTile = new Uint8Array(N); World._colTile = null;   // rebuilt with the prop grid
+      World._propGrid = new Map(); World._propTile = new Uint8Array(N); World._colTile = null; cStart = null;   // rebuilt with the prop grid
       World._wedges = new Map(); World._wedgeTile = new Uint8Array(N);
 
       function I(tx, tz) { return tz * w + tx; }
@@ -939,6 +940,7 @@
           arr.push(p);
         }
       });
+      World._buildColliders(N);
       World.generateMs = U.now ? U.now() - genT0 : 0;
       prog('done', 1);
       GTP.Events.emit('world:generated', { seed: seed, ms: World.generateMs });
@@ -1074,6 +1076,23 @@
     _propCollider: function (p) {
       var box = PROP_BOX[p.kind];
       if (box) { var bb = box(p); if (bb) { p.bx = bb[0]; p.bz = bb[1]; p._cos = Math.cos(p.rot || 0); p._sin = Math.sin(p.rot || 0); } }
+    },
+    // the prop grid as flat typed arrays for resolveCapsule: props come in a hundred object shapes, so reading x / z / r
+    // off them is a megamorphic load each (that made the slow path ~0.75 us a call). Same props in the same order per
+    // tile as World._propGrid; a collider's data are x, z, r, top (the height above which it stops counting), bx, bz, cos, sin.
+    _buildColliders: function (N) {
+      var grid = World._propGrid, start = new Int32Array(N + 1), ids = new Map(), props = [], n = 0, i, k;
+      grid.forEach(function (arr, key) { start[key + 1] = arr.length; n += arr.length; for (k = 0; k < arr.length; k++) if (!ids.has(arr[k])) { ids.set(arr[k], props.length); props.push(arr[k]); } });
+      for (i = 0; i < N; i++) start[i + 1] += start[i];
+      var list = new Int32Array(n), data = new Float64Array(props.length * 8);
+      grid.forEach(function (arr, key) { for (k = 0; k < arr.length; k++) list[start[key] + k] = ids.get(arr[k]); });
+      for (i = 0; i < props.length; i++) {
+        var p = props[i], o = i * 8;
+        data[o] = p.x; data[o + 1] = p.z; data[o + 2] = p.r != null ? p.r : 0.4; data[o + 3] = p.y + (p.h || 3) - 0.1;
+        data[o + 4] = p.bx || 0; data[o + 5] = p.bz || 0; data[o + 6] = p.bx ? p._cos : 1; data[o + 7] = p.bx ? p._sin : 0;
+      }
+      cStart = start; cList = list; cData = data; cProp = props; cSt = new Float64Array(props.length);
+      World._colliders = { start: start, list: list, data: data, props: props };
     },
     // the per-game state a game writes on props (Vehicle._knockProp: fallen, solid = false) back to generate's
     _resetProps: function () {
