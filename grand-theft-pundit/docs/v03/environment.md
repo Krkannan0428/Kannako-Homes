@@ -86,11 +86,11 @@ Branch `v03/environment`. Files owned and changed: `js/05_assets.js`, `js/10_ren
 ### Quality presets (names kept)
 | key | low | medium | high | ultra |
 |---|---|---|---|---|
-| shadows / cascades | off | 1024 near 44 m + 1024 far 220 m (every 3rd frame) | 2048 + 2048 far 250 m (every 2nd) | 4096 + 2048 far 300 m |
+| shadows / cascades | off | 1024 near 44 m + 1024 far 200 m (every 4th frame) | 2048 + 2048 far 250 m (every 2nd) | 4096 + 2048 far 300 m |
 | post | off | bloom, FXAA, DoF in cutscenes | + SSAO 12, TAA, SSR, motion blur, grain | + SSAO 16 |
-| lamp lights / headlight spots | 0 / 0 | 4 / 1 | 8 / 4 | 12 / 6 |
+| lamp lights / headlight spots | 0 / 0 | 2 / 1 | 8 / 4 | 12 / 6 |
 | interiors, ocean, trees, ground shader | on | on | on | on |
-| grass (clumps per tile, radius) | off | 6, 38 m | 10, 46 m | 14, 56 m |
+| grass (clumps per tile, radius) | off | 3, 30 m | 10, 46 m | 14, 56 m |
 | pixel ratio cap (`maxDpr`) | 1 | 1 | 1.5 | 2 |
 
 ## Interfaces exposed
@@ -139,7 +139,44 @@ NODE_PATH=/opt/node-tools/node_modules node tests/content_audit.js
 ```
 
 ## Performance
-(filled in below from `tests/perf.js`)
+`tests/perf.js` now ends every timed frame with a one-pixel `readPixels`, so `gpuMs` is the whole frame including the
+GPU (here SwiftShader, a CPU rasteriser: absolute numbers are 20-50x a real integrated GPU, ratios carry over).
+Final run, 1248 x 720 unless noted, seed 7 spawn, camera turning:
+
+| preset | gpuMs | cpuMs | draw calls (incl. shadow + post) | triangles | post passes | shadow Mtexels / frame |
+|---|---|---|---|---|---|---|
+| low | 1119 | 10.0 | 530 | 316k | 0 | 0 |
+| medium | 1974 | 18.4 | 728 | 481k | 11 | 1.4 |
+| high | 2759 | 13.3 | 630 | 472k | 15 (TAA, SSR, SSAO) | 6.3 |
+| ultra | 3565 | 10.2 | 576 | 556k | 15 | 21.0 |
+| medium @1888x1080 | 4148 | 13.5 | 706 | 480k | 11 | 1.3 |
+
+The same script on v0.2 (worktree at ea6a035) and v0.3, one boot each, seconds of SwiftShader per frame:
+v0.2 low 0.74 / medium 1.23 / high 1.81; v0.3 low 1.21 / medium 1.92 / high 3.24. Draw calls at medium fell from
+about 1066-1142 (v0.2) to 765-840 (v0.3): the near cascade only covers 44 m and the far one only buildings, ground and
+trees.
+
+What this means for "Medium holds 60 fps on integrated graphics": I cannot measure a real iGPU here, so this is an
+estimate, not a measurement. In SwiftShader v0.3 medium costs about 1.55x v0.2 medium per frame. That extra is mostly
+per-pixel shader ALU: a profile at low (`d9`, features removed one by one) put the ocean shader near 250-330 ms,
+leaf-card trees ~250 ms, the interior-mapped glass ~150 ms, environment-map lighting on medium ~350 ms. SwiftShader
+emulates transcendentals (sin/cos/pow in the ocean and glass) that an iGPU runs at full rate, so the real ratio should
+be smaller, while the 30% fewer draw calls cut the CPU/driver cost, which is what usually limits WebGL on an
+integrated GPU. Medium also caps the pixel ratio at 1 (a 2x retina laptop shaded 4x the pixels in v0.2) and was
+trimmed to 2 lamp lights, sparse grass and a far cascade every 4th frame. Net: on a 1x display medium should land
+close to v0.2 medium; on a high-DPI laptop it is clearly cheaper than v0.2. If a real Iris Xe / Radeon 680M check
+shows otherwise, the next levers are, in order: `interiors` off at medium, `cascades: 1`, `grass: 0`, and the auto
+preset already steps down to low after 5 s over 22 ms.
 
 ## Known issues
-(filled in below)
+- The far cascade is drawn every 4th frame at medium (2nd at high): a fast pan can show the far shadows a few
+  frames late at the box edge; the near cascade is always current.
+- TAA is camera-motion only (no per-object velocity): fast cars can leave a faint trail behind their edges on high,
+  clipped by the neighbourhood clamp. Medium uses FXAA.
+- SSR (high, ultra) works from the screen: things off screen do not reflect; reflections fade at the screen edges.
+- Grass and foliage only cast alpha shadows from the leaf texture, not the wind sway (the depth pass is static).
+- Shader clocks wrap every 2 hours of play (a one-frame jump in the sway and swell).
+- Interior rooms are per window cell; a room spanning two lit and unlit windows can look half lit (by design, it keeps
+  the near shader and the far LOD texture in agreement).
+- Night bloom of the lit lobbies downtown is still strong on high.
+- `tests/render.js` grew a third page (about 6 minutes headless on top of the existing 2-3).
