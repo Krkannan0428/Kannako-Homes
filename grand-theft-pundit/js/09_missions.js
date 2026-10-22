@@ -2052,8 +2052,8 @@
   var pendingCall = null;   // {missionId, t}: the next giver's call, waiting for the cards and cutscenes to clear
   var lastGps = null;
   function gpsPayload(x, z, label, kind, extra) {
-    var pl = player(), Wd = W(), route = null;
-    if (pl && Wd.route) { try { route = Wd.route(pl.x, pl.z, x, z) || null; } catch (e) { U.reportError(e, 'story.route'); route = null; } }
+    var pl = player(), Wd = W(), route = null, from = pl ? outsidePos(pl) : null;   // indoors: the line starts at the door
+    if (from && Wd.route) { try { route = Wd.route(from.x, from.z, x, z) || null; } catch (e) { U.reportError(e, 'story.route'); route = null; } }
     return Object.assign({ x: x, z: z, label: label, kind: kind, route: route }, extra || {});
   }
   function setGps(payload) {
@@ -2131,9 +2131,14 @@
     var n = storyNextMission();
     Story.refresh();
     if (!n) { clearGps(); GTP.Events.emit('story:done', { last: m.id }); return; }
-    storyGps(true);
+    // finished inside a room (m01c ends at Merle's counter): the GPS waits for the street, where its line and distance mean
+    // something (from the armory it read TURN AROUND, 4.1 km)
+    if (GTP.Interiors && GTP.Interiors.active) { clearGps(); gpsAfterExit = true; }
+    else storyGps(true);
     scheduleCall(n.id);
   }
+  var gpsAfterExit = false;
+  GTP.Events.on('interior:exit', function () { if (gpsAfterExit) { gpsAfterExit = false; if (!run && state) storyGps(true); } });
   var Story = GTP.Story = {
     chapter: { act: 1, title: ACT_TITLES[1] },
     gpsTarget: null,
@@ -2162,7 +2167,7 @@
       GTP.Events.emit('story:begin', { missionId: m.id, started: ok });
       return ok;
     },
-    reset: function () { pendingCall = null; lastGps = null; Story.gpsTarget = null; Story.lastCall = null; Story.chapter = { act: 1, title: chapterTitle(1) }; }
+    reset: function () { pendingCall = null; lastGps = null; gpsAfterExit = false; Story.gpsTarget = null; Story.lastCall = null; Story.chapter = { act: 1, title: chapterTitle(1) }; }
   };
 
   // story beacons: a tall light over every mission marker so a door is found from 200 m and more (the next story mission's is

@@ -368,6 +368,37 @@
     GTP.Events.emit('cutscene:end', { id: c.script.id || null, skipped: !!c.skipped, completed: runDone !== false });
     if (runDone !== false && typeof c.onDone === 'function') { try { c.onDone(); } catch (e) { U.reportError(e, 'cutscenes.onDone'); } }
   }
+  // how long confirm has been held: game time, or the wall clock while the live loop runs, whichever is longer. At a few frames a
+  // second (a software renderer, the first frames of the opening) each frame adds only a capped slice of game time, so a 0.6 s
+  // hold of Enter took many seconds of real time to skip the opening. Tests that step the game (no live loop) stay on game time.
+  function wallNow() { return typeof performance !== 'undefined' && performance.now ? performance.now() / 1000 : 0; }
+  function skipHeld(c, peek) {
+    var g = game(), live = !!(g && g._raf) && wallNow() > 0, kh = keyHold.script === c ? wallNow() - keyHold.t0 : 0;
+    if (!live || !(c.skipHoldT > 0)) return Math.max(c.skipHoldT || 0, live ? kh : 0);
+    var now = wallNow();
+    if (c.skipWall0 == null) { if (peek) return Math.max(c.skipHoldT, kh); c.skipWall0 = now - c.skipHoldT; }
+    return Math.max(c.skipHoldT, now - c.skipWall0, kh);
+  }
+  // The keyboard's own hold, timed from its events: when frames come seconds apart a whole hold of Enter can fall between two
+  // steps, and polling Input.down never sees it. A confirm key (Enter, Space: GTP.Input.bindings) held for skipHold seconds of
+  // wall clock, by its autorepeat or at its keyup, asks the running script to skip at the next step.
+  var keyHold = { code: null, t0: 0, script: null };
+  function confirmKey(code) { var B = GTP.Input && GTP.Input.bindings, a = B && B[code]; return !!a && a.indexOf('confirm') >= 0; }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('keydown', function (e) {
+      var c = cur; if (!c || c.script.skippable === false || !confirmKey(e.code)) return;
+      var now = wallNow();
+      if (keyHold.code !== e.code || keyHold.script !== c) { keyHold.code = e.code; keyHold.t0 = now; keyHold.script = c; return; }
+      if (now - keyHold.t0 >= K.skipHold) c.skipRequested = true;
+    }, true);
+    window.addEventListener('keyup', function (e) {
+      if (keyHold.code !== e.code) return;
+      var c = keyHold.script, held = wallNow() - keyHold.t0;
+      keyHold.code = null; keyHold.script = null;
+      if (c && c === cur && held >= K.skipHold) c.skipRequested = true;
+    }, true);
+    window.addEventListener('blur', function () { keyHold.code = null; keyHold.script = null; });
+  }
   var Cutscenes = GTP.Cutscenes = {
     K: K,
     active: false,
@@ -429,9 +460,10 @@
       c.t += dt;
       // skip: back once = this shot, confirm held = the script
       if (In && c.script.skippable !== false) {
+        if (c.skipRequested) { Cutscenes.skip(); return; }
         if (In.pressed('back')) { Cutscenes.skipShot(); }
-        if (In.down('confirm')) { c.skipHoldT += dt; if (c.skipHoldT >= K.skipHold) { Cutscenes.skip(); return; } }
-        else c.skipHoldT = 0;
+        if (In.down('confirm')) { c.skipHoldT += dt; if (skipHeld(c) >= K.skipHold) { Cutscenes.skip(); return; } }
+        else { c.skipHoldT = 0; c.skipWall0 = null; }
       }
       // the talking actor gestures while their line shows
       var Ms = GTP.Missions, line = Ms && Ms.dialogue && Ms.dialogue.active ? Ms.dialogue.current : null;
@@ -460,7 +492,7 @@
     },
     hud: function () {
       if (!cur) return { active: false, letterbox: false, skip: 0 };
-      return { active: true, letterbox: Cutscenes.letterbox, skip: U.clamp(cur.skipHoldT / K.skipHold, 0, 1), shot: cur.i, shots: cur.script.shots.length, title: scriptTitle(cur), t: cur.t, seconds: cur.seconds, skippable: cur.script.skippable !== false };
+      return { active: true, letterbox: Cutscenes.letterbox, skip: U.clamp(skipHeld(cur, true) / K.skipHold, 0, 1), shot: cur.i, shots: cur.script.shots.length, title: scriptTitle(cur), t: cur.t, seconds: cur.seconds, skippable: cur.script.skippable !== false };
     },
     actors: function () { return cur ? cur.actors : {}; },
     debug: { cur: function () { return cur; }, spot: spot, lookAt: lookAt }

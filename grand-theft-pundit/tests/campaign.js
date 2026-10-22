@@ -417,6 +417,17 @@ function installDriver() {
     fightOne(h, w) {
       const p = CT.p(), W = GTP.World, wd = GTP.Combat.WEAPONS[w], melee = wd.melee, scoped = !!wd.scope, range = melee ? 1.2 : scoped ? 40 : 6;
       let dx = p.x - h.x, dz = p.z - h.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+      // a careful shooter: a standoff spot whose line of fire (and a few metres past the target) is clear of anyone who is not a
+      // mission target, so a stray round never lands on a passing cop (m03b's range sits on a busy street)
+      if (!melee) {
+        const bystanders = GTP.Entities.near(h.x, h.z, range + 14, 'ped').filter((q) => q !== h && q !== p && q.alive && !q.removed && !q.inVehicle && !(q.mission && q.missionRole !== 'giver' && q.hostile));
+        const clear = (ux, uz) => bystanders.every((q) => {
+          const sx = h.x + ux * range, sz = h.z + uz * range, vx = h.x - sx, vz = h.z - sz, L = Math.hypot(vx, vz) || 1;
+          const t = ((q.x - sx) * vx + (q.z - sz) * vz) / L, side = Math.abs((q.x - sx) * vz - (q.z - sz) * vx) / L;
+          return t < 0 || t > L + 8 || side > 2.2;
+        });
+        if (!clear(dx, dz)) for (let k = 1; k < 12; k++) { const a = Math.atan2(dz, dx) + k * Math.PI / 6, ux = Math.cos(a), uz = Math.sin(a); if (clear(ux, uz) && !W.solidAt(h.x + ux * range, h.z + uz * range, h.y + 0.5)) { dx = ux; dz = uz; break; } }
+      }
       const r = W.resolveCapsule(h.x + dx * range, h.z + dz * range, h.y + 0.5, 0.45);
       CT.tp(r.x, r.z); p.yaw = U.dirToYaw(h.x - p.x, h.z - p.z); p.aimYaw = p.yaw; p.weapon = w;
       if (scoped) { const hp0 = h.hp; CT.aimedShot(h.x, h.y + 1.05, h.z, true); CT._snipes = (CT._snipes || 0) + 1; if (h.hp < hp0 || !h.alive) CT._snipeHits = (CT._snipeHits || 0) + 1; return; }

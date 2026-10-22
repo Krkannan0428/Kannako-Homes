@@ -7,7 +7,10 @@
  *  5 determinism: the same script twice puts the camera in the same place at the same time
  *  6 a mission intro (m00_intro from its light) plays cs_intro_m00_intro with the marker's giver and Kip reused; abort cleans up
  *  7 the `cutscene` objective type plays an inline script and completes; roof actors stand on Goldplate Tower
- *  8 hints: fire once per save as 'hint' events, queued 2 s apart, never two at once; h_enter from proximity */
+ *  8 hints: fire once per save as 'hint' events, queued 2 s apart, never two at once; h_enter from proximity
+ *  9 the real key path, non-headless: NEW GAME from the title with Enter, then Enter held on the keyboard during cs_opening
+ *    skips it whatever the frame rate (a software renderer draws a frame every few seconds here: the hold is timed from the
+ *    key events in wall-clock time); m00_intro's own intro follows */
 'use strict';
 const H = require('./_harness');
 
@@ -252,4 +255,30 @@ H.run('cutscenes', async (t) => {
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
+  await page.close();
+
+  // ---- 9. hold Enter on the real keyboard during the opening (the live loop, slow frames and all) ----
+  const live = await t.browser.newPage({ viewport: { width: 1280, height: 720 } });
+  live.setDefaultTimeout(300000);
+  const liveErrors = [];
+  live.on('pageerror', (e) => liveErrors.push(String(e && e.stack || e)));
+  await live.goto(t.url({ headless: 0, skipTitle: 0, seed: 7, mute: 1 }));
+  await live.evaluate(() => { try { localStorage.clear(); } catch (e) { /* a first launch */ } });
+  await live.reload();
+  await live.waitForFunction(() => window.GTP && GTP.game && GTP.game.state === 'title' && !GTP.game.loading.active && GTP.game.frames >= 3, null, { timeout: 300000 });
+  await live.keyboard.press('Enter');
+  await live.waitForFunction(() => GTP.Cutscenes && GTP.Cutscenes.active && !GTP.Missions.state.active, null, { timeout: 120000 });
+  const during = await live.evaluate(() => { window.__ends = []; GTP.Events.on('cutscene:end', (e) => window.__ends.push({ id: e.id, skipped: !!e.skipped })); return { state: GTP.game.state, shot: GTP.Cutscenes.hud().shot, frames: GTP.game.frames, mission: GTP.Missions.state.active }; });
+  await live.keyboard.down('Enter');
+  await live.waitForTimeout(1500);
+  await live.keyboard.up('Enter');
+  const t0 = Date.now();
+  await live.waitForFunction(() => !!GTP.Missions.state.active, null, { timeout: 60000 }).catch(() => null);
+  const skipped = await live.evaluate(() => ({ state: GTP.game.state, mission: GTP.Missions.state.active, phase: GTP.Missions.state.phase, ends: window.__ends.slice(), frames: GTP.game.frames }));
+  skipped.waited = Date.now() - t0;
+  console.log('  hold Enter (real keys, live loop): ' + JSON.stringify({ during, skipped }));
+  t.assert(during.state === 'cutscene' && !during.mission, 'NEW GAME plays cs_opening: ' + JSON.stringify(during));
+  t.assert(skipped.ends.length && skipped.ends[0].id === 'cs_opening' && skipped.ends[0].skipped && skipped.mission === 'm00_intro', 'holding Enter for 1.5 s skips the opening and m00 starts (its intro next): ' + JSON.stringify(skipped));
+  t.assert(liveErrors.length === 0, 'page errors on the live page:\n' + liveErrors.join('\n'));
+  await live.close();
 });
