@@ -116,3 +116,46 @@ and the test threw at line 637. They were fragile, and two real defects sat unde
 - **Armory branches from the world's doors (fixed in `13_interiors.js`)**: the AI door passes `branch` = the landmark id
   (`07_ai.js` ~1977), so `buildArmory` looked up `BRANCHES['both_sides_port']`, missed, and the Port and Uptown stores got the
   Strip's decor. `resolveTarget` now maps a landmark-id branch to strip / port / uptown.
+
+## 6. QA bugs pointing at my files (re-verified on this branch)
+
+Status: **fixed** (fixed here, with the guarding test), **already-fixed** (fixed by the v0.3 tracks, guarded), **not-ours**
+(re-verified, the cause is in another area's file: proposal given), **wontfix** (with the reason).
+
+### qa_r1_bugs.json (v0.2 round 1)
+
+| id | status | guard |
+|---|---|---|
+| QA-STR-08 discount counted twice | already-fixed (shooting track) | `tests/combat.js` §20 |
+| QA-STR-09 / CMB-02 ammo grants the weapon | already-fixed | `combat.js` §20 (refused `notOwned`); the armory only offers ammo for an owned gun |
+| QA-STR-14 megaphone / hot take give too little | already-fixed | `combat.js` §20 |
+| QA-STR-15 rampage_king cap (Combat part) | already-fixed | `combat.js` §20 |
+| QA-C1-01 AI melee at full rate | already-fixed (wind-up, cooldown, two attackers) | `combat.js` §21 |
+| CMB-01 rocket direct hit not a ratio | already-fixed | `combat.js` §21 |
+| CMB-03 hot mic ignores its rate | already-fixed | `combat.js` §21 |
+| CMB-04 first shot hitch (muzzle light) | already-fixed (created at intensity 0 on the first update) | `combat.js` §21 |
+| CMB-05 the lock steals the shot | already-fixed | `combat.js` §21 |
+| CMB-08 pickups switch weapon / ignore cap | already-fixed | `combat.js` §21 |
+| CMB-11 blast kills give no marker / stat | already-fixed | `combat.js` §21 |
+| CMB-12 (Combat half) re-cook in a car | already-fixed; the fuse HUD outside aim is the UI's | `combat.js` §21 |
+| CMB-14 head shots / pellet hits | already-fixed | `combat.js` §21 |
+| CMB-15 shotgun too weak | already-fixed (the parity table's 66 per volley still floors a 60 hp ped at 4 m) | `combat.js` §21 |
+| CMB-16 table leg | already-fixed | `combat.js` §21 |
+| CMB-06 / 07 / 09 / 10 / 13 | not-ours (30_game, render, AI heli gunner, missions) | |
+
+### qa_a / qa_b / qa_c / qa_d (v0.3 QA rounds)
+
+| id | status | evidence / fix |
+|---|---|---|
+| QA-A-DRV-01 exiting on the Loop viaduct drops the player into the sea | **fixed** (`06_entities.js` `Vehicle.exit`: swim only when the surface found is the sea) | `tests/regress/qa_a_drv_01.js` |
+| QA-A-DRV-02 exiting at a deck barrier drops to the street | **fixed** (`doorSpot` skips a door point whose surface is over 1 m below the car's: the passenger side) | `qa_a_drv_02.js` |
+| QA-A-DRV-08 cars drive up a stunt wedge's 1.3 m face | **fixed** (`_stepWall`: a wheel rising more than 0.5 m in one step is a wall: back, bounce, impact damage; slopes, the Loop ramps and the wedge's low end are unchanged). Left: the bumper sinks ~0.6 m into the face until `04_world.js` `resolveCapsule` knows wedges (world) | `qa_a_drv_08.js` |
+| QA-A-ENT-04 skid marks float / bury on ramps | **fixed** (the rear wheel's surface height). Left: the decal is flat, its ends sit ~0.1 m off on a ramp (`10_render.js` `_placeDecal` could tilt it) | `qa_a_ent_04.js` |
+| QA-A-ENT-10 first-person headlight stays behind | **fixed** (the hidden first-person car still places its headlight) | `qa_a_ent_10.js` |
+| QA-B-TCH-07 Tab in the shop opens an invisible wheel | **fixed** (`updateWheel`: no wheel without control or behind the shop page; an open one closes without equipping) | `qa_b_tch_07.js` |
+| QA-A-CAM-01 aiming at a near wall throws the camera into the building | **fixed** (`aimGuard`, section 3) | `qa_a_cam_01.js` passes |
+| QA-A-CAM-08 peds / cars culled before the fog | not-ours: `01_config.js` QUALITY `pedDraw` / `vehicleDraw` sit inside the fog's clear zone (fog 120..260 m). Set both to `fogStart + 0.85 * (drawDistance - fogStart)` (~239 m on medium), recompute in `11_ui.js` applySetting, and raise the AI `ACTIVE_RADIUS` (220) to at least that or the despawn becomes the pop. `06_entities.js` `tooFar()` reads the config and needs no change | `qa_a_cam_08.js` fails |
+| QA-A-CAM-02 / 03 / 05 / 06 / 07 | not-ours (`10_render.js` rig and chunks): first-person near plane vs walls; `rig.apply` ignores the frame alpha; the pull-in ignores big solid props; a pulled-in boom ends on a bus roof (the regress script's raycaster needs `rc.layers.enableAll()`: vehicles are on layer 1, so it passes falsely); no chunk prebuild after a teleport | scripts fail (CAM-06 by bounding box) |
+| QA-A-CAM-04 bike first-person eye too low | not-ours (`05_assets.js` `lightPoints.eye` for the bike: saddle height + the rider's eye) | `qa_a_cam_04.js` fails |
+| QA-B-FE-03 / pers-QA-SAVE-03 Enter / Space that confirm also act in the game | not-ours (`11_ui.js`): `Player.control` only reads `pressed('enter')` / `pressed('jump')`; the UI latches `shoot` / `action` after it consumes a confirm, but not `enter` / `jump`. Add `'enter', 'jump'` to the `Input.latch` lists at the dialogue advance (~3107, ~3117) and in `onState` into playing (~3213): verified in a scratch copy (RESUME, LOAD and CONTINUE keep the player in the car, Space no longer jumps). The regress scripts need `GTP.Cutscenes.skip()` after `T_.newGame()` (New Game now plays `cs_opening`) | probe |
+| QA-B-FE-04 Backspace / Esc reverse the car | not-ours (`02_input.js` line ~63: drop `'back'` from Escape and Backspace; menus use `cancel`; `12_cutscenes.js` ~432 should skip a shot on `cancel` too): verified in a scratch copy, 0 m moved | probe |

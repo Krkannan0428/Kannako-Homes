@@ -32,6 +32,7 @@
   var C = GTP.C, U = GTP.util;
   var nextId = 1;
   var WATER_Y = C.WATER_Y;
+  var STEP_WALL = 0.5;   // a wheel rising more than this in one step meets a wall (the ped step-up)
   var scratch = [], scratch2 = [], contactBuf = [];   // contactBuf: a vehicle step's one contact query (vehicles + peds)
 
   function W() { return GTP.World; }
@@ -553,7 +554,8 @@
       if (ped.kind === 'player') ped.vehicle = null;
       var spot = this.doorSpot(ped);
       ped.x = spot.x; ped.z = spot.z; ped.y = W().heightAt(spot.x, spot.z, this.y + 0.5);
-      if (this.sinking || isWaterTile(ped.x, ped.z)) { ped.y = WATER_Y + 0.25; ped.swimming = true; ped.onGround = false; }
+      // the water under a Loop viaduct is not where the door opens: swim only when the surface found is the sea (QA-A-DRV-01)
+      if (this.sinking || (isWaterTile(ped.x, ped.z) && ped.y <= WATER_Y + 0.45)) { ped.y = WATER_Y + 0.25; ped.swimming = true; ped.onGround = false; }
       else { ped.onGround = true; ped.swimming = false; }
       ped.yaw = this.yaw; ped.vx = ped.vz = ped.vy = 0; ped.state = 'idle'; ped.snap();
       if (ped._sh) GTP.Entities.hash.update(ped);
@@ -566,12 +568,15 @@
     // a free spot beside a door: driver side first, then the other side, then the rear
     doorSpot(ped) {
       var Wd = W(), r = ped ? ped.radius : C.PED.radius, y = this.y + 0.5;
+      var floor = Wd.heightAt(this.x, this.z, y);   // the surface the car stands on
       var cands = [this.doorWorld(0), this.doorWorld(1), this.doorWorld(2), this.localToWorld(0, this.hl + 0.8)];
       for (var i = 0; i < cands.length; i++) {
         var c = cands[i];
         if (Wd.solidAt(c.x, c.z, y)) continue;
         var res = Wd.resolveCapsule(c.x, c.z, y, r), rx = res.x, rz = res.z;
         if (Wd.solidAt(rx, rz, y)) continue;
+        // a door over the Loop deck's edge opens onto the street 7 m below: try the other side (QA-A-DRV-02)
+        if (Wd.heightAt(rx, rz, y) < floor - 1) continue;
         // never leave the ped inside another vehicle
         var list = GTP.Entities.hash.query(rx, rz, r + 6, scratch2), blocked = false;
         for (var k = 0; k < list.length; k++) if (list[k] !== this && list[k].kind === 'vehicle' && list[k].pushCircle(rx, rz, r)) { blocked = true; break; }
@@ -717,6 +722,20 @@
       this.x += this.vx * dt; this.z += this.vz * dt;
       // vertical: four wheel samples
       var g = this._sampleWheels();
+      // a wheel that would climb more than a kerb-high step in one step hit a face, not a slope (a stunt wedge's 1.3 m tall
+      // end or its sides, QA-A-DRV-08): back to the old spot and bounce off it like a wall
+      var sw = this.onGround ? this._stepWall(x0, z0, f) : null;
+      if (sw) {
+        this.x = x0; this.z = z0;
+        var wx = -f.z * sw.r + f.x * sw.f, wz = f.x * sw.r + f.z * sw.f, wl = Math.sqrt(wx * wx + wz * wz) || 1;
+        var snx = -wx / wl, snz = -wz / wl, svn = this.vx * snx + this.vz * snz;
+        if (svn < 0) {
+          this.vx -= (1 + PH.restitution) * svn * snx; this.vz -= (1 + PH.restitution) * svn * snz;
+          this.vx *= PH.scrape; this.vz *= PH.scrape; this.lastCollision = this.age;
+          if (-svn > PH.damageSpeed) this._impact(-svn, this.x + wx / sw.n, this.z + wz / sw.n, snx, snz, 'wall');
+        }
+        g = this._sampleWheels();
+      }
       if (this.onGround) {
         if (g.c < this.y - 0.35) { this.onGround = false; this.vy = 0; }
         else { this.y = Math.abs(g.c - this.y) > 0.4 ? g.c : U.damp(this.y, g.c, 40, dt); if (Math.abs(this.y - g.c) < 0.01) this.y = g.c; }
@@ -773,6 +792,20 @@
       var hf = (Math.max(h[0], mx - 1.6) + Math.max(h[1], mx - 1.6)) / 2, hr = (Math.max(h[2], mx - 1.6) + Math.max(h[3], mx - 1.6)) / 2;
       var hL = (Math.max(h[0], mx - 1.6) + Math.max(h[2], mx - 1.6)) / 2, hR = (Math.max(h[1], mx - 1.6) + Math.max(h[3], mx - 1.6)) / 2;
       return { c: c, pitch: Math.atan2(hf - hr, 2 * hl), roll: Math.atan2(hR - hL, 2 * hw) };
+    }
+    // after _sampleWheels: the wheels that rose more than STEP_WALL since the last spot (x0, z0, heading f0), summed as
+    // local offsets {r, f, n}; null when none did (a slope rises a few cm a step, a wedge face 1.3 m at once)
+    _stepWall(x0, z0, f0) {
+      var h = this.wheelY, y = this.y, i;
+      for (i = 0; i < 4 && h[i] < y + STEP_WALL; i++);
+      if (i === 4) return null;   // no wheel well above the car: the usual case, no extra samples
+      var Wd = W(), hw = this.hw * 0.9, hl = this.hl * 0.75, ox = -f0.z, oz = f0.x, sr = 0, sf = 0, n = 0;
+      for (i = 0; i < 4; i++) {
+        if (h[i] < y + STEP_WALL) continue;
+        var lr = (i & 1) ? hw : -hw, lf = i < 2 ? hl : -hl;
+        if (h[i] - Wd.heightAt(x0 + ox * lr + f0.x * lf, z0 + oz * lr + f0.z * lf, y) > STEP_WALL) { sr += lr; sf += lf; n++; }
+      }
+      return n ? { r: sr, f: sf, n: n } : null;
     }
     _syncOccupants() {
       var occ = this.occupants();
@@ -947,7 +980,7 @@
           var ang = U.dirToYaw(this.vx, this.vz);
           for (var s = -1; s <= 1; s += 2) {
             var wx = this.x + rx * hw * s - f.x * hl, wz = this.z + rz * hw * s - f.z * hl;
-            fx({ type: 'skid', x: wx, y: this.y, z: wz, size: 0.26, size2: 0.9, rot: ang, life: 14 });
+            fx({ type: 'skid', x: wx, y: W().heightAt(wx, wz, this.y + 0.5), z: wz, size: 0.26, size2: 0.9, rot: ang, life: 14 });   // the rear wheel's surface, not the car centre's height (QA-A-ENT-04)
           }
           if (this.hasPlayer() && R.chance(0.5)) sfx('skid', this.x, this.z, 0.4);
         }
@@ -979,7 +1012,8 @@
       m.rotation.set(this.pitch, this._pyaw + U.wrapAngle(this.yaw - this._pyaw) * a, this.roll, 'YXZ');
       var pl = player(), hidden = pl && pl.inVehicle === this && pl.cameraMode === 'first';
       m.visible = !hidden && !tooFar(this, C.QUALITY.vehicleDraw);
-      if (m.visible && GTP.Render && GTP.Render.syncVehicle) GTP.Render.syncVehicle(this);
+      // the player's car hidden in first person still carries the headlight spot (QA-A-ENT-10)
+      if ((m.visible || hidden) && GTP.Render && GTP.Render.syncVehicle) GTP.Render.syncVehicle(this);
     }
   }
 

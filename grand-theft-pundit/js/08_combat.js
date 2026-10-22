@@ -1845,11 +1845,14 @@
   function updateWheel(p, dt) {
     var In = GTP.Input, g = GTP.game;
     var tabDown = In.down('lockOn') || In.down('wheel');
+    // no wheel behind the shop page or while control is off: it is not drawn there, it slows the world and eats [ ] (QA-B-TCH-07)
+    var blocked = !p.controlEnabled || !!(GTP.UI && GTP.UI.state && GTP.UI.state.shopOpen);
     if (!wheel.open) {
-      if (tabDown && !p.aiming && p.alive && !p.knockedDown && g && g.state === 'playing') { wheel.hold += dt; if (wheel.hold >= 0.18) openWheel(p, 'key'); }
+      if (tabDown && !blocked && !p.aiming && p.alive && !p.knockedDown && g && g.state === 'playing') { wheel.hold += dt; if (wheel.hold >= 0.18) openWheel(p, 'key'); }
       else wheel.hold = 0;
       return;
     }
+    if (blocked) { closeWheel(p, false); return; }
     wheel.t += dt;
     var n = SLOTS.length, look = In.look, pad = In.gamepad;
     if (look && (look.dx || look.dy)) { wheel.vx += look.dx; wheel.vy += look.dy; var m = Math.sqrt(wheel.vx * wheel.vx + wheel.vy * wheel.vy); if (m > 60) { wheel.vx *= 60 / m; wheel.vy *= 60 / m; } look.dx = 0; look.dy = 0; }   // the wheel owns the mouse: the camera holds
