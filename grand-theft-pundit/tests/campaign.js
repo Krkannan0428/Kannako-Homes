@@ -71,7 +71,7 @@ function installDriver() {
   const U = GTP.util, M = GTP.Missions;
   const COUNTER = { FACT: 'forward', FEELING: 'left', GOTCHA: 'right', ANECDOTE: 'back' };
   const CT = window.CT = {
-    log: [], events: [], fails: [], cash: 0, spent: 0, endings: [], fallbacks: [], how: {}, cutscenes: [], subsLog: [],
+    log: [], events: [], fails: [], busts: [], cash: 0, spent: 0, endings: [], fallbacks: [], how: {}, cutscenes: [], subsLog: [],
     p() { return GTP.game.player; },
     adv(s) { GTP.game.advance(s); return s; },
     press(a) { GTP.Input.set(a, true); GTP.game.advance(1 / 60); GTP.Input.set(a, false); GTP.game.advance(1 / 60); },
@@ -596,12 +596,15 @@ function installDriver() {
     finish(id, after) {
       const p = CT.p(), Cs = GTP.Cutscenes;
       CT._expectEnd = true;
+      // stars from the last objective (m11's blast): step away from a cop closing in while the card and the act cutscene come up,
+      // as skipTalk does (standing still through them got the player busted: $500 and the guns)
+      const dodging = () => { if (GTP.AI.wanted.level > 0 && GTP.game.state === 'playing') CT.dodge(); };
       const s = CT.skipTalk(60, () => M.state.active !== id);
-      let t = 0; while (M.state.active === id && t < 5) t += CT.adv(0.2);
+      let t = 0; while (M.state.active === id && t < 5) { dodging(); t += CT.adv(0.2); }
       CT._expectEnd = false;
       let cutscene = null;
       if (after) {
-        const w = CT.until(() => Cs.active, 6, 0.1);
+        const w = CT.until(() => { dodging(); return Cs.active; }, 6, 0.1);
         const hud = Cs.hud();
         cutscene = { id: after, started: w > 0 && Cs.active, after: w, title: hud.title, shots: hud.shots, letterbox: Cs.letterbox, state: GTP.game.state, actors: Object.keys(Cs.actors()) };
         CT.adv(1.2); GTP.game.render();
@@ -621,7 +624,7 @@ function installDriver() {
         s, state: GTP.game.state, active: M.state.active, completed: M.state.completed.has(id), flags: Object.assign({}, M.state.flags),
         failed: M.state.failed[id] || 0, money: p.money, weapons: Object.keys(p.weapons).filter((w) => p.weapons[w] > 0), weapon: p.weapon,
         ammo: Object.assign({}, p.weapons, { fist: 'inf' }), credits, endings: CT.endings.slice(), errors: GTP.errors.length, cash: CT.cash, spent: CT.spent, markers: M.markers().map((m) => m.kind + ':' + m.id),
-        cutscene, subs: { count: subs.count, tier: subs.tier, name: subs.name }, busy: M.busy(), paid: CT.paid
+        cutscene, subs: { count: subs.count, tier: subs.tier, name: subs.name }, busy: M.busy(), paid: CT.paid, busts: CT.busts.slice(), wanted: GTP.AI.wanted.level
       };
     },
     // the generic driver for a mission with no script: each objective by its type, the v0.3 event types by their events
@@ -669,6 +672,11 @@ function installDriver() {
       const p = CT.p();
       if (p.inVehicle) { p.exitVehicle(); CT.adv(0.2); }
       if (GTP.Strands.active()) GTP.Strands.end('test');
+      // the last strand's teleport may have stood the player in a stranger's light (st_standby_1 by a sponsor stop): not this test's
+      if (GTP.Cutscenes.active) GTP.Cutscenes.skip();
+      if (M.state.active) { M.abort(); CT.adv(0.3); }
+      if (GTP.UI.modal && GTP.UI.modal()) GTP.UI.closeModal();   // a property screen a marker opened under the player
+      if (GTP.game.state === 'paused') { CT.press('pause'); CT.adv(0.2); }
       GTP.AI.wanted.clear(); GTP.game.debug.godMode(false); CT.adv(0.3);
       CT._sev = []; if (!CT._sevOn) { CT._sevOn = true; ['strand:start', 'strand:cycle', 'strand:end', 'race:finish', 'stunt:land', 'memo', 'subs:tier'].forEach((ev) => GTP.Events.on(ev, (e) => CT._sev.push(ev + ':' + (e.id || e.ramp || e.race || '')))); }
     },
@@ -706,11 +714,11 @@ function installDriver() {
       const S = GTP.Strands, p = CT.p(), money0 = p.money;
       CT.strandSetup();
       const depot = GTP.World.landmark('nap_depot').door; CT.tp(depot.x + 6, depot.z); CT.adv(0.5);
-      const s0 = CT.until(() => GTP.Entities.list.some((e) => e.kind === 'vehicle' && e.tag === 'sponsorvan' && !e.removed), 8, 0.5);
-      const van = GTP.Entities.list.find((e) => e.kind === 'vehicle' && e.tag === 'sponsorvan' && !e.removed);
+      const s0 = CT.until(() => GTP.Entities.list.some((e) => e.kind === 'vehicle' && e.tag === 'sponsorvan' && !e.removed && !e.wreck), 8, 0.5);
+      const van = GTP.Entities.list.find((e) => e.kind === 'vehicle' && e.tag === 'sponsorvan' && !e.removed && !e.wreck);
       if (!van) return { ok: false, note: 'no sponsor van at the depot after ' + s0 + 's' };
       const inVan = CT.enterVehicle(van); CT.adv(0.3);
-      const c = S.current(); if (!c || !c.run) return { ok: false, note: 'the chain did not start (active ' + S.active() + ')' };
+      const c = S.current(); if (!c || !c.run) return { ok: false, note: 'the chain did not start (active ' + S.active() + ')', inVan, state: GTP.game.state, mission: M.state.active, seat: p.seat, driver: !!(p.inVehicle && p.inVehicle.driver === p), tag: p.inVehicle && p.inVehicle.tag, vans: GTP.Entities.list.filter((e) => e.kind === 'vehicle' && e.tag === 'sponsorvan' && !e.removed && !e.wreck).length, ui: Object.keys(GTP.UI.state).filter((k) => GTP.UI.state[k] && typeof GTP.UI.state[k] === 'object' && GTP.UI.state[k].open) };
       CT.tp(c.run.dest.x + 2, c.run.dest.z); CT.adv(0.1);
       const s1 = CT.until(() => c.i === 1, 4, 0.1);
       p.exitVehicle(); CT.adv(0.2);
@@ -723,7 +731,7 @@ function installDriver() {
       const mk = S.debug.markers().find((m) => m.id === 'rr_01'); if (!mk) return { ok: false, note: 'no rr_01 marker' };
       CT.tp(mk.x + 20, mk.z); CT.adv(0.3); CT.tp(mk.x, mk.z);
       const s1 = CT.until(() => S.active() === 'ratio_rampages', 3, 0.1);
-      const c = S.current(); if (!c) return { ok: false, note: 'the rampage did not start' };
+      const c = S.current(); if (!c) return { ok: false, note: 'the rampage did not start', marker: { visible: mk.visible, armed: mk.armed, cooldown: mk.cooldown, holdT: mk.holdT, y: mk.y, d: +U.dist2d(p.x, p.z, mk.x, mk.z).toFixed(2) }, py: p.y, active: S.active(), mission: M.state.active, inVehicle: !!p.inVehicle, state: GTP.game.state, alive: p.alive };
       const s2 = CT.until(() => c.hecklers.length > 0, 6, 0.25);
       let guard = 0;
       while (S.active() === 'ratio_rampages' && guard++ < 40) { c.hecklers.forEach((h) => { if (h.alive && !h.removed) GTP.Combat.damage(h, 999, p, c.def.weapon); }); CT.adv(0.5); }
@@ -778,7 +786,7 @@ function installDriver() {
       CT.tp(lm.door.x, lm.door.z); CT.adv(0.2);
       let bought = null; GTP.Events.on('shop:buy', (e) => { bought = { id: e.item.id, price: e.price }; });
       CB.shop.open(lm.id); CT.adv(0.1);
-      const open = { page: !!GTP.UI.state.shopOpen, open: CB.shop.state.open, store: CB.shop.state.store && CB.shop.state.store.name, control: p.controlEnabled };
+      const open = { page: !!GTP.UI.state.shopOpen, open: CB.shop.state.open, store: CB.shop.state.store && CB.shop.state.store.name, control: p.controlEnabled, state: GTP.game.state, modal: GTP.UI.state.modal ? GTP.UI.state.modal.kind || true : null, interior: GTP.Interiors ? GTP.Interiors.active : null, mission: M.state.active };
       const items = CB.shop.items(), pick = items.find((it) => it.canBuy && it.tab === 'ammo') || items.find((it) => it.canBuy && it.tab === 'gear') || items.find((it) => it.canBuy);
       if (!pick) return { ok: false, note: 'nothing buyable: ' + items.map((it) => it.id + (it.locked ? '(locked)' : it.owned ? '(owned)' : '')).join(','), open };
       const r = CB.shop.buy(pick.id); CT.adv(0.2);
@@ -791,7 +799,7 @@ function installDriver() {
   GTP.Events.on('mission:complete', (e) => { CT.paid = e.reward; });
   GTP.Events.on('garage', (e) => { CT.spent += e.cost; });
   GTP.Events.on('pickup', (e) => { const pk = e && e.pickup; if (pk && pk.pickupType === 'cash') CT.cash += pk.value | 0; });
-  GTP.Events.on('busted', () => CT.fails.push('BUSTED'));
+  GTP.Events.on('busted', (e) => { CT.fails.push('BUSTED'); CT.busts.push({ mission: M.state.active || CT._cur, phase: M.state.phase, obj: M.state.objectiveText, state: GTP.game.state, level: e.level, fine: e.fine, t: +GTP.game.time.t.toFixed(1) }); });
   GTP.Events.on('player:wasted', () => CT.fails.push('WASTED'));
   GTP.Events.on('subs:tier', (e) => CT.subsLog.push(e));
   // every point of heat, with its source: a campaign run should never attract the police by accident
@@ -901,6 +909,8 @@ H.run('campaign', async (t) => {
     if (heat.log.length) console.log('  ' + id + ' heat: ' + JSON.stringify(heat));
     if (process.env.CAMPAIGN_TO === id) { console.log('  CAMPAIGN_TO ' + id + ': stopping here'); break; }
     t.assert(fin.completed && fin.active === null && fin.failed === 0, id + ' completed: ' + JSON.stringify({ completed: fin.completed, active: fin.active, failed: fin.failed, state: fin.state }));
+    const busts = fin.busts.filter((b) => b.mission === id);
+    t.assert(busts.length === 0, id + ': busted after its objectives (a $500 fine and the guns): ' + JSON.stringify(busts));
     // the reward (the paid amount: a heist pays after its plan), minus resprays, plus any cash picked up
     const paid = fin.paid != null ? fin.paid : def.reward;
     if (SCRIPT[id]) t.assert(paid === def.reward, id + ' pays its listed reward: ' + paid + ' vs ' + def.reward);

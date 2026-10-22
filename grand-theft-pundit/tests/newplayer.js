@@ -188,7 +188,9 @@ function installPlayer(budget) {
         // look ahead along the line only as far as the straight way there is clear (a building corner, a kerb tree, a lamp):
         // cutting the corner of the GPS line put the van against a kerb tree for a minute
         let k = i; while (k < pts.length - 1 && U.dist2d(v.x, v.z, pts[k].x, pts[k].z) < 9 && NP.clearSeg(v, pts[k + 1])) k++;
-        const tg = pts[k], d = U.dist2d(v.x, v.z, tg.x, tg.z), last = pts[pts.length - 1];
+        // a kerb tree or a lamp on the line itself (the line out of the pod garage's car park runs through one): steer round it
+        let tg = pts[k]; { const by = NP.aroundProp(v, tg, k === pts.length - 1); if (by) { tg = by; NP.notes.aroundProps = (NP.notes.aroundProps || 0) + (NP._around === by.prop ? 0 : 1); NP._around = by.prop; } }
+        const d = U.dist2d(v.x, v.z, tg.x, tg.z), last = pts[pts.length - 1];
         const dEnd = U.dist2d(v.x, v.z, last.x, last.z);
         const err = U.wrapAngle(U.dirToYaw(tg.x - v.x, tg.z - v.z) - v.yaw);
         // corner ahead: slow down by the turn angle between this leg and the next
@@ -219,6 +221,7 @@ function installPlayer(budget) {
           else { NP.hold('left', err > thr); NP.hold('right', err < -thr); }
         }
         NP.adv(1 / 30); t += 1 / 30;
+        if (window.NP_TRACE && Math.round(t * 30) % 15 === 0) NP.say('    van ' + v.x.toFixed(1) + ',' + v.z.toFixed(1) + ' yaw ' + v.yaw.toFixed(2) + ' v ' + v.speed.toFixed(1) + ' tg ' + Math.round(tg.x) + ',' + Math.round(tg.z) + ' ' + Object.keys(NP.held).filter((a) => NP.held[a]).join('+'));
         const rem = dEnd + (pts.length - 1 - i) * 4;
         if (rem < best - 0.5) { best = rem; lastProg = t; }
         if (t - lastProg > 2.5 && rev <= 0) {
@@ -229,7 +232,9 @@ function installPlayer(budget) {
       }
       NP.releaseAll();
       const vv = p.inVehicle;
-      return { ok: stop(), t, why: (NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s') + (vv ? ' at ' + Math.round(vv.x) + ',' + Math.round(vv.z) + (aheadT > 0 ? ', blocked ahead' : '') + ', overtakes ' + (NP.notes.overtakes || 0) : '') };
+      // what the van sat against (a giver on the pavement, a parked car, a kerb prop): the give-up line names it
+      const near = vv ? GTP.Entities.near(vv.x, vv.z, 7).filter((e) => e !== vv && e !== p && !e.removed && (e.kind === 'vehicle' || (e.kind === 'ped' && e.alive))).map((e) => e.kind + ':' + (e.castId || e.role || e.type || '') + '@' + U.dist2d(e.x, e.z, vv.x, vv.z).toFixed(1)).slice(0, 5) : [];
+      return { ok: stop(), t, why: (NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s') + (vv ? ' at ' + Math.round(vv.x) + ',' + Math.round(vv.z) + ' yaw ' + vv.yaw.toFixed(2) + (aheadT > 0 ? ', blocked ahead' : '') + ', overtakes ' + (NP.notes.overtakes || 0) + (near.length ? ', near ' + near.join(' ') : '') + ', line ' + route.pts.slice(0, 4).map((q) => Math.round(q.x) + ',' + Math.round(q.z)).join(' ') : '') };
     },
     // a straight drive from a to b passes no building and no solid prop (a van is about 2 m wide)
     clearSeg(a, b) {
@@ -243,6 +248,32 @@ function installPlayer(budget) {
         if (qx * qx + qz * qz < Math.pow(1.3 + (pr.r || 0.3), 2)) return false;
       }
       return true;
+    },
+    // the nearest solid prop on the straight way from the van to b (or just past b, a line point beside a tree; not a prop at the
+    // blip itself): a point a van's width beside it, on the side with open ground and a clear way there; null when the way is
+    // clear or neither side is open
+    aroundProp(a, b, isEnd) {
+      const W = GTP.World, T = W.T, dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz); if (L < 1) return null;
+      const ux = dx / L, uz = dz / L; let hit = null, ht = 1e9;
+      for (const pr of W.props || []) {
+        if (!pr.solid || Math.abs(pr.x - a.x) > L + 3 || Math.abs(pr.z - a.z) > L + 3) continue;
+        const al = (pr.x - a.x) * ux + (pr.z - a.z) * uz, sd = Math.abs((pr.x - a.x) * -uz + (pr.z - a.z) * ux);
+        if (al < 0.5 || al > (isEnd ? L - 1 : L + 1.5) || sd > 1.3 + (pr.r || 0.3) || al >= ht) continue;
+        hit = pr; ht = al;
+      }
+      // a parked car or bike on the line (nobody at the wheel; traffic waiting at a light is the overtake's job)
+      for (const e of GTP.Entities.near((a.x + b.x) / 2, (a.z + b.z) / 2, L / 2 + 3, 'vehicle')) {
+        if (e === a || e.removed || e.driver || Math.abs(e.speed || 0) > 0.5) continue;
+        const er = e.cls ? Math.max(e.cls.width || 1.8, e.cls.length || 4.5) / 2 : 2;
+        const al = (e.x - a.x) * ux + (e.z - a.z) * uz, sd = Math.abs((e.x - a.x) * -uz + (e.z - a.z) * ux);
+        if (al < 0.5 || al > L + er || sd > 1.3 + er || al >= ht) continue;
+        hit = { x: e.x, z: e.z, r: er, solid: true, ent: e }; ht = al;
+      }
+      if (!hit) return null;
+      const off = 2.6 + (hit.r || 0.3), open = (q) => { const tt = W.tileAt(q.x, q.z); return tt !== T.BUILDING && tt !== T.WATER && tt !== T.VOID && !W.solidAt(q.x, q.z, (a.y || 0) + 0.5); };
+      const sides = [1, -1].map((s) => ({ x: hit.x - uz * off * s, z: hit.z + ux * off * s, prop: hit.ent || hit })).filter((q) => open(q) && NP.clearSeg(a, q));
+      sides.sort((p1, p2) => U.dist2d(a.x, a.z, p1.x, p1.z) - U.dist2d(a.x, a.z, p2.x, p2.z));
+      return sides[0] || null;
     },
     // the nearest objective blip on the minimap (pickups show one blip each), else the HUD arrow's point
     objectivePoint() {
@@ -593,6 +624,7 @@ if (require.main === module) H.run('newplayer', async (t) => {
     const realLoad = (Date.now() - tEnter) / 1000;
     set('title', title.ids[0] === 'play' && started.state !== 'title', 'menu ' + JSON.stringify(title.items) + ', after Enter: ' + JSON.stringify(started) + ' (' + realLoad.toFixed(1) + ' s real to playable)');
     await ev(installPlayer, BUDGET);
+    if (process.env.NEWPLAYER_TRACE) await page.evaluate(() => { window.NP_TRACE = 1; });   // the van's track every half second in the log
     // count the frames the live loop ran since Enter as simulated time too
     await ev((sec) => { NP.t0steps = GTP.game.steps - Math.round(sec / (GTP.C.STEP || 1 / 60)); }, 0);
 

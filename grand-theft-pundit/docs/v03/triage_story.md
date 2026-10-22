@@ -46,7 +46,41 @@ step. `tests/cutscenes.js` section 9 drives it through `page.keyboard` on a non-
 The opening's pace (31 s of game time for cs_opening, the first objective at 52 s with every line read) is unchanged; the
 typewriter is the UI's (see UI below).
 
-## Test results (final: this branch merged with game/grand-theft-pundit a94bf77)
+## Last round: this branch on game/grand-theft-pundit 9f7c65c
+
+9f7c65c already carried this branch (merged as c805939), so v03r1/story fast-forwarded to it and was pushed as is. Then:
+- **campaign.js, "m11_trustless paid 2500: money 28719 expected 29219".** The $500 is the bust fine (`AI.bustFine`: $500 at one
+  or two stars), not a respray. Nothing charges for finishing a mission, so there is no game change. m11's destroy step blows up
+  Kyler's car (4 heat, one star). About 5 s later a beat cop arrested the player while `CT.finish` waited for the cs_act3
+  cutscene. That wait and the 5 s wait for the card did not step away from a closing cop the way `skipTalk` does. Now they do.
+  A bust after a mission's objectives also fails with its own message, which names the guns it takes as well, instead of a
+  money mismatch.
+- With the story through, the side strands after it hit two more test-side failures on this base, both fixed in campaign.js:
+  - The Sponsor Run test picked the burnt-out sponsor van. m13's stand-off now runs at the Nap Dynasty depot and wrecks it, and
+    the strands park a fresh one. The test now skips wrecks. Game side (09 `ensureVehicles`): the replaced wreck drops
+    `persistent`/`keep` and clears like any other.
+  - The delivery teleport stood the player in a stranger's light (st_standby_1), and its intro was still playing when the
+    rampage test began. Before each strand, `strandSetup` now skips a cutscene, aborts a running mission, closes a modal and
+    unpauses.
+- **newplayer.js, 665 s (m01_van 312 s).** A trace showed two stalls at the pod garage:
+  1. When the bay next to the wall was taken, the van spawned in the open part of the lot facing the garage wall. `vehicleSpot`
+     gave a bay with no wall beside it yaw 0. Game fix: an open bay now faces the nearest road.
+  2. The GPS line out of the lot runs through a kerb tree at (81.3, 318) and past a parked bike. The bot rammed them for 20 to
+     40 s, because its reverse-on-stall kept resetting the overtake timer. The bot now steers a van's width round a solid prop
+     or a parked, driverless vehicle on its line (`NP.aroundProp`).
+
+  The 600 s bar is unchanged. `NEWPLAYER_TRACE=1` logs the van's track. Runs vary because the frames the live loop runs
+  between Enter and the test taking over count as simulated time, which shifts the traffic. Before these fixes the same
+  build ran 368 to 733 s; after them it ran 332 and 344 s.
+
+## Test results (final: this branch merged with game/grand-theft-pundit 9f7c65c)
+
+On 9f7c65c, with the fixes above, every file of mine passes: `campaign.js` (35 missions, both endings, every strand, the
+shop), `missions.js`, `story.js`, `feel.js`, `cutscenes.js`, `saves.js`, `strands.js`, `smoke.js` and `newplayer.js` (332 s).
+`content_audit.js` (258 files, 0 hits) and `artifact.js` pass too. The a94bf77 notes below still hold for the other tracks'
+files.
+
+### On a94bf77
 
 My files pass on the merged code: `missions.js`, `cutscenes.js`, `saves.js`, `campaign.js` (the 35-mission story, both endings,
 every strand), `story.js`, `strands.js`, `feel.js`, `smoke.js`, `newplayer.js` (441 s); `content_audit.js` and `artifact.js` pass.
@@ -239,8 +273,8 @@ Totals: 50 fixed, 25 already-fixed, 4 other track, 2 fixed (12 part), 1 partly-f
 - `World.route` (ped mode) sends a pedestrian up the elevated ramp at x 140-149, z 228-235 (beside Dorm 4B) and expects them to
   step off its railed side: the newplayer bot lost 90-100 s on m00's third table piece every run. Ramp tiles should not be
   walkable sideways in the ped graph.
-- `World.route` (car mode) from the pod garage bay runs through the car park interior instead of out to the road; a kerb tree
-  (78, 321.3) and a lamp (306, 419.35, in front of Both Sides Arms' door) stand in the way. The mission light now avoids the lamp.
+- `World.route` (car mode) from the pod garage bay runs through the car park interior instead of out to the road. Its line along
+  z = 318 passes 0.7 m from a kerb tree at (81.3, 318), and a second kerb tree (78, 321.3) and a lamp (306, 419.35, in front of Both Sides Arms' door) stand in the way. The mission light now avoids the lamp.
 - `07_ai.js` `hookStrands`: folded. With `GTP.AI.routeVias` exported on the latest base, 09's `drivers.take` adds the A* corners
   itself and sets `_worldRoute`, so the wrapper stands down; `hookStrands` can be deleted.
 - QA-A-DRV-06 (rest): `Vehicle._collideWorld` treats the World.bounds clamp over open sea as a damaging wall impact.

@@ -244,8 +244,10 @@
       // a bay against a wall is backed into: the nose points away from the building, so a player who gets in can drive straight
       // out (nose-in, a new driver's first job in m01 was a reverse out of a tight lot)
       else if (bW || bE) { yaw = bW ? -Math.PI / 2 : Math.PI / 2; x += bW ? over : (bE ? -over : 0); }
-      else { yaw = bN ? Math.PI : 0; z += bN ? over : (bS ? -over : 0); }
-      if (kind === 'parking' && (bN || bS || bW || bE) && exitBlocked(x, z, yaw)) { s += 40; if (s >= bestS) continue; }   // a new driver's first job should not be a three-point turn round a tree
+      else if (bN || bS) { yaw = bN ? Math.PI : 0; z += bN ? over : -over; }
+      // an open bay faces the way out: its nose toward the nearest road (it faced the pod garage's wall from the open lot)
+      else { var rp0 = Wd.nearestRoadPoint(x, z); yaw = rp0 ? Math.round(U.dirToYaw(rp0.x - x, rp0.z - z) / (Math.PI / 2)) * (Math.PI / 2) : 0; }
+      if (kind === 'parking' && exitBlocked(x, z, yaw)) { s += 40; if (s >= bestS) continue; }   // a new driver's first job should not be a three-point turn round a tree
       best = { x: x, z: z, y: Wd.heightAt(x, z, 0), yaw: yaw, kind: kind, tx: tx, tz: tz }; bestS = s;
     }
     if (!best) { var rp = Wd.nearestRoadPoint(cx, cz); if (rp) best = { x: rp.x, z: rp.z, y: 0, yaw: U.dirToYaw(rp.dx, rp.dz), kind: 'road' }; }
@@ -3673,6 +3675,8 @@
     function ensure(tag, lmId, type, opts) {
       var lv = liveTagged(tag);
       if (lv) { if (opts.adopt && !lv.keep && !run) { lv.keep = true; lv.persistent = true; } return; }   // the van the player drove home from m01 becomes home (QA-SAVE-01)
+      // the old one burnt out (m13's stand-off at the depot): a fresh one parks, the wreck clears like any other
+      E().list.forEach(function (o) { if (o.kind === 'vehicle' && o.tag === tag && o.wreck && !o.removed) { o.persistent = false; o.keep = false; } });
       var lm = Wd.landmark(lmId); if (!lm || !lm.door) return;
       var cls = C.VEHICLES[type] || C.VEHICLES.van, spot = vehicleSpot(lm.door.x, lm.door.z, 40, 'parking', null, cls.length); if (!spot) return;
       var v = new GTP.Vehicle({ x: spot.x, z: spot.z, type: type, color: opts.color, wrap: opts.wrap, tag: tag, persistent: true });
