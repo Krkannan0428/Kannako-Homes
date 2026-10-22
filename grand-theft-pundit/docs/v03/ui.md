@@ -69,7 +69,8 @@ without the module):
 | Map markers | `Systems.markers()` (properties, safehouses, golf, jobs, job calls, the pin), strangers' missions | Systems' entries are appended (icons golf, $, job, fire, client); a mission whose `strandOf()` is a stranger strand is drawn as a purple `?` and listed in MISSIONS as a purple row with the strand's progress and a GPS button (the fake `Strangers.markers()` / `list()` paths are gone). |
 | Boss bar / specials | `boss:start`, `boss:phase {id, phase, phases, hp, maxHp, name, shield, state, hint}`, `boss:end`, `boss:defeated`, `Bosses.hud()`; `special:state {id, meter, active, unlocked, name}` | `GTP.UI.drawsBossBar = drawsSpecials = true` so 08b_bosses' fallback bar and meters stand down. Grey bar and the shield text while shielded, the hint under it; no PHASE announcement (the bosses banner it); hidden during dialogue. A special that is not `unlocked` is not shown. |
 | Radio | `Content.radio.nowPlaying(id)` for stations with songs | `Audio.radio.nowPlaying()` returns the "Station - tagline" string; it is ignored (the chip already says it). The news runner in `23_content_radio.js` keeps calling `UI.ticker` (not replaced). |
-| Hints | `GTP.Hints.current()` / `dismiss()` | A hint leaves a second after the player did what it asks (aim, move, look, reload, open the wheel, open the map) instead of its full six seconds. |
+| Hints | `GTP.Hints.current()` / `dismiss()` | A hint leaves a second after the player did what it asks (aim or fire, move, look, reload, open the wheel, open the map), at once in a vehicle for the on-foot ones, and after 4.5 s at most. Key-first hints (h_move, h_enter, h_drive, h_aim, h_reload, h_wheel, h_map) get a pad / touch sentence and pills built from the live bindings. The AIM / FIRE tutor pills retire on the first aim or shot (8 s at most) and never share the row with GET IN / TAKE COVER; a GET IN pill shows at a car door while an objective asks for it and for the first three cars. |
+| Input | `02_input.js` | Pad maps: foot / car / air / menu, plus `mini` for the debate and ratio war (LT holds SHOUT as `run`, X the HOTTAKE). A button held across a context switch is not a new press until released. Cutscenes, the RETRY card, modals and menus use the menu map. |
 | Title | `GTP.VERSION` | Shows 0.3.0 while `00_util.js` still says 0.2.0 (`desktop/package.json` is 0.3.0); a newer `GTP.VERSION` wins. |
 
 Exposed for the other tracks and tests: `GTP.UI.interiorFade`, `drawsBossBar`, `drawsSpecials` (flags),
@@ -182,7 +183,12 @@ Exposed for the other tracks and tests: `GTP.UI.interiorFade`, `drawsBossBar`, `
 cd grand-theft-pundit
 NODE_PATH=/opt/node-tools/node_modules node tests/ui_v03.js   # every v0.3 screen, the input actions, the QA bugs, phone width
 NODE_PATH=/opt/node-tools/node_modules node tests/ui.js       # the v0.2 UI suite, updated for STORY / the pause index / ten touch buttons
+NODE_PATH=/opt/node-tools/node_modules node tests/newplayer.js # the coordinator's new-player acceptance run (title to a manual save)
+node tests/content_audit.js
 ```
+
+`tests/ui_v03.js` drives the real modules on the merged build (heist payload, Combat.buy, Vehicles.buyMod, Systems
+golf / properties / wardrobe, Strangers) and keeps fakes only where a screen needs a state the build cannot reach quickly.
 
 Screenshots: `tests/out/v3_*.png` (gps_hud, gps_map, labels, call_ring, call_talk, chapter, story_tab, armory_enter,
 armory_card, armory_attach, armory_tints, armory_ammo, armory_locked, range_hud, range_medal, modshop, modshop_engine,
@@ -193,14 +199,18 @@ phone_call, night_hud, strangers_phone, strangers_map).
 
 ## Known issues / for integration
 
-- With the opening now on the fast NEW GAME path (QA-C1-07), `tests/audio.js`, `tests/feel.js` and
-  `tests/campaign.js` (not this track's) fail on this branch: each presses Enter on the title and then drives or
-  replays the opening itself, but the opening cutscene now starts on its own. Verified: with `FAST_START_OPENING`
-  set back to false all three pass. Fix at integration in those tests (clear `GTP.game._openingPending` after the
-  title's Enter, as `tests/ui.js` does, or expect the cutscene); the story track owns the New Game flow.
-  `tests/all.js` on this branch: 17 of 20 files pass, those three are the only failures.
-- `24_content_expansion.js` hint `h_aim` still says "(or Q)" and lists Q; the UI strips both at draw time.
-- The wardrobe and mod shop cameras pull in for buildings only (props such as signs can block the view outdoors; the
-  shops open inside interiors in the real flow).
-- The fake vehicle HUD screenshots use a sedan with its type swapped for one frame; the real meshes come from the
-  vehicles track.
+See `docs/v03/final_ui.md` for the release state and `docs/v03/triage_ui.md` for every QA finding. Open items that sit in
+other tracks' files (found while integrating):
+
+- `14_systems.js` `table('clothing')` runs `asList` over `parity.clothing` (`{name, tagline, stores, clerk, items}`), so
+  `Systems.wardrobe.items()` lists those keys as clothing; the UI drops such rows and sells the content list itself. The
+  barber's `haircut` stores `st.style || st.id` (the parity styles carry `hair`), so a bought cut can name an id the models
+  do not know.
+- `09_missions.js` reads the heist from `parity.heist` (two approaches, three crew) while the content defines
+  `parity.heists.hedge_job` (three approaches, six crew with roles); the board shows what `heist:board` sends.
+- `00_util.js` `GTP.VERSION` is still 0.2.0 (the title shows 0.3.0 until it changes).
+- `24_content_expansion.js` `h_taxi.glyphs.gamepad` says Y (exits the car); the UI draws D-PAD UP. `castIds` lacks the
+  v0.3 cast (the credits list them from `cast` anyway).
+- m01c's first objective (goto the armory door, radius 40) can be skipped by walking straight in (the door auto-enters
+  the interior and the goto never completes) — `v03r1/story` reports m01c fixed on its branch.
+- The wardrobe and mod shop cameras pull in for buildings only (props can block the view outdoors).
