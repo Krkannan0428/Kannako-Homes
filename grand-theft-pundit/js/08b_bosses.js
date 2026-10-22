@@ -1482,7 +1482,7 @@
     arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } }, place: 'the balloon depot lot',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 1, shieldText: '[REDACTED]',
     patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, barEvery: [4.8, 4.2, 3.8], patchHp: [110, 100, 90], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
-    hints: ['Shoot the black [REDACTED] patch on the balloon. Grey means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
+    hints: ['Shoot the black [REDACTED] patch on the balloon. Gray means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
     ticker: 'BREAKING: OVA WEATHER BALLOON POPS OVER DEPOT; OVA CONFIRMS IT WAS NEVER THERE',
     lines: {
       intro: [
