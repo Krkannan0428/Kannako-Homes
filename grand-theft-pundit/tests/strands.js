@@ -250,7 +250,7 @@ H.run('strands', async (t) => {
     mk.forEach((m) => { icons[m.icon] = (icons[m.icon] || 0) + 1; });
     const all = M.allMarkers().length, base = M.markers().length;
     const data = GTP.game.serialize(1);
-    return { icons, all, base, hud: S.hud(), summary: S.summary().map((s) => s.id + ': ' + s.line), saved: { strands: Object.keys(data.strands), memos: data.memos.length, fares: data.strands.loud_cab.fares, stunts: data.strands.stunt_jumps.done } , subs: M.subscribers() };
+    return { icons, all, base, hud: S.hud(), summary: S.summary().map((s) => s.id + ': ' + s.line), saved: { strands: Object.keys(data.strands).filter((k) => k !== 'cooldowns'), cooldowns: !!data.strands.cooldowns, memos: data.memos.length, fares: data.strands.loud_cab.fares, stunts: data.strands.stunt_jumps.done } , subs: M.subscribers() };
   });
   console.log('  surfaces: ' + JSON.stringify(r));
   t.assert(r.icons.rampage === 7 && r.icons.race >= 2 && r.icons.home === 1 && r.all === r.base + Object.values(r.icons).reduce((a, b) => a + b, 0), 'markers(): seven live rampage bubbles (rr_01 on cooldown), the open races, the home icon; allMarkers() adds them to the mission markers');
