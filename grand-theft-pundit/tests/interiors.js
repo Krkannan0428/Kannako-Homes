@@ -241,6 +241,9 @@ H.run('interiors', async (t) => {
     t.assert(ok.ok && ok.branch === b.replace('both_sides_', ''), b + ' uses the armory with its branch decor');
     await view('int_armory_' + ok.branch, [0, 3.0, 6.4, -1, 1.6, -5]);
     await page.evaluate(() => GTP.Interiors.exit({ instant: true }));
+    // the world's door markers pass the landmark id as the branch: the decor is still the branch's
+    const viaDoor = await page.evaluate((b) => { const ok = GTP.Interiors.enter('armory', { landmark: b, store: b, branch: b, instant: true }); GTP.game.advance(0.3); const br = GTP.Interiors.current && GTP.Interiors.current.branch; GTP.Interiors.exit({ instant: true }); GTP.game.advance(0.2); return { ok, br }; }, b);
+    t.assert(viaDoor.ok && viaDoor.br === b.replace('both_sides_', ''), b + ' entered through a world door (branch = the landmark id) keeps its decor: ' + JSON.stringify(viaDoor));
   }
   const rooms = await page.evaluate(() => {
     const I = GTP.Interiors, p = GTP.game.player, out = {};

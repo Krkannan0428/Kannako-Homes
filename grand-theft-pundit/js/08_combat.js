@@ -352,9 +352,9 @@
     var gx, gy, gz, X, Y, rig3 = modelsRig();
     if (raised && rig3 && !fit.upright && !fit.melee && !fit.knuckle) {
       // the models-track rig (06c holdPose): the grip in the chest frame, rifle-likes (and launchers, the minigun) in the shoulder
-      // pocket at (0.1 right, 0.1 up, 0.22 ahead), handguns out in front at (0.04, 0.18, 0.51); drawn at scale 1, so the shot leaves
+      // pocket at (0.1 right, 0.1 up, 0.32 ahead), handguns out in front at (0.04, 0.18, 0.51); drawn at scale 1, so the shot leaves
       // the barrel the player sees
-      var two = hold === 'two', ox = two ? 0.1 : 0.04, oy = two ? 0.1 : 0.18, oz = two ? 0.22 : 0.51, cy = y + MODEL_CHEST * ck * sc;
+      var two = hold === 'two', ox = two ? 0.1 : 0.04, oy = two ? 0.1 : 0.18, oz = two ? 0.32 : 0.51, cy = y + MODEL_CHEST * ck * sc;
       gx = x + (rx * ox + ux * oy + ax * oz) * sc; gy = cy + (uy * oy + ay * oz) * sc; gz = z + (rz * ox + uz * oy + az * oz) * sc;
       X = [ax, ay, az]; Y = [ux, uy, uz];
     } else if (raised) {
@@ -1766,13 +1766,29 @@
         CAM.aimFov = adsFov(base);
         // the shoulder camera: closer and further right than the base rig, so the gun in the hands reads beside the crosshair
         CAM.aimDist = AIM_CAM.dist; CAM.aimSide = AIM_CAM.side; CAM.aimHeight = AIM_CAM.height; CAM.aimLookHeight = AIM_CAM.look;
-        try { return orig.call(this, dt, input); } finally { CAM.aimFov = base; CAM.aimDist = d0; CAM.aimSide = s0; CAM.aimHeight = h0; CAM.aimLookHeight = l0; }
+        try { var res = orig.call(this, dt, input); aimGuard(this); return res; } finally { CAM.aimFov = base; CAM.aimDist = d0; CAM.aimSide = s0; CAM.aimHeight = h0; CAM.aimLookHeight = l0; }
       };
       Rd.rig._combatAds = true; hooked.rig = true;
     }
     syncArsenal();
     registerSave();
     if (pendingSave && player() && GTP.SaveRegistry.combat) GTP.SaveRegistry.combat.set(pendingSave);
+  }
+
+  // The aim camera's wall guard (QA-A-CAM-01): Render's guard casts from the look-at point 8 m ahead, so with a wall or a counter in
+  // those 8 m (in a shop, facing a building) it threw the camera in front of the player at floor height. While aiming on foot the
+  // camera is kept on the line from the shoulder to the over-the-shoulder spot, pulled in to the first wall (at least 0.4 m).
+  function aimGuard(r) {
+    var t = r._target || player(), Wd = W(), CAM = C.CAMERA;
+    if (!t || !t.aiming || t.inVehicle || scope.active || (t.cameraMode || r.mode) === 'first' || !Wd || !Wd.raycastBuildings) return;
+    var d = U.yawToDir(r.yaw), rx = -d.z, rz = d.x, ox = t.x, oy = t.y + 1.5, oz = t.z, pad = CAM.collisionPad || 0.3;
+    var ahead = (r.pos.x - t.x) * d.x + (r.pos.z - t.z) * d.z > 0.05;
+    var cx = ahead ? t.x - d.x * AIM_CAM.dist + rx * AIM_CAM.side : r.pos.x, cy = ahead ? t.y + AIM_CAM.height + Math.sin(r.pitch) * 1.2 : r.pos.y, cz = ahead ? t.z - d.z * AIM_CAM.dist + rz * AIM_CAM.side : r.pos.z;
+    var gx = cx - ox, gy = cy - oy, gz = cz - oz, gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1;
+    var hit = Wd.raycastBuildings(ox, oy, oz, gx / gl, gy / gl, gz / gl, gl + pad);
+    if (!ahead && !hit) return;
+    var tt = hit ? Math.max(0.4, Math.min(gl, hit.t - pad)) : gl;
+    r.pos.x = ox + gx / gl * tt; r.pos.y = oy + gy / gl * tt; r.pos.z = oz + gz / gl * tt; r.pulled = !!hit;
   }
 
   // ----------------------------------------------------------- scope --

@@ -912,6 +912,9 @@
   // ------------------------------------------------------------------ state --
   var S = { active: false, current: null, room: null, rooms: {}, trans: null, ret: null, npcs: [], prompt: null, near: null, browse: null, confirm: null, doors: [], doorSeed: null, doorCount: -1, overlay: null, holdExit: 0, muzzleT: 0, saved: { rangeBest: 0, medals: {} }, envSaved: false };
   var RANGE = { running: false, t: 0, score: 0, hits: 0, shots: 0, best: 0, last: null, spawnT: 0, hold: 0, cool: 0, loan: null, rng: null, bodyHit: 0 };
+  // the targets (meshes inside) and the booth stay out of JSON.stringify(Interiors.range)
+  Object.defineProperty(RANGE, 'targets', { value: null, writable: true, enumerable: false });
+  Object.defineProperty(RANGE, 'booth', { value: null, writable: true, enumerable: false });
 
   function roomFor(kind, branch) {
     var key = kind + ':' + branch;
@@ -1538,6 +1541,9 @@
     if (!kind) return null;
     var store = opts.store || (lm && lm.id) || null;
     var branch = opts.branch || (kind === 'armory' ? branchOf(lm || store) : kind === 'safehouse' ? (lm && lm.id) || store || 'def' : 'main');
+    // the world's doors pass the landmark id as the branch ('both_sides_port'): an armory branch is one of BRANCHES (strip / port /
+    // uptown), else its decor fell back to the Strip's
+    if (kind === 'armory' && !BRANCHES[branch] && /^both_sides|port|harbor|uptown|heights|strip/.test(branch)) branch = branchOf(branch);
     return { kind: kind, lm: lm, store: store, branch: branch };
   }
   function returnPoint(tg, opts, p) {
@@ -1572,12 +1578,15 @@
     spawnNpcs(room);
     if (R) { R._envClock = null; indoorLight(); }
     if (texCache.scoreboard) drawBoard();
+    // the range's targets and the booth (world x, z) for the story's range objective (a GPS point) and the tests
+    RANGE.targets = room.range ? room.range.targets : null; RANGE.booth = room.booth ? { x: room.booth.x, z: room.booth.z } : null;
     emit('interior:enter', { id: tg.kind, kind: tg.kind, store: tg.store, branch: tg.branch, landmark: tg.lm || null });
     return true;
   }
   function doExit() {
     var p = player(), room = S.room, cur = S.current;
     if (RANGE.running) endRange(true);
+    RANGE.targets = null; RANGE.booth = null;
     removeNpcs(); hidePrompt();
     var shop = GTP.Combat && GTP.Combat.shop; if (shop && shop.state && shop.state.open && shop.close) { try { shop.close(); } catch (e) { /* optional */ } }
     if (room) { room.group.visible = false; if (room.group.parent) room.group.parent.remove(room.group); }
@@ -1590,6 +1599,23 @@
     return true;
   }
 
+  // A mission's start light on a shop's doorstep wins over the door: m01c (and m03b) stand theirs on the Both Sides Arms door, and a
+  // door that fired first teleported the player inside mid-intro, where the mission's first objective (walk up to that door) could
+  // never be reached. The mission's own "step inside" objective then walks the player in from the doorstep.
+  function startLightBusy(p) {
+    var Ms = GTP.Missions, st = Ms && Ms.state; if (!Ms || !p) return false;
+    if (st && st.active) return st.phase !== 'play';   // a mission's intro / outro is playing
+    var list = Ms.markers ? Ms.markers() : [], r = ((Ms.K && Ms.K.markerRadius) || 1.9) + 0.4;
+    for (var i = 0; i < list.length; i++) if (list[i].kind === 'mission' && U.dist2d(p.x, p.z, list[i].x, list[i].z) <= r) return true;
+    return false;
+  }
+  function onInteriorObjective(e) {
+    var o = e && e.objective, p = player();
+    if (!o || o.type !== 'interior' || !p || !p.alive || p.inVehicle || S.active || S.trans) return;
+    var Wd = W(), lm = Wd && Wd.landmark ? Wd.landmark(o.landmark || o.store || '') : null;
+    if (!lm || !lm.door || U.dist2d(p.x, p.z, lm.door.x, lm.door.z) > 3) return;
+    Interiors.enter(o.interior || o.kind || lm, { landmark: lm, store: o.store || lm.id, branch: lm.id, force: true });
+  }
   var Interiors = GTP.Interiors = {
     active: false,
     current: null,
@@ -1602,6 +1628,7 @@
       ensureWrapped();
       opts = opts || {};
       var p = player(); if (!p || !p.alive || S.active || S.trans) return false;
+      if (!opts.force && !opts.instant && startLightBusy(p)) return false;
       var tg = resolveTarget(id, opts); if (!tg) return false;
       var ret = returnPoint(tg, opts, p);
       if (p.inVehicle && !opts.force) return false;
@@ -1690,7 +1717,7 @@
     removeNpcs(); hidePrompt();
     var room = S.room; if (room) { room.group.visible = false; if (room.group.parent) room.group.parent.remove(room.group); }
     var cur = S.current;
-    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null;
+    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null; RANGE.targets = null; RANGE.booth = null;
     var R = Rd(); if (R) { R._envClock = null; outdoorEnv(R); }
     emit('interior:exit', { id: cur ? cur.id : null, kind: cur ? cur.kind : null, store: cur ? cur.store : null, quiet: true });
   }
@@ -1724,4 +1751,5 @@
   GTP.SaveRegistry.interiors = { get: function () { return Interiors.serialize(); }, set: function (d) { Interiors.deserialize(d); } };
 
   ensureWrapped();
+  if (GTP.Events && GTP.Events.on) GTP.Events.on('mission:objective', onInteriorObjective);
 })();
