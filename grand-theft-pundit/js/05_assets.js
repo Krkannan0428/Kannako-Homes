@@ -616,7 +616,9 @@
       var variant = (opts.target ? 't' : '') + (opts.gold ? 'g' : '') + (opts.brass ? 'b' : '') + (opts.banner ? 'v' : '');
       var key = (opts.neon ? 'n:' : 'd:') + (opts.w || 2) + ':' + variant + ':' + text;
       if (Assets._signs[key]) return Assets._signs[key];
-      var ar = opts.w || 2, W = 512, H = Math.round(W / ar), cv = canvas(W, H), ctx = cv.getContext('2d');
+      // a wide sign gets a wider canvas (up to 2048 px), so its letters keep 128 px of height (QA-A-VIS-06: Render picks
+      // the real aspect up to 16:1 now)
+      var ar = opts.w || 2, W = Math.round(512 * U.clamp(ar / 4, 1, 4)), H = Math.round(W / ar), cv = canvas(W, H), ctx = cv.getContext('2d');
       var R = rngTex.fork(U.hash(text));
       var neon = !!opts.neon, color = opts.color || (neon ? R.pick(PAL.neon) : '#f4efe4');
       var bg = opts.bg || (neon ? '#0b0a12' : R.pick(['#1d2233', '#2c3e7a', '#8a2f2f', '#2f6b4a', '#4a3a6a', '#e8e2c8', '#c94040']));

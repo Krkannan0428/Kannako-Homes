@@ -26,6 +26,9 @@
   var KNOCKABLE = { lamp: 1, hydrant: 1, bin: 1, bench: 1, table: 1, luggage: 1, pallet: 1, stanchion: 1, cutout: 1 };
   var BIG_PROPS = { crane: 1, craneleg: 1, ship: 1, plane: 1, jet: 1, gantry: 1, billboard: 1, ferryboat: 1, yacht: 1, gazebo: 1, container: 1, canopy: 1, jetbridge: 1, cab: 1, stadium: 1 };
   var MAX_POINTS = 12, MAX_SPOTS = 6, MAX_RAIN = 2400, MAX_PUDDLES = 60;
+  var HEADLIGHT_I = 4.5;   // the player's headlight spot when on (it stays visible at 0 when off: QA-A-NGT-06)
+  var LAMP_FADE = 0.4;     // seconds a lamp light slot takes to fade in / out (QA-A-NGT-05)
+  var SIGN_AR = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16];   // sign texture aspects (QA-A-VIS-06)
   // which facade styles get which street-level and roof detail in _building (the building's own facade paints the
   // doors; the geometry lines up with them through the band's u offset)
   var DETAIL = {
@@ -99,6 +102,25 @@
       if (typeof window !== 'undefined') window.addEventListener('resize', function () { Render.resize(); });
       Render.rig.reset();
       Render.updateEnvironment(C.DAY.startClock);
+      Render._watchContext(canvasGl);
+    },
+    // WebGL context loss (QAC-50): three r152 rebuilds its own GL objects on restore, but the PMREM environment (a render
+    // target made once per half hour), the post targets and the canvas textures need a nudge, or reflections stay wrong
+    // until the next env refresh. 'lost' is default-prevented so the browser restores the context.
+    _watchContext: function (cv) {
+      if (!cv || !cv.addEventListener || Render._ctxWatch) return;
+      Render._ctxWatch = true; Render.contextLost = false;
+      cv.addEventListener('webglcontextlost', function (e) { e.preventDefault(); Render.contextLost = true; });
+      cv.addEventListener('webglcontextrestored', function () {
+        Render.contextLost = false;
+        try {
+          Render._pmrem = null; Render._envRT = null; Render._envKey = null; Render._envClock = null; Render._envDirty = true;
+          var A = Render._A; if (A && A.sky) A.sky.needsUpdate = true; if (A && A.env) A.env.needsUpdate = true;
+          if (GTP.PostFX && GTP.PostFX._dispose) GTP.PostFX._dispose();
+          if (Render.renderer && Render.renderer.shadowMap) Render.renderer.shadowMap.needsUpdate = true;
+          Render._farAt = null;
+        } catch (err) { U.reportError(err, 'render.contextrestored'); }
+      });
     },
 
     // Two sun shadow cascades in core three: the sun (near cascade, a small box round the focus at QUALITY.shadowMap) and
@@ -335,18 +357,23 @@
       // the muzzle flash light lives here from the start at intensity 0 (Combat reuses Render.muzzleLight): adding a light
       // later would recompile every lit material at the first shot (QA CMB-04)
       var muzzle = new THREE.PointLight(0xffd27a, 0, 9, 2); muzzle.name = 'muzzleLight'; s.add(muzzle); Render.muzzleLight = muzzle;
+      // the police helicopter's searchlight, resident the same way (07_ai heliLamp feature-detects Render.lights.heli and
+      // drives its intensity, position and target; QAC-23 / stab-QA-D-04)
+      var heli = new THREE.SpotLight(0xfff0c8, 0, 90, 0.2, 0.55, 1); heli.castShadow = false; heli.name = 'heliSpot'; heli.target.name = 'heliSpotTarget';
+      s.add(heli); s.add(heli.target);
       var fill = new THREE.AmbientLight(0x202838, 0.0);
       s.add(fill);
-      // the player's car headlights (one spot, no shadows)
-      var head = new THREE.SpotLight(0xfff1d0, 4.5, 70, 0.55, 0.6, 1.0);
-      head.castShadow = false; head.visible = false;
+      // the player's car headlights (one spot, no shadows). Always visible, dark at intensity 0: turning it visible when
+      // the player got into a car at night changed the light count and recompiled every lit material (QA-A-NGT-06)
+      var head = new THREE.SpotLight(0xfff1d0, 0, 70, 0.55, 0.6, 1.0);
+      head.castShadow = false; head.visible = true; head.name = 'playerHeadlight';
       s.add(head); s.add(head.target);
       // the pools: point lights for the nearest street lamps, spots for the nearest headlights (preset sets how many
       // are visible; an unused one sits at intensity 0 so the shader's light count never changes mid-game)
       var points = [], spots = [];
       for (i = 0; i < MAX_POINTS; i++) { var pl = new THREE.PointLight(0xffc27a, 0, 26, 1.6); pl.visible = i < (Q.pointLights | 0); pl.name = 'lamp' + i; s.add(pl); points.push(pl); }
       for (i = 0; i < MAX_SPOTS; i++) { var sl = new THREE.SpotLight(0xfff1d0, 0, 55, 0.5, 0.55, 1.0); sl.castShadow = false; sl.visible = i < (Q.headlights | 0); sl.name = 'head' + i; s.add(sl); s.add(sl.target); spots.push(sl); }
-      Render.lights = { hemi: hemi, sun: sun, sunFar: sunFar, target: target, fill: fill, headlight: head, headlightOwner: null, sunDir: new THREE.Vector3(0.5, 0.6, 0.4), points: points, spots: spots, _lampT: 0, _lamps: null, exposure: 1.0 };
+      Render.lights = { hemi: hemi, sun: sun, sunFar: sunFar, target: target, fill: fill, headlight: head, headlightOwner: null, heli: heli, muzzle: muzzle, sunDir: new THREE.Vector3(0.5, 0.6, 0.4), points: points, spots: spots, _lampT: 0, _lamps: null, exposure: 1.0 };
     },
     _initSky: function () {
       var A = Render._A, s = Render.scene;
@@ -359,7 +386,8 @@
       // stars
       var R = GTP.makeRng(4242), pos = [], sizes = [];
       for (var i = 0; i < 700; i++) {
-        var a = R.random() * Math.PI * 2, e = 0.06 + R.random() * 0.92, c = Math.cos(e);
+        // uniform on the dome up to the zenith (asin of a uniform height); 0.06..0.98 rad left a starless hole above 56 deg (QA-A-NGT-08)
+        var a = R.random() * Math.PI * 2, e = Math.asin(0.06 + R.random() * 0.94), c = Math.cos(e);
         pos.push(Math.cos(a) * c * 1000, Math.sin(e) * 1000, Math.sin(a) * c * 1000); sizes.push(1 + R.random() * 2);
       }
       var sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -461,6 +489,7 @@
       var horizonW = Math.pow(U.clamp(1 - sm.elevDeg / 32, 0, 1), 0.6) * (1 - night);
       var duskW = 4 * night * (1 - night);                      // peaks half way through dusk and dawn
       var overcast = Wx ? Wx.overcast : 0, rain = Wx ? Wx.rain : 0;
+      var ew = Render._envWx || (Render._envWx = { o: 0, r: 0 }); ew.o = overcast; ew.r = rain;   // the weather this paint used (QAC-24)
       var twilight = sm.rising ? SKYX.dawn : SKYX.dusk;
       function mixc(key) {
         var d = _c1.set(SKY.day[key]), s = _c2.set(SKY.sunset[key]), n = _c3.set(SKY.night[key]);
@@ -489,7 +518,11 @@
       var elevK = U.clamp(Math.sin(Math.max(0, elev)) * 2.2 + 0.08, 0, 1);
       L.sun.color.copy(sunC);
       L.sun.intensity = mixn('sunI') * (night > 0.99 ? 1 : Math.max(0.25, elevK)) * U.lerp(1, 0.38, overcast);
-      if (night > 0.5) { L.sun.intensity = SKY.night.sunI * U.lerp(1, 0.5, overcast); sunDir.set(-0.3, 0.7, 0.4).normalize(); }
+      // the moon rides the sun's arc twelve hours on (at least 20 degrees up); at night it is the light's direction and the
+      // sprite sits on it. The light was a fixed (-0.3, 0.7, 0.4) and the sprite mirrored it, 80 degrees apart (QA-A-NGT-04)
+      var mm = Render._sunModel((clock + 12) % 24), md = Render._moonDir || (Render._moonDir = new THREE.Vector3());
+      md.set(mm.dir.x, Math.max(mm.dir.y, 0.36), mm.dir.z).normalize();
+      if (night > 0.5) { L.sun.intensity = SKY.night.sunI * U.lerp(1, 0.5, overcast); sunDir.copy(md); }
       // exposure by time of day (the post pipeline reads it; the renderer applies it when post is off)
       var exposure = U.lerp(U.lerp(1.0, 0.96, horizonW), 0.92, night) * U.lerp(1, 0.94, overcast);
       L.exposure = exposure;
@@ -552,12 +585,14 @@
         rg.addColorStop(0, 'rgba(' + sunRGB(sunC, 0.75 * k) + ')'); rg.addColorStop(0.35, 'rgba(' + sunRGB(sunC, 0.28 * k) + ')'); rg.addColorStop(1, 'rgba(' + sunRGB(sunC, 0) + ')');
         ctx.fillStyle = rg;
         for (var ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(-ox, 0, W, H); ctx.restore(); }
-        // the horizon band on the sun's side at dusk / dawn
+        // the horizon band on the sun's side at dusk / dawn: an ellipse (W * 0.45 wide, a third as tall) centred on the
+        // horizon that fades to nothing inside the canvas. It was a circle clipped to rows 0.3 H .. 0.55 H, still bright at
+        // the cut: a hard dark arc about 36 degrees up when looking toward a low sun (QA-A-VIS-03)
         if (horizonW > 0.02) {
-          var hg = ctx.createRadialGradient(u, H * 0.5, 10, u, H * 0.5, W * 0.45);
-          hg.addColorStop(0, 'rgba(' + sunRGB(hor, 0.4 * horizonW * k) + ')'); hg.addColorStop(1, 'rgba(' + sunRGB(hor, 0) + ')');
+          var hg = ctx.createRadialGradient(0, 0, 10, 0, 0, W * 0.45), BY = 0.3;
+          hg.addColorStop(0, 'rgba(' + sunRGB(hor, 0.4 * horizonW * k) + ')'); hg.addColorStop(0.45, 'rgba(' + sunRGB(hor, 0.17 * horizonW * k) + ')'); hg.addColorStop(1, 'rgba(' + sunRGB(hor, 0) + ')');
           ctx.fillStyle = hg;
-          for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(-ox, H * 0.3, W, H * 0.25); ctx.restore(); }
+          for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(u + ox, H * 0.5); ctx.scale(1, BY); ctx.fillRect(-(u + ox), -H * 0.5 / BY, W, H / BY); ctx.restore(); }
         }
         // the disc itself (the env map needs a hot spot so car paint shows a sun highlight)
         var dg = ctx.createRadialGradient(u, v, 0, u, v, 7 + horizonW * 6);
@@ -566,7 +601,9 @@
         for (ox = -W; ox <= W; ox += W) { ctx.save(); ctx.translate(ox, 0); ctx.fillRect(-ox, 0, W, H); ctx.restore(); }
         ctx.globalCompositeOperation = 'source-over';
       }
-      A.sky.needsUpdate = true; A.env.needsUpdate = true;
+      // the dome's texture uploads now; the env texture (a second CanvasTexture over the same canvas) only when the PMREM
+      // is rebuilt from it (_refreshEnv): two 512 KB uploads per repaint were one too many (QAC-24)
+      A.sky.needsUpdate = true; Render._envDirty = true;
       function sunRGB(c, a) { return Math.round(c.r * 255) + ',' + Math.round(c.g * 255) + ',' + Math.round(c.b * 255) + ',' + a.toFixed(3); }
     },
     // PMREM from the equirect sky canvas: scene.environment, so every PBR material reflects the current sky
@@ -576,6 +613,7 @@
       try {
         if (!Render._pmrem) Render._pmrem = new THREE.PMREMGenerator(r);
         var old = Render._envRT;
+        if (Render._envDirty !== false) { A.env.needsUpdate = true; Render._envDirty = false; }
         Render._envRT = Render._pmrem.fromEquirectangular(A.env);
         Render.scene.environment = Render._envRT.texture;
         Render.envMap = Render._envRT.texture;
@@ -641,7 +679,12 @@
         Wx.rain = U.clamp(Wx.rain + Math.sign(wantR - Wx.rain) * k, 0, 1);
         if (Math.abs(Wx.overcast - wantO) < 1e-3 && Math.abs(Wx.rain - wantR) < 1e-3) Wx.state = Wx.target;
         if (Wx.rain > 0.05) Wx.wet = Math.min(1, Wx.wet + WC.wetRise * Wx.rain * dt); else Wx.wet = Math.max(0, Wx.wet - WC.wetDry * dt);
-        if (Math.abs(Wx.overcast - o0) > 1e-4 || Math.abs(Wx.rain - r0) > 1e-4) Render._envClock = null;   // repaint the sky as the weather moves
+        // repaint the sky as the weather moves: in steps of 0.02 (about every 0.8 s of a 40 s transition) and once on arrival.
+        // Every frame repainted the canvas and re-uploaded it for the whole transition (QAC-24)
+        if (Math.abs(Wx.overcast - o0) > 1e-4 || Math.abs(Wx.rain - r0) > 1e-4) {
+          var ew = Render._envWx, arrived = Wx.overcast === wantO && Wx.rain === wantR;
+          if (!ew || Math.abs(Wx.overcast - ew.o) >= 0.02 || Math.abs(Wx.rain - ew.r) >= 0.02 || arrived) Render._envClock = null;
+        }
         Wx._applyNow();
       },
       _applyNow: function () {
@@ -649,7 +692,9 @@
         var gm = A._mats.ground;
         if (gm) { gm.roughness = 1.0; gm.metalness = 0.0; gm.envMapIntensity = 0.5 + 0.6 * wet; }
         if (A.groundUniforms) { A.groundUniforms.uGtpWet.value = wet; A.groundUniforms.uGtpRain.value = Wx.rain; }
-        if (Wx._puddles) { Wx._puddles.material.opacity = 0.6 * U.smoothstep(wet * 1.6); Wx._puddles.visible = wet > 0.03 && (C.QUALITY.puddles | 0) > 0; }
+        // at night the mirror discs reflect a near-black sky and hid the lamp glare on the wet road under dark blots: they
+        // thin out and roughen so the road's own wet sheen and the lamps show through (QA-A-NGT-09)
+        if (Wx._puddles) { var nt = Render.night || 0, pmat = Wx._puddles.material; pmat.opacity = 0.6 * U.smoothstep(wet * 1.6) * U.lerp(1, 0.35, nt); pmat.roughness = U.lerp(0.02, 0.14, nt); Wx._puddles.visible = wet > 0.03 && (C.QUALITY.puddles | 0) > 0; }
       },
       applyQuality: function () {
         var Wx = Render.weather, Q = C.QUALITY;
@@ -659,7 +704,9 @@
       // per frame: the streaks fall through a box around the camera; the puddles re-seed when the player moves on
       frame: function (dt, cam) {
         var Wx = Render.weather, Q = C.QUALITY, WC = C.WEATHER;
-        var rainOn = Wx.rain > 0.02 && Q.weatherFx && (Q.rainCount | 0) > 0;
+        // indoors (GTP.Interiors.active) there is no rain and no puddle: folded from 13_interiors' weather.frame wrapper
+        var indoors = !!(GTP.Interiors && GTP.Interiors.active);
+        var rainOn = !indoors && Wx.rain > 0.02 && Q.weatherFx && (Q.rainCount | 0) > 0;
         if (Wx._rain) {
           Wx._rain.visible = rainOn;
           if (rainOn) {
@@ -669,18 +716,28 @@
             var pos = Wx._rain.geometry.attributes.position, arr = pos.array, box = WC.rainBox;
             var cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
             Wx._t += dt;
+            // under the Loop's deck no rain falls: with the camera below deck level and a deck tile in the box, drops under
+            // the slab are dropped out of sight (QA-A-NGT-07)
+            var Wd = Render._World, deckCheck = false, tx2, tz2;
+            if (Wd.deck && Wd.deckAt && cy < DECK_Y) {
+              for (tz2 = Math.floor((cz - box) / TILE); tz2 <= Math.floor((cz + box) / TILE) && !deckCheck; tz2++) for (tx2 = Math.floor((cx - box) / TILE); tx2 <= Math.floor((cx + box) / TILE); tx2++) if (Wd.deckAt(tx2, tz2)) { deckCheck = true; break; }
+            }
+            var under = DECK_Y - THICK;
             for (var i = 0; i < used; i++) {
               var k = i * 3, u = Wx._rainUnit;
               // each drop lives in unit space and is wrapped around the camera every frame (no per-drop state to keep)
               var y = u[k + 1] - (Wx._t * WC.rainFall) / (box * 2); y -= Math.floor(y);
               var x = u[k] * box + (Wx._t * Wx.wind) % (box * 2); x = ((x + box) % (box * 2) + (box * 2)) % (box * 2) - box;
               arr[k] = cx + x; arr[k + 1] = cy - box * 0.6 + y * box * 2; arr[k + 2] = cz + u[k + 2] * box;
+              if (deckCheck && arr[k + 1] < under && Wd.deckAt(Math.floor(arr[k] / TILE), Math.floor(arr[k + 2] / TILE))) arr[k + 1] = cy - 1000;
             }
             pos.needsUpdate = true;
           }
         }
+        if (indoors && Wx._puddles) Wx._puddles.visible = false;
         if (Wx._puddles && Wx._puddles.visible) Wx._placePuddles(cam);
       },
+      _byD2: function (a, b) { return a.d2 - b.d2; },
       _placePuddles: function (cam) {
         var Wx = Render.weather, W = Render._World, Q = C.QUALITY, im = Wx._puddles;
         var fx = Render.focusPoint(), px = fx.x, pz = fx.z;
@@ -689,13 +746,28 @@
         Wx._pudSeed = seed;
         var T = W.T, n = Math.min(MAX_PUDDLES, Q.puddles | 0), placed = 0;
         var tx0 = Math.max(0, Math.floor(px / TILE) - 16), tz0 = Math.max(0, Math.floor(pz / TILE) - 16);
-        for (var tz = tz0; tz < Math.min(W.h, tz0 + 32) && placed < n; tz++) for (var tx = tx0; tx < Math.min(W.w, tx0 + 32) && placed < n; tx++) {
+        // every candidate tile of the window, then the n nearest to the focus: the row-order scan spent the whole budget on
+        // the northern rows, so no puddle ever lay south of the player (QA-A-NGT-02)
+        var cand = Wx._pudCand || (Wx._pudCand = []), nc = 0, tz, tx, ci;
+        for (tz = tz0; tz < Math.min(W.h, tz0 + 32); tz++) for (tx = tx0; tx < Math.min(W.w, tx0 + 32); tx++) {
           var t = W.tile(tx, tz);
           if (t !== T.ROAD && t !== T.PARKING && t !== T.PLAZA && t !== T.SIDEWALK) continue;
-          var h = U.hash2(tx, tz, 0x9D);
-          if (h > 0.085) continue;
+          if (U.hash2(tx, tz, 0x9D) > 0.085) continue;
+          var ddx = (tx + 0.5) * TILE - px, ddz = (tz + 0.5) * TILE - pz, rec = cand[nc] || (cand[nc] = { tx: 0, tz: 0, t: 0, d2: 0 });
+          rec.tx = tx; rec.tz = tz; rec.t = t; rec.d2 = ddx * ddx + ddz * ddz; nc++;
+        }
+        cand.length = Math.max(cand.length, nc);
+        var pick = cand.slice(0, nc).sort(Render.weather._byD2);
+        for (ci = 0; ci < pick.length && placed < n; ci++) {
+          var pc = pick[ci]; tx = pc.tx; tz = pc.tz; t = pc.t;
           var ox = U.hash2(tx, tz, 0x9E), oz = U.hash2(tx, tz, 0x9F), sx = 1.0 + U.hash2(tx, tz, 0xA0) * 2.2, sz = 0.7 + U.hash2(tx, tz, 0xA1) * 1.4;
           var x = tx * TILE + 0.6 + ox * (TILE - 1.2), z = tz * TILE + 0.6 + oz * (TILE - 1.2), y = W.groundY(t) + 0.012;
+          if (t === T.SIDEWALK) {
+            // a disc at kerb height stays inside its own tile, or its rim floats over the road (QA-A-NGT-03)
+            var edge = Math.min(x - tx * TILE, (tx + 1) * TILE - x, z - tz * TILE, (tz + 1) * TILE - z) - 0.08;
+            if (edge < 0.35) continue;
+            sx = Math.min(sx, edge); sz = Math.min(sz, edge);
+          }
           _q.setFromAxisAngle(_v2.set(0, 1, 0), U.hash2(tx, tz, 0xA2) * Math.PI);
           _m.compose(_v.set(x, y, z), _q, _v2.set(sx, 1, sz));
           im.setMatrixAt(placed++, _m);
@@ -809,54 +881,92 @@
       if (L._fillBase) L.fill.color.setRGB(L._fillBase.r * T.night[0], L._fillBase.g * T.night[1], L._fillBase.b * T.night[2]);
       Render.districtTint = T;
     },
-    // the light pools: the nearest lamps get a point light, the nearest lit cars (not the player's, which has its own) a spot
+    // the light pools: the nearest lamps get a point light, the nearest lit cars (not the player's, which has its own) a spot.
+    // Lamp slots fade (QA-A-NGT-05): every 0.3 s the wanted set is picked (nearest to the focus, lamps more than 8 m
+    // behind the camera count as 2x farther, knocked-over lamps never); a slot whose lamp left the set fades out over
+    // LAMP_FADE s and only then takes a wanted lamp, which fades in. A cut (teleport, a new free-camera view: the focus
+    // moved 25 m in a frame) snaps the pool instead.
     _updateLightPool: function (dt) {
       var L = Render.lights, Q = C.QUALITY, W = Render._World, lit = Render.lit || 0, i;
       var nP = Math.min(MAX_POINTS, Q.pointLights | 0), nS = Math.min(MAX_SPOTS, Q.headlights | 0);
+      // the player's headlight has an owner only while it is synced: a removed / vacated car goes dark
+      var ho = L.headlightOwner;
+      if (ho && (ho.removed || (typeof ho.hasPlayer === 'function' && !ho.hasPlayer()))) { L.headlight.intensity = 0; L.headlightOwner = null; }
       if (nP > 0) {
         L._lampT -= dt;
-        if (!L._lamps || L._lamps.world !== W._seed) { L._lamps = { world: W._seed, list: (W.props || []).filter(function (p) { return p.kind === 'lamp'; }) }; L._lampT = 0; }
-        if (L._lampT <= 0 || !L._near) {
+        if (!L._lamps || L._lamps.world !== W._seed) { L._lamps = { world: W._seed, list: (W.props || []).filter(function (p) { return p.kind === 'lamp'; }) }; L._lampT = 0; L._slots = null; }
+        var fx = Render.focusPoint(), cut = false;
+        if (!L._slots || L._slots.length !== MAX_POINTS) { L._slots = []; for (i = 0; i < MAX_POINTS; i++) L._slots.push({ p: null, k: 0 }); cut = true; }
+        if (L._lastFx) { var jx = fx.x - L._lastFx.x, jz = fx.z - L._lastFx.z; if (jx * jx + jz * jz > 25 * 25) cut = true; } else L._lastFx = { x: 0, z: 0 };
+        L._lastFx.x = fx.x; L._lastFx.z = fx.z;
+        var slots = L._slots, stamp;
+        if (L._lampT <= 0 || cut || !L._near) {
           L._lampT = 0.3;
-          var fx = Render.focusPoint(), list = L._lamps.list, near = [];
+          stamp = L._wantStamp = (L._wantStamp || 0) + 1;
+          var cam = Render.camera, list = L._lamps.list, near = L._near || (L._near = []), nn = 0, cx = cam.position.x, cz = cam.position.z;
+          cam.getWorldDirection(_v2); var fl = Math.sqrt(_v2.x * _v2.x + _v2.z * _v2.z) || 1, fdx = _v2.x / fl, fdz = _v2.z / fl;
           for (i = 0; i < list.length; i++) {
             var p = list[i]; if (p.fallen) continue;
             var dx = p.x - fx.x, dz = p.z - fx.z, d2 = dx * dx + dz * dz;
             if (d2 > 80 * 80) continue;
-            var j = near.length;
-            if (j < nP || d2 < near[j - 1].d2) {
-              near.push({ p: p, d2: d2 });
-              for (var k = near.length - 1; k > 0 && near[k].d2 < near[k - 1].d2; k--) { var tmp = near[k]; near[k] = near[k - 1]; near[k - 1] = tmp; }
-              if (near.length > nP) near.pop();
+            if ((p.x - cx) * fdx + (p.z - cz) * fdz < -8) d2 *= 4;   // behind the camera: lights nothing the player sees
+            if (nn < nP || d2 < near[nn - 1].d2) {
+              var ins = nn < nP ? nn++ : nn - 1, rec0 = near[ins] || (near[ins] = { p: null, d2: 0 });
+              rec0.p = p; rec0.d2 = d2;
+              for (var k = ins; k > 0 && near[k].d2 < near[k - 1].d2; k--) { var tmp = near[k]; near[k] = near[k - 1]; near[k - 1] = tmp; }
             }
           }
-          L._near = near;
+          L._nearN = nn;
+          for (i = 0; i < nn; i++) near[i].p._gtpWant = stamp;
+          if (cut) for (i = 0; i < MAX_POINTS; i++) { slots[i].p = null; slots[i].k = 0; }
+        }
+        stamp = L._wantStamp;
+        var nearL = L._near, nearN = L._nearN || 0, step = cut ? 1 : dt / LAMP_FADE;
+        for (i = 0; i < MAX_POINTS; i++) {
+          var sl0 = slots[i];
+          if (sl0.p && (i >= nP || sl0.p._gtpWant !== stamp || sl0.p.fallen)) { sl0.k = Math.max(0, sl0.k - step); if (sl0.k <= 0) sl0.p = null; }
+          else if (sl0.p) sl0.k = Math.min(1, sl0.k + step);
+          if (!sl0.p && i < nP) {
+            // a free slot takes the nearest wanted lamp no other slot holds
+            for (var q = 0; q < nearN; q++) {
+              var lampC = nearL[q].p, held = false;
+              for (var s2 = 0; s2 < MAX_POINTS; s2++) if (slots[s2].p === lampC) { held = true; break; }
+              if (!held) { sl0.p = lampC; sl0.k = cut ? 1 : Math.min(1, step); break; }
+            }
+          }
         }
         for (i = 0; i < nP; i++) {
-          var pl = L.points[i], rec = L._near[i];
-          if (!rec || lit < 0.02) { pl.intensity = 0; continue; }
-          var pp = rec.p, d = U.yawToDir(pp.rot || 0);
-          pl.position.set(pp.x + d.x * 1.4, (pp.y == null ? CURB : pp.y) + 5.6, pp.z + d.z * 1.4);
-          pl.intensity = 1.35 * lit * U.clamp(1.3 - Math.sqrt(rec.d2) / 80, 0.25, 1);
+          var pl = L.points[i], sl1 = slots[i];
+          if (!sl1.p || lit < 0.02) { pl.intensity = 0; continue; }
+          var pp = sl1.p, dX = -Math.sin(pp.rot || 0), dZ = -Math.cos(pp.rot || 0), ddx0 = pp.x - fx.x, ddz0 = pp.z - fx.z, ke = sl1.k * sl1.k * (3 - 2 * sl1.k);
+          pl.position.set(pp.x + dX * 1.4, (pp.y == null ? CURB : pp.y) + 5.6, pp.z + dZ * 1.4);   // the arm's head (yawToDir inline)
+          pl.intensity = 1.35 * lit * U.clamp(1.3 - Math.sqrt(ddx0 * ddx0 + ddz0 * ddz0) / 80, 0.25, 1) * ke;
         }
       }
       if (nS > 0 && GTP.Entities) {
-        var cars = GTP.Entities.list, cand = [], night = Render.night || 0, fx2 = Render.focusPoint();
+        // the nS nearest lit cars, kept by insertion in reusable records (a fresh array, a record per car, a sort closure
+        // and two localToWorld objects per spot every frame: QAC-49)
+        var cars = GTP.Entities.list, sc = L._spotCand || (L._spotCand = []), nsc = 0, night = Render.night || 0, fx2 = Render.focusPoint();
+        for (i = sc.length; i < nS; i++) sc.push({ v: null, d2: 0 });
         if (night > 0.25) for (i = 0; i < cars.length; i++) {
           var v = cars[i];
           if (v.kind !== 'vehicle' || v.removed || v.wreck || v.sinking || !(v.driver || v.lights) || v.hasPlayer()) continue;
           if (!v.mesh || !v.mesh.visible) continue;
           var ddx = v.x - fx2.x, ddz = v.z - fx2.z, dd2 = ddx * ddx + ddz * ddz;
           if (dd2 > 70 * 70) continue;
-          cand.push({ v: v, d2: dd2 });
+          if (nsc < nS || dd2 < sc[nsc - 1].d2) {
+            var at = nsc < nS ? nsc++ : nsc - 1; sc[at].v = v; sc[at].d2 = dd2;
+            for (var q2 = at; q2 > 0 && sc[q2].d2 < sc[q2 - 1].d2; q2--) { var tmp2 = sc[q2]; sc[q2] = sc[q2 - 1]; sc[q2 - 1] = tmp2; }
+          }
         }
-        cand.sort(function (a, b) { return a.d2 - b.d2; });
         for (i = 0; i < nS; i++) {
-          var sl = L.spots[i], cv = cand[i];
+          var sl = L.spots[i], cv = i < nsc ? sc[i] : null;
           if (!cv) { sl.intensity = 0; continue; }
-          var vv = cv.v, hp = vv.localToWorld(0, vv.cls.length / 2 - 0.1), tp = vv.localToWorld(0, vv.cls.length / 2 + 13);
-          sl.position.set(hp.x, vv.y + 0.7, hp.z); sl.target.position.set(tp.x, vv.y - 0.3, tp.z);
+          // localToWorld(0, f) inline: forward is (-sin yaw, -cos yaw)
+          var vv = cv.v, fwx = -Math.sin(vv.yaw || 0), fwz = -Math.cos(vv.yaw || 0), hl = vv.cls.length / 2;
+          sl.position.set(vv.x + fwx * (hl - 0.1), vv.y + 0.7, vv.z + fwz * (hl - 0.1)); sl.target.position.set(vv.x + fwx * (hl + 13), vv.y - 0.3, vv.z + fwz * (hl + 13));
           sl.intensity = 2.8 * U.clamp((night - 0.25) / 0.3, 0, 1) * U.clamp(1.4 - Math.sqrt(cv.d2) / 70, 0.3, 1);
+          cv.v = null;
         }
       }
     },
@@ -882,7 +992,8 @@
       var sk = Render.sky, L = Render.lights;
       sk.dome.position.set(cam.position.x, cam.position.y - 40, cam.position.z);
       sk.sun.position.copy(L.sunDir).multiplyScalar(950).add(sk.dome.position);
-      sk.moon.position.set(-L.sunDir.x, 0.6, -L.sunDir.z).normalize().multiplyScalar(950).add(sk.dome.position);
+      if (Render._moonDir) sk.moon.position.copy(Render._moonDir).multiplyScalar(950).add(sk.dome.position);   // on the moonlight (QA-A-NGT-04)
+      else sk.moon.position.set(-L.sunDir.x, 0.6, -L.sunDir.z).normalize().multiplyScalar(950).add(sk.dome.position);
       sk.stars.position.copy(sk.dome.position);
       sk.clouds.position.set(cam.position.x, cam.position.y + 240, cam.position.z);
       sk.cloudMat.uniforms.offset.value.set(t * 0.0022 * Render.weather.wind, t * 0.0009);
@@ -1636,9 +1747,15 @@
         g.box(x0 + b.w * 0.3, cy, z0 + b.d * 0.3, 0.7, 1.1, 0.7, swatch('rust'), tint, GB.NO_BOTTOM);
         return;
       }
-      // flat roof: gravel, parapet, details
-      var rq = [[0, ruv[1]], [b.w / 8, ruv[1]], [b.w / 8, ruv[3]], [0, ruv[3]]];
-      g.quad([x0, top, z0], [x0, top, z1], [x1, top, z1], [x1, top, z0], rq, tint);
+      // flat roof: gravel, parapet, details. The gravel band repeats in u (512 px per 8 m along x) but not in v (its 160 px
+      // are clamped between the atlas bands), so the roof is laid in 2.5 m strips along z, each the band's full height,
+      // every other one mirrored so the seams meet: square texels both ways. It was one quad with u along z and the band
+      // stretched across the whole depth, 5-40x streaks (QA-A-VIS-01)
+      var GS = 2.5, vIn = (ruv[3] - ruv[1]) * 2 / 160, vb0 = ruv[1] + vIn, vb1 = ruv[3] - vIn, uw = b.w / 8;
+      for (var zs = z0, si = 0; zs < z1 - 1e-3; zs += GS, si++) {
+        var ze = Math.min(z1, zs + GS), va = si % 2 ? vb1 : vb0, ve = va + (si % 2 ? -1 : 1) * (vb1 - vb0) * (ze - zs) / GS;
+        g.quad([x0, top, zs], [x0, top, ze], [x1, top, ze], [x1, top, zs], [[0, va], [0, ve], [uw, ve], [uw, va]], tint);
+      }
       var pt = A.bandUV(7, 1), pq = [[0, pt[1]], [1, pt[1]], [1, pt[3]], [0, pt[3]]], pth = 0.35, ph = 0.6;
       var parapet = function (f) { return f === 'top' ? swatch('concreteLight') : pq; };
       g.box(x0, top, z0, b.w, ph, pth, parapet, tint, GB.NO_BOTTOM);
@@ -1723,7 +1840,7 @@
         if (p.hidden) continue;   // collision-only props (a ship's hull circles, crane legs)
         if (p.kind === 'sign' || p.kind === 'billboard') signs.push(p);
         if (p.kind === 'sign' && !p.standing && !p.pole) continue;   // wall-mounted signs have no post
-        if (p.kind === 'lamp') lamps.push(p);
+        if (p.kind === 'lamp' && !p.fallen) lamps.push(p);   // a knocked-over lamp has no glow (QA-A-ENT-03)
         if (p.kind === 'beacon') beacons.push(p);
         if (p.kind === 'edgelight') edgelights.push(p);
         (byKind[p.kind] || (byKind[p.kind] = [])).push(p);
@@ -1775,8 +1892,10 @@
       });
       // text signs: one plane each (textures cached by text)
       signs.forEach(function (p) {
-        var ar = Math.max(1, (p.w || 4) / (p.h || 1));
-        var ratio = p.banner ? 0.5 : ar >= 3 ? 4 : ar >= 1.5 ? 2 : 1;
+        // the texture's aspect: the nearest of SIGN_AR (no sign stretches its letters by more than ~15 %); it was 1, 2 or
+        // 4 for planes up to 13:1, so half the signs had wide squat lettering, up to 3.2x (QA-A-VIS-06)
+        var ar = Math.max(1, (p.w || 4) / (p.h || 1)), ratio = 0.5;
+        if (!p.banner) { ratio = 1; for (var ri = 0; ri < SIGN_AR.length; ri++) if (Math.abs(Math.log(ar / SIGN_AR[ri])) < Math.abs(Math.log(ar / ratio))) ratio = SIGN_AR[ri]; }
         var mat = A.signMaterial(p.text || '', !!p.neon, ratio, (p.target || p.gold || p.brass || p.banner) ? { target: !!p.target, gold: !!p.gold, brass: !!p.brass, banner: !!p.banner } : null);
         var geo = Render._planeGeo(p.w || 4, p.h || 1);
         var mesh = new THREE.Mesh(geo, mat);
@@ -1809,6 +1928,8 @@
         var pm = new THREE.PointsMaterial({ map: A.glow, size: 3.2, sizeAttenuation: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0, color: 0xffd9a0 });
         var ptsMesh = new THREE.Points(pg, pm); ptsMesh.renderOrder = 6; ptsMesh.userData.own = true;
         ch.group.add(ptsMesh); ch.glowPts = ptsMesh;
+        // each lamp remembers its pool quad (4 vertices) and sprite, so knocking it over can put them out
+        lamps.forEach(function (p, li) { p._glowCh = ch; p._glowI = li; });
       }
       // the airfield: runway edge lights glow at night (a second Points batch), beacons blink red all day
       if (edgelights.length) {
@@ -1859,7 +1980,16 @@
     // ---------------------------------------------------- knocked props --
     // A knocked prop tips over its base in the car's direction over 0.45 s (an InstancedMesh matrix update, no new draw).
     _fallen: [],
-    knockProp: function (p) { if (p && Render._fallen.indexOf(p) < 0) Render._fallen.push(p); },
+    knockProp: function (p) { if (p && Render._fallen.indexOf(p) < 0) Render._fallen.push(p); if (p && p.kind === 'lamp') Render._dropGlow(p); },
+    // a knocked-over lamp goes dark: its pool quad collapses and its glow sprite drops out of sight (the light pool skips
+    // fallen lamps; a chunk rebuild leaves them out). It kept glowing 6 m up in the air (QA-A-ENT-03)
+    _dropGlow: function (p) {
+      var ch = p._glowCh, i = p._glowI; if (!ch || i == null) return;
+      if (ch.glow && ch.glow.geometry) { var gp = ch.glow.geometry.attributes.position; if (gp && (i + 1) * 4 <= gp.count) { for (var v = i * 4; v < i * 4 + 4; v++) gp.setXYZ(v, gp.getX(i * 4), -50, gp.getZ(i * 4)); gp.needsUpdate = true; } }
+      var pts = ch.glowPts && ch.glowPts.name !== 'edgelights' ? ch.glowPts.geometry.attributes.position : null;
+      if (pts && i < pts.count) { pts.setY(i, -50); pts.needsUpdate = true; }
+      p._glowCh = null;
+    },
     _fallenMatrix: function (p, k, out) {
       var inst = p._inst, f = p.fallen, ease = k * k * (3 - 2 * k), tilt = ease * 1.5;
       _v2.set(f.dz, 0, -f.dx);   // up x fallDir: tipping about this axis leans the prop toward the fall direction
@@ -1921,7 +2051,7 @@
       if (e.mesh.parent) e.mesh.parent.remove(e.mesh);
       var ud = e.mesh.userData;
       if (ud && ud.paint) ud.paint.dispose();
-      if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.visible = false; Render.lights.headlightOwner = null; }
+      if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.intensity = 0; Render.lights.headlightOwner = null; }
     },
     // drop an entity's mesh and build it again from its current state (a vehicle after a mod shop visit, a ped after an
     // outfit or a haircut): same parent, same pose; returns the new mesh (v0.3: the vehicles and systems tracks call it)
@@ -1933,7 +2063,7 @@
       if (old && old !== fresh) {
         if (old.parent) old.parent.remove(old);
         var ud = old.userData; if (ud && ud.paint) ud.paint.dispose();
-        if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.visible = false; Render.lights.headlightOwner = null; }
+        if (e.kind === 'vehicle' && Render.lights && Render.lights.headlightOwner === e) { Render.lights.headlight.intensity = 0; Render.lights.headlightOwner = null; }
         old.traverse(function (o) { if (o.geometry && o.userData && o.userData.own) o.geometry.dispose(); });
       }
       e.mesh = fresh;
@@ -1957,8 +2087,11 @@
       }
       if (e.kind === 'pickup') return (GTP.Combat && GTP.Combat.pickupMesh) ? GTP.Combat.pickupMesh(e) : A.pickupMesh(e.pickupType);
       if (e.kind === 'projectile') {
-        var pm = new THREE.Mesh(new THREE.SphereGeometry(e.weaponId === 'hottake' ? 0.16 : 0.07, 6, 4), e.weaponId === 'hottake' ? Render._hotMat() : A.colorMaterial('#ffe08a'));
-        return pm;
+        // two shared spheres (never disposed): a sphere per throw was never freed, +1 GPU geometry each (stab-QA-D-08)
+        var hot = e.weaponId === 'hottake', PG = Render._projGeo || (Render._projGeo = {});
+        var pg = PG[hot ? 'hot' : 'shot'] || (PG[hot ? 'hot' : 'shot'] = new THREE.SphereGeometry(hot ? 0.16 : 0.07, 6, 4));
+        pg.userData.shared = true;
+        return new THREE.Mesh(pg, hot ? Render._hotMat() : A.colorMaterial('#ffe08a'));
       }
       return null;
     },
@@ -2014,7 +2147,9 @@
     },
     // called from Vehicle.syncMesh: wheels, light states, wreck look, the player's headlight spot
     syncVehicle: function (v) {
-      var m = v.mesh, ud = m && m.userData; if (!ud || !ud.rec) return;
+      // a mesh another track builds and drives (06b's aircraft, boats, bikes: userData.gtpVehicle, or no userData.rec) is
+      // left alone (folded from 06b_vehicles_air_sea's syncVehicle wrapper)
+      var m = v.mesh, ud = m && m.userData; if (!ud || !ud.rec || ud.gtpVehicle) return;
       var rec = ud.rec, mats = ud.mats, M = Render._vehicleMats(), wheels = ud.wheels, i, o;
       for (i = 0; i < rec.wheelOffsets.length; i++) {
         o = rec.wheelOffsets[i];
@@ -2034,17 +2169,17 @@
           if (v.siren) { var ph = Math.floor(v.age * 5) % 2; mats[5] = ph ? M.barOn : M.barOff; mats[6] = ph ? M.barOff : M.barOn; }
           else { mats[5] = M.barDim; mats[6] = M.barDim; }
         }
-        // the player's car throws a real spotlight at night
+        // the player's car throws a real spotlight at night (the spot stays visible; off is intensity 0, QA-A-NGT-06)
         var L = Render.lights;
         if (L && L.headlight && v.hasPlayer()) {
           L.headlightOwner = v;
-          L.headlight.visible = lightsOn;
+          L.headlight.intensity = lightsOn ? HEADLIGHT_I : 0;
           if (lightsOn) {
             var p = v.localToWorld(0, v.cls.length / 2 - 0.1), t = v.localToWorld(0, v.cls.length / 2 + 14);
             L.headlight.position.set(p.x, v.y + rec.lightPoints.head.y, p.z);
             L.headlight.target.position.set(t.x, v.y - 0.3, t.z);
           }
-        } else if (L && L.headlightOwner === v) { L.headlight.visible = false; L.headlightOwner = null; }
+        } else if (L && L.headlightOwner === v) { L.headlight.intensity = 0; L.headlightOwner = null; }
       }
     },
 
@@ -2160,14 +2295,25 @@
         var geo = new THREE.PlaneGeometry(1, 1);
         var alpha = new THREE.InstancedBufferAttribute(new Float32Array(N), 1); alpha.setUsage(THREE.DynamicDrawUsage);
         geo.setAttribute('iAlpha', alpha);
+        // iShape: 0 = a skid (the plain rectangle), > 0 = a scorch / stain: a soft round mark with a ragged edge, its value
+        // seeding the edge (QA-A-ENT-05: explosions left hard black 5 x 5 m squares)
+        var shape = new THREE.InstancedBufferAttribute(new Float32Array(N), 1); shape.setUsage(THREE.DynamicDrawUsage);
+        geo.setAttribute('iShape', shape);
         var mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
         mat.onBeforeCompile = function (sh) {
           sh.vertexShader = sh.vertexShader
-            .replace('#include <common>', '#include <common>\nattribute float iAlpha;\nvarying float vIAlpha;')
-            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvIAlpha = iAlpha;');
+            .replace('#include <common>', '#include <common>\nattribute float iAlpha;\nattribute float iShape;\nvarying float vIAlpha;\nvarying float vIShape;\nvarying vec2 vDUv;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvIAlpha = iAlpha; vIShape = iShape; vDUv = uv;');
           sh.fragmentShader = sh.fragmentShader
-            .replace('#include <common>', '#include <common>\nvarying float vIAlpha;')
-            .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse, opacity * vIAlpha );');
+            .replace('#include <common>', '#include <common>\nvarying float vIAlpha;\nvarying float vIShape;\nvarying vec2 vDUv;')
+            .replace('vec4 diffuseColor = vec4( diffuse, opacity );', [
+              'float gtpA = vIAlpha;',
+              'if ( vIShape > 0.0 ) {',
+              '  vec2 q = vDUv * 2.0 - 1.0; float rr = length( q ), an = atan( q.y, q.x ), sd = vIShape * 37.0;',
+              '  float edge = 0.78 + 0.1 * sin( an * 5.0 + sd ) + 0.06 * sin( an * 11.0 + sd * 1.7 ) + 0.04 * sin( an * 23.0 + sd * 2.3 );',
+              '  gtpA *= ( 1.0 - smoothstep( edge * 0.35, edge, rr ) ) * ( 0.85 + 0.15 * sin( rr * 19.0 + sd ) );',
+              '}',
+              'vec4 diffuseColor = vec4( diffuse, opacity * gtpA );'].join('\n'));
         };
         mat.customProgramCacheKey = function () { return 'gtp-decals'; };
         var im = new THREE.InstancedMesh(geo, mat, N);
@@ -2176,7 +2322,7 @@
         var zero = new THREE.Matrix4().makeScale(0, 0, 0), white = new THREE.Color(0xffffff);
         for (i = 0; i < N; i++) { im.setMatrixAt(i, zero); im.setColorAt(i, white); }
         im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
-        F._decalIM = im; F._decalAlpha = alpha; F._decalFree = [];
+        F._decalIM = im; F._decalAlpha = alpha; F._decalShape = shape; F._decalFree = [];
         for (i = N - 1; i >= 0; i--) F._decalFree.push(i);
         F._decalM = new THREE.Matrix4(); F._decalP = new THREE.Vector3(); F._decalQ = new THREE.Quaternion(); F._decalS = new THREE.Vector3(); F._decalE = new THREE.Euler(); F._decalC = new THREE.Color();
         Render.fxGroup.add(im);
@@ -2192,7 +2338,9 @@
         F._decalC.set(o.color || (o.type === 'skid' ? 0x14161a : 0x303030));
         F._decalIM.setColorAt(slot, F._decalC);
         F._decalAlpha.array[slot] = o.type === 'skid' ? 0.55 : 0.7;
-        F._decalIM.instanceMatrix.needsUpdate = true; F._decalIM.instanceColor.needsUpdate = true; F._decalAlpha.needsUpdate = true;
+        // a decal is round unless it asks for a rectangle (o.square); the edge seed comes from where it lies (no rng draw)
+        F._decalShape.array[slot] = o.type === 'skid' || o.square ? 0 : 0.05 + 0.95 * U.hash2(Math.round(o.x * 4), Math.round(o.z * 4), 77);
+        F._decalIM.instanceMatrix.needsUpdate = true; F._decalIM.instanceColor.needsUpdate = true; F._decalAlpha.needsUpdate = true; F._decalShape.needsUpdate = true;
       },
       add: function (o) {
         o = o || {}; o.t = 0;

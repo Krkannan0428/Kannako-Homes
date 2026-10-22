@@ -438,8 +438,16 @@
       if (F._mats.ssao) F._mats.ssao.uniforms.samples.value = F.flags.samples;
       if (!F.enabled) F._dispose();
     },
+    // the targets follow the real drawing buffer (the browser clamps a huge canvas) and stay within the GPU's texture /
+    // renderbuffer limits, aspect kept: past them every target was incomplete and the frame black with no error (QAC-26)
     resize: function (w, h) {
-      var F = PostFX;
+      var F = PostFX, r = F.renderer;
+      if (r) {
+        var gl = r.getContext();
+        if (gl.drawingBufferWidth > 1 && gl.drawingBufferHeight > 1) { w = Math.min(w, gl.drawingBufferWidth); h = Math.min(h, gl.drawingBufferHeight); }
+        var cap = Math.min(r.capabilities.maxTextureSize || 4096, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) || 4096);
+        var k = Math.min(1, cap / Math.max(w, h, 1)); w = Math.floor(w * k); h = Math.floor(h * k);
+      }
       F.width = Math.max(2, w | 0); F.height = Math.max(2, h | 0);
       F._dispose();
     },
@@ -448,7 +456,7 @@
       [F._rt, F._aoRT, F._aoRT2, F._threshRT, F._ldrRT, F._bloomOut, F._histA, F._histB, F._tmpRT, F._ssrRT, F._dofRT].forEach(function (rt) { if (rt) rt.dispose(); });
       F._bloomRTs.forEach(function (rt) { rt.dispose(); }); (F._upRTs || []).forEach(function (rt) { rt.dispose(); });
       F._rt = F._aoRT = F._aoRT2 = F._threshRT = F._ldrRT = F._bloomOut = F._histA = F._histB = F._tmpRT = F._ssrRT = F._dofRT = null; F._bloomRTs = []; F._upRTs = [];
-      F._histValid = false;
+      F._histValid = false; F._fbOk = false;
     },
     _ensure: function () {
       var F = PostFX, w = F.width, h = F.height;
@@ -532,6 +540,8 @@
         var taa = F.flags.taa;
         if (taa) { F._aspect = camera.aspect; var hi = (F._frame++ % 8) + 1; camera.setViewOffset(w, h, F._halton(hi, 2) - 0.5, F._halton(hi, 3) - 0.5, w, h); }
         renderer.setRenderTarget(F._rt);
+        // once per allocation: an incomplete scene target (a GPU limit, a lost context) falls back to the plain path below
+        if (!F._fbOk) { var glc = renderer.getContext(); if (glc.checkFramebufferStatus(glc.FRAMEBUFFER) !== glc.FRAMEBUFFER_COMPLETE && !glc.isContextLost()) throw new Error('postfx: incomplete framebuffer ' + w + 'x' + h); F._fbOk = true; }
         renderer.clear();
         renderer.render(scene, camera);
         // the matrices TAA and the motion blur reproject with: this frame's (jittered) inverse, the last frame's view-projection
