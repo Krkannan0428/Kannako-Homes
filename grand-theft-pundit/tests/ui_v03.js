@@ -255,13 +255,24 @@ H.run('ui_v03', async (t) => {
   console.log('  heist: ' + JSON.stringify(heist));
   t.assert(heist.plan && heist.plan.approach === heist.aps[1] && heist.plan.crew.join() === heist.ids.slice(0, 3).join() && (!heist.heistIds || heist.ids.join() === heist.heistIds.join()) && !heist.modal, 'the board emits heist:plan {approach, crew}: ' + JSON.stringify(heist.plan));
 
-  // ---- 11. golf ----
-  await page.evaluate(() => { GTP.Events.emit('golf:start', { hole: 3, par: 4, wind: { speed: 9, dir: 0.7 }, club: 'Driver', dist: 312 }); T_.adv(0.2); T_.press('right', 20); T_.press('shoot'); T_.adv(0.55); GTP.game.render(); });
+  // ---- 11. golf: GTP.Systems.golf owns the round and reads the input; the UI draws its state ----
+  await page.evaluate(() => {
+    const S = GTP.Systems; window.GOLF_SHOTS = 0; GTP.Events.on('golf:shot', () => { GOLF_SHOTS++; });
+    window.GOLF_START = S.golf.start({ force: true, hole: 2 }); T_.adv(0.2);
+    T_.press('shoot'); T_.adv(0.4); GTP.game.render();   // the first press starts Systems' meter
+  });
   await shot('golf');
-  const golf = await page.evaluate(() => { const G = T_.ui.golf, a = { power: G.power, phase: G.phase, ctl: GTP.game.player.controlEnabled }; T_.press('shoot'); a.shot = T_.last('golf:shot'); GTP.Events.emit('golf:end', { strokes: 3, par: 4 }); T_.adv(0.5); GTP.game.render(); a.term = T_.ui.golfEnd && T_.ui.golfEnd.strokes; a.ctl2 = GTP.game.player.controlEnabled; return a; });
+  const golf = await page.evaluate(() => {
+    const G = T_.ui.golf, st = GTP.Systems.golf.state(), a = { start: GOLF_START, hole: G && G.hole, sysHole: st.hole, phase: G && G.phase, sysPhase: st.phase, meter: G && G.power, ctl: GTP.game.player.controlEnabled, club: G && G.club };
+    T_.press('shoot'); T_.adv(0.1); a.shots = GOLF_SHOTS; a.phase2 = T_.ui.golf && T_.ui.golf.phase;   // the second press: one golf:shot, from Systems
+    GTP.Systems.golf.settle(30); T_.adv(0.2);
+    GTP.Systems.golf.quit(); T_.adv(0.5); GTP.game.render();
+    a.card = T_.ui.golfEnd && { round: !!T_.ui.golfEnd.round, strokes: T_.ui.golfEnd.strokes }; a.after = !!T_.ui.golf; a.ctl2 = GTP.game.player.controlEnabled;
+    return a;
+  });
   await shot('golf_end');
   console.log('  golf: ' + JSON.stringify(golf));
-  t.assert(golf.phase === 'swing' && golf.ctl === false && golf.shot && golf.shot.power > 0.2 && golf.shot.angle > 0 && golf.ctl2 === true, 'the swing meter emits golf:shot {power, angle}; golf:end hands control back: ' + JSON.stringify(golf));
+  t.assert(golf.start && golf.start.ok && golf.hole === golf.sysHole + 1 && golf.phase === 'swing' && golf.sysPhase === 'swing' && golf.meter > 0 && golf.club && golf.shots === 1 && golf.phase2 === 'flight' && !golf.after && golf.ctl2 !== false, 'golf draws Systems.golf.state() (1-based hole, its meter, its club), the UI emits no golf:shot of its own, golf:end clears the panel: ' + JSON.stringify(golf));
   await page.evaluate(() => T_.adv(4.6));
 
   // ---- 12. prompts, crosshair, fuse, parachute, vehicle HUDs, boss, specials, achievement, fade ----
