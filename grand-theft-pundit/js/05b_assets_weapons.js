@@ -1,7 +1,7 @@
 /* Grand Theft Pundit: 05b_assets_weapons.js
  * The v0.3 arsenal's meshes: low-poly, vertex-coloured, built once per (id, tint) with GTP.GeoBuilder and shared between
- * every hand, holster, rack and crate. 36 built weapons (fists have no mesh) plus a class fallback, so a weapon id that only
- * exists in GTP.Content.parity.weapons still gets a believable gun of its class.
+ * every hand, holster, rack and crate. 46 built weapons (fists have no mesh); the content track's ids for weapons built here under
+ * another id draw that mesh (ALIAS), and any other unknown id gets a built weapon of its class, so it always has a believable mesh.
  *
  * Weapon-space convention (every gun): the trigger hand's palm sits at the origin, the barrel runs along +x, up is +y, the
  * grip goes down -y. Melee weapons put the handle at the origin and the head along +x. Thrown things and the megaphone stand
@@ -28,7 +28,10 @@
   var A = GTP.Assets = GTP.Assets || {};
   var GB = GTP.GeoBuilder, UV = GB.UV0, TAU = Math.PI * 2;
 
-  function c(hex) { var n = parseInt(hex.slice(1), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
+  // colours are authored in sRGB; vertex colours are linear (three r152 colour management), so a gunmetal #26272c stays near
+  // black instead of rendering as a pale #6b6b6b grey
+  function lin(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  function c(hex) { var n = parseInt(hex.slice(1), 16); return [lin(((n >> 16) & 255) / 255), lin(((n >> 8) & 255) / 255), lin((n & 255) / 255)]; }
   // the tintable colours come first: a tint swaps exactly these two (and POLY) for its own pair
   var GUN = c('#26272c'), GUN2 = c('#3a3c44'), POLY = c('#2d2f34');
   var STEEL = c('#8e939c'), CHROME = c('#c9ccd4'), WOOD = c('#5a3a22'), WOOD2 = c('#7a5230'), BROWN = c('#4a3524');
@@ -314,6 +317,80 @@
     smoke: function (g) { g.cylinder(0, 0, 0, 0.035, 0.035, 0.14, 8, GREY); g.cylinder(0, 0.06, 0, 0.037, 0.037, 0.03, 8, CHROME); g.cylinder(0, 0.14, 0, 0.02, 0.02, 0.025, 6, GUN); box(g, 0.015, 0.11, -0.005, 0.012, 0.06, 0.01, STEEL); tubeZ(g, -0.03, 0.17, -0.003, 0.003, 0.014, STEEL, 6); return { len: 0.18, upright: true, holster: 'none', hold: 'one' }; },
     // the Sticky Note: a yellow pad with a blinking light and a timer strip
     stickynote: function (g) { box(g, -0.045, 0.0, -0.045, 0.09, 0.03, 0.09, YELLOW); box(g, -0.04, 0.03, -0.04, 0.08, 0.004, 0.08, c('#ffe98a')); box(g, -0.01, 0.034, -0.01, 0.02, 0.012, 0.02, RED); box(g, -0.035, 0.034, 0.02, 0.07, 0.004, 0.012, GUN); return { len: 0.09, upright: true, holster: 'none', hold: 'one' }; },
+    // ---- the content track's additions (parity ids without a fallback twin) ----
+    // The Run of Show: a clipboard held by its bottom edge, the run sheet under the clip
+    clipboard: function (g) {
+      bx(g, -0.02, 0.33, -0.006, 0.006, 0.23, c('#8a5a32')); bx(g, 0.0, 0.31, 0.006, 0.008, 0.2, WHITE);
+      for (var i = 0; i < 6; i++) bx(g, 0.03 + i * 0.04, 0.035 + i * 0.04, 0.008, 0.009, 0.15, GREY);
+      bx(g, 0.27, 0.32, 0.006, 0.02, 0.09, CHROME); tubeZ(g, 0.3, 0.02, -0.035, 0.035, 0.008, STEEL, 6);
+      return { len: 0.35, holster: 'back', hold: 'one', melee: true };
+    },
+    // Par Ten Putter: a rubber grip, a chrome shaft, a gold putter head
+    golf_club: function (g) {
+      tube(g, -0.06, 0.24, 0.016, 0.013, RUBBER, 8); tube(g, 0.24, 0.92, 0.008, 0.006, CHROME, 6);
+      tube(g, 0.9, 0.96, 0.009, 0.012, GUN, 6); bx(g, 0.94, 1.0, -0.035, 0.0, 0.11, GOLD); bx(g, 0.995, 1.0, -0.03, -0.004, 0.09, GUN);
+      return { len: 1.02, holster: 'back', hold: 'two', melee: true };
+    },
+    // The Mic Stand: a chrome pole, the round base at the swinging end, the mic in its clip near the hands
+    mic_stand: function (g) {
+      tube(g, -0.06, 0.22, 0.014, 0.014, RUBBER, 8); tube(g, 0.22, 1.08, 0.011, 0.011, CHROME, 7);
+      tube(g, 1.06, 1.1, 0.12, 0.12, GUN, 12); tube(g, 1.1, 1.11, 0.1, 0.08, GUN2, 12);
+      tube(g, -0.1, -0.06, 0.018, 0.018, GUN2, 7); g.sphere(-0.14, 0, 0, 0.035, 8, 4, STEEL); tube(g, -0.12, -0.09, 0.02, 0.016, GUN, 7);
+      return { len: 1.15, holster: 'back', hold: 'two', melee: true };
+    },
+    // The Footnote: a two-shot pocket pistol, the barrels stacked
+    pocket: function (g) {
+      bx(g, -0.03, 0.09, 0.0, 0.05, 0.022, CHROME); tube(g, 0.0, 0.1, 0.009, 0.009, STEEL, 7, 0.038, 0); tube(g, 0.0, 0.1, 0.009, 0.009, STEEL, 7, 0.016, 0);
+      pistolGrip(g, c('#e8dcc0'), 0.07, 0.024, 0.035); bx(g, -0.042, -0.026, 0.035, 0.06, 0.008, STEEL); triggerGuard(g, 0.0, 0.035, CHROME);
+      return { muzzle: [0.1, 0.038, 0], rail: [0.02, 0.05, 0], under: [0.05, 0.0, 0], mag: [-0.04, -0.07, 0], support: [-0.012, -0.04, 0.026], len: 0.14 };
+    },
+    // The Thread: a boxy machine pistol, the long magazine through the grip, a wire stock folded under
+    micro_smg: function (g) {
+      var f = pistolKit(g, { len: 0.2, slideH: 0.045, w: 0.036, slide: GUN, frame: POLY, gripLen: 0.09 });
+      magazine(g, -0.064, -0.088, 0.13, 0.03, 0.026, GUN2, -0.015);
+      bx(g, -0.04, 0.12, -0.01, -0.002, 0.012, STEEL); bx(g, 0.11, 0.122, -0.045, -0.002, 0.03, STEEL);
+      tube(g, 0.16, 0.2, 0.013, 0.013, GUN, 7, 0.05, 0); bx(g, -0.02, 0.1, 0.075, 0.079, 0.03, c('#2ee6ff'));
+      f.mag = [-0.08, -0.215, 0]; f.support = [0.1, -0.045, 0]; f.muzzle = [0.2, 0.05, 0]; f.len = 0.24; return f;
+    },
+    // The Signal Boost: a fat orange flare pistol
+    flare_gun: function (g) {
+      bx(g, -0.05, 0.06, -0.004, 0.06, 0.04, ORANGE); tube(g, 0.02, 0.26, 0.026, 0.026, ORANGE, 10, 0.034, 0); tube(g, 0.25, 0.27, 0.03, 0.03, c('#ff9a40'), 10, 0.034, 0);
+      pistolGrip(g, ORANGE, 0.1, 0.034, 0.03); triggerGuard(g, 0.0, 0.05, c('#c84a14')); bx(g, -0.065, -0.045, 0.04, 0.07, 0.012, GUN);
+      bx(g, 0.1, 0.18, 0.058, 0.062, 0.03, PINK);
+      return { muzzle: [0.27, 0.034, 0], rail: [0.08, 0.06, 0], under: [0.18, 0.0, 0], mag: [0.02, 0.034, 0], support: [-0.012, -0.05, 0.03], len: 0.33 };
+    },
+    // Breaking News: a stun canister with a red band and a chyron strip, a spoon and a pin
+    flashbang: function (g) {
+      g.cylinder(0, 0, 0, 0.032, 0.032, 0.13, 8, GREY); g.cylinder(0, 0.03, 0, 0.034, 0.034, 0.02, 8, RED); g.cylinder(0, 0.07, 0, 0.034, 0.034, 0.025, 8, WHITE);
+      g.cylinder(0, 0.13, 0, 0.018, 0.018, 0.022, 6, GUN); box(g, 0.015, 0.09, -0.006, 0.012, 0.07, 0.012, STEEL); tubeZ(g, -0.028, 0.15, -0.003, 0.003, 0.014, STEEL, 6);
+      return { len: 0.17, upright: true, holster: 'none', hold: 'one' };
+    },
+    // The Follow-Up Question: a six-round revolving launcher with a fat barrel, a foregrip and a folding stock
+    grenade_launcher: function (g) {
+      tube(g, -0.02, 0.16, 0.075, 0.075, GUN2, 6, 0.05, 0); for (var i = 0; i < 6; i++) { var a = i / 6 * TAU; tube(g, 0.155, 0.165, 0.016, 0.016, BRASS, 6, 0.05 + Math.cos(a) * 0.045, Math.sin(a) * 0.045); }
+      tube(g, 0.16, 0.5, 0.032, 0.032, GUN, 10, 0.05, 0); tube(g, 0.47, 0.51, 0.038, 0.038, OLIVE, 10, 0.05, 0);
+      bx(g, 0.2, 0.42, 0.005, 0.02, 0.05, OLIVE); prism(g, [[0.29, 0.005], [0.33, 0.005], [0.325, -0.08], [0.295, -0.08]], 0.026, POLY);
+      bx(g, -0.06, 0.0, -0.005, 0.06, 0.044, GUN); pistolGrip(g, POLY, 0.1, 0.034); triggerGuard(g, 0.0, 0.05, GUN);
+      bx(g, -0.3, -0.06, 0.03, 0.045, 0.014, STEEL); bx(g, -0.3, -0.06, -0.03, -0.015, 0.014, STEEL); bx(g, -0.32, -0.3, -0.05, 0.06, 0.05, RUBBER);
+      bx(g, 0.02, 0.14, 0.125, 0.14, 0.02, GUN); bx(g, 0.05, 0.07, 0.115, 0.15, 0.03, GUN2);
+      return { muzzle: [0.51, 0.05, 0], rail: [0.08, 0.13, 0], under: [0.31, 0.0, 0], mag: [0.07, -0.03, 0], support: [0.31, -0.045, 0], len: 0.83, holster: 'back', hold: 'two' };
+    },
+    // The Merch Cannon: a T-shirt cannon, a pink-striped tube over an air tank, a rolled shirt in the muzzle
+    merch_cannon: function (g) {
+      tube(g, -0.12, 0.62, 0.055, 0.055, c('#3a3c44'), 12, 0.11, 0); tube(g, 0.1, 0.2, 0.057, 0.057, PINK, 12, 0.11, 0); tube(g, 0.6, 0.64, 0.064, 0.064, CREAM, 12, 0.11, 0);
+      tube(g, 0.62, 0.635, 0.045, 0.045, c('#ff3fa4'), 10, 0.11, 0);
+      tube(g, -0.1, 0.36, 0.038, 0.038, c('#d8dde6'), 10, -0.035, 0); tube(g, 0.36, 0.4, 0.038, 0.02, CHROME, 10, -0.035, 0); bx(g, 0.04, 0.08, -0.01, 0.07, 0.03, STEEL);
+      pistolGrip(g, RUBBER, 0.1, 0.034); triggerGuard(g, 0.0, 0.05, GUN); bx(g, 0.24, 0.28, -0.12, -0.07, 0.03, RUBBER);
+      return { muzzle: [0.64, 0.11, 0], rail: [0.2, 0.17, 0], under: [0.26, -0.07, 0], mag: [0.0, -0.07, 0], support: [0.26, -0.095, 0], len: 0.78, holster: 'back', hold: 'two' };
+    },
+    // The Mute Button: a handheld remote with a big red button and a stub antenna pointed at whoever is talking
+    mute_button: function (g) {
+      bx(g, -0.03, 0.15, -0.005, 0.03, 0.05, GUN); bx(g, -0.02, 0.14, 0.03, 0.034, 0.044, GUN2);
+      g.cylinder(0.07, 0.034, 0, 0.016, 0.018, 0.016, 10, RED); g.sphere(0.07, 0.05, 0, 0.012, 8, 4, c('#ff5a4a'));
+      tube(g, 0.15, 0.24, 0.005, 0.003, STEEL, 6, 0.015, 0); g.sphere(0.24, 0.015, 0, 0.008, 6, 3, RED);
+      pistolGrip(g, RUBBER, 0.07, 0.04, 0.0);
+      return { muzzle: [0.24, 0.015, 0], rail: [0.06, 0.034, 0], under: [0.1, -0.005, 0], mag: [-0.02, -0.07, 0], support: [-0.012, -0.04, 0.03], len: 0.27 };
+    },
     // the Scalding Latte: a paper cup, a sleeve, a lid
     coffee: function (g) { g.cylinder(0, 0, 0, 0.034, 0.045, 0.14, 9, WHITE); g.cylinder(0, 0.04, 0, 0.038, 0.042, 0.05, 9, c('#a0683a')); g.cylinder(0, 0.14, 0, 0.048, 0.046, 0.018, 9, WHITE); g.cylinder(0, 0.158, 0, 0.04, 0.03, 0.012, 9, WHITE); return { len: 0.17, upright: true, holster: 'none', hold: 'one' }; }
   };
@@ -323,8 +400,14 @@
     pistol: 'pistol', oped: 'pistol', filibuster: 'pistol', revolver: 'pistol', smg: 'smg', threadpistol: 'smg', liveblog: 'smg', pocketsmg: 'smg',
     lmg: 'lmg', combatmg: 'lmg', rifle: 'rifle', carbine: 'rifle', battlerifle: 'rifle', bullpup: 'rifle', shotgun: 'shotgun', doublebarrel: 'shotgun',
     autoshotgun: 'shotgun', sawnoff: 'shotgun', sniper: 'sniper', marksman: 'sniper', heavysniper: 'sniper', ratio: 'launcher', confetti: 'launcher',
-    spin: 'launcher', firework: 'launcher', hottake: 'thrown', hotmic: 'thrown', smoke: 'thrown', stickynote: 'thrown', coffee: 'thrown'
+    spin: 'launcher', firework: 'launcher', hottake: 'thrown', hotmic: 'thrown', smoke: 'thrown', stickynote: 'thrown', coffee: 'thrown',
+    clipboard: 'melee', golf_club: 'melee', mic_stand: 'melee', pocket: 'pistol', micro_smg: 'smg', flare_gun: 'special', flashbang: 'thrown',
+    grenade_launcher: 'launcher', merch_cannon: 'launcher', mute_button: 'special'
   };
+  // the content track's ids for weapons the fallback table built under its own id (Combat's LEGACY map, same pairs): the parity id
+  // draws the fallback's mesh
+  var ALIAS = { selfie_stick: 'selfie', heavy_pistol: 'filibuster', machine_pistol: 'threadpistol', pdw: 'liveblog', battle_rifle: 'battlerifle',
+    both_barrels: 'doublebarrel', auto_shotgun: 'autoshotgun', heavy_sniper: 'heavysniper', sticky: 'stickynote', spin_smoke: 'smoke', minigun: 'spin' };
   // attachment slots by class (a weapon's own list from the parity table wins in Combat)
   var SLOTS = { pistol: ['muzzle', 'mag', 'optic', 'light'], smg: ['muzzle', 'mag', 'optic', 'grip', 'light'], rifle: ['muzzle', 'mag', 'optic', 'grip', 'light'],
     lmg: ['muzzle', 'optic', 'grip'], shotgun: ['muzzle', 'mag', 'optic', 'grip', 'light'], sniper: ['muzzle', 'mag', 'optic'] };
@@ -333,6 +416,8 @@
   var FIT_X = {
     pistol: { hold: 'one', holster: 'hip' }, oped: { hold: 'one', holster: 'hip' }, filibuster: { hold: 'one', holster: 'hip' }, revolver: { hold: 'one', holster: 'hip' },
     threadpistol: { hold: 'one', holster: 'hip' }, pocketsmg: { hold: 'one', holster: 'hip' }, sawnoff: { hold: 'one', holster: 'hip' },
+    pocket: { hold: 'one', holster: 'hip' }, micro_smg: { hold: 'one', holster: 'hip' }, flare_gun: { hold: 'one', holster: 'hip' }, mute_button: { hold: 'one', holster: 'hip' },
+    clipboard: { pickupScale: 0.9 }, golf_club: { pickupScale: 0.7 }, mic_stand: { pickupScale: 0.65 }, grenade_launcher: { pickupScale: 0.65 }, merch_cannon: { pickupScale: 0.65 },
     tableleg: { pickupScale: 0.85 }, bat: { pickupScale: 0.7 }, selfie: { pickupScale: 0.75 }, rifle: { pickupScale: 0.8 }, carbine: { pickupScale: 0.8 }, battlerifle: { pickupScale: 0.7 },
     lmg: { pickupScale: 0.65 }, combatmg: { pickupScale: 0.65 }, shotgun: { pickupScale: 0.7 }, doublebarrel: { pickupScale: 0.7 }, autoshotgun: { pickupScale: 0.75 },
     sniper: { pickupScale: 0.55 }, marksman: { pickupScale: 0.6 }, heavysniper: { pickupScale: 0.5 }, ratio: { pickupScale: 0.55 }, firework: { pickupScale: 0.6 }, spin: { pickupScale: 0.6 }
@@ -366,6 +451,7 @@
   function builderFor(id, cls) {
     if (BUILD[id]) return id;
     if (!id || id === 'fist') return null;
+    if (ALIAS[id] && BUILD[ALIAS[id]]) return ALIAS[id];
     cls = cls || clsHint(id);
     var pool = []; for (var k in CLASS_OF) if (CLASS_OF[k] === cls) pool.push(k);
     if (!pool.length) for (k in CLASS_OF) if (CLASS_OF[k] === 'pistol') pool.push(k);
@@ -406,7 +492,7 @@
     for (var i = 0; i < a.length; i += 3) {
       for (var k = 0; k < TINTABLE.length; k++) {
         var t = TINTABLE[k];
-        if (Math.abs(a[i] - t[0]) < 0.004 && Math.abs(a[i + 1] - t[1]) < 0.004 && Math.abs(a[i + 2] - t[2]) < 0.004) {
+        if (Math.abs(a[i] - t[0]) < 0.0005 && Math.abs(a[i + 1] - t[1]) < 0.0005 && Math.abs(a[i + 2] - t[2]) < 0.0005) {   // exact (float32) matches of the linear colours
           var to = k === 1 ? second : main; a[i] = to[0]; a[i + 1] = to[1]; a[i + 2] = to[2]; break;
         }
       }
@@ -443,7 +529,8 @@
   A.weaponFit = FIT;
   A.weaponTints = TINTS;
   A.weaponAttachments = ATTACH;
-  A.weaponClassOf = function (id) { return CLASS_OF[id] || null; };
+  A.weaponClassOf = function (id) { return CLASS_OF[id] || CLASS_OF[ALIAS[id]] || null; };
+  A.weaponAlias = ALIAS;
   // the fit for an id (built weapons by name; others by the class fallback); also kept in weaponFit[id]
   A.weaponFitFor = function (id, cls) {
     if (!id || id === 'fist') return null;
@@ -507,6 +594,6 @@
     return m;
   };
   // every built id gets its fit up front (Combat, the armory racks and tests read A.weaponFit directly)
-  A.weaponIds = function () { return Object.keys(CLASS_OF); };
+  A.weaponIds = function () { return Object.keys(CLASS_OF).concat(Object.keys(ALIAS)); };
   A._prefitWeapons = function () { for (var id in CLASS_OF) A.weaponFitFor(id); };
 })();

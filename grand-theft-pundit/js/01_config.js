@@ -31,6 +31,8 @@
     QUALITY: {
       preset: 'medium',
       drawDistance: 260, fogStart: 120, shadowBox: 120, pedDraw: 110, vehicleDraw: 200, prebuildPerCall: 3,
+      // Render.ensureChunks re-derives pedDraw / vehicleDraw every frame from the fog drawn: culled where it is this thick
+      pedFog: 0.6, vehicleFog: 0.75,
       // overlaid from the preset:
       shadows: true, shadowMap: 1024, softShadows: false, anisotropy: 4,
       post: true, ssao: false, ssaoSamples: 12, bloom: true, fxaa: true, grain: false,
@@ -80,6 +82,7 @@
       posDamp: 12, yawDamp: 6, fovDamp: 4,
       fovSpeedMax: 75, fovSpeedAt: 35,
       collisionPad: 0.3,
+      near: 0.3, nearFirst: 0.15,  // camera near plane; first person on foot sits 0.25 m from a wall it faces (QA-A-CAM-02)
       shakeDecay: 5
     },
 

@@ -320,6 +320,197 @@ H.run('render', async (t) => {
   t.assert(v3r.v3_strip_rain_night_high.warm > 0.01, 'the strip in the rain has warm light and neon: ' + v3r.v3_strip_rain_night_high.warm);
   t.assert(v3r.v3_park_noon_high.green > 0.1, 'the park reads green (grass, trees): ' + v3r.v3_park_noon_high.green);
   t.assert(v3r.v3_marina_noon_high.blue > 0.1, 'the marina shows sea and sky: ' + v3r.v3_marina_noon_high.blue);
+
+  // ---- envw2 assets: builders in js/05_assets.js (QA-A-NGT-01, the v0.3 place props folded in from 20_content_world) ----
+  const as2 = await vp.evaluate(() => {
+    const A = GTP.Assets, W = GTP.World, U = GTP.util, out = {};
+    // NGT-01: the lamp head, turned by the instance's yaw about +y, lands where the glow / pool / point light go (yawToDir * 1.4)
+    const pos = A.prop('lamp').geometry.attributes.position; let sx = 0, sz = 0, n = 0;
+    for (let i = 0; i < pos.count; i++) if (pos.getY(i) > 5.8 && Math.abs(pos.getZ(i)) > 0.9) { sx += pos.getX(i); sz += pos.getZ(i); n++; }
+    sx /= n; sz /= n; out.lampWorst = 0;
+    W.props.filter((p) => p.kind === 'lamp').forEach((p) => {
+      const c = Math.cos(p.rot || 0), s = Math.sin(p.rot || 0), d = U.yawToDir(p.rot || 0);
+      const hx = p.x + sx * c + sz * s, hz = p.z - sx * s + sz * c;
+      out.lampWorst = Math.max(out.lampWorst, Math.hypot(hx - (p.x + d.x * 1.4), hz - (p.z + d.z * 1.4)));
+    });
+    // the six v0.3 place props are native builders: not the crate fallback, no wrapper left on Assets.prop
+    const crate = A.prop('crate').geometry.attributes.position.count;
+    out.folded = ['helipad', 'teebox', 'barberpole', 'mannequin', 'pontoon', 'tirestack'].map((k) => { const r = A.prop(k); return { k, verts: r.geometry.attributes.position.count, crate: r.geometry.attributes.position.count === crate, wrapped: !!r._world, shadow: r.castShadow }; });
+    out.wrapper = !!A.prop._worldProps;
+    // VIS-05: the far LOD Lambert materials carry the sky-ambient factor of their near twins
+    out.farAmb = [A.groundMaterialFar(), A.propMaterialFar(), A.facadeMaterialFar ? A.facadeMaterialFar('downtown') : null].map((m) => m && m.userData.farAmb ? +m.userData.farAmb.value.toFixed(2) : 0);
+    return out;
+  });
+  console.log('  envw2 assets: ' + JSON.stringify(as2));
+  t.assert(as2.lampWorst < 0.3, 'every lamp head sits over its glow, pool and light (QA-A-NGT-01): worst ' + as2.lampWorst.toFixed(2) + ' m');
+  t.assert(!as2.wrapper && as2.folded.every((f) => !f.crate && !f.wrapped && f.verts > 30), 'the helipad, teebox, barber pole, mannequin, pontoon and tyre stack are 05_assets builders: ' + JSON.stringify(as2.folded));
+  // QAC-33: stepping down to low frees the normal / roughness maps' GPU copies (they stayed resident)
+  const q33 = await vp.evaluate(() => {
+    const R = GTP.Render, info = R.renderer.info.memory; GTP.game.render();
+    const before = info.textures; R.quality.set('low'); GTP.game.advance(0.2); GTP.game.render();
+    const low = info.textures; R.quality.set('medium'); GTP.game.advance(0.2); GTP.game.render();
+    return { before, low, back: info.textures };
+  });
+  console.log('  QAC-33 textures: ' + JSON.stringify(q33));
+  t.assert(q33.low < q33.before, 'going down to low frees the surface maps on the GPU (QAC-33): ' + JSON.stringify(q33));
+  t.assert(as2.farAmb.every((k) => k > 1.5),'the far LOD materials make up the near ones\' sky ambient (QA-A-VIS-05): ' + as2.farAmb);
+  t.assert(as2.folded.filter((f) => !f.shadow).map((f) => f.k).join() === 'helipad,teebox', 'the flush helipad and teebox cast no shadow: ' + JSON.stringify(as2.folded));
   const v3e = await t.errors(v3);
   t.assert(v3e.length === 0, 'v0.3 errors:\n' + v3e.join('\n'));
+  await vp.close();
+
+  // ==== the camera rig (integration round 2, render-camera): walls, props, the deck, NaN, interpolation ====
+  const cr = await t.boot({ seed: 7 });
+  const cp = cr.page;
+  const camRig = await cp.evaluate(() => {
+    const g = GTP.game, p = g.player, W = GTP.World, R = GTP.Render, out = {};
+    GTP.C.CARS_TARGET = 0; GTP.C.PEDS_TARGET = 0; g.debug.godMode(true);
+    const inB = (v) => W.buildings.some((b) => v.x > b.x && v.x < b.x + b.w && v.z > b.z && v.z < b.z + b.d && v.y > b.y && v.y < b.y + b.h);
+    // QA-A-CAM-01: aim 3 m and 6 m from a wall: the camera stays behind the player, outside the building
+    const walls = W.buildings.filter((b) => {
+      if (b.h < 12) return false;
+      const tz = b.tz + (b.td >> 1);
+      for (let k = 1; k <= 3; k++) if (!W.isWalkable(W.tile(b.tx - k, tz)) || W.deck[tz * W.w + b.tx - k]) return false;
+      return true;
+    }).slice(0, 2);
+    out.aim = [];
+    for (const b of walls) for (const dist of [3, 6]) {
+      const yaw = -Math.PI / 2;
+      g.debug.teleport(b.x - dist, b.z + b.d / 2 + 0.5); p.yaw = p.moveYaw = p.aimYaw = yaw; R.rig.yaw = yaw; R.rig.pitch = 0.1; R.rig.snap(); g.advance(1 / 60);
+      GTP.Input.set('aim', true); for (let i = 0; i < 40; i++) g.advance(1 / 60);
+      const c = R.camera.position;
+      out.aim.push({ b: b.id, dist, aiming: !!p.aiming, ahead: +(c.x - p.x).toFixed(2), inB: inB(c) });
+      GTP.Input.set('aim', false); g.advance(0.3);
+    }
+    // QA-A-CAM-02: first person against a wall: no point of the near plane inside the building
+    const fpB = W.buildings.filter((b) => b.h >= 12 && W.tile(b.tx - 1, b.tz + (b.td >> 1)) === W.T.SIDEWALK && !W.deck[(b.tz + (b.td >> 1)) * W.w + b.tx - 1]).slice(0, 2);
+    out.fp = [];
+    for (const b of fpB) {
+      const yaw = -Math.PI / 2;
+      g.debug.teleport(b.x - 0.42, b.z + b.d / 2 + 0.5); p.yaw = p.moveYaw = p.aimYaw = yaw;
+      p.cameraMode = 'first'; R.rig.yaw = yaw; R.rig.pitch = 0; R.rig.snap(); g.advance(2 / 60);
+      const cam = R.camera; cam.updateMatrixWorld();
+      const n = cam.near, hh = Math.tan(cam.fov * Math.PI / 360) * n, hw = hh * cam.aspect; let k = 0;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]) if (inB(new THREE.Vector3(sx * hw, sy * hh, -n).applyMatrix4(cam.matrixWorld))) k++;
+      out.fp.push({ b: b.id, near: n, inside: k });
+      p.cameraMode = 'chase'; g.advance(0.05);
+    }
+    out.nearBack = R.camera.near;
+    // QA-A-CAM-05: the chase camera looking from a container stack (or an airliner) toward the player stays out of it
+    const conts = W.props.filter((q) => q.kind === 'container');
+    const inCont = (c) => conts.some((q) => {
+      const cs = Math.cos(q.rot || 0), sn = Math.sin(q.rot || 0), dx = c.x - q.x, dz = c.z - q.z;
+      return Math.abs(dx * cs - dz * sn) < 1.1 && Math.abs(dx * sn + dz * cs) < 2.9 && c.y > (q.y || 0) && c.y < (q.y || 0) + 2.6;
+    });
+    out.cont = [];
+    for (const c of conts.filter((q) => q.y > 2 && (q.rot || 0) === 0).filter((_, i) => i % 23 === 0)) {
+      if (out.cont.length >= 3) break;
+      for (const side of [-1, 1]) {
+        const x = c.x + side * 3.4, z = c.z;
+        if (conts.some((q) => Math.abs(q.x - x) < 1.6 && Math.abs(q.z - z) < 3.2)) continue;
+        g.debug.teleport(x, z); g.advance(0.05);
+        R.rig.yaw = GTP.util.dirToYaw(p.x - c.x, p.z - c.z); R.rig.pitch = 0.15; R.rig.snap(); g.advance(0.5);
+        out.cont.push({ inCont: inCont(R.camera.position) });
+        break;
+      }
+    }
+    const pl = W.props.filter((q) => q.kind === 'plane' && q.r >= 7)[0];
+    if (pl) {
+      g.debug.teleport(pl.x + 9, pl.z); g.advance(0.05);
+      R.rig.yaw = GTP.util.dirToYaw(p.x - pl.x, p.z - pl.z); R.rig.pitch = 0.15; R.rig.snap(); g.advance(0.5);
+      out.planeD = +Math.hypot(R.camera.position.x - pl.x, R.camera.position.z - pl.z).toFixed(2); out.planeR = pl.r;
+    }
+    // QA-A-DRV-07: under the Loop in a car, looking up keeps the camera under the slab
+    out.deck = [];
+    for (const [x, z, yaw] of [[184, 186, -Math.PI / 2], [300, 376, 0]]) {
+      const v = g.debug.spawnVehicle(x, z, 'sedan', { yaw, y: 0 }); v.y = 0; g.debug.teleport(x, z, 0); v.enter(p, 0);
+      R.rig.yaw = yaw; R.rig.snap(); g.advance(0.1);
+      for (let i = 0; i < 10; i++) { GTP.Input.setLook(0, 30); g.advance(1 / 60); }
+      GTP.Input.setLook(0, 0); g.advance(0.05);
+      const c = R.rig.pos;
+      out.deck.push({ under: !!W.deck[W.tileIndex(Math.floor(x / 4), Math.floor(z / 4))], camY: +c.y.toFixed(2), camOverDeck: !!W.deck[W.tileIndex(Math.floor(c.x / 4), Math.floor(c.z / 4))], pitch: +R.rig.pitch.toFixed(2) });
+      p.exitVehicle(); g.advance(0.1); v.destroy(); g.debug.teleport(300, 300); g.advance(0.1);
+    }
+    // QAC-28: one NaN target step does not poison the rig
+    const x0 = p.x; p.x = NaN; R.updateCamera(1 / 60); p.x = x0;
+    for (let i = 0; i < 10; i++) g.advance(1 / 60);
+    g.render();
+    out.nan = { cam: Number.isFinite(R.camera.position.x) && Number.isFinite(R.camera.position.y), rig: Number.isFinite(R.rig.pos.x) && Number.isFinite(R.rig.focus.x), d: +Math.hypot(R.camera.position.x - p.x, R.camera.position.z - p.z).toFixed(2) };
+    R.rig.yaw = NaN; g.advance(2 / 60); g.render();
+    out.nanYaw = Number.isFinite(R.rig.yaw) && Number.isFinite(R.camera.position.x);
+    return out;
+  });
+  console.log('  camera rig: ' + JSON.stringify(camRig));
+  t.assert(camRig.aim.length >= 4 && camRig.aim.every((q) => q.aiming && !q.inB && q.ahead < 0.5), 'QA-A-CAM-01: the aim camera stays behind the player and out of a near wall: ' + JSON.stringify(camRig.aim));
+  t.assert(camRig.fp.length >= 2 && camRig.fp.every((q) => q.inside === 0), 'QA-A-CAM-02: the first-person near plane does not cut into a wall: ' + JSON.stringify(camRig.fp));
+  t.assert(camRig.nearBack === 0.3, 'the chase camera is back on the 0.3 m near plane: ' + camRig.nearBack);
+  t.assert(camRig.cont.length >= 2 && camRig.cont.every((q) => !q.inCont), 'QA-A-CAM-05: the chase camera is not inside a container stack: ' + JSON.stringify(camRig.cont));
+  t.assert(camRig.planeD > camRig.planeR, 'QA-A-CAM-05: the chase camera is not inside the airliner: ' + JSON.stringify([camRig.planeD, camRig.planeR]));
+  t.assert(camRig.deck.length === 2 && camRig.deck.every((q) => q.under && q.pitch > 0.8 && !(q.camOverDeck && q.camY > 6.3)), 'QA-A-DRV-07: looking up under the Loop keeps the camera under the slab: ' + JSON.stringify(camRig.deck));
+  t.assert(camRig.nan.cam && camRig.nan.rig && camRig.nan.d < 8 && camRig.nanYaw, 'QAC-28: a NaN target or yaw does not poison the rig: ' + JSON.stringify([camRig.nan, camRig.nanYaw]));
+  const camRig2 = await cp.evaluate(() => {
+    const g = GTP.game, p = g.player, W = GTP.World, R = GTP.Render, C = GTP.C, out = {};
+    // QA-A-CAM-03 / QAC-17: flat out, the car holds its place on screen whatever the render alpha
+    const v = g.debug.spawnVehicle(40, 90, 'sports', { yaw: GTP.util.dirToYaw(1, 0) }); v.persistent = true;
+    g.debug.teleport(40, 90); v.enter(p, 0); g.advance(0.05); R.rig.yaw = v.yaw; R.rig.snap();
+    GTP.Input.set('forward', true); for (let i = 0; i < 240; i++) g.advance(1 / 60);
+    const ys = [];
+    for (const a of [0, 0.5, 1]) { g.render(a); ys.push(R.worldToScreen(v.mesh.position.x, v.mesh.position.y + 0.8, v.mesh.position.z).sy); }
+    GTP.Input.set('forward', false);
+    out.interp = { speed: +v.speed2d().toFixed(1), range: +(Math.max(...ys) - Math.min(...ys)).toFixed(2) };
+    p.exitVehicle(); g.advance(0.1); v.destroy(); g.advance(0.05);
+    // QA-A-CAM-06: a bus backed up to a wall: the boom climbs, its own roof does not fill the screen
+    const b = W.buildings.filter((b) => b.h >= 9 && [1, 2, 3].every((k) => W.isWalkable(W.tile(b.tx - k, b.tz + (b.td >> 1))) && !W.deck[(b.tz + (b.td >> 1)) * W.w + b.tx - k]))[0];
+    const z = b.z + b.d / 2 + 0.5, yaw = Math.PI / 2;
+    const bus = g.debug.spawnVehicle(b.x - 30, z, 'bus', { yaw }); bus.persistent = true;
+    g.debug.teleport(b.x - 30, z); bus.enter(p, 0); g.advance(0.05);
+    g.debug.teleport(b.x - bus.cls.length / 2 - 0.35, z); bus.yaw = yaw; bus.snap();
+    R.rig.yaw = yaw; R.rig.pitch = 0.14; R.rig.snap(); g.advance(0.5);
+    GTP.Entities.sync(1); R.camera.updateMatrixWorld(); bus.mesh.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster(); rc.layers.enableAll(); let hit = 0, n = 0;
+    for (let i = 0; i < 32; i++) for (let j = 0; j < 18; j++) { rc.setFromCamera(new THREE.Vector2((i + 0.5) / 16 - 1, (j + 0.5) / 9 - 1), R.camera); n++; if (rc.intersectObject(bus.mesh, true).length) hit++; }
+    out.bus = { cover: +(hit / n).toFixed(2), camY: +R.camera.position.y.toFixed(2), camInB: W.tile(Math.floor(R.camera.position.x / 4), Math.floor(R.camera.position.z / 4)) === W.T.BUILDING };
+    p.exitVehicle(); g.advance(0.1); bus.destroy(); g.advance(0.05);
+    // QA-A-CAM-07: after a teleport (live chunk budget) no chunk in view and inside the fog start is missing on the first frame
+    const missing = () => {
+      const cam = R.camera, S = C.TILE * C.CHUNK_TILES; cam.updateMatrixWorld();
+      const fr = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+      const nn = Math.ceil(W.w / C.CHUNK_TILES), list = [];
+      for (let zz = 0; zz < nn; zz++) for (let xx = 0; xx < nn; xx++) {
+        const qx = Math.max(xx * S, Math.min(cam.position.x, xx * S + S)), qz = Math.max(zz * S, Math.min(cam.position.z, zz * S + S));
+        const dn = Math.hypot(qx - cam.position.x, qz - cam.position.z);
+        if (dn > R.scene.fog.near) continue;
+        if (!fr.intersectsBox(new THREE.Box3(new THREE.Vector3(xx * S, -2, zz * S), new THREE.Vector3(xx * S + S, 30, zz * S + S)))) continue;
+        if (!R.chunks.has(xx + ',' + zz)) list.push(xx + ',' + zz);
+      }
+      return list;
+    };
+    R.headless = false;
+    R.invalidateAll(); R.prebuild(110, 270, 300);
+    g.debug.teleport(560, 610); p.yaw = Math.PI; R.rig.yaw = Math.PI; R.rig.snap(); g.advance(1 / 60); g.render();
+    out.pop = missing();
+    // QAC-10: a sweep over the map keeps a ring of chunks, not the whole city
+    let maxN = 0;
+    for (const [x, zq] of [[100, 100], [800, 100], [800, 800], [100, 800], [450, 450]]) {
+      g.debug.teleport(x, zq); g.advance(1 / 60);
+      for (let i = 0; i < 80; i++) R.ensureChunks();
+      maxN = Math.max(maxN, R.chunks.size);
+    }
+    R.headless = true;
+    out.evict = { maxN, total: Math.ceil(W.w / C.CHUNK_TILES) * Math.ceil(W.h / C.CHUNK_TILES), unbuilds: R.stats.chunkUnbuilds || 0 };
+    // QA-A-CAM-08: the entity draw ranges sit inside the fog, where it already hides them
+    g.render();
+    const fog = R.scene.fog, Q = C.QUALITY;
+    out.draw = { near: fog.near, far: fog.far, ped: Q.pedDraw, car: Q.vehicleDraw, pedFog: +((Q.pedDraw - fog.near) / (fog.far - fog.near)).toFixed(2), carFog: +((Q.vehicleDraw - fog.near) / (fog.far - fog.near)).toFixed(2) };
+    return out;
+  });
+  console.log('  camera rig 2: ' + JSON.stringify(camRig2));
+  t.assert(camRig2.interp.speed > 30 && camRig2.interp.range < 2, 'QA-A-CAM-03 / QAC-17: the camera is interpolated with the car (screen drift across alpha < 2 px): ' + JSON.stringify(camRig2.interp));
+  t.assert(camRig2.bus.cover < 0.4 && !camRig2.bus.camInB, 'QA-A-CAM-06: a bus at a wall covers less than 40% of the screen: ' + JSON.stringify(camRig2.bus));
+  t.assert(camRig2.pop.length === 0, 'QA-A-CAM-07: no chunk in view inside the fog start is missing after a teleport: ' + JSON.stringify(camRig2.pop));
+  t.assert(camRig2.evict.unbuilds > 0 && camRig2.evict.maxN < camRig2.evict.total * 0.6, 'QAC-10: far chunks are unbuilt: ' + JSON.stringify(camRig2.evict));
+  t.assert(camRig2.draw.pedFog >= 0.5 && camRig2.draw.carFog >= 0.5 && camRig2.draw.ped < camRig2.draw.far && camRig2.draw.car < camRig2.draw.far, 'QA-A-CAM-08: peds and vehicles are culled inside the fog: ' + JSON.stringify(camRig2.draw));
+  const crErr = await t.errors(cr);
+  t.assert(crErr.length === 0, 'camera rig errors:\n' + crErr.join('\n'));
+  await cp.close();
 });

@@ -361,13 +361,14 @@
     if (!m) { m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.05), new THREE.MeshStandardMaterial({ color: 0x2a2b30, roughness: 0.4, metalness: 0.6 })); m.geometry.translate(0.25, 0, 0); }
     return m;
   }
+  function fitFor(id, cls) { var A = GTP.Assets; return A && A.weaponFitFor ? A.weaponFitFor(id, cls) : A && A.weaponFit ? A.weaponFit[id] : null; }
   function weaponLen(id, cls) {
-    var f = GTP.Assets && GTP.Assets.weaponFit && GTP.Assets.weaponFit[id];
+    var f = fitFor(id, cls);
     if (f && f.len) return f.len;
     var k = CLASS_MESH[String(cls || '').toLowerCase()];
     return k && LONG[k] ? 0.9 : 0.3;
   }
-  function weaponUpright(id) { var f = GTP.Assets && GTP.Assets.weaponFit && GTP.Assets.weaponFit[id]; return f ? !!f.upright : (id === 'megaphone' || id === 'hottake' || id === 'hotmic'); }
+  function weaponUpright(id) { var f = fitFor(id); return f ? !!f.upright : (id === 'megaphone' || id === 'hottake' || id === 'hotmic'); }
   // the store's stock: Combat.catalog (v0.3 shop API) first, the v0.2 shop list next, the parity table and Combat's
   // WEAPONS last; each entry {itemId, weaponId, name, price, cls, long, upright}
   function stock(storeId) {
@@ -389,6 +390,21 @@
     }
     out.sort(function (a, b) { return (a.price || 0) - (b.price || 0); });
     return out;
+  }
+  // where a stock entry goes in the armory (see buildArmory): by Combat's class, hold and the mesh's fit
+  function rackGroup(e) {
+    var W2 = GTP.Combat && GTP.Combat.WEAPONS, w = W2 && W2[e.weaponId], cls = w ? w.cls : String(e.cls || '').toLowerCase();
+    var f = GTP.Assets && GTP.Assets.weaponFitFor ? GTP.Assets.weaponFitFor(e.weaponId, cls) : null, hold = w && w.hold ? w.hold : f ? f.hold : 'two';
+    if ((w && w.melee) || cls === 'melee') return (e.len || 0) >= 0.6 ? 'meleeLong' : 'meleeShort';
+    if (cls === 'thrown' || cls === 'explosive' || cls === 'throwable') return 'thrown';
+    if (cls === 'special') return 'special';
+    if (cls === 'launcher' || cls === 'heavy') return 'heavy';
+    if (cls === 'pistol' || hold === 'one') return 'hand';
+    if (cls === 'smg' || cls === 'lmg' || cls === 'mg') return 'mg';
+    if (cls === 'shotgun') return 'shotgun';
+    if (cls === 'sniper' || cls === 'marksman') return 'sniper';
+    if (cls === 'rifle') return 'rifle';
+    return e.long ? 'rifle' : 'hand';
   }
   // live status of a rack entry for the prompt: {price, owned, locked, lockReason, ammoItem}
   var statusCache = { key: null, t: -9, st: null };
@@ -579,19 +595,23 @@
       room.plane(m, x, 3.62, z, w, w / 6, face);
       room.box('metal', x - 0.01, 3.62 + w / 12, z - 0.01, 0.02, 4.2 - 3.62 - w / 12, 0.02, steel);
     }
-    hangSign('hand', 'HANDGUNS', -8.6, 2.1, 2.6, 'e'); hangSign('long', 'RIFLES & SHOTGUNS', 8.6, 2.1, 3.0, 'w');
+    hangSign('melee', 'MELEE & THROWN', -8.6, 2.1, 3.0, 'e'); hangSign('long', 'LONG GUNS', 8.6, 2.1, 2.6, 'w');
     room.plane(texMat(signTex('cat-ammo-' + branch, 'AMMO', { w: 512, h: 128, bg: '#101114', fg: '#ffd27a', border: '#ffd27a', size: 76 }), { basic: true }), -8.95, 0.98, 5.0, 0.9, 0.22, 'e');
     [[-8.7, 6.7], [8.7, 6.7], [-8.7, -6.7]].forEach(function (q) {
       room.box('matte', q[0] - 0.08, 3.9, q[1] - 0.08, 0.16, 0.3, 0.16, black);
       room.box('gloss', q[0] - 0.1 + (q[0] < 0 ? 0.12 : -0.12), 3.72, q[1] - 0.12 + (q[1] < 0 ? 0.1 : -0.1), 0.2, 0.16, 0.28, col('#e8e2d0'));
       room.box('glow', q[0] + (q[0] < 0 ? 0.12 : -0.12), 3.8, q[1] + (q[1] < 0 ? 0.25 : -0.25), 0.03, 0.03, 0.01, [2.2, 0.2, 0.2]);
     });
-    // stock the racks
-    var list = stock(B.store), longs = [], shorts = [], i;
-    for (i = 0; i < list.length; i++) (list[i].long ? longs : shorts).push(list[i]);
-    var placedShort = 0, placedLong = 0;
+    // ---- stock the store: the whole arsenal once each, grouped by class (GTP.Combat.catalog order inside a group) ----
+    //   east wall (LONG GUNS): a row each for rifles, shotguns, snipers, machine guns
+    //   behind the counter (the feature wall): launchers and heavy weapons on top, the specials below
+    //   west pegboard (MELEE & THROWN): long melee, short melee
+    //   the main glass counter: every handgun (pistols, one-handed SMGs, the sawed-off) lying under the glass
+    //   the two display islands: the thrown things, laid out in the cases
+    var list = stock(B.store), groups = { rifle: [], shotgun: [], sniper: [], mg: [], heavy: [], special: [], meleeLong: [], meleeShort: [], hand: [], thrown: [] }, i;
+    for (i = 0; i < list.length; i++) groups[rackGroup(list[i])].push(list[i]);
     function hang(entry, x, y, z, face, scale) {
-      var m = weaponMesh(entry.weaponId, entry.cls), s = scale || 1.25;
+      var m = weaponMesh(entry.weaponId, entry.cls), s = scale || 1.2;
       var len = entry.len || 0.3;
       m.scale.set(s, s, s);
       var holder = new THREE.Group(); holder.add(m);
@@ -609,29 +629,54 @@
       room.group.add(tag);
       room.items.push({ entry: entry, mesh: holder, face: face });
     }
-    // every slot is filled, GTA style: a stock larger than the walls hangs once each, a smaller one repeats down the rows
-    // west pegboard: handguns, SMGs, throwables (3 rows x 7)
-    var hand = shorts.filter(function (x) { return !x.upright; }), thrown = shorts.filter(function (x) { return x.upright; });
-    var westList = hand.concat(thrown); if (!westList.length) westList = shorts;
-    // the back wall behind Merle: the priciest long guns (3 rows x 4); the east rack: the rest of the long guns (4 rows x 3)
-    var backList = longs.slice().sort(function (a, b) { return (b.price || 0) - (a.price || 0); }), eastList = longs.slice();
-    if (longs.length > 24) { backList = longs.slice(longs.length - 12); eastList = longs.slice(0, longs.length - 12); }
-    function fill(list, n, i0) { var out = []; if (!list.length) return out; for (var q = 0; q < n; q++) out.push(list[(q + (i0 || 0)) % list.length]); return out; }
-    var west = westList.length >= 21 ? westList.slice(0, 21) : fill(westList, 21), east = fill(eastList, 12), back = fill(backList, 12);
-    if (westList.length > 21) back = back.concat([]);   // the overflow goes in the display islands below
-    for (var r = 0; r < 3; r++) for (var c = 0; c < 7; c++) { var we = west[r * 7 + c]; if (we) hang(we, -8.9, 2.65 - r * 0.62, -1.2 + c * 1.05, 'e', 1.35); }
-    for (r = 0; r < 4; r++) for (c = 0; c < 3; c++) { var ee = east[r * 3 + c]; if (ee) hang(ee, 8.9, 2.75 - r * 0.55, -0.3 + c * 2.35, 'w', 1.2); }
-    for (r = 0; r < 3; r++) for (c = 0; c < 4; c++) { var be = back[r * 4 + c]; if (be) hang(be, -7.0 + c * 2.8, 2.6 - r * 0.6, -6.9, 's', 1.2); }
-    void placedShort; void placedLong;
-    // the display islands: handguns lying under the glass (browsable copies of the wall's)
-    var flat = hand.length > 21 ? hand.slice(21, 27) : fill(hand.slice().reverse(), Math.min(6, hand.length * 2));
-    for (i = 0; i < flat.length; i++) {
-      var fe = flat[i], fm = weaponMesh(fe.weaponId, fe.cls), fs = 1.3, fl = (fe.len || 0.3) * fs;
-      fm.scale.set(fs, fs, fs); fm.rotation.x = -Math.PI / 2; var hold = new THREE.Group(); hold.add(fm); fm.position.set(-fl / 2, 0, 0);
-      var isl = i < 3 ? -5.6 : 2.9, k2 = i % 3;
-      hold.position.set(isl + 0.45 + k2 * 0.85, 0.9, 2.1); room.group.add(hold);
-      room.items.push({ entry: fe, mesh: hold, face: 'up' });
+    // a gun lying on its side under the glass (the grip toward the customer), centred on (x, z); upright things lie along x
+    function lay(entry, x, z, scale) {
+      var m = weaponMesh(entry.weaponId, entry.cls), s = scale || 1.1, len = (entry.len || 0.3) * s, holder = new THREE.Group();
+      m.scale.set(s, s, s);
+      if (entry.upright) { m.rotation.z = -Math.PI / 2; m.position.set(-len / 2, 0.06 * s, 0); }
+      else { m.rotation.x = -Math.PI / 2; m.position.set(-len / 2, 0.035, 0); }
+      holder.add(m); holder.position.set(x, 0.88, z); room.group.add(holder);
+      var tag = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.1), texMat(tagTex(entry.name, entry.price), { rough: 0.6 }));
+      tag.rotation.x = -Math.PI / 2; tag.position.set(x, 0.885, z + 0.18); room.group.add(tag);
+      room.items.push({ entry: entry, mesh: holder, face: 'up' });
     }
+    // rows of a wall: each group starts its own row while rows last (a long group runs on into the next row); what does not fit
+    // is returned
+    function shelve(order, rows, cols) {
+      var out = [], cells = [], r = 0, c = 0, need = 0, g;
+      for (g = 0; g < order.length; g++) need += Math.max(1, Math.ceil(order[g].length / cols));
+      var packed = need > rows;
+      for (g = 0; g < order.length; g++) {
+        var L = order[g]; if (!L.length) continue;
+        if (!packed && c > 0) { r++; c = 0; }
+        for (var q = 0; q < L.length; q++) {
+          if (c >= cols) { r++; c = 0; }
+          if (r >= rows) out.push(L[q]); else cells.push({ e: L[q], r: r, c: c });
+          c++;
+        }
+      }
+      return { cells: cells, overflow: out };
+    }
+    // the east wall: 4 rows x 4 (rifles, shotguns, snipers, machine guns)
+    var east = shelve([groups.rifle, groups.shotgun, groups.sniper, groups.mg], 4, 4);
+    east.cells.forEach(function (q) { hang(q.e, 8.9, 2.85 - q.r * 0.55, -0.9 + q.c * 2.0, 'w', 1.1); });
+    // the feature wall behind Merle: 2 rows x 5 (heavy, then specials)
+    var back = shelve([groups.heavy, groups.special], 2, 5);
+    back.cells.forEach(function (q) { hang(q.e, -7.3 + q.c * 2.3, 2.55 - q.r * 0.8, -6.9, 's', q.r ? 1.25 : 1.1); });
+    // the west pegboard: 3 rows x 5 (long melee, short melee, then anything the other walls could not take)
+    var west = shelve([groups.meleeLong, groups.meleeShort], 2, 5), spill = east.overflow.concat(back.overflow, west.overflow);
+    west.cells.forEach(function (q) { hang(q.e, -8.9, 2.7 - q.r * 0.7, -1.0 + q.c * 1.65, 'e', q.e.len > 0.6 ? 1.1 : 1.3); });
+    for (i = 0; i < Math.min(5, spill.length); i++) hang(spill[i], -8.9, 1.35, -1.0 + i * 1.65, 'e', 1.1);
+    spill = spill.slice(5);
+    // the main counter: the handguns in one row (the register end stays clear), then the display islands: the thrown things
+    var hands = groups.hand.concat(spill.filter(function (e) { return !e.long; })), n = Math.min(hands.length, 9);
+    for (i = 0; i < n; i++) lay(hands[i], -6.45 + i * (n > 1 ? 9.0 / (n - 1) : 0), -2.6, 1.15);
+    var cases = groups.thrown.concat(hands.slice(9), spill.filter(function (e) { return e.long; }));
+    for (i = 0; i < Math.min(cases.length, 12); i++) {
+      var isl = i < 6 ? -5.6 : 2.9, k2 = i % 6;
+      lay(cases[i], isl + 0.45 + (k2 % 3) * 0.85, 1.82 + Math.floor(k2 / 3) * 0.42, cases[i].long ? 0.6 : 1.15);
+    }
+    if (cases.length > 12 && U && U.reportError) U.reportError(new Error((cases.length - 12) + ' weapons did not fit the armory'), 'interiors.stock');
 
     // Merle and the counter interaction
     room.npcs.push({ cast: 'merle', role: 'clerk', name: 'Merle Firmness', x: -1.5, z: -3.9, yaw: Math.PI, color: '#3fd27f', hello: function () { return pickLine(shopBarks('door') || LINES.merleHello); } });
@@ -867,6 +912,9 @@
   // ------------------------------------------------------------------ state --
   var S = { active: false, current: null, room: null, rooms: {}, trans: null, ret: null, npcs: [], prompt: null, near: null, browse: null, confirm: null, doors: [], doorSeed: null, doorCount: -1, overlay: null, holdExit: 0, muzzleT: 0, saved: { rangeBest: 0, medals: {} }, envSaved: false };
   var RANGE = { running: false, t: 0, score: 0, hits: 0, shots: 0, best: 0, last: null, spawnT: 0, hold: 0, cool: 0, loan: null, rng: null, bodyHit: 0 };
+  // the targets (meshes inside) and the booth stay out of JSON.stringify(Interiors.range)
+  Object.defineProperty(RANGE, 'targets', { value: null, writable: true, enumerable: false });
+  Object.defineProperty(RANGE, 'booth', { value: null, writable: true, enumerable: false });
 
   function roomFor(kind, branch) {
     var key = kind + ':' + branch;
@@ -967,18 +1015,21 @@
     };
     Wd.heightAt._interiors = Wd.solidAt._interiors = Wd.resolveCapsule._interiors = true;
   }
+  // Combat.fire asks Interiors.canFire before a player shot and calls Interiors.onPlayerShot after one, and Combat.update runs
+  // Interiors.update every step (08_combat.js); this installer only wraps a Combat that predates those hooks
   function wrapCombat() {
     var CB = GTP.Combat; if (!CB || wrapped.combat || !CB.fire) return;
     wrapped.combat = true;
+    if (CB.fire._interiors) { wrapped.update = !!(CB.update && CB.update._interiors); return; }
     var oFire = CB.fire;
     CB.fire = function (ped, weaponId) {
-      if (ped && ped.kind === 'player' && S.active && !canShoot(ped)) { var I0 = In(); if (I0 && I0.down && I0.down('shoot')) muzzleLine(); return false; }   // E (action) also reaches fire: interacting is not shooting
+      if (ped && ped.kind === 'player' && S.active && !Interiors.canFire(ped)) return false;
       var r = oFire.apply(this, arguments);
-      if (r && ped && ped.kind === 'player' && RANGE.running && S.room && S.room.range) { try { rangeShot(ped); } catch (e) { report(e, 'rangeShot'); } }
+      if (r && ped && ped.kind === 'player') Interiors.onPlayerShot(ped);
       return r;
     };
     CB.fire._interiors = true;
-    if (CB.update) {
+    if (CB.update && !CB.update._interiors) {
       var oU = CB.update;
       CB.update = function (dt) { var r = oU.apply(this, arguments); try { Interiors.update(dt); } catch (e) { report(e, 'update'); } return r; };
       wrapped.update = true;
@@ -1211,7 +1262,9 @@
     var store = S.current && S.current.store, lm = S.current && S.current.landmark;
     if (q.kind === 'clerk') {
       var CB = GTP.Combat;
-      if (GTP.UI && GTP.UI.openArmory) { try { GTP.UI.openArmory({ store: store, landmark: lm, counter: true }); } catch (e) { report(e, 'ui.openArmory'); } }
+      // the UI's armory: openArmory(storeId, weaponId); shop:open still goes out so a `shop` objective (and the audio cue) hear it
+      var sid = (store && (store.id || store)) || (lm && lm.id) || null, lmo = lm && typeof lm === 'object' ? lm : (sid && W() && W().landmark ? W().landmark(sid) : null);
+      if (GTP.UI && GTP.UI.openArmory) { try { GTP.UI.openArmory(sid, null); } catch (e) { report(e, 'ui.openArmory'); } emit('shop:open', { landmark: lmo, store: sid, counter: true }); }
       else if (CB && CB.shop && CB.shop.open) { try { CB.shop.open(lm || store); } catch (e2) { report(e2, 'shop.open'); } }
       clerkSay('door');
       return;
@@ -1488,6 +1541,9 @@
     if (!kind) return null;
     var store = opts.store || (lm && lm.id) || null;
     var branch = opts.branch || (kind === 'armory' ? branchOf(lm || store) : kind === 'safehouse' ? (lm && lm.id) || store || 'def' : 'main');
+    // the world's doors pass the landmark id as the branch ('both_sides_port'): an armory branch is one of BRANCHES (strip / port /
+    // uptown), else its decor fell back to the Strip's
+    if (kind === 'armory' && !BRANCHES[branch] && /^both_sides|port|harbor|uptown|heights|strip/.test(branch)) branch = branchOf(branch);
     return { kind: kind, lm: lm, store: store, branch: branch };
   }
   function returnPoint(tg, opts, p) {
@@ -1522,12 +1578,15 @@
     spawnNpcs(room);
     if (R) { R._envClock = null; indoorLight(); }
     if (texCache.scoreboard) drawBoard();
+    // the range's targets and the booth (world x, z) for the story's range objective (a GPS point) and the tests
+    RANGE.targets = room.range ? room.range.targets : null; RANGE.booth = room.booth ? { x: room.booth.x, z: room.booth.z } : null;
     emit('interior:enter', { id: tg.kind, kind: tg.kind, store: tg.store, branch: tg.branch, landmark: tg.lm || null });
     return true;
   }
   function doExit() {
     var p = player(), room = S.room, cur = S.current;
     if (RANGE.running) endRange(true);
+    RANGE.targets = null; RANGE.booth = null;
     removeNpcs(); hidePrompt();
     var shop = GTP.Combat && GTP.Combat.shop; if (shop && shop.state && shop.state.open && shop.close) { try { shop.close(); } catch (e) { /* optional */ } }
     if (room) { room.group.visible = false; if (room.group.parent) room.group.parent.remove(room.group); }
@@ -1540,6 +1599,23 @@
     return true;
   }
 
+  // A mission's start light on a shop's doorstep wins over the door: m01c (and m03b) stand theirs on the Both Sides Arms door, and a
+  // door that fired first teleported the player inside mid-intro, where the mission's first objective (walk up to that door) could
+  // never be reached. The mission's own "step inside" objective then walks the player in from the doorstep.
+  function startLightBusy(p) {
+    var Ms = GTP.Missions, st = Ms && Ms.state; if (!Ms || !p) return false;
+    if (st && st.active) return st.phase !== 'play';   // a mission's intro / outro is playing
+    var list = Ms.markers ? Ms.markers() : [], r = ((Ms.K && Ms.K.markerRadius) || 1.9) + 0.4;
+    for (var i = 0; i < list.length; i++) if (list[i].kind === 'mission' && U.dist2d(p.x, p.z, list[i].x, list[i].z) <= r) return true;
+    return false;
+  }
+  function onInteriorObjective(e) {
+    var o = e && e.objective, p = player();
+    if (!o || o.type !== 'interior' || !p || !p.alive || p.inVehicle || S.active || S.trans) return;
+    var Wd = W(), lm = Wd && Wd.landmark ? Wd.landmark(o.landmark || o.store || '') : null;
+    if (!lm || !lm.door || U.dist2d(p.x, p.z, lm.door.x, lm.door.z) > 3) return;
+    Interiors.enter(o.interior || o.kind || lm, { landmark: lm, store: o.store || lm.id, branch: lm.id, force: true });
+  }
   var Interiors = GTP.Interiors = {
     active: false,
     current: null,
@@ -1552,6 +1628,7 @@
       ensureWrapped();
       opts = opts || {};
       var p = player(); if (!p || !p.alive || S.active || S.trans) return false;
+      if (!opts.force && !opts.instant && startLightBusy(p)) return false;
       var tg = resolveTarget(id, opts); if (!tg) return false;
       var ret = returnPoint(tg, opts, p);
       if (p.inVehicle && !opts.force) return false;
@@ -1596,6 +1673,13 @@
       if (!shown) hidePrompt();
     },
     // tests / tools
+    // Combat's hooks: may the player shoot here (no, except on the range; pulling the trigger earns Merle's line), and a shot taken
+    canFire: function (p) {
+      if (!S.active || canShoot(p)) return true;
+      var I0 = In(); if (I0 && I0.down && I0.down('shoot')) muzzleLine();   // E (action) also reaches fire: interacting is not shooting
+      return false;
+    },
+    onPlayerShot: function (p) { if (RANGE.running && S.room && S.room.range) { try { rangeShot(p); } catch (e) { report(e, 'rangeShot'); } } },
     rooms: function () { return S.rooms; },
     room: function () { return S.room; },
     roomAt: roomAt,
@@ -1633,7 +1717,7 @@
     removeNpcs(); hidePrompt();
     var room = S.room; if (room) { room.group.visible = false; if (room.group.parent) room.group.parent.remove(room.group); }
     var cur = S.current;
-    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null;
+    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null; RANGE.targets = null; RANGE.booth = null;
     var R = Rd(); if (R) { R._envClock = null; outdoorEnv(R); }
     emit('interior:exit', { id: cur ? cur.id : null, kind: cur ? cur.kind : null, store: cur ? cur.store : null, quiet: true });
   }
@@ -1667,4 +1751,5 @@
   GTP.SaveRegistry.interiors = { get: function () { return Interiors.serialize(); }, set: function (d) { Interiors.deserialize(d); } };
 
   ensureWrapped();
+  if (GTP.Events && GTP.Events.on) GTP.Events.on('mission:objective', onInteriorObjective);
 })();

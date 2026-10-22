@@ -37,6 +37,8 @@
     gapMin: 2.4, gapTime: 0.85, lookMin: 3.5, lookTime: 0.8,
     brakeAccel: 6, steerGain: 2.3,
     stuckTime: 3, honkAfter: 2, pedBlockCreep: 5,
+    playerBlock: 12,                                     // s behind the player's standing car before traffic swerves round it
+    giveUp: 24,                                          // s held by a car that will not move before a car out of view is recycled
     yieldSpeed: 5,
     pedIdleChance: 0.06, chatChance: 0.5, barkEvery: [9, 20],
     sight: 70, sightCar: 95, heliSight: 120,
@@ -242,6 +244,7 @@
     addHeat: function (n, src) {
       if (!(n > 0)) return;
       var p = player(); if (!p || !p.alive) return;
+      if (bossSet()) return 0;   // a boss fight is a set piece: no heat while one runs (folded from 08b_bosses installCrime)
       wanted.heat = Math.min(wanted.heat + n, C.WANTED.thresholds[C.WANTED.thresholds.length - 1] + 10);
       wanted.lastSeen = simT(); wanted.lastKnown.x = p.x; wanted.lastKnown.z = p.z; wanted.graceUntil = simT() + K.wantedGrace;
       wanted.sync();
@@ -287,22 +290,37 @@
       wanted.seenThisTick = false;
     }
   };
+  // the per-crime throttle stamps (sim time of the last hitPed / attackCop / hitCopCar). AI.reset clears them: New Game and
+  // Load restart the clock at 0, and a stamp from the old session must not hold back the new one's heat (QAC-02). A stamp
+  // ahead of the clock (a load to an earlier time) counts as expired.
   var heatT = { ped: -9, cop: -9, car: -9 };
+  function heatReady(key, every) {
+    var now = simT(), last = heatT[key];
+    if (now >= last && now - last < every) return false;
+    heatT[key] = now; return true;
+  }
+  function resetHeatStamps() { heatT.ped = heatT.cop = heatT.car = -9; }
+  // a boss encounter in its intro, fight or break (GTP.Bosses.fighting() when the bosses module exposes it)
+  function bossSet() {
+    var B = GTP.Bosses; if (!B) return false;
+    if (typeof B.fighting === 'function') return !!B.fighting();
+    var l = typeof B.list === 'function' ? B.list() : null; if (!l) return false;
+    for (var i = 0; i < l.length; i++) { var s = l[i] && l[i].state; if (s === 'intro' || s === 'fight' || s === 'break') return true; }
+    return false;
+  }
   function hookHeat() {
     var Ev = GTP.Events;
     // a car into a crowd or a roadblock: one crime per burst of contact, a cop knocked over is ramCop (3), not attackCop (5)
     Ev.on('vehicle:hitPed', function (e) {
       if (!(e.vehicle && e.vehicle.hasPlayer && e.vehicle.hasPlayer() && e.ped && e.ped.alive) || e.ped.hostile) return;
-      var now = simT();
-      if (isCop(e.ped)) { if (now - heatT.cop >= K.heatEvery) { heatT.cop = now; wanted.crime('ramCop', 'vehicle'); } }
-      else if (now - heatT.ped >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', 'vehicle'); }
+      if (isCop(e.ped)) { if (heatReady('cop', K.heatEvery)) wanted.crime('ramCop', 'vehicle'); }
+      else if (heatReady('ped', K.heatEvery)) wanted.crime('hitPed', 'vehicle');
     });
     // denting a cruiser (ramming a roadblock, a bump in a chase): one heat per ram, not per contact step
     Ev.on('vehicle:damage', function (e) {
       var p = player(), v = e && e.vehicle; if (!p || !v || !v.isPolice) return;
       var src = e.src; if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
-      var now = simT();
-      if (now - heatT.car >= K.heatEveryCar) { heatT.car = now; wanted.addHeat(1, 'hitCopCar'); }
+      if (heatReady('car', K.heatEveryCar)) wanted.addHeat(1, 'hitCopCar');
     });
     Ev.on('damage', function (e) {
       var p = player(); if (!p || !e || !e.target || e.target === p) return;
@@ -310,11 +328,10 @@
       if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
       // self-defence: a ped flagged hostile (mission goons that attack the player) earns no heat.
       // Heat per hit is rate-limited: an SMG burst or a ram is one crime, not eleven (kills still count in full).
-      var now = simT();
       if (e.target.kind === 'ped') {
         if (e.target.hostile) { /* no crime */ }
-        else if (isCop(e.target)) { if (now - (heatT.cop || -9) >= K.heatEvery) { heatT.cop = now; wanted.crime('attackCop', 'attackCop'); } }
-        else if (e.type !== 'vehicle') { if (now - (heatT.ped || -9) >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', e.type || 'hit'); } }
+        else if (isCop(e.target)) { if (heatReady('cop', K.heatEvery)) wanted.crime('attackCop', 'attackCop'); }
+        else if (e.type !== 'vehicle') { if (heatReady('ped', K.heatEvery)) wanted.crime('hitPed', e.type || 'hit'); }
       }
       // gunfire scares the street
       if (e.type && /pistol|smg|shotgun|hottake|megaphone/.test(String(e.type))) AI.alarm(e.target.x, e.target.z, 26, p);
@@ -325,6 +342,8 @@
     // v0.3: the shooting track's cover events, and the interior's door latch (step out of a shop without walking back in)
     Ev.on('cover:enter', function (e) { var p = player(); if (!p || wanted.level === 0) return; AI.coverAlert(e && e.x != null ? e.x : p.x, e && e.z != null ? e.z : p.z); });
     Ev.on('cover:exit', function () { cover.active = false; });
+    // the stars are gone: every police car nobody drives (released roadblocks, unloaded cruisers) stands down (stab-QA-D-03)
+    Ev.on('wanted', function (e) { if (e && e.level === 0) policeStandDown(); });
     Ev.on('interior:exit', function () { doors.wasInside = true; });
     Ev.on('honk', function (e) { var v = e.vehicle; if (v && v.hasPlayer && v.hasPlayer()) AI.alarm(v.x, v.z, 7, v, true); });
     Ev.on('vehicle:enter', function (e) {
@@ -350,17 +369,21 @@
 
   // -------------------------------------------------------------- spawner --
   var DIRS4 = [{ dx: 1, dz: 0 }, { dx: -1, dz: 0 }, { dx: 0, dz: 1 }, { dx: 0, dz: -1 }];
+  function allGone(list) { for (var i = 0; i < list.length; i++) if (list[i] && !list[i].removed) return false; return true; }
   var spawner = {
     t: 0, warm: false, parked: new Map(), parkTiles: [], deckTiles: [], lotOf: new Map(), protestHome: null, protestT: 0, raccoon: null, raccoonAct: 0, hqDone: false, stats: { peds: 0, cars: 0, parked: 0 },
+    protestPeds: [], hqPeds: [],   // the marchers and the precinct door guards of the current spawn (their latches wait for them to go)
     reset: function () {
-      spawner.t = 0; spawner.warm = false; spawner.parked.clear(); spawner.parkTiles = []; spawner.deckTiles = []; spawner.lotOf.clear(); spawner._near = {};
-      spawner.protestHome = null; spawner.protestT = 0; spawner.raccoon = null; spawner.raccoonAct = 0; spawner.hqDone = false;
+      spawner.t = 0; spawner.warm = false; spawner.parked.clear(); spawner.parkTiles = []; spawner.deckTiles = []; spawner.lotOf.clear(); spawner._near = {}; spawner._fit.clear();
+      spawner.protestHome = null; spawner.protestT = 0; spawner.raccoon = null; spawner.raccoonAct = 0; spawner.hqDone = false; spawner.protestPeds = []; spawner.hqPeds = [];
       var Wd = W(); if (!Wd.tiles) return;
       ensureT();
       var N = Wd.w * Wd.h, i;
       for (i = 0; i < N; i++) {
         var tz = (i / Wd.w) | 0;
-        if (Wd.tiles[i] === T.PARKING && !(Wd.meta[i] & M.YARD) && (tz & 1) && !(Wd._noPark && Wd._noPark[i])) spawner.parkTiles.push(i);   // never on a helipad, the apron, the links or a stunt line
+        // never on a helipad, the apron, the links or a stunt line; QA-A-GEO-05: never a bay a van's body would share with a
+        // solid prop (the windsock, the airliners and jet bridges, pumps, crates, the stadium mast)
+        if (Wd.tiles[i] === T.PARKING && !(Wd.meta[i] & M.YARD) && (tz & 1) && !(Wd._noPark && Wd._noPark[i]) && !spawner.bayProp(i)) spawner.parkTiles.push(i);
         if (Wd.deck[i] && !((Wd.dmeta[i] & M.H) && (Wd.dmeta[i] & M.V))) spawner.deckTiles.push(i);
       }
       // landmark lots with a fixed parked fleet (the balloon depot's beige vans, the podcast van)
@@ -371,7 +394,7 @@
         for (var zz = lm.lot.z; zz < lm.lot.z + lm.lot.d && n < cap; zz++) for (var xx = lm.lot.x; xx < lm.lot.x + lm.lot.w && n < cap; xx++) {
           if (!Wd.inBounds(xx, zz)) continue;
           var ti = tileI(xx, zz);
-          if (Wd.tiles[ti] !== T.PARKING || (Wd._noPark && Wd._noPark[ti])) continue;
+          if (Wd.tiles[ti] !== T.PARKING || (Wd._noPark && Wd._noPark[ti]) || spawner.bayProp(ti)) continue;
           // keep clear of the door approach and the building's own skirt
           if (lm.building && U.pointInRect((xx + 0.5) * TILE, (zz + 0.5) * TILE, lm.building.x - 2.5, lm.building.z - 2.5, lm.building.w + 5, lm.building.d + 5)) continue;
           spawner.lotOf.set(ti, { type: tbl[id].type || 'sedan', color: tbl[id].color || null, wrap: tbl[id].wrap || null, landmark: id });
@@ -379,6 +402,69 @@
           n++;
         }
       }
+    },
+    // a solid prop (not fallen, standing on the ground) inside a van-sized bay round the tile centre: 5.4 x 2.2 m along z
+    // (yaw 0 / PI), so the check covers the tile and the rows before and after it (World._propGrid lists each solid prop
+    // in every tile its circle touches)
+    bayProp: function (ti) {
+      var Wd = W(), PG = Wd._propGrid, PT = Wd._propTile; if (!PG || !PT) return false;
+      var w = Wd.w, tx = ti % w, tz = (ti / w) | 0, cx = (tx + 0.5) * TILE, cz = (tz + 0.5) * TILE;
+      for (var dz = -1; dz <= 1; dz++) {
+        if (!Wd.inBounds(tx, tz + dz)) continue;
+        var j = ti + dz * w, list = PT[j] ? PG.get(j) : null; if (!list) continue;
+        for (var k = 0; k < list.length; k++) {
+          var p = list[k];
+          if (p.fallen || !(p.r > 0) || (p.y || 0) > 1.5) continue;
+          if (Math.abs(p.x - cx) < 1.1 + p.r && Math.abs(p.z - cz) < 2.7 + p.r) return true;
+        }
+      }
+      return false;
+    },
+    // QA-A-TRF-07: the free run along z (the bay's axis) round a parking tile's centre for a body up to 2.5 m wide: walls
+    // (World.solidAt at bumper height) and solid props cut it. Cached per tile: {lo, hi} offsets from the centre (m), or
+    // null when the centre itself is blocked. Long bodies (vans 5.4 m, trucks 7.5 m, buses 10 m) need the room a 4 m tile
+    // does not have by itself; the car is slid along the bay to fit, or a shorter type takes the bay.
+    _fit: new Map(),
+    bayFit: function (ti) {
+      if (spawner._fit.has(ti)) return spawner._fit.get(ti);
+      var Wd = W(), PG = Wd._propGrid, PT = Wd._propTile, w = Wd.w, tx = ti % w, tz = (ti / w) | 0, cx = (tx + 0.5) * TILE, cz = (tz + 0.5) * TILE;
+      var props = [], seen = [], a, b, k;
+      if (PG && PT) for (b = -2; b <= 2; b++) for (a = -1; a <= 1; a++) {
+        if (!Wd.inBounds(tx + a, tz + b)) continue;
+        var j = (tz + b) * w + tx + a, list = PT[j] ? PG.get(j) : null; if (!list) continue;
+        for (k = 0; k < list.length; k++) { var p = list[k]; if (p.fallen || !(p.r > 0) || (p.y || 0) > 1.5 || seen.indexOf(p) >= 0) continue; seen.push(p); props.push(p); }
+      }
+      var HW = 1.25, STEP = 0.1, MAXD = 5.6;
+      var blocked = function (z) {
+        if (Wd.solidAt(cx - HW, z, 0.8) || Wd.solidAt(cx, z, 0.8) || Wd.solidAt(cx + HW, z, 0.8)) return true;
+        for (var q = 0; q < props.length; q++) { var pr = props[q], dz = Math.abs(pr.z - z); if (dz < pr.r && Math.abs(pr.x - cx) < HW + Math.sqrt(pr.r * pr.r - dz * dz)) return true; }
+        return false;
+      };
+      var res = null;
+      if (!blocked(cz)) {
+        var lo = 0, hi = 0;
+        while (lo > -MAXD && !blocked(cz + lo - STEP)) lo -= STEP;
+        while (hi < MAXD && !blocked(cz + hi + STEP)) hi += STEP;
+        res = { lo: lo, hi: hi };
+      }
+      spawner._fit.set(ti, res);
+      return res;
+    },
+    // the longest buildable type of `list` (then a sedan, then a scooter) whose body fits bay ti, or null
+    fitType: function (ti, list) {
+      var best = null, bl = 0, i;
+      for (i = 0; i < list.length; i++) { var t = spawner.vehicleType(list[i]), L = C.VEHICLES[t].length; if (L > bl && spawner.bayZ(ti, L / 2) != null) { best = t; bl = L; } }
+      if (!best && C.VEHICLES.sedan && spawner.bayZ(ti, C.VEHICLES.sedan.length / 2) != null) best = 'sedan';
+      if (!best && C.VEHICLES.bike && spawner.bayZ(ti, C.VEHICLES.bike.length / 2) != null) best = 'bike';
+      return best;
+    },
+    // the bay centre (z) for a body of half-length hl, slid along the bay off a wall or a prop, or null when it does not fit
+    bayZ: function (ti, hl) {
+      var f = spawner.bayFit(ti); if (!f) return null;
+      var m = 0.15, lo = f.lo + hl + m, hi = f.hi - hl - m;
+      if (lo > hi) return null;
+      var cz = (((ti / W().w) | 0) + 0.5) * TILE;
+      return cz + U.clamp(0, lo, hi);
     },
     warmup: function () {
       spawner.warm = true;
@@ -568,36 +654,51 @@
         if (Wd.tile(tx, tz - 1) === T.BUILDING || Wd.tile(tx, tz + 1) === T.BUILDING) { if (Wd.tile(tx - 1, tz) === T.BUILDING || Wd.tile(tx + 1, tz) === T.BUILDING) continue; }
         var yaw = U.hash2(tx, tz, seed + 5) < 0.5 ? 0 : Math.PI;
         type = spawner.vehicleType(type);
+        // QA-A-TRF-07: the body must fit the bay (walls at bumper height, solid props): it slides along the bay, or the
+        // longest type of the district's list that fits takes the bay (no draw on the stream); a fixed fleet keeps its
+        // type and leaves a bay it does not fit empty
+        var hl = C.VEHICLES[type].length / 2, bz = spawner.bayZ(ti, hl);
+        if (bz == null && !lot) { type = spawner.fitType(ti, tbl[did] || ['sedan']); if (type) { hl = C.VEHICLES[type].length / 2; bz = spawner.bayZ(ti, hl); } }
+        if (bz == null) continue;
+        if (hl > 2.3 || Math.abs(bz - z) > 0.05) {
+          var near2 = E().hash.query(x, bz, Math.max(3.2, hl + 0.9), scratch3), clash = false;
+          for (var j2 = 0; j2 < near2.length; j2++) if (near2[j2].kind === 'vehicle' || near2[j2].kind === 'player') { clash = true; break; }
+          if (clash) continue;
+        }
+        z = bz;
         var v = spawner.spawnVehicle(x, z, type, { yaw: yaw, kind: 'parked', color: lot ? lot.color : null, wrap: lot ? lot.wrap : (type === 'taxi' && flags().cab_livery ? 'pod' : null) });
         v.vx = v.vz = 0; v.speed = 0;
         spawner.parked.set(ti, v);
         made++;
       }
     },
-    // precinct cops and cruisers, HOA patrols, the protest, the raccoon
+    // precinct cops and cruisers, HOA patrols, the protest, the raccoon. The precinct guards and the marchers despawn like any
+    // ped past C.ACTIVE_RADIUS; each latch re-arms once the peds it spawned are all gone and the player is out of its spawn
+    // radius (a distance-only latch at 260 / 280 m left them missing for good after a trip to 220-280 m: QAC-36)
     specials: function () {
       var Wd = W(), p = player(); if (!p) return;
       var hq = Wd.landmark('police_hq');
       if (hq && hq.door) {
         var dh = U.dist2d(p.x, p.z, hq.door.x, hq.door.z);
         if (dh < 170 && !spawner.hqDone) {
-          spawner.hqDone = true;
+          spawner.hqDone = true; spawner.hqPeds = [];
           for (var i = 0; i < 2; i++) {
             var gx = hq.door.x + R().range(-3, 3), gz = hq.door.z + R().range(-1.5, 1.5);
             var cop = spawner.spawnPed(gx, gz, 'cop', { mode: 'guard', home: { x: hq.door.x, z: hq.door.z }, radius: 10 });
-            cop.ai.ambient = false;
+            cop.ai.ambient = false; spawner.hqPeds.push(cop);
           }
           // two cruisers in the precinct lot, ready to go
           var lotTiles = spawner.parkTiles.filter(function (ti) { var tx = ti % Wd.w, tz = (ti / Wd.w) | 0; return tx >= hq.lot.x && tx < hq.lot.x + hq.lot.w && tz >= hq.lot.z && tz < hq.lot.z + hq.lot.d && !spawner.parked.has(ti); });
           for (i = 0; i < Math.min(2, lotTiles.length); i++) {
-            var ti = lotTiles[i], tx = ti % Wd.w, tz = (ti / Wd.w) | 0, cx = (tx + 0.5) * TILE, cz = (tz + 0.5) * TILE;
+            var ti = lotTiles[i], tx = ti % Wd.w, tz = (ti / Wd.w) | 0, cx = (tx + 0.5) * TILE, cz = spawner.bayZ(ti, C.VEHICLES.cop.length / 2);
+            if (cz == null) continue;   // QA-A-TRF-07: a cruiser fits its bay too
             var near = E().hash.query(cx, cz, 3.2, scratch3), blocked = false;
             for (var j = 0; j < near.length; j++) if (near[j].kind === 'vehicle') { blocked = true; break; }
             if (blocked) continue;
             var cv = spawner.spawnVehicle(cx, cz, 'cop', { yaw: 0, kind: 'parked' });
             spawner.parked.set(ti, cv);
           }
-        } else if (dh > 260) spawner.hqDone = false;
+        } else if (spawner.hqDone && dh > 190 && allGone(spawner.hqPeds)) spawner.hqDone = false;
       }
       // HOA patrol SUVs in Culdesac Heights
       var d = Wd.districtAt(p.x, p.z);
@@ -615,15 +716,15 @@
       if (pp) {
         var dp = U.dist2d(p.x, p.z, pp.x, pp.z);
         if (dp < 160 && !spawner.protestHome) {
-          spawner.protestHome = { x: pp.x, z: pp.z };
+          spawner.protestHome = { x: pp.x, z: pp.z }; spawner.protestPeds = [];
           for (i = 0; i < 7; i++) {
             var a = R().random() * U.TAU, r = R().range(3, 9);
             var px = pp.x + Math.cos(a) * r, pz = pp.z + Math.sin(a) * r;
             if (Wd.solidAt(px, pz, 0.5)) continue;
             var m = spawner.spawnPed(px, pz, 'protester', { mode: 'protest', home: { x: pp.x, z: pp.z }, radius: 11 });
-            m.ai.ambient = true;
+            m.ai.ambient = true; spawner.protestPeds.push(m);
           }
-        } else if (dp > 280) spawner.protestHome = null;
+        } else if (spawner.protestHome && dp > 180 && allGone(spawner.protestPeds)) spawner.protestHome = null;
       }
       // the Lot C raccoon (GDD 9): near pod_garage in Act I, nap_depot in Act II, tyn_tower in Act III
       var F = flags(), act = F.knows_memo || F.survived_thursday ? 3 : (F.show_renamed ? 2 : 1);
@@ -758,19 +859,46 @@
       startFlee(p, ai, a, R().range(3.5, 6.5)); ai.fleeT0 = ai.fleeT;
       return;
     }
-    // a car bearing down on us: step out of its way (sideways, away from its centre line)
+    // a car bearing down on us: step out of its way (sideways, away from its centre line). Perf: the step's fast cars are
+    // listed once (fastCars); only when one of them has this ped in its corridor does the hash query run, so the result
+    // (the first such car in hash order) is the one it always was. The local frame is worked out inline (no objects).
+    var fl = fastCars(), any = false, fx, fz, dx, dz, lf, lr;
+    for (i = 0; i < fl.length; i++) {
+      var c = fl[i], csp = fastSp[i];
+      if (c.removed || Math.abs(c.y - p.y) > 2.5) continue;
+      fx = -Math.sin(c.yaw); fz = -Math.cos(c.yaw); dx = p.x - c.x; dz = p.z - c.z; lf = dx * fx + dz * fz;
+      if (lf < 0 || lf > 6 + csp * 1.1) continue;
+      lr = dx * (-fz) + dz * fx;
+      if (Math.abs(lr) > c.hw + 1.6) continue;
+      any = true; break;
+    }
+    if (!any) return;
     var list = E().hash.query(p.x, p.z, 16, scratch2);
     for (i = 0; i < list.length; i++) {
       var v = list[i];
       if (v.kind !== 'vehicle' || v.removed || Math.abs(v.y - p.y) > 2.5) continue;
       var sp = v.speed2d(); if (sp < 7) continue;
-      var l = v.worldToLocal(p.x, p.z);
-      if (l.f < 0 || l.f > 6 + sp * 1.1 || Math.abs(l.r) > v.hw + 1.6) continue;
-      var f = U.yawToDir(v.yaw), rx = -f.z, rz = f.x, s = l.r < 0 ? -1 : 1;
-      startFlee(p, ai, null, 1.6, { x: rx * s, z: rz * s }); ai.fleeT0 = ai.fleeT;
+      fx = -Math.sin(v.yaw); fz = -Math.cos(v.yaw); dx = p.x - v.x; dz = p.z - v.z; lr = dx * (-fz) + dz * fx; lf = dx * fx + dz * fz;
+      if (lf < 0 || lf > 6 + sp * 1.1 || Math.abs(lr) > v.hw + 1.6) continue;
+      var s = lr < 0 ? -1 : 1;
+      startFlee(p, ai, null, 1.6, { x: -fz * s, z: fx * s }); ai.fleeT0 = ai.fleeT;
       return;
     }
     void dt; void now;
+  }
+  // the vehicles moving at 7 m/s or more this step (and their speeds), listed on first use per AI step: vehicles neither
+  // move nor spawn inside the AI's entity loop, so the list holds for the whole step
+  var fastList = [], fastSp = [], fastStep = -1;
+  function fastCars() {
+    if (fastStep === stepN) return fastList;
+    fastStep = stepN; fastList.length = 0; fastSp.length = 0;
+    var list = E().list;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i]; if (e.kind !== 'vehicle' || e.removed) continue;
+      var sp = Math.sqrt(e.vx * e.vx + e.vz * e.vz);
+      if (sp >= 7) { fastList.push(e); fastSp.push(sp); }
+    }
+    return fastList;
   }
   function wanderTick(p, ai, dt) {
     if (ai.escape) {
@@ -873,11 +1001,11 @@
     if (shot || ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, shot || pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
   }
 
-  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load
-  // (06c_animation loads before this file); once the animation track's GTP.Anim is in, it poses ped.cowering itself and
-  // this wrapper stands aside.
+  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load,
+  // only when the animation module (06c_animation, loaded before this file) is missing: with GTP.Anim the wrapper did
+  // nothing but cost a call per ped per frame, and posing ped.cowering is the animation module's job.
   (function () {
-    var P = GTP.Ped && GTP.Ped.prototype; if (!P || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
+    var P = GTP.Ped && GTP.Ped.prototype; if (!P || GTP.Anim || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
     var base = P.syncMesh;
     P.syncMesh = function (alpha) {
       base.call(this, alpha);
@@ -922,7 +1050,7 @@
     return {
       kind: kind || 'traffic', axis: 'h', dir: 1, laneC: v.z, lane: 0, w: 2, lo: 0, deck: false, plan: null, phase: v.id % K.carTick,
       cruise: 10, speedMul: R().range(0.9, 1.12), targetSpeed: 0, cap: 99, capReason: null, stopAlong: null, waitT: 0,
-      blockedT: 0, honkT: 0, stuckT: 0, reverseT: 0, revSteer: 0, unsticks: 0, offRoadT: 0, recover: null, swerve: 0, swerveT: 0, lastSteer: 0, hoa: false, turnT: 0,
+      blockedT: 0, honkT: 0, stuckT: 0, reverseT: 0, revSteer: 0, unsticks: 0, offRoadT: 0, recover: null, recRevT: 0, swerve: 0, swerveT: 0, swerveOf: null, lastSteer: 0, hoa: false, turnT: 0,
       mode: (kind === 'cop' || kind === 'hoa') ? 'patrol' : null, path: null, pi: 0, repathT: 0, goal: null, goalSpeed: 0, pursuitT: 0, lostT: 0, exitT: 0, blockT: 0
     };
   }
@@ -967,10 +1095,20 @@
     var cur = laneByte(tx, tz, axis, deck);
     if (!cur) { if (!adoptLane(v, ai)) return false; axis = ai.axis; dir = ai.dir; oax = axis === 'h' ? 'v' : 'h'; dx = axis === 'h' ? dir : 0; dz = axis === 'v' ? dir : 0; cur = laneByte(tx, tz, axis, ai.deck); deck = ai.deck; if (!cur) return false; }
     var li = laneInfo(cur, axis, tx, tz);
+    // QA-A-TRF-03: the lane under the car is only taken when it runs our way and we are not mid-swerve; otherwise (a car
+    // pushed onto the oncoming side, an unfinished three-point turn, a swerve round a parked car) keep to the lane of our
+    // direction nearest the one we were following, and scan ahead along that lane's tiles
+    if (li.dir !== dir || ai.swerve) {
+      var want = (ai.laneC >= li.lo * TILE && ai.laneC < (li.lo + li.w) * TILE) ? ai.laneC : (axis === 'h' ? v.z : v.x) - ai.swerve;
+      var bestL = -1, bestD = 1e9;
+      for (var l0 = 0; l0 < li.w; l0++) { if (laneDirOf(l0, li.w, axis) !== dir) continue; var dl = Math.abs((li.lo + l0 + 0.5) * TILE - want); if (dl < bestD) { bestD = dl; bestL = l0; } }
+      var ntx = axis === 'h' ? tx : li.lo + bestL, ntz = axis === 'h' ? li.lo + bestL : tz, nb = bestL >= 0 ? laneByte(ntx, ntz, axis, deck) : 0;
+      if (!nb || (nb >> 4) !== bestL || (nb & 15) !== li.w) { if (!adoptLane(v, ai)) return false; return true; }   // an odd cross-section: adoptLane picks a lane of our heading
+      tx = ntx; tz = ntz; cur = nb; li = laneInfo(cur, axis, tx, tz);
+    }
     ai.lane = li.l; ai.w = li.w; ai.lo = li.lo; ai.laneC = li.center;
     var lowHalfMine = li.l < li.w / 2, rankMine = Math.abs(li.l - innerLane(li.w, lowHalfMine));
     var ctx = tx, ctz = tz, cdeck = deck, k;
-    var alongOf = function (ax, az) { return axis === 'h' ? ax : az; };
     for (k = 1; k <= 18; k++) {
       var nl = stepLayer(ctx, ctz, cdeck, ctx + dx, ctz + dz);
       if (!nl) { ai.plan = deadPlan(v, ai, ctx, ctz); return true; }
@@ -1000,7 +1138,6 @@
           } else if (sb) ai.sideSkip = (ai.sideSkip || 0) - 1;
         }
       }
-      void alongOf;
     }
     // a long straight: cruise and look again later
     ai.plan = { kind: 'cruise', until: (axis === 'h' ? v.x : v.z) + dir * 10 * TILE, t: 0 };
@@ -1009,7 +1146,7 @@
   function deadPlan(v, ai, ltx, ltz) {
     var axis = ai.axis, dir = ai.dir;
     var endAlong = (axis === 'h' ? ltx : ltz) * TILE + (dir > 0 ? TILE : 0);
-    return { kind: 'dead', endAlong: endAlong, t: 0, turning: false };
+    return { kind: 'dead', endAlong: endAlong, t: 0, turning: false, atBox: false };
   }
   function junctionPlan(v, ai, li, btx, btz, bdeck, other, k, rankMine, lowHalfMine) {
     var Wd = W(), axis = ai.axis, dir = ai.dir, oax = axis === 'h' ? 'v' : 'h';
@@ -1026,7 +1163,12 @@
       if (mb && (mb >> 4) === li.l && (mb & 15) === li.w) {
         var run = 1, rx = ax, rz = az, rl = sl === 'deck', dead = !!(Wd.metaAt(ax, az) & M.DEAD);
         while (run < 10) { var nl = stepLayer(rx, rz, rl, rx + (axis === 'h' ? dir : 0), rz + (axis === 'v' ? dir : 0)); if (!nl) break; rx += axis === 'h' ? dir : 0; rz += axis === 'v' ? dir : 0; rl = nl === 'deck'; var b2 = laneByte(rx, rz, axis, rl); if (!b2 || (b2 >> 4) !== li.l) break; run++; if (laneByte(rx, rz, oax, rl)) { run = 10; break; } }
-        opts.push({ kind: 'straight', w: dead ? 0.05 : (run >= 10 ? 3 : run >= 4 ? 1.2 : 0.15) });
+        // QA-A-TRF-04: a lane that ends `run` tiles past the box (a stub at the sea wall) is only driven into when the car can
+        // stop and turn in it; the plan carries the end so the braking starts before the box, not after it
+        var stubEnd = null;
+        if (run < 10) { var firstA = axis === 'h' ? ax : az, lastA = firstA + dir * (run - 1); stubEnd = (dir > 0 ? lastA + 1 : lastA) * TILE; }
+        // (a street that ends short of the next junction is a dead end to the planner, however long: taken rarely)
+        if (run >= 10 || run * TILE >= v.cls.length + 6) opts.push({ kind: 'straight', w: dead ? 0.05 : (run >= 10 ? 3 : 0.15), stubEnd: stubEnd });
       }
     }
     // turns: right = (-dz, dx), left = (dz, -dx) in world xz
@@ -1056,48 +1198,93 @@
       var dead2 = !!(Wd.metaAt(exTx, exTz) & M.DEAD) || run2 < 5;
       opts.push({ kind: tn.kind, w: dead2 ? 0.03 : tn.w, exitDir: exitDir, lane: lane, turnAlong: (lo2 + lane + 0.5) * TILE });
     }
-    var plan = { kind: 'dead', endAlong: entryAlong, t: 0, turning: false };
+    // nothing to take (a bus at the campus avenue's last street before the sea wall): stop short of the box and turn round
+    // in it (atBox: the box gives the room, so the car is not simply recycled out of view)
+    var plan = { kind: 'dead', endAlong: entryAlong, t: 0, turning: false, atBox: true };
     if (!opts.length) return plan;
     var total = 0; for (i = 0; i < opts.length; i++) total += opts[i].w;
     var r = R().random() * total, pick = opts[opts.length - 1];
     for (i = 0; i < opts.length; i++) { r -= opts[i].w; if (r <= 0) { pick = opts[i]; break; } }
-    plan = { kind: pick.kind, entryAlong: entryAlong, exitEdge: exitEdge, box: box, signaled: !bdeck && signaled(btx, btz), sigTx: btx, sigTz: btz, turning: false, t: 0, side: false };
+    plan = { kind: pick.kind, entryAlong: entryAlong, exitEdge: exitEdge, box: box, signaled: !bdeck && signaled(btx, btz), sigTx: btx, sigTz: btz, turning: false, t: 0, side: false, stubEnd: null };
     if (pick.kind !== 'straight') { plan.turnAlong = pick.turnAlong; plan.exitAxis = oax; plan.exitDir = pick.exitDir; plan.exitLaneC = pick.turnAlong; }
+    else plan.stubEnd = pick.stubEnd;
     void k;
     return plan;
   }
-  // speed caps from the car / ped ahead in our corridor
+  // speed caps from the car / ped ahead in our corridor (QAC-46: the local frame is worked out inline, no per-candidate
+  // objects; the same arithmetic as Vehicle.worldToLocal)
   function aheadCaps(v, ai, dt) {
-    var sp = Math.max(0, v.speed), f = U.yawToDir(v.yaw), L = Math.min(44, 7 + sp * 1.3);
-    var list = E().hash.query(v.x + f.x * L * 0.5, v.z + f.z * L * 0.5, L * 0.5 + 5, scratch), cap = 99, reason = null, pedBlock = false;
+    var vhl = v.hl, vhw = v.hw, rgap = 99;
+    // (a bus or a truck looks the extra body length ahead: from its centre 7 m reached barely past its own bumper)
+    var ext0 = v.cls.length > 6 ? vhl - 2.25 : 0;
+    var sp = Math.max(0, v.speed), yaw = v.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), L = Math.min(44, 7 + sp * 1.3) + ext0;
+    var list = E().hash.query(v.x + fx * L * 0.5, v.z + fz * L * 0.5, L * 0.5 + 5, scratch), cap = 99, reason = null, pedBlock = false;
     for (var i = 0; i < list.length; i++) {
       var o = list[i];
       if (o === v || o.removed || Math.abs(o.y - v.y) > 2.6) continue;
+      var dx, dz, lf, lr;
       if (o.kind === 'vehicle') {
         if (o.sinking) continue;
-        var l = v.worldToLocal(o.x, o.z), ext = Math.abs(Math.cos(o.yaw - v.yaw)) > 0.7 ? o.hl : o.hw;
-        if (l.f <= 0 || l.f > L + ext || Math.abs(l.r) > v.hw + o.hw * 0.8 + 0.35) continue;
-        var gap = l.f - v.hl - ext, along = o.vx * f.x + o.vz * f.z;
+        dx = o.x - v.x; dz = o.z - v.z; lr = dx * (-fz) + dz * fx; lf = dx * fx + dz * fz;
+        var ext = Math.abs(Math.cos(o.yaw - yaw)) > 0.7 ? o.hl : o.hw;
+        if (lf <= 0 || lf > L + ext || Math.abs(lr) > vhw + o.hw * 0.8 + 0.35) continue;
+        var gap = lf - vhl - ext, along = o.vx * fx + o.vz * fz;
         var want = K.gapMin + sp * K.gapTime, c;
         if (gap < 1.0) c = 0; else if (gap < want) c = Math.max(0, along + (gap - want) * 0.9); else continue;
-        if (c < cap) { cap = c; reason = o; }
+        if (c < cap) { cap = c; reason = o; rgap = gap; }
       } else if (o.kind === 'ped' || o.kind === 'player') {
         if (o.inVehicle || !o.alive || o.knockedDown) continue;
-        var lp = v.worldToLocal(o.x, o.z), Lp = 5 + sp * 0.9;
+        dx = o.x - v.x; dz = o.z - v.z; lr = dx * (-fz) + dz * fx; lf = dx * fx + dz * fz;
+        // (from a bus's centre 5 m ended 0.2 m past its nose: one standing there was pushed along at a crawl for minutes)
+        var Lp = 5 + sp * 0.9 + ext0;
         // a ped stepping toward our line (a runner off the kerb) is seen from a wider corridor
-        var latV = (o.vx || 0) * (-f.z) + (o.vz || 0) * f.x, stepping = (lp.r > 0 && latV < -1) || (lp.r < 0 && latV > 1);
-        if (lp.f <= 0 || lp.f > Lp || Math.abs(lp.r) > v.hw + (stepping ? 2.6 : 0.7)) continue;
-        var g2 = lp.f - v.hl - 1.6, cp = g2 <= 0 ? 0 : Math.sqrt(2 * K.brakeAccel * g2);
+        var latV = (o.vx || 0) * (-fz) + (o.vz || 0) * fx, stepping = (lr > 0 && latV < -1) || (lr < 0 && latV > 1);
+        if (lf <= 0 || lf > Lp || Math.abs(lr) > vhw + (stepping ? 2.6 : 0.7)) continue;
+        var g2 = lf - vhl - 1.6, cp = g2 <= 0 ? 0 : Math.sqrt(2 * K.brakeAccel * g2);
         if (ai.blockedT > K.pedBlockCreep) cp = Math.max(cp, 1.3);
-        if (cp < cap) { cap = cp; reason = o; pedBlock = true; }
+        if (cp < cap) { cap = cp; reason = o; pedBlock = true; rgap = 99; }
       }
     }
+    // swerving round a car that will not move: creep past it (the car can only steer out of the corridor while it rolls)
+    if (ai.swerveT > 0 && reason && reason === ai.swerveOf && rgap > 0.3 && cap < 1.5) cap = 1.5;
     ai.cap = cap; ai.capReason = reason; ai.pedBlock = pedBlock;
-    // stationary obstacle ahead for a while: swerve round it
-    if (reason && reason.kind === 'vehicle' && cap < 0.5 && sp < 0.5 && !(reason.ai && reason.ai.plan && reason.ai.plan.turning)) {
-      if (ai.blockedT > K.stuckTime && !ai.swerveT) { ai.swerve = (ai.axis === 'h' ? (ai.dir > 0 ? -1 : 1) : (ai.dir > 0 ? 1 : -1)) * 3.2; ai.swerveT = 5; }
+    // a stationary obstacle ahead for a while: swerve round it. QA-A-TRF-02: only round a car nobody drives (parked, a
+    // wreck, an empty or dead driver's seat, a roadblock) or the player's car once it has stood longer than a red phase; a
+    // driven car that stands is queued (at a light, a yield, behind the car ahead) and is waited for, and the swerve takes
+    // a lane of our own direction when the road has one, the oncoming lane only round an obstacle that will not move
+    // (a car whose rider was thrown off keeps its last plan: an empty seat wins over a stale `turning`)
+    if (reason && reason.kind === 'vehicle' && cap < 0.5 && sp < 0.5 && !ai.swerveT && ai.blockedT > K.stuckTime) {
+      var inert = inertCar(reason);
+      var still = inert || (!(reason.ai && reason.ai.plan && reason.ai.plan.turning) && ai.blockedT > K.playerBlock && reason.hasPlayer && reason.hasPlayer());
+      if (still) {
+        var so = swerveOffset(ai, true);
+        if (so) {
+          ai.swerve = so; ai.swerveT = 5; ai.swerveOf = reason;
+          // nose to tail with it: back off first, the wheels turned so the nose swings toward the swerve side
+          if (rgap < 1.2) {
+            var sx = ai.axis === 'h' ? v.x + ai.dir * 6 : ai.laneC + so, sz = ai.axis === 'h' ? ai.laneC + so : v.z + ai.dir * 6;
+            ai.reverseT = 0.9; ai.revSteer = U.clamp(U.wrapAngle(U.dirToYaw(sx - v.x, sz - v.z) - yaw) * K.steerGain, -1, 1) * 0.8;
+          }
+        }
+      }
     }
     if (ai.swerveT > 0) { ai.swerveT -= dt; if (ai.swerveT <= 0) { ai.swerve = 0; ai.swerveT = 0; } }
+  }
+  // a vehicle that will not move by itself: nobody (alive) at the wheel, a wreck, a parked or roadblock car
+  function inertCar(o) {
+    if (o.wreck || !o.driver || !o.driver.alive) return true;
+    var oa = o.ai;
+    return !!(oa && (oa.kind === 'parked' || oa.mode === 'parked' || oa.mode === 'roadblock'));
+  }
+  // the lateral offset of a swerve: a neighbouring lane that runs our way (the overtaking side first), else (when allowed)
+  // 3.2 m toward the centre line, into the oncoming lane; 0 when there is no room
+  function swerveOffset(ai, oncoming) {
+    var inward = ai.axis === 'h' ? (ai.dir > 0 ? -1 : 1) : (ai.dir > 0 ? 1 : -1);
+    var l = Math.floor(ai.laneC / TILE) - ai.lo;
+    if (l >= 0 && l < ai.w && laneDirOf(l, ai.w, ai.axis) === ai.dir) {
+      for (var s = 0; s < 2; s++) { var dl = s ? -inward : inward, l2 = l + dl; if (l2 >= 0 && l2 < ai.w && laneDirOf(l2, ai.w, ai.axis) === ai.dir) return dl * TILE; }
+    }
+    return oncoming ? inward * 3.2 : 0;
   }
   function boxBusy(v, box) {
     var cx = (box.x0 + box.x1) / 2, cz = (box.z0 + box.z1) / 2, r = Math.max(box.x1 - box.x0, box.z1 - box.z0) * 0.75 + 2;
@@ -1106,7 +1293,7 @@
       var o = list[i];
       if (o === v || o.kind !== 'vehicle' || o.removed || Math.abs(o.y - v.y) > 3) continue;
       if (o.x < box.x0 - 1 || o.x > box.x1 + 1 || o.z < box.z0 - 1 || o.z > box.z1 + 1) continue;
-      if (o.speed2d() > 0.4 || (o.ai && o.ai.plan && o.ai.plan.turning)) return true;
+      if (o.speed2d() > 0.4 || (o.ai && o.driver && o.ai.plan && o.ai.plan.turning)) return true;   // an empty car's stale plan does not hold the box
     }
     return false;
   }
@@ -1116,13 +1303,15 @@
     ai.deck = onDeck(v);
     if (!roadUnder(v)) {
       ai.offRoadT += dt;
-      if (ai.offRoadT > 0.6 && !ai.recover) { var rp = Wd.nearestRoadPoint(v.x, v.z); if (rp) ai.recover = { x: rp.x, z: rp.z }; }
+      // QA-A-TRF-01/04: the plan made on the road is dropped (its dead-end or signal stop held a car on the pavement at
+      // speed 0 for minutes); the drive back follows the road point alone
+      if (ai.offRoadT > 0.6 && !ai.recover) { var rp = Wd.nearestRoadPoint(v.x, v.z); if (rp) { ai.recover = { x: rp.x, z: rp.z }; ai.recRevT = 0; ai.plan = null; ai.stopAlong = null; } }
       if (ai.offRoadT > 8 && !visibleToCamera(v.x, v.y + 1, v.z)) { recycle(v); return; }
     } else {
       ai.offRoadT = 0;
       if (ai.recover) { ai.recover = null; adoptLane(v, ai); }
     }
-    if (ai.recover) { aheadCaps(v, ai, dt); return; }
+    if (ai.recover) { aheadCaps(v, ai, dt); if (!breakGridlock(v, ai, dt)) giveUp(v, ai); return; }
     if (!ai.plan && !planAhead(v, ai)) { ai.offRoadT += dt; return; }
     var plan = ai.plan, axis = ai.axis, dir = ai.dir, along = axis === 'h' ? v.x : v.z;
     plan.t += dt;
@@ -1130,8 +1319,14 @@
     if (plan.kind === 'cruise') { if ((plan.until - along) * dir < 0) ai.plan = null; ai.cruise = cruiseFor(v, ai); }
     else if (plan.kind === 'dead') {
       var dEnd = (plan.endAlong - along) * dir - v.hl;
-      if (dEnd < 2.5 && Math.abs(v.speed) < 0.6) {
-        if (!visibleToCamera(v.x, v.y + 1, v.z) || ai.kind === 'traffic' && plan.t > 20) { recycle(v); return; }
+      // QA-A-TRF-01: a queue at a dead end (the street north of Ratio Row that ends at the lot under the Loop) waited for
+      // its head car's three-point turn, which the queue itself blocked: a car held there by the car ahead turns round
+      // where it stands, so the queue unwinds from the back. Only a queue of that dead end: the car ahead waits on it too
+      // (a car whose lane ends 60 m on, held in ordinary traffic, turned round in a junction's mouth and knotted it)
+      var cra = ai.capReason && ai.capReason.kind === 'vehicle' && ai.capReason.ai, crp = cra && cra.plan;
+      var queued = !!crp && (crp.kind === 'dead' || crp.kind === 'uturn') && ai.blockedT > K.stuckTime;
+      if ((dEnd < 2.5 || queued) && Math.abs(v.speed) < 0.6) {
+        if ((!plan.atBox && !visibleToCamera(v.x, v.y + 1, v.z)) || ai.kind === 'traffic' && plan.t > 20) { recycle(v); return; }
         // three-point turn: back up with the wheels turned, then swing round into the opposite lane
         if (!plan.turning) {
           var li = laneInfo(laneByte(Math.floor(v.x / TILE), Math.floor(v.z / TILE), axis, ai.deck) || (ai.lane << 4 | ai.w), axis, Math.floor(v.x / TILE), Math.floor(v.z / TILE));
@@ -1175,7 +1370,17 @@
       } else if (ai.turnT > 7) { if (!adoptLane(v, ai)) ai.plan = null; }
     }
     aheadCaps(v, ai, dt);
-    breakGridlock(v, ai, dt);
+    if (!breakGridlock(v, ai, dt)) giveUp(v, ai);
+  }
+  // QA-A-TRF-01: the unstick path (carStep, ai.stuckT) only runs with nothing ahead, so a car held by another car waited
+  // for good, and the frozen cars kept the traffic budget. Held by a car longer than any queue at a light lasts
+  // (K.giveUp), a traffic car out of view is recycled and the spawner puts fresh traffic on the streets
+  function giveUp(v, ai) {
+    var cr = ai.capReason;
+    if (ai.kind !== 'traffic' || !cr || cr.kind !== 'vehicle' || ai.blockedT < K.giveUp || Math.abs(v.speed) > 0.6) return false;
+    if (visibleToCamera(v.x, v.y + 1, v.z)) return false;
+    recycle(v);
+    return true;
   }
   // v0.3: a gridlock cycle (each car's speed cap is the car ahead of it, round a junction or nose to nose after a swerve
   // into the oncoming lane) never clears by itself: seen in the campaign, five cars and a courier stood 300 s at Ratio Row.
@@ -1206,14 +1411,23 @@
       v.setControls(-0.8, ai.revSteer, false, 0);
       return;
     }
-    var tgt, L = Math.max(K.lookMin, Math.abs(sp) * K.lookTime), plan = ai.plan, axis = ai.axis, dir = ai.dir;
+    // the steering target as two numbers (QAC-46: no object per car per step)
+    var tgx, tgz, L = Math.max(K.lookMin, Math.abs(sp) * K.lookTime), plan = ai.plan, axis = ai.axis, dir = ai.dir;
     var along = axis === 'h' ? v.x : v.z;
-    if (ai.recover) tgt = ai.recover;
+    if (ai.recover) { tgx = ai.recover.x; tgz = ai.recover.z; }
     else if (plan && plan.turning) {
       var ex = plan.exitAxis, ed = plan.exitDir, L2 = Math.max(3.2, Math.abs(sp) * 0.75);
-      tgt = ex === 'h' ? { x: v.x + ed * L2, z: plan.exitLaneC } : { x: plan.exitLaneC, z: v.z + ed * L2 };
-    } else tgt = axis === 'h' ? { x: v.x + dir * L, z: ai.laneC + ai.swerve } : { x: ai.laneC + ai.swerve, z: v.z + dir * L };
-    var diff = U.wrapAngle(U.dirToYaw(tgt.x - v.x, tgt.z - v.z) - v.yaw);
+      if (ex === 'h') { tgx = v.x + ed * L2; tgz = plan.exitLaneC; } else { tgx = plan.exitLaneC; tgz = v.z + ed * L2; }
+    } else if (axis === 'h') { tgx = v.x + dir * L; tgz = ai.laneC + ai.swerve; } else { tgx = ai.laneC + ai.swerve; tgz = v.z + dir * L; }
+    var diff = U.wrapAngle(U.dirToYaw(tgx - v.x, tgz - v.z) - v.yaw);
+    // QA-A-TRF-04: a road point behind the car (it overran a kerb or a stub) is backed up to, tail first, instead of an
+    // arc forward that took buses off the sea wall; four seconds of it at most, then forward as before
+    if (ai.recover && (diff > 1.9 || diff < -1.9) && ai.recRevT < 4) {
+      ai.recRevT += dt;
+      var rsteer = U.clamp(U.wrapAngle(diff - Math.PI) * K.steerGain, -1, 1);
+      v.setControls(-0.6, rsteer, false, 0); ai.lastSteer = -rsteer; ai.targetSpeed = 0; ai.stuckT = 0;
+      return;
+    }
     var steer = U.clamp(-diff * K.steerGain, -1, 1);
     // speed
     var ts = ai.recover ? 4 : ai.cruise;
@@ -1221,12 +1435,14 @@
     if (ai.stopAlong != null) { var d = (ai.stopAlong - along) * dir; ts = Math.min(ts, d <= 0.35 ? 0 : Math.sqrt(2 * K.brakeAccel * (d - 0.35))); }
     if (plan) {
       if (plan.kind === 'right' || plan.kind === 'left') {
-        var tsp = K.turnSpeed[plan.kind];
+        // a longer body (van, SUV, truck) takes the corner slower, or its swing runs wide onto the corner's signal pole
+        var tsp = K.turnSpeed[plan.kind] * (v.cls.length > 4.6 ? Math.max(0.6, 4.6 / v.cls.length) : 1);
         if (plan.turning) ts = Math.min(ts, tsp);
         else { var rem = (plan.turnAlong - along) * dir - K.turnRadius[plan.kind]; ts = Math.min(ts, Math.sqrt(tsp * tsp + 2 * K.brakeAccel * Math.max(0, rem))); }
         if (!plan.signaled && !plan.turning && !plan.side) { var de = (plan.entryAlong - along) * dir; if (de > 0 && de < 14) ts = Math.min(ts, Math.max(K.yieldSpeed, Math.sqrt(K.yieldSpeed * K.yieldSpeed + 2 * K.brakeAccel * de))); }
-      } else if (plan.kind === 'straight' && !plan.signaled) {
-        var de2 = (plan.entryAlong - along) * dir; if (de2 > 0 && de2 < 12) ts = Math.min(ts, Math.max(K.yieldSpeed + 3, Math.sqrt(64 + 2 * K.brakeAccel * de2)));
+      } else if (plan.kind === 'straight') {
+        if (!plan.signaled) { var de2 = (plan.entryAlong - along) * dir; if (de2 > 0 && de2 < 12) ts = Math.min(ts, Math.max(K.yieldSpeed + 3, Math.sqrt(64 + 2 * K.brakeAccel * de2))); }
+        if (plan.stubEnd != null) { var ds = (plan.stubEnd - along) * dir - v.hl - 1.8; ts = Math.min(ts, ds <= 0 ? 0 : Math.sqrt(2 * K.brakeAccel * ds)); }
       } else if (plan.kind === 'dead') {
         var dd = (plan.endAlong - along) * dir - v.hl - 1.8; ts = Math.min(ts, dd <= 0 ? 0 : Math.sqrt(2 * K.brakeAccel * dd));
       } else if (plan.kind === 'uturn') ts = Math.min(ts, K.turnSpeed.uturn);
@@ -1269,9 +1485,30 @@
 
   // ---------------------------------------------------------------- police --
   var police = {
-    footT: 0, cruiserT: 0, swatT: 0, roadblockT: 0, tickT: 0, roadblocks: [], heli: null, bustT: 0, busted: false, bustedT: 0, bustCop: null, garageT: 0, garageToastT: 0, pathBudget: 0,
-    reset: function () { police.footT = police.cruiserT = police.swatT = police.roadblockT = police.tickT = 0; police.roadblocks = []; police.heli = null; police.bustT = 0; police.busted = false; police.bustedT = 0; police.bustCop = null; police.garageT = 0; police.garageToastT = 0; }
+    footT: 0, cruiserT: 0, swatT: 0, roadblockT: 0, tickT: 0, roadblocks: [], heli: null, heliT: 0, bustT: 0, busted: false, bustedT: 0, bustCop: null, bustLevel: 0, garageT: 0, garageToastT: 0, pathBudget: 0,
+    // New Game / Load: the helicopter's respawn wait and the last bust's level go too (QAC-37), and the resident spotlight goes dark
+    reset: function () {
+      police.footT = police.cruiserT = police.swatT = police.roadblockT = police.tickT = 0; police.roadblocks = []; police.heli = null; police.heliT = 0;
+      police.bustT = 0; police.busted = false; police.bustedT = 0; police.bustCop = null; police.bustLevel = 0; police.garageT = 0; police.garageToastT = 0;
+      heliLamp.ensure(); heliLamp.off();
+    }
   };
+  // no live AI driver at the wheel
+  function unmanned(v) { return !v.driver || !v.driver.alive || v.hasPlayer(); }
+  // siren and lightbar off on the police cars nobody drives once the stars are gone: released roadblock cruisers, cruisers
+  // and SWAT vans whose crews got out (copsExit parks them), a cruiser whose cop never made it back in. The driven ones turn
+  // theirs off in copCarTick; the player's own car, mission and event cars (persistent) are left alone
+  function policeStandDown() {
+    var list = E().list;
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i];
+      if (v.kind !== 'vehicle' || v.removed || v.persistent || !v.ai || v.hasPlayer() || !(v.siren || v.isPolice || v.tag === 'swat')) continue;
+      var off = unmanned(v);
+      if (!off && v.ai.mode !== 'parked' && v.ai.mode !== 'roadblock') continue;
+      v.siren = false;
+      if (off) v.lights = false;
+    }
+  }
   var DIRN = { x: 0, z: -1 };
   function faceToward(p, x, z, dt) { p.yaw = U.angleDamp(p.yaw, U.dirToYaw(x - p.x, z - p.z), 8, dt); }
   function shakeAt(x, z) { var pl = player(); if (pl && GTP.Render && GTP.Render.rig) GTP.Render.rig.shake(U.clamp(1 - U.dist2d(pl.x, pl.z, x, z) / 40, 0.1, 1)); }
@@ -1444,8 +1681,10 @@
     if (ai.mode === 'patrol' && (ai.seen || wanted.level >= 2)) { ai.mode = 'pursuit'; v.siren = true; ai.path = null; ai.pursuitT = 0; }
     if (ai.mode === 'pursuit' || ai.mode === 'ram') {
       ai.pursuitT += dt;
-      if (ai.seen) { ai.lostT = 0; ai.goal = { x: pl.x + (pl.vx || 0) * 0.4, z: pl.z + (pl.vz || 0) * 0.4 }; }
-      else { ai.lostT += dt; ai.goal = { x: wanted.lastKnown.x, z: wanted.lastKnown.z }; }
+      // (QAC-46: the goal object is the car's own and is reused, not a new one per brain tick)
+      var gq = ai.goal || (ai.goal = { x: 0, z: 0 });
+      if (ai.seen) { ai.lostT = 0; gq.x = pl.x + (pl.vx || 0) * 0.4; gq.z = pl.z + (pl.vz || 0) * 0.4; }
+      else { ai.lostT += dt; gq.x = wanted.lastKnown.x; gq.z = wanted.lastKnown.z; }
       if (ai.seen && plVeh && d < K.ramRange) ai.mode = 'ram'; else if (ai.mode === 'ram' && (ai.lostT > 4 || !plVeh)) ai.mode = 'pursuit';
       // unload: the player is on foot nearby, or his car is boxed in
       var unload = ai.seen && ((!plVeh && d < K.exitRange) || (plVeh && plSpeed < 3 && d < 8));
@@ -1469,7 +1708,7 @@
     var pl = player();
     if (!pl) return;
     var goal = ai.goal || wanted.lastKnown, d = U.dist2d(v.x, v.z, pl.x, pl.z), speed = v.cls.maxSpeed * K.pursuitSpeed;
-    if (ai.mode === 'tail') { goal = { x: pl.x, z: pl.z }; speed = Math.min(13, speed); if (d < 13) speed = 0; ai.honkT = (ai.honkT || 0) - dt; if (ai.honkT <= 0 && d < 30) { v.honk(); ai.honkT = R().range(4, 9); } }
+    if (ai.mode === 'tail') { goal = pl; speed = Math.min(13, speed); if (d < 13) speed = 0; ai.honkT = (ai.honkT || 0) - dt; if (ai.honkT <= 0 && d < 30) { v.honk(); ai.honkT = R().range(4, 9); } }
     var direct = ai.mode === 'ram' || (ai.seen && d < 28 && losClear(v.x, v.y + 1, v.z, goal.x, 1, goal.z));
     if (ai.mode === 'ram') { if (ai.cap < 99 && ai.capReason && ai.capReason.hasPlayer && ai.capReason.hasPlayer()) ai.cap = 99; speed = v.cls.maxSpeed; }
     var gx = goal.x, gz = goal.z;
@@ -1511,17 +1750,20 @@
     }
     return null;
   }
+  // the response on the street: foot cops on the case, cruisers a cop is driving (a released roadblock car, an unloaded
+  // cruiser or one whose cop never got back in is no pursuit: QAC-35), SWAT vans
   function copCounts() {
     var list = E().list, foot = 0, cars = 0, vans = 0;
     for (var i = 0; i < list.length; i++) {
       var e = list[i]; if (e.removed) continue;
       if (e.kind === 'ped' && e.alive && (e.role === 'cop' || e.role === 'swat') && !e.inVehicle && e.ai && (e.ai.mode === 'chase' || e.ai.mode === 'alert' || e.ai.mode === 'roadblock')) foot++;
-      else if (e.kind === 'vehicle' && e.ai && !e.wreck && !e.sinking) { if (e.tag === 'swat') vans++; else if (e.type === 'cop' && e.ai.kind !== 'parked' && e.ai.mode !== 'roadblock') cars++; }
+      else if (e.kind === 'vehicle' && e.ai && !e.wreck && !e.sinking) { if (e.tag === 'swat') vans++; else if (e.type === 'cop' && e.ai.kind !== 'parked' && e.ai.mode !== 'roadblock' && e.ai.mode !== 'parked' && !unmanned(e)) cars++; }
     }
     return { foot: foot, cars: cars, vans: vans };
   }
   function spawnResponders(dt) {
     var lvl = wanted.level, pl = player();
+    police.heliT = Math.max(0, (police.heliT || 0) - dt);   // the wait after a shoot-down runs with or without stars (QAC-37)
     if (!lvl || !pl || !pl.alive) { if (police.heli && !police.heli.leaving) police.heli.leave(); return; }
     var q = K.response, ix = lvl - 1, cnt = copCounts();
     police.footT -= dt; police.cruiserT -= dt; police.swatT -= dt; police.roadblockT -= dt;
@@ -1546,7 +1788,6 @@
         for (i = occ.length; i < 3; i++) { var sw = spawner.spawnPed(ss.x, ss.z, 'swat'); sw.ai.ambient = false; sw.ai.driver = true; if (!van.enter(sw, i)) sw.destroy(); }
       }
     }
-    police.heliT = Math.max(0, (police.heliT || 0) - dt);
     if (q.heli[ix] && !police.heli && police.heliT <= 0) { police.heli = new Heli(); E().add(police.heli); }
     else if (!q.heli[ix] && police.heli && !police.heli.leaving && !police.heli.down) police.heli.leave();
     // roadblocks ahead of a driving player
@@ -1602,13 +1843,34 @@
       var passed = pl && ((pl.x - rb.x) * (rb.axis === 'h' ? rb.dir : 0) + (pl.z - rb.z) * (rb.axis === 'v' ? rb.dir : 0)) > 12;
       if (!rb.released && (passed || rb.t > K.roadblock.life || wanted.level === 0)) {
         rb.released = true;
-        for (var j = 0; j < rb.cars.length; j++) { var car = rb.cars[j]; if (!car.removed) { car.ai.kind = 'cop'; car.ai.mode = 'parked'; } }
+        // the cars are left parked for their cops to take back; with no stars left they go quiet (stab-QA-D-03; a later
+        // drop to zero stars reaches them through policeStandDown)
+        for (var j = 0; j < rb.cars.length; j++) { var car = rb.cars[j]; if (!car.removed) { car.ai.kind = 'cop'; car.ai.mode = 'parked'; if (!wanted.level) { car.siren = false; car.lights = false; } } }
         for (j = 0; j < rb.cops.length; j++) { var cop = rb.cops[j]; if (cop.ai) { cop.ai.mode = wanted.level ? 'chase' : 'wander'; cop.ai.block = null; cop.ai.lostT = 0; } }
       }
       if (rb.released && rb.t > K.roadblock.life + 10) police.roadblocks.splice(i, 1);
     }
   }
   // ------------------------------------------------------------ helicopter --
+  // The searchlight is one SpotLight resident in the scene from the first New Game (police.reset, before the first frame)
+  // at intensity 0, driven by the police helicopter that is up. A light that came and went with the helicopter changed the
+  // scene's light count and recompiled every lit material: a 0.7-3.5 s freeze at five stars (QAC-23, stab-QA-D-04). It is
+  // never toggled: dark is intensity 0 (the way Render keeps Render.muzzleLight). A slot of Render's own
+  // (GTP.Render.lights.heli) wins when the render module has one.
+  var heliLamp = {
+    light: null, scene: null, owner: null,
+    ensure: function () {
+      var Rd = GTP.Render; if (!Rd || !Rd.scene || typeof THREE === 'undefined') return null;
+      var own = Rd.lights && Rd.lights.heli;
+      if (own) { heliLamp.light = own; heliLamp.scene = Rd.scene; return own; }
+      if (heliLamp.light && heliLamp.scene === Rd.scene && heliLamp.light.parent) return heliLamp.light;
+      var l = new THREE.SpotLight(0xfff0c8, 0, 90, 0.2, 0.55, 1); l.castShadow = false; l.name = 'heliSpot'; l.target.name = 'heliSpotTarget';
+      Rd.scene.add(l); Rd.scene.add(l.target);
+      heliLamp.light = l; heliLamp.scene = Rd.scene;
+      return l;
+    },
+    off: function () { if (heliLamp.light) heliLamp.light.intensity = 0; heliLamp.owner = null; }
+  };
   // Circles above the player at five stars with a spotlight cone; sees the player by raycast.
   class Heli extends GTP.Entity {
     constructor() {
@@ -1620,7 +1882,10 @@
       GTP.Events.emit('heli', { on: true });
       if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(true, this.x, this.z); } catch (e) { /* optional */ } }
     }
-    leave() { if (this.leaving) return; this.leaving = true; this.leaveT = 0; var a = R().random() * U.TAU; this.leaveDir = { x: Math.cos(a), z: Math.sin(a) }; GTP.Events.emit('heli', { on: false }); if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(false, this.x, this.z); } catch (e) { /* optional */ } } }
+    // the rotor keeps sounding while it flies off (Audio.heli fades it with distance; update() keeps it fed, easing it
+    // out over the last 3 s before the helicopter is gone): stab-QA-D-09
+    leave() { if (this.leaving) return; this.leaving = true; this.leaveT = 0; var a = R().random() * U.TAU; this.leaveDir = { x: Math.cos(a), z: Math.sin(a) }; GTP.Events.emit('heli', { on: false }); }
+    destroy() { if (heliLamp.owner === this) heliLamp.off(); return super.destroy(); }
     // it can be shot down: 400 hp, smoke under half, then a spin to the ground and a blast
     applyDamage(n, src, type) {
       if (this.down || !(n > 0)) return 0;
@@ -1684,7 +1949,7 @@
       this.seeT -= dt;
       if (this.seeT <= 0) { this.seeT = 0.25; this.sees = !this.leaving && wanted.level > 0 && U.dist2d(this.x, this.z, pl.x, pl.z) < K.heliSight && losClear(this.x, this.y - 1, this.z, pl.x, pl.y + 1.2, pl.z); if (this.sees) wanted.see(this); }
       if (this.sees && !this.leaving && wanted.level >= 4 && pl.alive) this.gunner(pl, dt);
-      if (GTP.Audio && GTP.Audio.heli && this.age % 0.5 < dt) { try { GTP.Audio.heli(!this.leaving, this.x, this.z); } catch (e) { /* optional */ } }
+      if (GTP.Audio && GTP.Audio.heli && this.age % 0.5 < dt) { try { GTP.Audio.heli(this.leaving ? U.clamp((9 - this.leaveT) / 3, 0.05, 1) : 1, this.x, this.z); } catch (e) { /* optional */ } }
     }
     // CMB-09 (GDD §2.3): the door gunner's SMG. Bursts of five at a player it can see within 60 m, AI damage scale, worse
     // against a moving target or a car; the misses kick up the ground beside the player
@@ -1717,22 +1982,28 @@
       m.position.set(this._px + (this.x - this._px) * a, this._py + (this.y - this._py) * a, this._pz + (this.z - this._pz) * a);
       ud.body.rotation.set(0, this._pyaw + U.wrapAngle(this.yaw - this._pyaw) * a, this.bank, 'YXZ');
       ud.rotor.rotation.y = this.rotor; ud.tailRotor.rotation.x = this.rotor * 1.7;
-      // light + cone from the belly to the ground spot (group space: no rotation)
+      // the cone from the belly to the ground spot (group space: no rotation) and the resident searchlight (world space)
       var lx = this.spot.x - m.position.x, ly = this.spotY - m.position.y, lz = this.spot.z - m.position.z;
-      ud.target.position.set(lx, ly, lz);
       var len = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
       ud.cone.position.set(lx * 0.5, -0.8 + ly * 0.5, lz * 0.5);
       ud.cone.scale.set(7, len, 7);
       ud.cone.quaternion.setFromUnitVectors(ud.up, ud.dirV.set(-lx / len, -ly / len, -lz / len));
       ud.pool.position.set(lx, ly + 0.06, lz);
-      var night = GTP.Render ? GTP.Render.night || 0 : 0, on = !this.leaving && !this.down;
-      ud.light.visible = on; ud.light.intensity = 3 + 6 * night;
+      var night = GTP.Render ? GTP.Render.night || 0 : 0, on = !this.leaving && !this.down && !this.removed;
+      var L = heliLamp.ensure();
+      if (L) {
+        if (on) { heliLamp.owner = this; L.position.set(m.position.x, m.position.y - 0.9, m.position.z); L.target.position.set(this.spot.x, this.spotY, this.spot.z); L.intensity = 3 + 6 * night; }
+        else if (heliLamp.owner === this) heliLamp.off();
+      }
       ud.cone.visible = on; ud.cone.material.opacity = 0.05 + 0.1 * night;
       ud.pool.visible = on; ud.pool.material.opacity = 0.25 + 0.45 * night;
       m.visible = !this.removed;
     }
-    static buildMesh() {
-      var A = GTP.Assets, G = GTP.GeoBuilder, grp = new THREE.Group(), body = new THREE.Group();
+    // the GPU resources are built once and shared by every helicopter (one is up at a time): a helicopter comes at every
+    // five-star episode and 45 s after a shoot-down, and Render.detach disposes nothing of an entity's mesh (QAC-32)
+    static resources() {
+      if (Heli._res) return Heli._res;
+      var A = GTP.Assets, G = GTP.GeoBuilder;
       var navy = [0.10, 0.12, 0.18], white = [0.92, 0.93, 0.95], glass = [0.45, 0.6, 0.75], dark = [0.08, 0.08, 0.1];
       var g = new G({ color: true });
       g.box(-0.85, -0.2, -1.9, 1.7, 1.5, 3.9, G.UV0, navy);                 // cabin (forward = -z)
@@ -1744,22 +2015,28 @@
       g.box(-1.0, -0.95, -1.6, 0.12, 0.12, 3.2, G.UV0, dark); g.box(0.88, -0.95, -1.6, 0.12, 0.12, 3.2, G.UV0, dark);   // skids
       g.box(-1.0, -0.85, -0.9, 0.1, 0.65, 0.1, G.UV0, dark); g.box(0.9, -0.85, -0.9, 0.1, 0.65, 0.1, G.UV0, dark);
       g.box(-1.0, -0.85, 0.7, 0.1, 0.65, 0.1, G.UV0, dark); g.box(0.9, -0.85, 0.7, 0.1, 0.65, 0.1, G.UV0, dark);
-      var hull = new THREE.Mesh(g.build(), A.propMaterial()); hull.castShadow = true; hull.name = 'hull';
       var rg = new G({ color: true });
       rg.box(-4.6, 0, -0.14, 9.2, 0.07, 0.28, G.UV0, dark); rg.box(-0.14, 0, -4.6, 0.28, 0.07, 9.2, G.UV0, dark);
-      var rotor = new THREE.Mesh(rg.build(), A.propMaterial()); rotor.position.set(0, 1.68, 0); rotor.name = 'rotor';
       var tg = new G({ color: true }); tg.box(-0.05, -0.7, -0.09, 0.1, 1.4, 0.18, G.UV0, dark);
-      var tail = new THREE.Mesh(tg.build(), A.propMaterial()); tail.position.set(0.12, 0.9, 4.95); tail.name = 'tailRotor';
+      Heli._res = {
+        hull: g.build(), rotor: rg.build(), tail: tg.build(), cone: new THREE.ConeGeometry(1, 1, 24, 1, true), pool: new THREE.PlaneGeometry(16, 16),
+        // one pass for both faces: additive without depth writes looks the same, and r152's back-then-front split for a
+        // transparent double-sided material cost a second program and a material re-key every frame
+        coneMat: new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: true, forceSinglePass: true }),
+        poolMat: new THREE.MeshBasicMaterial({ map: A.glow, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xfff1cc })
+      };
+      return Heli._res;
+    }
+    static buildMesh() {
+      var A = GTP.Assets, S = Heli.resources(), grp = new THREE.Group(), body = new THREE.Group();
+      var hull = new THREE.Mesh(S.hull, A.propMaterial()); hull.castShadow = true; hull.name = 'hull';
+      var rotor = new THREE.Mesh(S.rotor, A.propMaterial()); rotor.position.set(0, 1.68, 0); rotor.name = 'rotor';
+      var tail = new THREE.Mesh(S.tail, A.propMaterial()); tail.position.set(0.12, 0.9, 4.95); tail.name = 'tailRotor';
       body.add(hull); body.add(rotor); body.add(tail);
       grp.add(body);
-      var light = new THREE.SpotLight(0xfff0c8, 6, 90, 0.2, 0.55, 1); light.castShadow = false; light.position.set(0, -0.9, 0);
-      var target = new THREE.Object3D(); target.position.set(0, -30, 0);
-      light.target = target; grp.add(light); grp.add(target);
-      var cone = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: true }));
-      cone.renderOrder = 6; cone.name = 'cone'; grp.add(cone);
-      var pool = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.MeshBasicMaterial({ map: A.glow, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xfff1cc }));
-      pool.rotation.x = -Math.PI / 2; pool.renderOrder = 5; pool.name = 'pool'; grp.add(pool);
-      grp.userData = { body: body, rotor: rotor, tailRotor: tail, light: light, target: target, cone: cone, pool: pool, up: new THREE.Vector3(0, 1, 0), dirV: new THREE.Vector3() };
+      var cone = new THREE.Mesh(S.cone, S.coneMat); cone.renderOrder = 6; cone.name = 'cone'; grp.add(cone);
+      var pool = new THREE.Mesh(S.pool, S.poolMat); pool.rotation.x = -Math.PI / 2; pool.renderOrder = 5; pool.name = 'pool'; grp.add(pool);
+      grp.userData = { body: body, rotor: rotor, tailRotor: tail, cone: cone, pool: pool, up: new THREE.Vector3(0, 1, 0), dirV: new THREE.Vector3() };
       grp.name = 'heli';
       return grp;
     }
@@ -1959,6 +2236,9 @@
     var Ev = GTP.Events, I = GTP.Interiors, v = pl.inVehicle, rec = { id: d.id, kind: d.kind, t: simT() };
     doors.latched[d.id] = true; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
     if (d.foot) doors.latched[d.foot] = true;   // a garage sharing the kerb with its front door: stepping out of the car does not walk in
+    // Spin Doctor's bay: the vehicles module runs the drive-in itself (GTP.Vehicles.modshop: modshop:open with the catalog,
+    // modshop:close on the way out, its own no-heat rule); a second modshop:open from the marker opened the UI twice
+    if (d.kind === 'modshop' && GTP.Vehicles && GTP.Vehicles.modshop) { rec.result = 'vehicles'; return; }
     if (d.kind !== 'armory' && storyBusy()) { toast('Finish what you started first.'); rec.result = 'busy'; return; }
     if (wanted.level > 0 && d.kind !== 'armory') { toast('Lose the heat first.'); rec.result = 'wanted'; return; }
     Ev.emit('door:enter', { door: d, landmark: d.landmark, kind: d.kind, vehicle: v || null });
@@ -2435,7 +2715,7 @@
         garageCheck(dt);
         residentsTick(dt);
         coverTick();
-        if (police.heli && police.heli.removed) police.heli = null;
+        if (police.heli && police.heli.removed) { if (heliLamp.owner === police.heli) heliLamp.off(); police.heli = null; }
       } catch (e) { U.reportError(e, 'ai.police'); }
       try { doorsTick(dt); } catch (e) { U.reportError(e, 'ai.doors'); }
       try { eventsTick(dt); } catch (e) { U.reportError(e, 'ai.events'); }
@@ -2443,8 +2723,8 @@
     },
     updateRespawn: updateRespawn,
     reset: function () {
-      stepN = 0; alarms.length = 0;
-      wanted.clear(); wanted.lastSeen = -1e9;
+      stepN = 0; fastStep = -1; alarms.length = 0;
+      wanted.clear(); wanted.lastSeen = -1e9; wanted.graceUntil = -1e9; resetHeatStamps();
       spawner.reset(); police.reset();
       if (events.cur) eventCleanup(events.cur, true);
       events.cur = null; events.t = 0; events.next = 0; events.lastId = null; events.ended.length = 0;

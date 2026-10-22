@@ -48,8 +48,9 @@
   var COL = {
     ink: '#eef1fb', muted: '#8f97b3', pink: '#ff3fa4', cyan: '#2ee6ff', amber: '#ffbe3c', lime: '#9dff3c', red: '#ff3b30', gold: '#e8b53a',
     blue: '#4a7cff', green: '#3fd27f', cream: '#f4ead8', white: '#ffffff',
-    panel: 'rgba(13,16,32,0.86)', panelSoft: 'rgba(13,16,32,0.62)', line: 'rgba(46,230,255,0.25)', dark: 'rgba(6,7,13,0.8)', outline: 'rgba(4,6,14,0.82)'
+    panel: 'rgba(13,16,32,0.86)', panelSoft: 'rgba(13,16,32,0.8)', line: 'rgba(46,230,255,0.25)', dark: 'rgba(6,7,13,0.8)', outline: 'rgba(4,6,14,0.82)'
   };
+  var COL_LABEL = '#b8bfd6';   // a muted label that still reads 5.6:1 over the soft panels on a bright sky (QA-B-HUD-13)
   var MINIMAP_PX = 220, LOGICAL_W = 1280, LOGICAL_H = 720;
   var SETTINGS_KEY = 'gtp.settings.v1';
   // NEW GAME with no save anywhere starts at once in slot 1 (nothing to choose or overwrite) and, like the slot picker,
@@ -96,6 +97,7 @@
     gamepadGlyphs: false,
     debugLine: '',
     sessionStarted: false,
+    mouseActive: false, lastMouse: { x: 0, y: 0, seen: false },
     // v0.3
     gps: null, gpsChipRect: null,     // {x, z, label, kind, route, dist, len, turn}
     call: null, callQueue: [], callLog: [], callRect: null,
@@ -136,6 +138,7 @@
     if (o.maxW) ctx.fillText(s, x, y, o.maxW); else ctx.fillText(s, x, y);
     if (a !== 1) ctx.globalAlpha = ga;
   }
+  function ellipsize(ctx, s, font, maxW) { s = String(s || ''); if (measure(ctx, s, font) <= maxW) return s; while (s.length > 1 && measure(ctx, s + '…', font) > maxW) s = s.slice(0, -1); return s.replace(/[\s,;·]+$/, '') + '…'; }
   function measure(ctx, s, font) { ctx.font = font; return ctx.measureText(String(s)).width; }
   function wrap(ctx, s, font, maxW) {
     ctx.font = font;
@@ -151,7 +154,22 @@
   function ease(t) { t = clamp01(t); return t * t * (3 - 2 * t); }
   function hexA(hex, a) { var c = U.hexToRgb(hex); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
   function hit(x, y, w, h, fn, id) { ui.hit.push({ x: x, y: y, w: w, h: h, fn: fn, id: id || null }); }
-  function hovering(x, y, w, h) { var m = GTP.Input && GTP.Input.mouse; return !!m && !ui.touch.visible && m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h; }
+  // hover selects only while the mouse is the active pointer (it moved since the last key / pad navigation): a resting
+  // cursor never steals the keyboard or pad selection (QA-B-FE-02)
+  function hovering(x, y, w, h) { var m = GTP.Input && GTP.Input.mouse; return !!m && ui.mouseActive && !ui.touch.visible && m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h; }
+  // a mouse that moved takes the menus' hover back (checked on the step and on the draw, so a move between two draws
+  // counts before the next step); a key or the pad gives the selection to the keys again (QA-B-FE-02)
+  function trackMouseMove() {
+    var In = GTP.Input; if (!In || !In.mouse) return;
+    var m = In.mouse, lm = ui.lastMouse;
+    if (!lm.seen) { lm.x = m.x; lm.y = m.y; lm.seen = true; return; }   // the first look is the baseline (both start at 0, 0)
+    if (lm.x !== m.x || lm.y !== m.y) { ui.mouseActive = true; lm.x = m.x; lm.y = m.y; }
+  }
+  function trackPointer() {
+    var In = GTP.Input; if (!In || !In.mouse) return;
+    trackMouseMove();
+    if (In.pressed('forward') || In.pressed('back') || In.pressed('left') || In.pressed('right') || In.pressed('confirm') || In.pressed('tabNext') || In.pressed('weaponNext') || In.pressed('weaponPrev') || In.lastDevice === 'gamepad') ui.mouseActive = false;
+  }
   function sfx(name, gain) { var p = player(); if (GTP.Audio && GTP.Audio.play) { try { GTP.Audio.play(name, { x: p ? p.x : 0, z: p ? p.z : 0, gain: gain == null ? 0.5 : gain }); } catch (e) { /* audio optional */ } } }
   function cast(id) { var Cc = GTP.Content && GTP.Content.cast; return Cc ? (Cc[id] || null) : null; }
   function castName(id) { var c = cast(id); return c ? c.name : String(id || ''); }
@@ -168,12 +186,29 @@
   }
   function stationColor(st) {
     var m = { wail_101: COL.red, pennant_fm: COL.gold, velvetine_888: '#b56bff', quiet_signal: '#9fb3c8' };
+    if (st && typeof st.color === 'string') return st.color;   // v0.3 stations carry their colour
+    if (st && typeof st.color === 'number') return '#' + ('000000' + st.color.toString(16)).slice(-6);
     return (st && m[st.id]) || COL.cyan;
   }
   function failText(kind, dflt) { var R = GTP.Content && GTP.Content.radio; return (R && R.failTexts && R.failTexts[kind]) || dflt; }
   var ROLE_LABEL = { civ: 'CIVILIAN', cop: 'COP', swat: 'BALLOON UNIT', thug: 'GOON', protester: 'MARCHER', hoa: 'HOA PATROL', npc: 'SOMEBODY', raccoon: 'RACCOON', courier: 'COURIER', doorman: 'DOORMAN', clerk: 'CLERK' };
+  // the name over a lock-on / scope target: a boss weak point by its label, a boss by its name, a vehicle by its display
+  // name (never the engine class id, QA-B-TXT-04), a cast member by name, else the role
+  function targetLabel(t) {
+    if (!t) return '';
+    if (t.bossPart) return String(t.label || 'WEAK POINT');
+    if (t.boss && t.boss.name) return String(t.boss.name);
+    if (t.kind === 'vehicle' || t.kind === 'heli') return t.isPolice ? 'CRUISER' : vehicleName(t).toUpperCase();
+    return t.castId ? castName(t.castId) : roleLabel(t.role);
+  }
+  // a boss ped's own hp is a 100000 placeholder: its bar is the encounter's
+  function targetHp(t) {
+    var b = t && t.boss; if (b && b.maxHp) return U.clamp((b.hp || 0) / b.maxHp, 0, 1);
+    return U.clamp((t.hp || 0) / (t.maxHp || 1), 0, 1);
+  }
   function roleLabel(role) { return ROLE_LABEL[role] || String(role || 'ped').toUpperCase(); }
   function fmtSubs(n) { n = n | 0; return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'K' : String(n); }
+  function nMissions(n) { n = n | 0; return n + (n === 1 ? ' mission' : ' missions'); }
   function fmtPlay(sec) { sec = Math.max(0, sec | 0); var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + ':' + (m < 10 ? '0' : '') + m; }
   function fmtDate(ms) { if (!ms) return ''; try { var d = new Date(ms); return d.toLocaleDateString() + ' ' + d.toTimeString().slice(0, 5); } catch (e) { return ''; } }
   function menuDown(In) { return In.pressed('back') && !In.pressed('cancel'); }
@@ -189,6 +224,8 @@
     if (lm.id === 'hospital') return acts >= 3 ? 'Goldplate Goldplate Memorial, formerly St. Somebody\'s' : (acts === 2 ? 'Goldplate Goldplate Memorial' : 'Goldplate Memorial');
     if (/^Goldplate/.test(base)) return acts >= 2 && !/^Goldplate Goldplate/.test(base) ? 'Goldplate ' + base : base;
     if (lm.kind === 'hospital' || lm.kind === 'police' || lm.kind === 'park' || lm.kind === 'dock') return base;
+    if (lm.district === 'uptown' || /heirloom/i.test(lm.id || '')) return base;   // old money refuses the name (QA-B-TXT-07)
+    base = base.replace(/^The /, '');
     return (acts >= 2 ? 'Goldplate Goldplate ' : 'Goldplate ') + base;
   }
   // Roz's sign: the thing the player did most recently (player.stats), else an idle cause.
@@ -227,7 +264,7 @@
   function minimapRect() {
     var size = Math.round(px(MINIMAP_PX) * (portrait ? 0.68 : 1));
     if (ui.touch.visible && portrait) return { x: safe.l, y: ui.objBottom + px(6), s: size, top: true, left: true };
-    if (ui.touch.visible) return { x: W - safe.r - size, y: ui.hudTop + px(140), s: size, top: true, left: false };
+    if (ui.touch.visible) return { x: W - safe.r - size, y: ui.hudTop + px(156), s: size, top: true, left: false };   // under the weapon panel (QA-B-HUD-09)
     return { x: W - safe.r - size, y: H - safe.b - size, s: size, top: false, left: false };
   }
   function letterboxBar() {
@@ -243,7 +280,7 @@
   var DRAW_DIST = { near: 160, normal: 260, far: 360 };
   var SETTING_ROWS = [
     { id: 'master', label: 'MASTER VOLUME', type: 'slider' },
-    { id: 'music', label: 'MUSIC', type: 'slider', note: 'the radio and the title theme' },
+    { id: 'music', label: 'MUSIC', type: 'slider', note: 'the radio stations' },
     { id: 'sfx', label: 'SFX', type: 'slider', note: 'everything else' },
     { id: 'quality', label: 'QUALITY', type: 'choice', values: ['low', 'medium', 'high', 'ultra', 'auto'], note: 'shadows, post-processing, light pools' },
     { id: 'drawDistance', label: 'DRAW DISTANCE', type: 'choice', values: ['near', 'normal', 'far'], note: '160 / 260 / 360 m' },
@@ -268,7 +305,8 @@
     } catch (e) { return false; }
   }
   function saveSettings() {
-    var s = ui.settings, out = { master: s.master, music: s.music, sfx: s.sfx, quality: s.quality, drawDistance: s.drawDistance, weather: s.weather, gamepad: s.gamepad, hints: s.hints, subtitles: s.subtitles };
+    // a one-off ?quality= / ?low= boot never overwrites the stored preset (QA-B-FE-14)
+    var s = ui.settings, out = { master: s.master, music: s.music, sfx: s.sfx, quality: ui.qualityFromUrl ? (ui.storedQuality || 'auto') : s.quality, drawDistance: ui.lowFromUrl ? (ui.storedDraw || s.drawDistance) : s.drawDistance, weather: s.weather, gamepad: s.gamepad, hints: s.hints, subtitles: s.subtitles };
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(out)); return true; } catch (e) { return false; }
   }
   // Volumes: GTP.Audio.setVolumes({master, music, sfx}) scales the master, radio and effects buses (Audio.volumes carries
@@ -296,7 +334,11 @@
         break;
       case 'drawDistance': {
         var d = DRAW_DIST[s.drawDistance] || 260;
+        if (!ui.baseDraw) ui.baseDraw = { dd: C.QUALITY.drawDistance || 260, ped: C.QUALITY.pedDraw, veh: C.QUALITY.vehicleDraw };
         C.QUALITY.drawDistance = d; C.QUALITY.fogStart = Math.round(d * 0.46);
+        // the entity draw ranges follow the fog, so the FAR setting does not make peds pop out in clear air (QA-A-CAM-08)
+        if (ui.baseDraw.ped) C.QUALITY.pedDraw = Math.round(ui.baseDraw.ped * d / ui.baseDraw.dd);
+        if (ui.baseDraw.veh) C.QUALITY.vehicleDraw = Math.round(ui.baseDraw.veh * d / ui.baseDraw.dd);
         if (Rd && Rd.scene && Rd.scene.fog) { Rd.scene.fog.far = d; Rd.scene.fog.near = C.QUALITY.fogStart; }
         break;
       }
@@ -308,7 +350,7 @@
       default: break;
     }
   }
-  function applyAllSettings(opts) { ['master', 'quality', 'drawDistance', 'weather', 'gamepad', 'hints'].forEach(function (k) { applySetting(k, opts); }); }
+  function applyAllSettings(opts) { ['master', 'quality', 'drawDistance', 'weather', 'gamepad', 'hints'].forEach(function (k) { if (k === 'drawDistance' && opts && opts.skipDraw) return; applySetting(k, opts); }); }
   function settingValueLabel(row) {
     var s = ui.settings, Rd = GTP.Render;
     switch (row.type) {
@@ -323,6 +365,8 @@
   }
   function settingStep(row, dir) {
     var s = ui.settings, v;
+    if (row.id === 'quality') ui.qualityFromUrl = false;
+    if (row.id === 'drawDistance') ui.lowFromUrl = false;
     switch (row.type) {
       case 'slider': s[row.id] = U.clamp((s[row.id] | 0) + dir * 10, 0, 100); break;
       case 'toggle': s[row.id] = !s[row.id]; break;
@@ -340,7 +384,10 @@
     touch: { forward: 'STICK', back: 'STICK', left: 'STICK', right: 'STICK', run: 'STICK (full)', jump: 'JUMP', action: 'ENTER', shoot: 'FIRE', aim: 'AIM', enter: 'ENTER', weaponNext: 'WPN', weaponPrev: 'WPN', horn: 'HORN', radio: 'RADIO', map: 'MAP', pause: 'PAUSE', confirm: 'TAP', cancel: 'BACK', cameraMode: 'CAM', lockOn: 'AIM', reload: 'RLD', wheel: 'WPN (hold)', zoomIn: 'PINCH', zoomOut: 'PINCH', secondary: 'TAP', tabNext: 'TAB', cover: 'COVER', special: 'SPCL', throttleUp: 'THR+', throttleDown: 'THR-', yawLeft: 'YAW L', yawRight: 'YAW R', pitchUp: 'STICK', pitchDown: 'STICK', rollLeft: 'STICK', rollRight: 'STICK' }
   };
   function device() { var In = GTP.Input; if (ui.touch.visible && (!In || In.lastDevice !== 'gamepad')) return 'touch'; return In && In.lastDevice === 'gamepad' && In.gamepadEnabled ? 'gamepad' : 'keyboard'; }
-  function glyph(action) { var d = device(); return (GLYPH[d] && GLYPH[d][action]) || (GLYPH.keyboard[action] || action.toUpperCase()); }
+  function glyph(action) {
+    var d = device(), p = player();
+    if (action === 'action' && p && p.inVehicle) { if (d === 'gamepad') return 'D-PAD ↑'; if (d === 'touch') return 'JOB'; }   // the in-car 'action' (QA-B-HUD-01)
+    return (GLYPH[d] && GLYPH[d][action]) || (GLYPH.keyboard[action] || action.toUpperCase()); }
   function keyPill(ctx, label, x, y, h, opts) {
     opts = opts || {};
     var font = F(opts.size || 10, 'bold'), w = measure(ctx, label, font) + px(12);
@@ -530,6 +577,11 @@
       case 'rampage': ctx.beginPath(); ctx.ellipse(0, -1, 9, 6.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.moveTo(-3, 4); ctx.lineTo(-6, 9); ctx.lineTo(2, 5); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-5, -2, 2, 2); ctx.fillRect(-1, -2, 2, 2); ctx.fillRect(3, -2, 2, 2); break;
       case 'ramp': ctx.beginPath(); ctx.moveTo(-9, 7); ctx.lineTo(9, 7); ctx.lineTo(9, -6); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(-2, 2, 2, 5); ctx.fillRect(3, -1, 2, 8); break;
       case 'violation': ctx.beginPath(); for (var j = 0; j < 10; j++) { var a2 = -Math.PI / 2 + j * Math.PI / 5, rd = j % 2 ? 3.6 : 8.5; ctx.lineTo(Math.cos(a2) * rd, Math.sin(a2) * rd); } ctx.closePath(); ctx.fill(); break;
+      case 'golf': ctx.fillRect(-1, -8, 2, 16); ctx.beginPath(); ctx.moveTo(1, -8); ctx.lineTo(9, -5); ctx.lineTo(1, -2); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.ellipse(0, 8, 6, 2, 0, 0, Math.PI * 2); ctx.fill(); break;
+      case 'property': ctx.font = 'bold 15px ' + FONT_DISPLAY; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('$', 0, 1); break;
+      case 'job': rr(ctx, -8, -4, 16, 11, 2); ctx.fill(); ctx.fillRect(-3, -7, 6, 3); ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-8, 0, 16, 1.5); break;
+      case 'fire': ctx.beginPath(); ctx.moveTo(0, -9); ctx.quadraticCurveTo(8, 0, 5, 6); ctx.quadraticCurveTo(0, 10, -5, 6); ctx.quadraticCurveTo(-8, 0, 0, -9); ctx.fill(); break;
+      case 'client': ctx.beginPath(); ctx.arc(0, -4, 4, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(0, 8, 7, Math.PI, Math.PI * 2); ctx.fill(); break;
       case 'stranger': ctx.font = 'bold 17px ' + FONT_DISPLAY; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', 0, 1); break;
       case 'waypoint': ctx.beginPath(); ctx.moveTo(0, 9); ctx.lineTo(-6, -1); ctx.arc(0, -3, 6, Math.PI * 0.85, Math.PI * 2.15); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.beginPath(); ctx.arc(0, -3, 2.4, 0, Math.PI * 2); ctx.fill(); break;
       default: ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
@@ -582,6 +634,7 @@
     var list = E.list;
     for (var i = 0; i < list.length; i++) {
       var e = list[i]; if (e.removed) continue;
+      if (e.bossPart || e.boss) continue;   // a boss weak point (an entity of kind 'heli') is not a police helicopter
       if (e.kind === 'heli') { out.push({ x: e.x, z: e.z, kind: 'heli' }); continue; }
       if (e.kind === 'vehicle' && e.isPolice && !e.wreck && e.driver) { out.push({ x: e.x, z: e.z, kind: 'car' }); continue; }
       if (e.kind === 'ped' && e.alive && !e.inVehicle && (e.role === 'cop' || e.role === 'swat' || e.role === 'hoa')) out.push({ x: e.x, z: e.z, kind: 'cop' });
@@ -593,14 +646,29 @@
   function allMarkers() {
     var Ms = GTP.Missions, out = [];
     try { out = Ms && Ms.allMarkers ? Ms.allMarkers() : (Ms && Ms.markers ? Ms.markers() : []); } catch (e) { out = []; }
-    var Sg = GTP.Strangers;   // v0.3 strangers side missions: Strangers.markers() -> [{id, x, z, y, title, giver}]
-    if (Sg && typeof Sg.markers === 'function') { try { var sm = Sg.markers() || []; for (var si = 0; si < sm.length; si++) if (sm[si] && typeof sm[si].x === 'number') out.push(Object.assign({}, sm[si], { id: 'stranger:' + sm[si].id, kind: 'stranger', icon: 'stranger', strangerId: sm[si].id })); } catch (e) { /* optional */ } }
+    // strangers side missions (GTP.Strangers, mission kind 'stranger') come as ordinary mission markers: drawn as a purple '?'
+    for (var si = 0; si < out.length; si++) { var sid = out[si] && out[si].kind === 'mission' ? strandOf(out[si].missionId || out[si].id) : null; if (sid) out[si] = Object.assign({}, out[si], { kind: 'stranger', icon: 'stranger', strangerId: sid }); }
+    // the systems' entries (properties for sale, safehouses, the golf course, odd jobs; the job calls and the pin while one runs)
+    var Sy = GTP.Systems;
+    if (Sy && typeof Sy.markers === 'function') { try { var sy = Sy.markers() || []; for (var yi = 0; yi < sy.length; yi++) if (sy[yi] && typeof sy[yi].x === 'number') out.push(sy[yi]); } catch (e) { /* optional */ } }
     var CB = GTP.Combat, g = game();
     if (CB && CB.shop && CB.shop.stores) {
       var inCut = g && g.state === 'cutscene';
       try { var st = CB.shop.stores(); for (var i = 0; i < st.length && !inCut; i++) out.push({ id: 'shop:' + st[i].id, kind: 'shop', icon: 'gunshop', x: st[i].x, z: st[i].z, title: st[i].name || 'Both Sides Arms', color: COL.green }); } catch (e) { /* optional */ }
     }
     return out;
+  }
+  // the strand of a strangers mission id (null for the story's own missions)
+  function strandOf(missionId) {
+    if (!missionId) return null;
+    var Sg = GTP.Strangers; if (Sg && typeof Sg.strandOf === 'function') { var r = call(Sg.strandOf, Sg, [missionId], null); if (r) return r; }
+    var Ms = GTP.Missions, d = Ms && Ms.def ? call(Ms.def, Ms, [missionId], null) : null;
+    return d && d.kind === 'stranger' ? (d.strand || 'stranger') : null;
+  }
+  // mission and objective blips on top of the home / strand icons that can share their spot (QA-B-NP-02)
+  function markersByLayer() {
+    var all = allMarkers(), rank = function (m) { return m.kind === 'objective' ? 3 : m.kind === 'mission' ? 2 : m.kind === 'stranger' ? 1 : 0; };
+    return all.map(function (m, i) { return { m: m, i: i }; }).sort(function (a, b) { return rank(a.m) - rank(b.m) || a.i - b.i; }).map(function (o) { return o.m; });
   }
   function markerColor(mk) {
     if (mk.kind === 'objective') return COL.amber;
@@ -631,8 +699,17 @@
     ui.map.routeT -= dt;
     if (ui.map.routeT > 0) return;
     ui.map.routeT = 2;
-    var path = null;
-    try { if (Wd && Wd.findPath) path = Wd.findPath(p.x, p.z, wp.x, wp.z, { mode: 'car', fromY: p.y, maxExpansions: 20000 }); } catch (e) { path = null; }
+    // a search only when the player moved 12 m or the waypoint changed; a failed search backs off 10 s / 30 m (QAC-25)
+    var key = wp.x + ',' + wp.z, rc = ui.map.routeCache, R0 = ui.map.route;
+    if (rc && rc.key === key && R0 && !rc.failed) {
+      // a route is kept while the player stays on it: trim the points behind, search again only 35 m off it (QAC-25)
+      var best = -1, bd = 1e9;
+      for (var ri = 0; ri < Math.min(R0.length, 12); ri++) { var dd = U.dist2d(p.x, p.z, R0[ri].x, R0[ri].z); if (dd < bd) { bd = dd; best = ri; } }
+      if (bd < 35) { if (best > 0) ui.map.route = R0.slice(best); return; }
+    }
+    if (rc && rc.key === key && rc.failed && U.dist2d(p.x, p.z, rc.x, rc.z) < 30 && ui.t - rc.t < 10 && R0) return;
+    var path = computeRoute(p.x, p.z, wp.x, wp.z, { fromY: p.y }), failed = !path || path.failed;
+    ui.map.routeCache = { key: key, x: p.x, z: p.z, t: ui.t, failed: failed };
     ui.map.route = path && path.length > 1 ? path : [{ x: p.x, z: p.z }, { x: wp.x, z: wp.z }];
   }
   function drawMarkerIcon(ctx, mk, x, y, s, lbl) {
@@ -652,6 +729,7 @@
   }
   function drawMinimap(ctx) {
     var p = player(), Rd = GTP.Render, m = minimapRect(); if (!p || !Rd) return;
+    if (indoors()) { drawIndoorMinimap(ctx, m); return; }
     var size = m.s, cx = m.x + size / 2, cy = m.y + size / 2, r = size / 2;
     var zoom = (size / 180) * (p.inVehicle ? 0.78 : 1);   // px per metre
     var yaw = Rd.rig ? Rd.rig.yaw : 0;
@@ -676,11 +754,15 @@
       var lw = toLocal(wp.x, wp.z); ctx.lineTo(lw.x, lw.y); ctx.stroke(); ctx.restore();
     }
     drawGpsMinimap(ctx, toLocal, clampEdge);
-    var marks = allMarkers(), t = ui.t, i;
+    // the north badge sits under the rim arrows (a target due north keeps its arrow, QA-B-HUD-10)
+    var nx = cx + Math.sin(yaw) * (r - px(11)), ny = cy - Math.cos(yaw) * (r - px(11));
+    ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(nx, ny, px(7), 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0b1020'; ctx.font = F(9, 'bold'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('N', nx, ny + 0.5);
+    var marks = markersByLayer(), t = ui.t, i;
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i], l = toLocal(mk.x, mk.z), col = markerColor(mk);
       if (l.far) {
-        if (mk.kind === 'shop' || mk.kind === 'stranger' || mk.icon === 'home' || mk.icon === 'race' || mk.icon === 'rampage') continue;   // only the objective-grade markers point from the rim
+        if (mk.kind === 'shop' || mk.kind === 'stranger' || mk.kind === 'system' || mk.icon === 'home' || mk.icon === 'race' || mk.icon === 'rampage') continue;   // only the objective-grade markers point from the rim
         var e = clampEdge(l); ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.ang); ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(px(7), 0); ctx.lineTo(-px(4), -px(5)); ctx.lineTo(-px(4), px(5)); ctx.closePath(); ctx.fill(); ctx.restore(); continue;
       }
       var pulse = mk.kind === 'objective' || mk.kind === 'mission' ? 1 + 0.15 * Math.sin(t * 4 + i) : 1;
@@ -700,10 +782,6 @@
         ctx.fillStyle = (Math.floor(t * 4) % 2) ? '#4a7cff' : '#ff3b30'; ctx.beginPath(); ctx.arc(lb.x, lb.y, px(bl.kind === 'car' ? 4.5 : 3.2), 0, Math.PI * 2); ctx.fill();
       }
     }
-    // north tick
-    var nx = cx + Math.sin(yaw) * (r - px(11)), ny = cy - Math.cos(yaw) * (r - px(11));
-    ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(nx, ny, px(7), 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#0b1020'; ctx.font = F(9, 'bold'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('N', nx, ny + 0.5);
     // player arrow (fixed, pointing up)
     ctx.save(); ctx.translate(cx, cy);
     ctx.fillStyle = COL.ink; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 2;
@@ -717,7 +795,11 @@
     var near = nearLandmark(p);
     if (street && Wd.loopAt && Wd.lowerLoopName && Wd.loopAt(p.x, p.z, p.y) === 'lower' && street === (Wd.loopName || 'The Loop')) street = Wd.lowerLoopName;
     var line1 = d ? String(d.name || d.id).toUpperCase() : 'OPEN WATER', line2 = near ? landmarkLabel(near) : (street || '');
-    var chipFont = F(13, 'bold'), cw = Math.max(measure(ctx, line1, F(10, 'bold')), measure(ctx, line2, chipFont)) + px(22);
+    drawPlaceChip(ctx, m, line1, line2);
+  }
+  // the district / street chip by the minimap (sets ui.chipBottom for what stacks under it)
+  function drawPlaceChip(ctx, m, line1, line2) {
+    var size = m.s, chipFont = F(13, 'bold'), cw = Math.max(measure(ctx, line1, F(10, 'bold')), measure(ctx, line2, chipFont)) + px(22);
     cw = Math.min(cw, portrait ? W - safe.l - safe.r : px(360));
     var chx = m.left ? m.x : m.x + size - cw, chy = m.top ? m.y + size + px(6) : m.y - px(44);
     panel(ctx, chx, chy, cw, px(38), px(8), COL.panelSoft, 'rgba(255,255,255,0.12)');
@@ -725,6 +807,25 @@
     txt(ctx, line1, tx, chy + px(14), { font: F(10, 'bold'), color: COL.cyan, align: al, outline: false, maxW: cw - px(20) });
     txt(ctx, line2, tx, chy + px(30), { font: chipFont, color: COL.ink, align: al, outline: false, maxW: cw - px(20) });
     ui.chipBottom = chy + px(38);
+  }
+  // inside a GTP.Interiors room (built far from the city): no city map, no GPS chip, no 4 km objective arrow; the minimap
+  // says where the player is and how out works
+  function indoors() { var I = GTP.Interiors; return !!(I && I.active); }
+  function drawIndoorMinimap(ctx, m) {
+    var size = m.s, cx = m.x + size / 2, cy = m.y + size / 2, I = ui.interior || {};
+    var name = storeLabel(I.store || I.landmark, I.kind) || INTERIOR_NAMES[I.kind] || 'Indoors';
+    ctx.save();
+    rr(ctx, m.x, m.y, size, size, px(14)); ctx.fillStyle = '#121626'; ctx.fill(); ctx.clip();
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    for (var g2 = px(16); g2 < size; g2 += px(16)) { ctx.beginPath(); ctx.moveTo(m.x + g2, m.y); ctx.lineTo(m.x + g2, m.y + size); ctx.moveTo(m.x, m.y + g2); ctx.lineTo(m.x + size, m.y + g2); ctx.stroke(); }
+    // a door glyph and the way out
+    ctx.fillStyle = COL.green; rr(ctx, cx - px(11), cy - px(30), px(22), px(32), px(3)); ctx.fill();
+    ctx.fillStyle = '#121626'; ctx.beginPath(); ctx.arc(cx + px(5), cy - px(13), px(2), 0, Math.PI * 2); ctx.fill();
+    txt(ctx, 'INDOORS', cx, cy + px(22), { font: F(12, '900'), color: COL.ink, align: 'center', outline: false });
+    txt(ctx, 'Walk out the door to leave', cx, cy + px(38), { font: F(9, 'bold'), color: COL.muted, align: 'center', outline: false, maxW: size - px(16) });
+    ctx.restore();
+    rr(ctx, m.x, m.y, size, size, px(14)); ctx.lineWidth = px(3); ctx.strokeStyle = 'rgba(238,241,251,0.85)'; ctx.stroke();
+    drawPlaceChip(ctx, m, 'INSIDE', name);
   }
   function nearLandmark(p) {
     var Wd = GTP.World, lms = Wd && Wd.landmarks; if (!lms) return null;
@@ -783,7 +884,7 @@
     txt(ctx, str, rx, y, { font: F(26, 'bold'), color: COL.lime, align: 'right', lw: px(4) });
     if (m.deltaT > 0 && m.delta) {
       var a = Math.min(1, m.deltaT / 0.6), ds = (m.delta > 0 ? '+' : '') + U.fmtMoney(m.delta);
-      txt(ctx, ds, rx - px(96), y, { font: F(13, 'bold'), color: m.delta > 0 ? COL.amber : COL.red, align: 'right', alpha: a });
+      txt(ctx, ds, rx - measure(ctx, str, F(26, 'bold')) - px(10), y, { font: F(13, 'bold'), color: m.delta > 0 ? COL.amber : COL.red, align: 'right', alpha: a });
     }
     // SUBS 12.4K under the money, the gains floating up
     var s = ui.subs, X = expansion(), label = (X.subscriberSources && X.subscriberSources.hudLabel) || 'SUBS';
@@ -824,13 +925,13 @@
     var fl = GTP.Missions && GTP.Missions.state ? GTP.Missions.state.flags || {} : {};
     panel(ctx, x, y, bw, bh, px(8), COL.panelSoft, 'rgba(255,255,255,0.14)');
     drawWeaponIcon(ctx, w.id, x + px(6), y + px(4), px(36), COL.ink);
-    txt(ctx, String(w.name || w.id).toUpperCase(), x + px(48), y + px(18), { font: F(11, 'bold'), color: COL.muted, outline: false, maxW: bw - px(56) });
+    txt(ctx, String(w.name || w.id).toUpperCase(), x + px(48), y + px(18), { font: F(11, 'bold'), color: COL_LABEL, outline: false, maxW: bw - px(56) });
     var ammoCol = fl.rampage_king ? COL.pink : COL.ink;
     if (w.infinite) txt(ctx, '∞', x + bw - px(10), y + px(38), { font: F(22, 'bold'), color: ammoCol, align: 'right', outline: false });
     else if (w.mag != null && w.magSize) {
       var low = w.mag <= Math.max(1, Math.floor(w.magSize / 4));
       txt(ctx, String(w.mag), x + bw - px(10) - measure(ctx, ' | ' + (w.reserve == null ? '-' : w.reserve), F(12, 'bold')), y + px(38), { font: F(18, 'bold'), color: low ? COL.red : ammoCol, align: 'right', outline: false });
-      txt(ctx, ' | ' + (w.reserve == null ? '-' : w.reserve), x + bw - px(10), y + px(37), { font: F(12, 'bold'), color: COL.muted, align: 'right', outline: false });
+      txt(ctx, ' | ' + (w.reserve == null ? '-' : w.reserve), x + bw - px(10), y + px(37), { font: F(12, 'bold'), color: COL_LABEL, align: 'right', outline: false });
     } else {
       var ammo = String(w.ammo == null ? 0 : w.ammo);
       txt(ctx, ammo, x + bw - px(10), y + px(38), { font: F(18, 'bold'), color: (w.ammo <= 5) ? COL.red : ammoCol, align: 'right', outline: false });
@@ -839,7 +940,7 @@
       ctx.fillStyle = 'rgba(255,255,255,0.12)'; rr(ctx, x + px(48), y + px(30), px(60), px(5), px(2)); ctx.fill();
       ctx.fillStyle = COL.amber; rr(ctx, x + px(48), y + px(30), px(60) * clamp01(w.reloading.k), px(5), px(2)); ctx.fill();
       txt(ctx, 'RELOADING', x + px(48), y + px(26), { font: F(8, 'bold'), color: COL.amber, outline: false });
-    } else if (ui.wanted.last === 0 && w.id === 'fist') txt(ctx, glyph('wheel') + ' wheel · [ ] cycle', x + px(48), y + px(36), { font: F(9), color: 'rgba(143,151,179,0.8)', outline: false, maxW: bw - px(56) });
+    } else if (ui.wanted.last === 0 && w.id === 'fist') txt(ctx, glyph('wheel') + ' wheel' + (device() === 'touch' ? '' : ' · ' + glyph('weaponPrev') + ' ' + glyph('weaponNext') + ' cycle'), x + px(48), y + px(36), { font: F(9, 'bold'), color: '#b8bfd6', outline: false, maxW: bw - px(62) - measure(ctx, '∞', F(22, 'bold')) });
     else if (!w.infinite && w.magSize && w.mag === 0 && w.reserve > 0) txt(ctx, glyph('reload') + ' reload', x + px(48), y + px(36), { font: F(9, 'bold'), color: COL.red, outline: false });
   }
   function drawClock(ctx, rx, y) {
@@ -858,7 +959,7 @@
     var maxW = Math.min(px(620), W - safe.l - safe.r - (portrait ? 0 : px(20)));
     var objFont = F(15, 'bold', FONT_TEXT);
     var lines = wrap(ctx, text, objFont, maxW - px(28));
-    var hasTimer = !!timer, hasProg = !!(prog && prog.total);
+    var hasTimer = !!timer, hasProg = !!(prog && prog.total) && !(prog.n != null && String(text).indexOf(prog.n + '/' + prog.total) >= 0);   // no second count (QA-B-NP-05)
     // the timer row keeps clear of the hint line, and of the progress count at the top right when a single line has no hint
     var timerGap = hasTimer ? (hint ? px(8) : (hasProg && lines.length < 2 ? px(10) : 0)) : 0;
     var ph = px(14) + lines.length * px(19) + (hasTimer ? px(24) + timerGap : 0) + (hint ? px(16) : 0) + (title ? px(14) : 0);
@@ -886,7 +987,8 @@
       ctx.fillStyle = 'rgba(255,255,255,0.12)'; rr(ctx, x + px(16), by, bw, px(6), px(3)); ctx.fill();
       ctx.fillStyle = urgent ? (Math.floor(ui.t * 6) % 2 ? COL.red : '#ff8a80') : COL.cyan; rr(ctx, x + px(16), by, bw * k, px(6), px(3)); ctx.fill();
       txt(ctx, U.fmtTime(Math.ceil(rem)), x + pw - px(12), by - px(6), { font: F(16, 'bold'), color: urgent ? COL.red : COL.ink, align: 'right', outline: false });
-      txt(ctx, mission ? 'CODE EXPIRES IN' : 'TIME', x + px(16), by - px(6), { font: F(9, 'bold'), color: COL.muted, outline: false });
+      var tlabel = timer.label ? String(timer.label).toUpperCase() : mission && Ms.state && Ms.state.active === 'm02_read' ? 'CODE EXPIRES IN' : 'TIME LEFT';   // QA-B-NP-01
+      txt(ctx, tlabel, x + px(16), by - px(6), { font: F(9, 'bold'), color: COL.muted, outline: false });
     }
     return y + ph + px(8);
   }
@@ -904,16 +1006,38 @@
   // tutorial hints (GTP.Hints): a line and the active device's key glyphs under the objective panel
   function hintGlyphs(id, keys) {
     var X = expansion(), list = X.hints || [], d = device();
+    if ((id === 'h_taxi' || id === 'h_patrol') && d !== 'keyboard') return [glyph('action')];   // the content names Y / Enter, which exit the car
     for (var i = 0; i < list.length; i++) if (list[i].id === id && list[i].glyphs) { var g = list[i].glyphs[d] || list[i].glyphs.keyboard; if (g) return g; }
     return keys || [];
+  }
+  // hint sentences name keyboard keys; on a pad or touch the key words become that device's glyphs (QA-B-HUD-02)
+  var KEYWORD_ACTION = { 'E': 'action', 'F': 'enter', 'R': 'reload', 'Q': 'cover', 'M': 'map', 'N': 'radio', 'H': 'horn', 'V': 'cameraMode', 'Tab': 'lockOn', 'Space': 'jump', 'Shift': 'run', 'Enter': 'confirm', 'Esc': 'pause', 'Ctrl': 'shoot', 'right mouse button': 'aim', 'left mouse button': 'shoot' };
+  // the hints whose sentence starts with a key ("R reloads.", "W goes, S brakes", "F or Enter gets in", "M opens the map"):
+  // their own pad / touch sentence and pills, built from the bindings (QA-B-HUD-02)
+  var HINT_DEVICE = {
+    h_move: function (d) { return d === 'touch' ? { text: 'The left stick moves; push it all the way to run. ' + glyph('jump') + ' jumps.', keys: [glyph('jump')] } : { text: 'The left stick moves. Hold ' + glyph('run') + ' to run. ' + glyph('jump') + ' jumps.', keys: [glyph('run'), glyph('jump')] }; },
+    h_look: function (d) { return d === 'touch' ? { text: 'Drag the right half of the screen to look around.', keys: [] } : { text: 'The right stick looks around.', keys: ['RS'] }; },
+    h_enter: function () { return { text: glyph('enter') + ' gets in. The same button gets out.', keys: [glyph('enter')] }; },
+    h_drive: function (d) { return d === 'touch' ? { text: 'The stick steers, forward goes, back brakes and reverses. ' + glyph('jump') + ' is the handbrake: hold it for a slide.', keys: [glyph('jump')] } : { text: 'RT goes, LT brakes and reverses, ' + glyph('jump') + ' is the handbrake. Hold it for a slide.', keys: ['RT', 'LT', glyph('jump')] }; },
+    h_aim: function () { return { text: 'Hold ' + glyph('aim') + ' to aim. ' + glyph('lockOn') + ' switches targets. Head shots count double.', keys: [glyph('aim'), glyph('shoot')] }; },
+    h_reload: function () { return { text: glyph('reload') + ' reloads. An empty magazine reloads itself.', keys: [glyph('reload')] }; },
+    h_wheel: function (d) { return d === 'touch' ? { text: 'Hold WPN for the weapon wheel and drag to pick; a tap cycles.', keys: ['WPN'] } : { text: 'Hold ' + glyph('lockOn') + ' (no gun raised) for the weapon wheel. ' + glyph('weaponPrev') + ' / ' + glyph('weaponNext') + ' cycle.', keys: [glyph('lockOn')] }; },
+    h_map: function (d) { return d === 'touch' ? { text: 'MAP opens the map. Tap anywhere to set a waypoint.', keys: ['MAP'] } : { text: glyph('map') + ' opens the map. ' + glyph('confirm') + ' sets a waypoint at the cursor.', keys: [glyph('map')] }; }
+  };
+  function deviceText(t) {
+    if (device() === 'keyboard') return t;
+    return t.replace(/\b(Press|press|Hold|hold|Tap|tap|with|With)( the)? (right mouse button|left mouse button|E|F|R|Q|M|N|H|V|Tab|Space|Shift|Enter|Esc|Ctrl)\b/g, function (all, verb, the, key) { return verb + ' ' + glyph(KEYWORD_ACTION[key]); });
   }
   function drawHint(ctx, y) {
     var Hs = GTP.Hints, h = Hs && Hs.hud ? Hs.hud() : null, g = game();
     if (!h || !g || g.state !== 'playing') return y;
-    var k = h.k || 0, a = k < 0.06 ? k / 0.06 : k > 0.92 ? (1 - k) / 0.08 : 1;
+    var ht = h.t || 0, tot = Math.min(h.total || 6, 4.5), a = ht < 0.3 ? ht / 0.3 : ht > tot - 0.4 ? Math.max(0, (tot - ht) / 0.4) : 1;   // hintActed retires a hint at 4.5 s
     var font = F(12, '', FONT_TEXT), maxW = Math.min(px(560), W - safe.l - safe.r - px(20));
-    var htext = String(h.text || '').replace(/\s*\(or Q\)/g, '');   // v0.3: Q is cover now, aim is the right mouse button / LT
-    var lines = wrap(ctx, htext, font, maxW - px(60)), keys = hintGlyphs(h.id, h.keys).filter(function (k) { return !(h.id === 'h_aim' && k === 'Q'); });
+    var htext = deviceText(String(h.text || '').replace(/\s*\(or Q\)/g, ''));   // v0.3: Q is cover now, aim is the right mouse button / LT
+    var keys = hintGlyphs(h.id, h.keys).filter(function (k) { return !(h.id === 'h_aim' && k === 'Q'); });
+    var dv = device(), own = dv !== 'keyboard' && HINT_DEVICE[h.id] ? HINT_DEVICE[h.id](dv) : null;
+    if (own) { htext = own.text; keys = own.keys; }
+    var lines = wrap(ctx, htext, font, maxW - px(60));
     var kw = 0; for (var i = 0; i < keys.length; i++) kw += measure(ctx, keys[i], F(10, 'bold')) + px(18);
     var pw = Math.max(px(220), Math.min(maxW, Math.max(kw + px(60), measure(ctx, lines[0] || '', font) + px(60)))), ph = px(16) + lines.length * px(16) + (keys.length ? px(22) : 0);
     var x = (W - pw) / 2;
@@ -934,11 +1058,11 @@
     var r = h && h.race; if (!r || !r.active) return y;
     var pw = Math.min(px(420), W - safe.l - safe.r), x = (W - pw) / 2, ph = px(54);
     panel(ctx, x, y, pw, ph, px(10), COL.panelSoft, 'rgba(255,255,255,0.2)');
-    txt(ctx, (r.name || 'RACE').toUpperCase(), x + px(14), y + px(18), { font: F(10, 'bold'), color: COL.muted, outline: false, maxW: pw * 0.5 });
+    txt(ctx, (r.name || 'RACE').toUpperCase(), x + px(14), y + px(18), { font: F(10, 'bold'), color: COL_LABEL, outline: false, maxW: pw * 0.5 });
     txt(ctx, U.fmtTime(r.time || 0), x + pw - px(14), y + px(18), { font: F(12, 'bold'), color: COL.ink, align: 'right', outline: false });
     var pos = r.countdown > 0 ? '-' : 'P' + r.position, col = r.position === 1 ? COL.lime : r.position === 2 ? COL.amber : COL.ink;
     txt(ctx, pos, x + px(14), y + px(46), { font: F(26, '900', FONT_DISPLAY), color: col, outline: false });
-    txt(ctx, '/ ' + r.racers, x + px(14) + measure(ctx, pos, F(26, '900', FONT_DISPLAY)) + px(6), y + px(46), { font: F(12, 'bold'), color: COL.muted, outline: false });
+    txt(ctx, '/ ' + r.racers, x + px(14) + measure(ctx, pos, F(26, '900', FONT_DISPLAY)) + px(6), y + px(46), { font: F(12, 'bold'), color: COL_LABEL, outline: false });
     txt(ctx, 'LAP ' + r.lap + ' / ' + r.laps, x + pw * 0.45, y + px(44), { font: F(14, 'bold'), color: COL.ink, align: 'center', outline: false });
     txt(ctx, 'CHECKPOINT ' + r.checkpoint + ' / ' + r.total, x + pw - px(14), y + px(44), { font: F(12, 'bold'), color: COL.cyan, align: 'right', outline: false });
     return y + ph + px(8);
@@ -986,7 +1110,7 @@
     return null;
   }
   function drawObjectiveArrow(ctx) {
-    var Rd = GTP.Render, p = player(); if (!Rd || !p) return;
+    var Rd = GTP.Render, p = player(); if (!Rd || !p || indoors() || (ui.golf && ui.golf.active)) return;
     var at = arrowTarget(); if (!at) return;
     var t = at.t, col = at.col;
     var s = Rd.worldToScreen(t.x, (t.y || 0) + 2.6, t.z);
@@ -1005,6 +1129,8 @@
     var ang = Math.atan2(ly, lx), cx = W / 2, cy = H / 2;
     var ex = cx + Math.cos(ang) * (W / 2 - px(42)), ey = cy + Math.sin(ang) * (H / 2 - px(42));
     ex = U.clamp(ex, px(42), W - px(42)); ey = U.clamp(ey, px(110), H - px(70));
+    var mm = minimapRect(), top = mm.top ? mm.y : mm.y - px(100), bot = mm.top ? (ui.chipBottom || mm.y + mm.s) + px(56) : H;   // keep clear of the minimap, its chip and the GPS chip (QA-B-HUD-03)
+    if (ex > mm.x - px(36) && ex < mm.x + mm.s + px(36) && ey > top - px(30) && ey < bot) { if (mm.top) ey = bot + px(10); else { ex = Math.min(ex, mm.x - px(40)); ey = Math.min(ey, H - px(70)); } }
     ctx.save(); ctx.translate(ex, ey); ctx.rotate(ang);
     ctx.fillStyle = col; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(px(16), 0); ctx.lineTo(-px(8), -px(11)); ctx.lineTo(-px(3), 0); ctx.lineTo(-px(8), px(11)); ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -1038,7 +1164,7 @@
     if (tg && GTP.Render) {
       var ts = GTP.Render.worldToScreen(tg.x, tg.y + (tg.height || 1.8) * ((tg.look && tg.look.scale) || 1) + 0.4, tg.z);
       if (ts.visible && U.dist2d(ts.sx, ts.sy, cx, cy) < rad - px(20)) {
-        var label = tg.kind === 'vehicle' ? String(tg.type || 'car').toUpperCase() : tg.kind === 'heli' ? 'WEATHER BALLOON' : (tg.castId ? castName(tg.castId) : roleLabel(tg.role));
+        var label = targetLabel(tg);
         var font = F(10, 'bold'), w = measure(ctx, label, font) + px(14);
         panel(ctx, ts.sx - w / 2, ts.sy - px(18), w, px(16), px(4), 'rgba(255,63,164,0.25)', 'rgba(255,63,164,0.6)');
         txt(ctx, label, ts.sx, ts.sy - px(6), { font: font, color: COL.ink, align: 'center', outline: false });
@@ -1057,9 +1183,15 @@
     for (var i = 0; i < T.length; i++) {
       var o = T[i], k = o.t / (o.life || 1.2), s = Rd.worldToScreen(o.x, o.y + k * 1.1, o.z);
       if (!s.visible || s.depth > 1) continue;
+      s = { sx: s.sx, sy: Math.max(s.sy, safe.t + px(84)) };   // never cut off at the top edge (QA-B-HUD-12)
       var a = k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1, size = o.size || 16;
       txt(ctx, o.text, s.sx, s.sy, { font: F(size * (1 + Math.min(k, 0.15)), 'bold', FONT_DISPLAY), color: o.color || COL.pink, align: 'center', alpha: a, lw: px(4) });
     }
+  }
+  function occluded(from, x, y, z) {
+    var Wd = GTP.World; if (!Wd || !Wd.raycastBuildings) return false;
+    var dx = x - from.x, dy = y - from.y, dz = z - from.z, len = Math.sqrt(dx * dx + dy * dy + dz * dz); if (len < 1) return false;
+    try { var h = Wd.raycastBuildings(from.x, from.y, from.z, dx / len, dy / len, dz / len, len - 0.5); return !!(h && h.t != null && h.t < len - 0.6); } catch (e) { return false; }
   }
   function drawBarks(ctx) {
     var E = GTP.Entities, Rd = GTP.Render, cam = Rd && Rd.camera; if (!E || !cam) return;
@@ -1076,9 +1208,11 @@
     for (i = 0; i < n; i++) {
       var p = cands[i].e, sc = (p.look && p.look.scale) || 1, s = Rd.worldToScreen(p.x, p.y + (p.height || 1.8) * sc + 0.45, p.z);
       if (!s.visible || s.depth > 1 || s.sx < px(20) || s.sx > W - px(20) || s.sy < bar + px(40) || s.sy > H - bar - px(20)) continue;   // off-screen peds keep their lines to themselves
+      if (p.kind !== 'player' && occluded(cam.position, p.x, p.y + (p.height || 1.8) * sc, p.z)) continue;   // nobody talks through a facade (QA-A-ENT-06)
       var fade = p.lineTime < 0.4 ? p.lineTime / 0.4 : 1, scale = U.clamp(1.25 - cands[i].d / 60, 0.7, 1);
       var tw = Math.min(measure(ctx, p.line, font) * scale, px(300)), bw = tw + px(16), bh = px(22) * scale;
       var bx = U.clamp(s.sx - bw / 2, px(4), W - bw - px(4)), by = s.sy - bh - px(8);
+      if (by < safe.t + px(160) && (bx + bw > W - safe.r - px(170) || bx < safe.l + px(240))) continue;   // never over the bars, money or weapon panel
       ctx.globalAlpha = fade;
       panel(ctx, bx, by, bw, bh, px(8), 'rgba(12,14,22,0.85)', p._barkColor || 'rgba(255,255,255,0.35)', 1.5);
       ctx.fillStyle = 'rgba(12,14,22,0.85)'; ctx.beginPath(); ctx.moveTo(s.sx - px(5), by + bh); ctx.lineTo(s.sx + px(5), by + bh); ctx.lineTo(s.sx, by + bh + px(6)); ctx.closePath(); ctx.fill();
@@ -1117,7 +1251,9 @@
     // caller, text}), the top-of-hour news bulletin (station.bulletins / station.news), call-in lines (station.callers)
     var np = null, A = GTP.Audio;
     try { np = A && A.radio && typeof A.radio.nowPlaying === 'function' ? A.radio.nowPlaying() : null; } catch (e) { np = null; }
+    if (np && typeof np !== 'object') np = null;   // GTP.Audio's nowPlaying() is the "Station - tagline" string: the chip already says it
     if (!np && st.nowPlaying) np = typeof st.nowPlaying === 'function' ? st.nowPlaying() : st.nowPlaying;
+    if (!np && R && typeof R.nowPlaying === 'function' && st.songs && st.songs.length) { try { np = R.nowPlaying(st.id); } catch (e) { np = null; } if (np) np = { kind: 'song', id: np.song, title: np.title, artist: np.artist }; }   // the radio track: Content.radio.nowPlaying(id)
     if (np) {
       var npo = typeof np === 'string' ? { text: np } : np, key = sidKey(st) + '|' + (npo.id || npo.title || npo.text || '');
       if (key !== tk.lastNp) { tk.lastNp = key; return radioLine(npo, st); }
@@ -1163,6 +1299,7 @@
   }
   function drawTicker(ctx, y) {
     var tk = ui.ticker, p = player(), st = currentStation(); if (!tk.cur || !p) return;
+    if (p.inVehicle && vehCat(p.inVehicle) === 'chute') return;   // no radio under a canopy (the vehicles track mutes it too)
     var m = minimapRect();
     var x = safe.l + (ui.touch.visible ? px(210) : 0), right = m.top ? W - safe.r - (ui.touch.visible ? px(230) : 0) : m.x - px(12), w = right - x;
     if (portrait) { x = safe.l; w = W - safe.l - safe.r; }
@@ -1216,6 +1353,11 @@
     var line = d.line, who = line.who || 'everyone', cm = cast(who), color = line.color || (cm && cm.color) || COL.ink, name = line.name || castName(who);
     var sub = ui.settings.subtitles === 'large' ? 1.25 : 1;
     var ps = px((portrait ? 76 : 96) * sub), bw = Math.min(px(780 * sub), W - safe.l - safe.r), bh = ps + px(24);
+    var mm = minimapRect(), st0 = game().state;
+    if (!mm.top && st0 === 'playing') bw = Math.min(bw, 2 * (mm.x - px(12) - W / 2));   // clear of the bottom-right minimap (QA-B-FE-13)
+    // the box grows to the whole line: no wrapped line is scrolled away (QA-B-TXT-01)
+    var fontD = F((portrait ? 14 : 17) * sub, '', FONT_TEXT), lineHD = px((portrait ? 18 : 22) * sub), nAll = wrap(ctx, String(line.text || ''), fontD, bw - ps - px(44)).length;
+    bh = Math.max(bh, px(58 * sub) + nAll * lineHD + px(8));
     var bar = letterboxBar();
     var bx = (W - bw) / 2, by = H - safe.b - bh - px(ui.touch.visible && game().state === 'playing' ? 150 : 16) - (bar ? bar - px(4) : 0);
     var a = Math.min(1, d.t / 0.18);
@@ -1310,7 +1452,7 @@
     var k = c.t / c.dur, failed = c.kind === 'failed', offer = failed && retryOffer();
     var a = k < 0.1 ? k / 0.1 : (!offer && k > 0.85) ? (1 - k) / 0.15 : 1, pop = 1 + (1 - ease(Math.min(1, c.t / 0.35))) * 0.25;
     var col = failed ? COL.red : COL.gold;
-    var cy = H * 0.4, bh = offer ? px(170) : px(120);
+    var cy = H * 0.4, bh = offer ? px(190) : px(120);   // the help line sits inside the band (QA-B-HUD-11)
     ctx.save(); ctx.globalAlpha = a;
     ctx.fillStyle = 'rgba(6,7,13,0.55)'; ctx.fillRect(0, cy - px(58), W, bh);
     ctx.fillStyle = col; ctx.fillRect(0, cy - px(58), W, px(3)); ctx.fillRect(0, cy - px(58) + bh - px(3), W, px(3));
@@ -1335,7 +1477,8 @@
   }
   function drawToasts(ctx) {
     if (!ui.toasts.length) return;
-    var y = ui.shopOpen || ui.modal ? safe.t + px(52) : ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0) - letterboxBar();
+    var gs = game() ? game().state : null;
+    var y = ui.shopOpen || ui.modal || (ui.golf && ui.golf.active) || gs === 'paused' ? safe.t + px(52) : ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0) - letterboxBar();
     for (var i = ui.toasts.length - 1; i >= 0; i--) {
       var t = ui.toasts[i], k = t.t / t.dur, a = k < 0.1 ? k / 0.1 : k > 0.8 ? (1 - k) / 0.2 : 1;
       var font = F(13, 'bold'), tw = Math.min(measure(ctx, t.text, font), W - px(60)) + px(24);
@@ -1357,7 +1500,7 @@
     ctx.save(); ctx.translate(W / 2, cy); ctx.scale(scale, scale);
     txt(ctx, text, 0, px(16), { font: F(portrait ? 40 : 64, '900', FONT_DISPLAY), color: busted ? '#8fb6ff' : COL.pink, align: 'center', lw: px(8), outline: 'rgba(0,0,0,0.9)', maxW: W - px(30) });
     ctx.restore();
-    var fine = C.ECONOMY.bustedFine, sub = busted ? 'Rate your arrest, one to ten. Fine: ' + U.fmtMoney(fine) + '.' : 'Discharged with a bandage that has a coupon code. Cash -' + Math.round(C.ECONOMY.deathCashLoss * 100) + '%.';
+    var fine = d.fine != null ? d.fine : GTP.AI && GTP.AI.bustFine ? GTP.AI.bustFine(d.level != null ? d.level : (ui.wanted.last || 1), (player() || {}).money | 0) : C.ECONOMY.bustedFine, sub = busted ? 'Rate your arrest, one to ten. Fine: ' + U.fmtMoney(fine) + '.' : 'Discharged with a bandage that has a coupon code. Cash -' + Math.round(C.ECONOMY.deathCashLoss * 100) + '%.';
     var lines = wrap(ctx, sub, F(15, 'bold', FONT_TEXT), W - px(60));
     for (var i = 0; i < lines.length; i++) txt(ctx, lines[i], W / 2, cy + px(44) + i * px(20), { font: F(15, 'bold', FONT_TEXT), color: COL.ink, align: 'center', alpha: k });
     var Ms = GTP.Missions, lf = Ms && Ms.lastFail ? Ms.lastFail() : null;
@@ -1435,8 +1578,21 @@
   }
   // the three slot cards (LOAD GAME, NEW GAME's picker, the pause menu's LOAD / SAVE): slot number, progress, play time, money,
   // location, stars, timestamp; [LOAD] [DELETE] or [START HERE] / [SAVE HERE] / [OVERWRITE]
+  // the slot list, parsed once per frame / until a save, load or delete (QA-D SAVE-18: three full decodes per frame)
+  function slotsOf(g) {
+    if (!g || !g.slots) return [];
+    var c = ui.slotCache;
+    // decoded once until a save, delete, migration, load, state change or storage event marks it dirty (QA-D SAVE-18), and at
+    // most once every 2 s otherwise (a write from another tab with no storage event)
+    if (c && !c.dirty && ui.t - c.t < 2) return c.list;
+    var list = []; try { list = g.slots() || []; } catch (e) { list = []; }
+    ui.slotCache = { t: ui.t, list: list, dirty: false };
+    return list;
+  }
+  function slotsDirty() { if (ui.slotCache) ui.slotCache.dirty = true; }
+  function slotUsed(s) { return !!(s && (!s.empty || s.corrupt)); }   // an unreadable slot is not free space (QA-D SAVE-05)
   function slotCards(ctx, mode, selRef, x, y, w, h, activate) {
-    var g = game(), slots = g && g.slots ? g.slots() : [], n = 3;
+    var g = game(), slots = slotsOf(g), n = 3;
     var stack = w < px(620), cw = stack ? w : (w - px(16)) / 3, ch = stack ? Math.min(px(118), (h - px(20)) / 3) : Math.min(h, px(260));
     var Ms = GTP.Missions;
     for (var i = 0; i < n; i++) {
@@ -1465,9 +1621,9 @@
       }
       // the buttons
       var bb = [], by = cy + ch - px(38), bh = px(28);
-      if (mode === 'load') { if (!s.empty) { bb.push({ id: 'load', label: 'LOAD', col: COL.lime }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); }
-      else if (mode === 'new') bb.push(s.empty ? { id: 'new', label: 'START HERE', col: COL.lime } : { id: 'new', label: 'OVERWRITE', col: COL.red });
-      else if (mode === 'save') bb.push(s.empty ? { id: 'save', label: 'SAVE HERE', col: COL.lime } : { id: 'save', label: 'OVERWRITE', col: COL.amber });
+      if (mode === 'load') { if (s.corrupt) { bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else if (!s.empty) { bb.push({ id: 'load', label: 'LOAD', col: COL.lime }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); }
+      else if (mode === 'new') bb.push(!slotUsed(s) ? { id: 'new', label: 'START HERE', col: COL.lime } : { id: 'new', label: 'OVERWRITE', col: COL.red });
+      else if (mode === 'save') bb.push(!slotUsed(s) ? { id: 'save', label: 'SAVE HERE', col: COL.lime } : { id: 'save', label: 'OVERWRITE', col: COL.amber });
       var bx = cx + px(14), tot = 0;
       for (k = 0; k < bb.length; k++) tot += measure(ctx, bb[k].label, F(11, 'bold')) + px(24) + px(8);
       if (stack) bx = cx + cw - tot - px(8);
@@ -1483,7 +1639,7 @@
     return { cw: cw, ch: ch, stack: stack, slots: slots, bottom: stack ? y + n * (ch + px(8)) : y + ch };
   }
   // the in-page confirmation screen (never window.confirm): OVERWRITE SLOT 2? / DELETE SLOT 3? / abandon the mission / lose progress
-  function askConfirm(o) { ui.confirm = Object.assign({ sel: 1, yes: 'YES', no: 'BACK', lines: [], danger: false, t: 0 }, o || {}); }
+  function askConfirm(o) { ui.confirm = Object.assign({ sel: 1, yes: 'YES', no: 'BACK', lines: [], danger: false, t: 0, openWall: Date.now() }, o || {}); }
   function confirmActivate(yes) {
     var c = ui.confirm; if (!c) return;
     ui.confirm = null; sfx('ui', 0.35);
@@ -1500,13 +1656,15 @@
     txt(ctx, c.title, x + pw / 2, y + px(36), { font: F(20, '900', FONT_DISPLAY), color: c.danger ? COL.red : COL.gold, align: 'center', outline: false, maxW: pw - px(32) });
     for (i = 0; i < lines.length; i++) txt(ctx, lines[i], x + pw / 2, y + px(62) + i * px(20), { font: font, color: COL.ink, align: 'center', outline: false });
     var bw = px(150), by = y + ph - px(44), bh = px(32), bx0 = x + pw / 2 - bw - px(8), bx1 = x + pw / 2 + px(8);
-    var btns = [{ x: bx0, label: c.yes, yes: true, col: c.danger ? COL.red : COL.lime }, { x: bx1, label: c.no, yes: false, col: COL.muted }];
+    // BACK on the left, the destructive YES on the right, away from the slot button that opened the box, and a click on
+    // YES within 0.4 s of opening is ignored, so a double-click never confirms (QA-B-FE-01)
+    var btns = [{ x: bx1, label: c.yes, yes: true, col: c.danger ? COL.red : COL.lime }, { x: bx0, label: c.no, yes: false, col: COL.muted }];
     for (i = 0; i < 2; i++) {
       var b = btns[i], sel = c.sel === i;
       if (hovering(b.x, by, bw, bh)) { c.sel = i; sel = true; }
       panel(ctx, b.x, by, bw, bh, px(8), sel ? hexA(b.col === COL.muted ? COL.pink : b.col, 0.28) : 'rgba(255,255,255,0.05)', sel ? (b.col === COL.muted ? COL.pink : b.col) : 'rgba(255,255,255,0.2)', sel ? 2 : 1);
       txt(ctx, b.label, b.x + bw / 2, by + px(21), { font: F(13, 'bold'), color: COL.ink, align: 'center', outline: false });
-      hit(b.x, by, bw, bh, confirmActivate.bind(null, b.yes), 'confirm-' + i);
+      hit(b.x, by, bw, bh, (function (yes) { return function () { if (yes && Date.now() - (c.openWall || 0) < 400) return; confirmActivate(yes); }; })(b.yes), 'confirm-' + i);
     }
   }
   function confirmInput(In) {
@@ -1514,7 +1672,6 @@
     if (In.pressed('left') || In.pressed('right') || In.pressed('forward') || menuDown(In)) { c.sel = 1 - c.sel; sfx('ui', 0.2); }
     if (In.pressed('confirm')) confirmActivate(c.sel === 0);
     else if (menuBack(In)) confirmActivate(false);
-    else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
     return true;
   }
   // the settings page (title and pause share it)
@@ -1546,7 +1703,7 @@
         panel(ctx, x + pw - px(20) - vw - px(6), ry + rh / 2 - px(11), vw, px(22), px(5), sel ? 'rgba(255,63,164,0.22)' : 'rgba(255,255,255,0.08)', null);
         txt(ctx, val, x + pw - px(20) - px(6) - vw / 2, ry + rh * 0.64, { font: F(12, 'bold'), color: COL.ink, align: 'center', outline: false });
         txt(ctx, '▶', x + pw - px(14), ry + rh * 0.64, { font: F(11, 'bold'), color: sel ? COL.pink : COL.muted, align: 'right', outline: false });
-        if (r.note && !portrait) txt(ctx, r.note, split, ry + rh * 0.64, { font: F(10), color: 'rgba(143,151,179,0.8)', outline: false, maxW: pw * 0.36 - vw });
+        if (r.note && !portrait) { var nmax = pw * 0.36 - vw; if (nmax > px(40)) txt(ctx, ellipsize(ctx, r.note, F(10), nmax), split, ry + rh * 0.64, { font: F(10), color: 'rgba(143,151,179,0.8)', outline: false }); }   // cut, never squeezed (QA-B-FE-17)
         hit(x + pw - px(20) - vw - px(30), ry, px(24), rh, (function (row) { return function () { settingStep(row, -1); }; })(r), 'set-' + r.id + '-l');
         hit(x + pw - px(20) - vw - px(6), ry, vw + px(30), rh, (function (row) { return function () { settingStep(row, 1); }; })(r), 'set-' + r.id + '-r');
       } else if (r.type === 'page') hit(x + px(8), ry, pw - px(16), rh, function () { ui.settings.from = 'settings'; settingsOpenControls(); }, 'set-controls');
@@ -1568,7 +1725,7 @@
       if (r.type === 'back') onBack();
       else if (r.type === 'page') { ui.settings.from = 'settings'; settingsOpenControls(); }
       else settingStep(r, 1);
-    } else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
+    }
     return true;
   }
 
@@ -1583,9 +1740,12 @@
   var PAD_ROWS = [['Left stick', 'Move / steer  ·  menus: navigate'], ['Right stick', 'Look  ·  map: zoom'], ['A', 'Jump / handbrake  ·  confirm'], ['B', 'Sprint (hold) · cover (tap) / horn  ·  back'], ['X', 'Reload / radio  ·  delete'], ['Y', 'Enter / exit vehicle  ·  tab'], ['LB / RB', 'Previous / next weapon  ·  pages'], ['LT / RT', 'Aim / shoot  ·  map zoom'], ['Back / Start', 'Map / pause'], ['L3 / R3', 'Special / lock-on (hold: wheel)'], ['D-pad', 'Quick slots: pistol, rifle, thrown, melee'], ['Aircraft', 'LS pitch + roll · LB RB yaw · RT LT throttle']];
   function titleItems() {
     var g = game(), items = [{ id: 'play', label: 'NEW GAME', desc: 'A fresh Grievance City. Pick a slot, pick a seed, pick a side. Both are wrong.' }];
-    var hasSave = !!(g && g.hasSave && g.hasSave()), latest = hasSave && g.latestSlot ? g.latestSlot() : 0;
-    var meta = null;
-    if (latest && g.slots) { var sl = g.slots(); for (var i = 0; i < sl.length; i++) if (sl[i].slot === latest) meta = sl[i].meta; }
+    var anySlot = slotsOf(g).some(slotUsed);
+    if (!anySlot) items[0].desc = 'Straight into Grievance City, slot 1. (Seeds and slots live under LOAD GAME.) Pick a side. Both are wrong.';   // QA-B-FE-18
+    var sl = slotsOf(g), latest = 0, latestT = -1, meta = null;
+    for (var i = 0; i < sl.length; i++) if (!sl[i].empty && sl[i].meta && (sl[i].meta.savedAt || 0) > latestT) { latestT = sl[i].meta.savedAt || 0; latest = sl[i].slot; meta = sl[i].meta; }
+    var hasSave = !!latest;
+    if (!sl.length && g && g.hasSave) { hasSave = !!g.hasSave(); latest = hasSave && g.latestSlot ? g.latestSlot() : 0; }
     if (hasSave) items.unshift({ id: 'continue', label: 'CONTINUE', desc: meta ? 'Slot ' + latest + ': ' + (meta.missions | 0) + ' / ' + (meta.missionsTotal || 25) + ' missions, ' + fmtPlay(meta.playTime) + ', ' + U.fmtMoney(meta.money || 0) + (meta.district ? ', ' + meta.district : '') : 'The most recent save.' });
     items.push({ id: 'load', label: 'LOAD GAME', desc: 'Three slots. Load, delete, or start a new game in an empty one.' });
     items.push({ id: 'settings', label: 'SETTINGS', desc: 'Volumes, quality, draw distance, weather, gamepad, hints, subtitles.' });
@@ -1657,7 +1817,7 @@
     ctx.restore();
   }
   function drawTitle(ctx) {
-    var tt = ui.title; tt.t += 1 / 60;
+    var tt = ui.title; tt.t = ui.t;   // the real clock, not per drawn frame (QA-C QAC-44)
     // cinematic vignette
     var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, 'rgba(6,7,13,0.75)'); g.addColorStop(0.35, 'rgba(6,7,13,0.15)'); g.addColorStop(0.7, 'rgba(6,7,13,0.25)'); g.addColorStop(1, 'rgba(6,7,13,0.85)');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -1689,13 +1849,14 @@
       }
     }
     txt(ctx, 'A parody. All characters are fictional.', W / 2, H - safe.b - px(34), { font: F(12, 'bold'), color: COL.ink, align: 'center' });
-    txt(ctx, 'Grievance City: two time zones, one opinion.  v' + (GTP.VERSION || '') + (GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected() ? '  ·  gamepad connected' : ''), W / 2, H - safe.b - px(14), { font: F(10), color: COL.muted, align: 'center' });
+    txt(ctx, 'Grievance City: two time zones, one opinion.  v' + gameVersion() + (GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected() ? '  ·  gamepad connected' : ''), W / 2, H - safe.b - px(14), { font: F(10), color: COL.muted, align: 'center' });
   }
   // NEW GAME's slot picker / LOAD GAME's cards on the title (ui.title.slotMode = 'new' | 'load'), the seed field under them
+  function slotHint() { var d = device(); return d === 'gamepad' ? 'LS picks · A chooses · B back' : d === 'touch' ? 'tap a button' : '← → pick  ·  Enter choose  ·  Esc back'; }
   function drawTitleSlots(ctx) {
     var tt = ui.title, mode = tt.slotMode, pw = Math.min(px(900), W - safe.l - safe.r), x = (W - pw) / 2, y = Math.max(px(110), H * 0.2);
     txt(ctx, mode === 'new' ? 'NEW GAME: PICK A SLOT' : 'LOAD GAME', x, y - px(12), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false });
-    txt(ctx, (glyph('left') === 'LS' ? 'LS picks · A chooses · B back' : '← → pick  ·  Enter choose  ·  Esc back'), x + pw, y - px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
+    txt(ctx, slotHint(), pw < px(560) ? x : x + pw, pw < px(560) ? y - px(36) : y - px(14), { font: F(10, 'bold'), color: COL.muted, align: pw < px(560) ? 'left' : 'right', outline: false, maxW: pw });   // on its own line when narrow (QA-B-FE-15)
     var ref = tt.slotRef || (tt.slotRef = {}); ref.sel = tt.slotSel; ref.btn = tt.slotBtn || 0;
     var r = slotCards(ctx, mode, ref, x, y, pw, Math.min(px(260), H - y - px(130)), titleSlotActivate);
     tt.slotSel = ref.sel;   // hover may have moved the selection
@@ -1707,7 +1868,9 @@
     panel(ctx, sx + px(50), sy, fw, fh, px(6), focus ? 'rgba(46,230,255,0.12)' : 'rgba(10,12,24,0.9)', focus ? COL.cyan : 'rgba(255,255,255,0.2)', focus ? 2 : 1);
     var shown = tt.seed || '', caret = focus && Math.floor(tt.t * 2) % 2 === 0 ? '|' : '';
     txt(ctx, (shown || (focus ? '' : String(game() ? game().seed : 7))) + caret, sx + px(60), sy + px(21), { font: F(14, 'bold'), color: shown || focus ? COL.ink : COL.muted, outline: false, maxW: fw - px(20) });
-    txt(ctx, 'Same seed, same city as a friend. Digits only.', sx + px(50) + fw + px(12), sy + px(21), { font: F(10), color: COL.muted, outline: false, maxW: pw - fw - px(70) });
+    var noteRoom = pw - fw - px(70) - px(132);
+    if (noteRoom > measure(ctx, 'Same seed, same city as a friend. Digits only.', F(10)) * 0.9) txt(ctx, 'Same seed, same city as a friend. Digits only.', sx + px(50) + fw + px(12), sy + px(21), { font: F(10), color: COL.muted, outline: false, maxW: noteRoom });
+    else txt(ctx, 'Same seed, same city as a friend. Digits only.', sx, sy + fh + px(16), { font: F(10), color: COL.muted, outline: false, maxW: pw });   // under the field when narrow (QA-B-FE-15)
     hit(sx + px(50), sy, fw, fh, function () { tt.seedFocus = true; GTP.Input.text.capture = true; GTP.Input.text.queue.length = 0; }, 'seed');
     var bw = px(120), bx = x + pw - bw, by = sy;
     panel(ctx, bx, by, bw, fh, px(8), hovering(bx, by, bw, fh) ? 'rgba(255,63,164,0.25)' : 'rgba(10,12,24,0.9)', 'rgba(255,255,255,0.2)');
@@ -1715,6 +1878,14 @@
     hit(bx, by, bw, fh, function () { titleBack(); }, 'slots-back');
     if (r.slots && r.slots[tt.slotSel]) r.slots[tt.slotSel]._sel = true;
     tt._slotInfo = r;
+  }
+  // the version on the title: GTP.VERSION (00_util.js) still reads 0.2.0 in the v0.3 build; the UI shows the release it
+  // belongs to (desktop/package.json: 0.3.0) unless GTP.VERSION is newer
+  var RELEASE = '0.3.0';
+  function gameVersion() {
+    var v = String(GTP.VERSION || ''), a = v.split('.').map(Number), b = RELEASE.split('.').map(Number);
+    for (var i = 0; i < 3; i++) { if ((a[i] || 0) > b[i]) return v; if ((a[i] || 0) < b[i]) return RELEASE; }
+    return v || RELEASE;
   }
   function chosenSeed() { var g = game(), s = parseInt(ui.title.seed, 10); return isFinite(s) && ui.title.seed !== '' ? s : (g ? g.seed : 7); }
   function beginNewGame(slot, seed, opening) {
@@ -1728,39 +1899,48 @@
     g.setState('playing');
     // the slot is claimed at once so CONTINUE and the cards know the game exists (quiet; the autosave takes over after)
     try { if (g.saveSlot) g.saveSlot(slot || 1, { quiet: true, reason: 'new' }); } catch (e) { /* storage optional */ }
-    toast('New game in slot ' + (slot || 1) + '. Minds changed: zero.');
+    if (!opening) toast('New game in slot ' + (slot || 1) + '. Minds changed: zero.');   // with the opening it would surface under the first prompts
   }
   function titleSlotActivate(action, slot) {
     var g = game(), tt = ui.title; if (!g) return;
-    var slots = g.slots ? g.slots() : [], s = slots[slot - 1];
+    var slots = slotsOf(g), s = slots[slot - 1];
     sfx('ui', 0.4);
     if (action === 'load') { if (g.loadSlot && g.loadSlot(slot)) { ui.sessionStarted = true; ui.money.shown = null; ui.wanted.last = 0; ui.subs.shown = null; } return; }
-    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.', 'There is no undo. There is no liaison.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); toast('Slot ' + slot + ' deleted'); } }); return; }
+    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.', 'There is no undo. There is no liaison.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); slotsDirty(); toast('Slot ' + slot + ' deleted'); } }); return; }
     if (action === 'new') {
-      if (s && !s.empty) { askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: ['It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { beginNewGame(slot, chosenSeed(), true); } }); return; }
+      if (slotUsed(s)) { askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: [s.corrupt ? 'It holds a save this build cannot read (' + (s.version != null ? 'another version' : 'damaged') + ').' : 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { beginNewGame(slot, chosenSeed(), true); } }); return; }
       beginNewGame(slot, chosenSeed(), true);
     }
     void tt;
   }
-  function slotButtons(mode, s) { return mode === 'load' && s && !s.empty ? 2 : 1; }
+  function slotButtons(mode, s) { return mode === 'load' && slotUsed(s) ? 2 : 1; }
   function titleBack() { var tt = ui.title; tt.page = 'menu'; tt.seedFocus = false; if (GTP.Input) GTP.Input.text.capture = false; }
+  // CONTROLS: keyboard on the left, the gamepad (always) and touch on the right; one column on narrow screens with the
+  // device in use first; rows shrink to fit above the title footer (QA-B-FE-10 / FE-11)
+  var CONTROLS_EXTRA = [['+ / -', 'Zoom the map / the scope'], ['Esc or Backspace', 'Back out of a menu'], ['Delete', 'Delete a save slot (LOAD GAME)']];
   function drawControlsPanel(ctx, title, onClose) {
-    var padOn = GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected(), rows = padOn ? CONTROLS.concat([['', '']], PAD_ROWS) : CONTROLS;
-    var pw = Math.min(px(640), W - safe.l - safe.r), rh = px(portrait ? 20 : 22), ph = px(70) + rows.length * rh;
-    if (ph > H - px(24)) { rh = Math.max(px(14), Math.floor((H - px(94)) / rows.length)); ph = px(70) + rows.length * rh; }
-    var x = (W - pw) / 2, y = Math.max(px(12), Math.min(H * 0.18, H - ph - px(20)));
+    var padOn = GTP.Input && GTP.Input.padConnected && GTP.Input.padConnected(), keys = CONTROLS.concat(CONTROLS_EXTRA);
+    var touchRows = [['Left half', 'The stick moves (push to the rim: run)'], ['Right half', 'Drag to look'], ['Buttons', 'FIRE, AIM, JUMP, ENTER, RLD, WPN (hold: wheel), COVER, SPCL'], ['Pills', 'MAP and PAUSE at the top'], ['In a car', 'HORN, BRAKE, EXIT, CAM, BOOST'], ['In the air', 'THR+ / THR-, YAW L / YAW R, the stick pitches and rolls']];
+    var two = W >= px(900) && !portrait, pw = Math.min(two ? px(1080) : px(640), W - safe.l - safe.r);
+    var right = [['', 'GAMEPAD (standard layout)' + (padOn ? '  ·  CONNECTED' : '')]].concat(PAD_ROWS, [['', 'TOUCH']], touchRows);
+    var cols = two ? [keys, right] : [device() === 'gamepad' ? right.slice(0, PAD_ROWS.length + 1).concat([['', 'KEYBOARD']], keys) : device() === 'touch' ? right.slice(PAD_ROWS.length + 1).concat([['', 'KEYBOARD']], keys) : keys.concat([['', 'GAMEPAD (standard layout)']], PAD_ROWS)];
+    var nRows = Math.max.apply(null, cols.map(function (c) { return c.length; })), avail = H - px(130);
+    var rh = Math.max(px(13), Math.min(px(portrait ? 20 : 22), Math.floor((avail - px(70)) / nRows))), ph = px(70) + nRows * rh;
+    var x = (W - pw) / 2, y = Math.max(px(12), Math.min(H * 0.12, H - ph - px(70)));
     panel(ctx, x, y, pw, ph, px(12), 'rgba(10,12,24,0.97)', COL.line, 1.5);
-    txt(ctx, title + (padOn ? '  ·  GAMEPAD CONNECTED' : ''), x + px(20), y + px(32), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false, maxW: pw - px(140) });
-    txt(ctx, (glyph('cancel') === 'B' ? 'B: back' : 'Enter / Esc: back'), x + pw - px(20), y + px(30), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
-    var ty = y + px(58), split = x + pw * (portrait ? 0.46 : 0.4);
-    for (var i = 0; i < rows.length; i++) {
-      if (!rows[i][0]) { txt(ctx, 'GAMEPAD (standard layout)', x + px(20), ty, { font: F(10, 'bold'), color: COL.cyan, outline: false }); ty += rh; continue; }
-      ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0)'; ctx.fillRect(x + px(8), ty - rh + px(6), pw - px(16), rh);
-      txt(ctx, rows[i][0], split - px(10), ty, { font: F(portrait ? 10 : 12, 'bold'), color: COL.cyan, align: 'right', outline: false, maxW: split - x - px(20) });
-      txt(ctx, rows[i][1], split + px(6), ty, { font: F(portrait ? 10 : 12, '', FONT_TEXT), color: COL.ink, outline: false, maxW: x + pw - split - px(20) });
-      ty += rh;
+    txt(ctx, title, x + px(20), y + px(32), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false, maxW: pw - px(160) });
+    txt(ctx, device() === 'gamepad' ? 'B: back' : device() === 'touch' ? 'tap: back' : 'Enter / Esc: back', x + pw - px(20), y + px(30), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
+    var colW = (pw - px(16)) / cols.length, fs = rh < px(18) ? 10 : 12;
+    for (var c = 0; c < cols.length; c++) {
+      var rows = cols[c], cx0 = x + px(8) + c * colW, ty = y + px(58), split = cx0 + colW * (portrait ? 0.46 : 0.4);
+      for (var i = 0; i < rows.length; i++) {
+        if (!rows[i][0]) { txt(ctx, rows[i][1], cx0 + px(12), ty, { font: F(10, 'bold'), color: COL.cyan, outline: false, maxW: colW - px(20) }); ty += rh; continue; }
+        ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0)'; ctx.fillRect(cx0, ty - rh + px(5), colW - px(8), rh);
+        txt(ctx, rows[i][0], split - px(10), ty, { font: F(portrait ? 10 : fs, 'bold'), color: COL.cyan, align: 'right', outline: false, maxW: split - cx0 - px(16) });
+        txt(ctx, rows[i][1], split + px(6), ty, { font: F(portrait ? 10 : fs, '', FONT_TEXT), color: COL.ink, outline: false, maxW: cx0 + colW - split - px(16) });
+        ty += rh;
+      }
     }
-    if (ui.touch.visible) txt(ctx, 'Touch: left stick moves, right side looks, buttons fire / aim / enter / jump / reload / weapon (hold: wheel) / map / pause.', x + px(20), y + ph - px(12), { font: F(9), color: COL.muted, outline: false, maxW: pw - px(40) });
     hit(x, y, pw, ph, onClose, 'controls-close');
   }
   function titleActivate(id) {
@@ -1776,8 +1956,8 @@
     }
     // NEW GAME: with no save anywhere the game starts at once in slot 1 (nothing to choose, nothing to overwrite);
     // otherwise the slot picker (choose an empty slot or overwrite, and the seed field)
-    var any = false, sl = g.slots ? g.slots() : [];
-    for (var i = 0; i < sl.length; i++) if (!sl[i].empty) any = true;
+    var any = false, sl = slotsOf(g);
+    for (var i = 0; i < sl.length; i++) if (slotUsed(sl[i])) any = true;
     if (!any) { beginNewGame(1, g.seed, FAST_START_OPENING); return; }
     tt.page = 'slots'; tt.slotMode = 'new'; tt.slotSel = 0; tt.slotBtn = 0;
     for (i = 0; i < sl.length; i++) if (sl[i].empty) { tt.slotSel = i; break; }
@@ -1792,23 +1972,22 @@
         else if (/^[0-9]$/.test(k) && tt.seed.length < 9) tt.seed += k;
       }
       if (In.pressed('confirm') || menuBack(In)) { tt.seedFocus = false; In.text.capture = false; }
-      else if (In.pressed('shoot') && In.mouse && In.mouse.down) { tt.seedFocus = false; In.text.capture = false; pointerTap(In.mouse.x, In.mouse.y); }
       return true;
     }
     q.length = 0;
     if (menuBack(In)) { titleBack(); return true; }
-    var slots = g && g.slots ? g.slots() : [], cur = slots[tt.slotSel], nb = slotButtons(tt.slotMode, cur);
+    var slots = slotsOf(g), cur = slots[tt.slotSel], nb = slotButtons(tt.slotMode, cur);
     if (In.pressed('left')) { if (tt.slotBtn > 0) tt.slotBtn--; else { tt.slotSel = (tt.slotSel + 2) % 3; tt.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('right')) { if (tt.slotBtn < nb - 1) tt.slotBtn++; else { tt.slotSel = (tt.slotSel + 1) % 3; tt.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('forward')) { tt.slotSel = (tt.slotSel + 2) % 3; tt.slotBtn = 0; }
     if (menuDown(In)) { tt.slotSel = (tt.slotSel + 1) % 3; tt.slotBtn = 0; }
-    if (In.pressed('secondary') && tt.slotMode === 'load' && cur && !cur.empty) titleSlotActivate('delete', cur.slot);
+    if (In.pressed('secondary') && tt.slotMode === 'load' && slotUsed(cur)) titleSlotActivate('delete', cur.slot);
     if (In.pressed('tabNext')) { tt.seedFocus = true; In.text.capture = true; q.length = 0; }
     if (In.pressed('confirm')) {
       if (!cur) return true;
-      if (tt.slotMode === 'load') { if (cur.empty) titleSlotActivate('new', cur.slot); else titleSlotActivate(tt.slotBtn === 1 ? 'delete' : 'load', cur.slot); }
+      if (tt.slotMode === 'load') { if (cur.corrupt) titleSlotActivate(tt.slotBtn === 1 ? 'delete' : 'new', cur.slot); else if (cur.empty) titleSlotActivate('new', cur.slot); else titleSlotActivate(tt.slotBtn === 1 ? 'delete' : 'load', cur.slot); }
       else titleSlotActivate('new', cur.slot);
-    } else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
+    }
     return true;
   }
 
@@ -1822,8 +2001,8 @@
   function openPause(page) {
     var g = game(); if (!g) return;
     if (g.state === 'paused') { ui.pause.page = page; return; }
-    if (g.state !== 'playing' && g.state !== 'cutscene') return;
-    ui.pause.from = g.state; ui.pause.page = page; ui.pause.sel = 0; ui.pause.scroll = 0; ui.pause.row = 0;
+    if (g.state !== 'playing' && g.state !== 'cutscene' && !(g.state === 'minigame' && ui.minigame)) return;
+    ui.pause.from = g.state; ui.pause.page = page; ui.pause.sel = 0; ui.pause.scroll = 0; ui.pause.row = 0; ui.pause.phoneFrom = null;
     if (page === 'phone' && (ui.pause.tab < 0 || ui.pause.tab >= PHONE_TABS.length)) ui.pause.tab = 0;
     g.setState('paused');
     if (GTP.Input.releasePointerLock) GTP.Input.releasePointerLock();
@@ -1832,7 +2011,7 @@
     var g = game(); if (!g || g.state !== 'paused') return;
     ui.confirm = null;
     if (ui.pause.page === 'shop' && GTP.Combat && GTP.Combat.shop && GTP.Combat.shop.state.open) { try { GTP.Combat.shop.close(); } catch (e) { /* optional */ } }
-    var to = ui.pause.from === 'cutscene' && GTP.Cutscenes && GTP.Cutscenes.active ? 'cutscene' : 'playing';
+    var to = ui.pause.from === 'cutscene' && GTP.Cutscenes && GTP.Cutscenes.active ? 'cutscene' : ui.pause.from === 'minigame' && ui.minigame ? 'minigame' : 'playing';
     g.setState(to);
   }
   function busyText() {
@@ -1841,13 +2020,27 @@
     if (St && St.active && St.active()) return 'the strand';
     return null;
   }
+  // SAVE refuses what a load would undo for free: a cutscene (it would be marked watched), stars, a burning car, the
+  // minigame, death (QA-B-FE-07, QA-D SAVE-06 / SAVE-08)
+  function saveBlocker() {
+    var g = game(), p = player(), Cs = GTP.Cutscenes, wl = (GTP.AI && GTP.AI.wanted) ? GTP.AI.wanted.level : (p ? p.wanted | 0 : 0);
+    if ((Cs && Cs.active) || ui.pause.from === 'cutscene') return 'Not during a cutscene. Let it finish.';
+    var Ms0 = GTP.Missions; if (Ms0 && Ms0.busy && call(Ms0.busy, Ms0, [], false) && !(Ms0.state && Ms0.state.active)) return 'A cutscene is about to start. Save after it.';   // the pending act / ending cutscene (QA-D SAVE-06)
+    if (ui.pause.from === 'minigame' || ui.minigame) return 'Finish the argument first.';
+    if (p && !p.alive) return 'You are being ratio\'d. Save later.';
+    if (wl > 0) return 'Lose the stars first. The precinct does not do saves.';
+    var v = p && p.inVehicle; if (v && (v.burning || v.onFire || (v.hp != null && v.hp <= 0))) return 'Not in a burning car.';
+    void g; return null;
+  }
   function doSave(slot) {
     var g = game(); if (!g) return;
+    var block = saveBlocker(); if (block) { toast(block); sfx('fail', 0.25); return; }
     var busy = busyText();
     var write = function () {
       var Ms = GTP.Missions, St = GTP.Strands;
       if (Ms && Ms.state && Ms.state.active && Ms.abort) Ms.abort();
       if (St && St.active && St.active() && St.end) St.end('save');
+      slotsDirty();
       if (g.saveSlot(slot || g.activeSlot || 1, { quiet: true, reason: 'manual' })) { toast('Saved to slot ' + (slot || g.activeSlot || 1)); ui.saved.t = 1.2; ui.saved.slot = slot || g.activeSlot; }
     };
     if (busy) askConfirm({ title: 'SAVE NOW?', lines: ['Saving now will abandon ' + busy + '.'], yes: 'SAVE', no: 'BACK', danger: true, onYes: write });
@@ -1865,10 +2058,10 @@
     sfx('ui', 0.4);
     switch (id) {
       case 'resume': closePause(); break;
-      case 'story': ui.pause.page = 'phone'; ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; break;
+      case 'story': ui.pause.page = 'phone'; ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; ui.pause.phoneFrom = 'pause'; break;
       case 'save': ui.pause.page = 'slots'; ui.pause.slotMode = 'save'; ui.pause.slotSel = Math.max(0, (g.activeSlot || 1) - 1); ui.pause.slotBtn = 0; break;
       case 'load': ui.pause.page = 'slots'; ui.pause.slotMode = 'load'; ui.pause.slotSel = Math.max(0, (g.latestSlot ? g.latestSlot() || 1 : 1) - 1); ui.pause.slotBtn = 0; break;
-      case 'map': ui.pause.page = 'phone'; ui.pause.tab = 0; mapCenterOnPlayer(); break;
+      case 'map': ui.pause.page = 'phone'; ui.pause.tab = 0; ui.pause.phoneFrom = 'pause'; mapCenterOnPlayer(); break;
       case 'settings': ui.pause.page = 'settings'; ui.settings.sel = 0; break;
       case 'controls': ui.settings.from = 'pause'; ui.pause.page = 'controls'; break;
       case 'mute': setMuted(!ui.muted); break;
@@ -1879,15 +2072,15 @@
   }
   function pauseSlotActivate(action, slot) {
     var g = game(), pg = ui.pause; if (!g) return;
-    var slots = g.slots ? g.slots() : [], s = slots[slot - 1];
+    var slots = slotsOf(g), s = slots[slot - 1];
     sfx('ui', 0.4);
     if (action === 'save') {
-      if (s && !s.empty && slot !== g.activeSlot) askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: ['It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { doSave(slot); } });
+      if (slotUsed(s) && (slot !== g.activeSlot || s.corrupt)) askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: [s.corrupt ? 'It holds a save this build cannot read (' + (s.version != null ? 'another version' : 'damaged') + ').' : 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { doSave(slot); } });
       else doSave(slot);
       return;
     }
     if (action === 'load') { doLoad(slot); return; }
-    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + (s.meta.missions | 0) + ' missions and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); toast('Slot ' + slot + ' deleted'); } }); return; }
+    if (action === 'delete') { askConfirm({ title: 'DELETE SLOT ' + slot + '?', lines: [s && s.meta ? 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.' : 'Gone for good.'], yes: 'DELETE', no: 'BACK', danger: true, onYes: function () { g.deleteSlot(slot); slotsDirty(); toast('Slot ' + slot + ' deleted'); } }); return; }
     if (action === 'new') { askConfirm({ title: 'NEW GAME IN SLOT ' + slot + '?', lines: ['Lose unsaved progress?'], yes: 'NEW GAME', no: 'BACK', danger: true, onYes: function () { beginNewGame(slot, g.seed, true); } }); return; }
     void pg;
   }
@@ -1922,7 +2115,7 @@
   function drawPauseSlots(ctx) {
     var pg = ui.pause, pw = Math.min(px(900), W - safe.l - safe.r), x = (W - pw) / 2, y = Math.max(px(60), H * 0.18);
     txt(ctx, pg.slotMode === 'save' ? 'SAVE GAME' : 'LOAD GAME', x, y - px(12), { font: F(18, '900', FONT_DISPLAY), color: COL.gold, outline: false });
-    txt(ctx, (glyph('left') === 'LS' ? 'LS picks · A chooses · B back' : '← → pick  ·  Enter choose  ·  Esc back'), x + pw, y - px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right', outline: false });
+    txt(ctx, slotHint(), pw < px(560) ? x : x + pw, pw < px(560) ? y - px(36) : y - px(14), { font: F(10, 'bold'), color: COL.muted, align: pw < px(560) ? 'left' : 'right', outline: false, maxW: pw });   // on its own line when narrow (QA-B-FE-15)
     var ref = pg.slotRef || (pg.slotRef = {}); ref.sel = pg.slotSel; ref.btn = pg.slotBtn || 0;
     var r = slotCards(ctx, pg.slotMode, ref, x, y, pw, Math.min(px(260), H - y - px(90)), pauseSlotActivate);
     pg.slotSel = ref.sel;
@@ -1935,18 +2128,19 @@
   function pauseSlotsInput(In) {
     var pg = ui.pause, g = game();
     if (menuBack(In)) { pg.page = 'pause'; return true; }
-    var slots = g && g.slots ? g.slots() : [], cur = slots[pg.slotSel], nb = slotButtons(pg.slotMode, cur);
+    var slots = slotsOf(g), cur = slots[pg.slotSel], nb = slotButtons(pg.slotMode, cur);
     if (In.pressed('left')) { if (pg.slotBtn > 0) pg.slotBtn--; else { pg.slotSel = (pg.slotSel + 2) % 3; pg.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('right')) { if (pg.slotBtn < nb - 1) pg.slotBtn++; else { pg.slotSel = (pg.slotSel + 1) % 3; pg.slotBtn = 0; } sfx('ui', 0.2); }
     if (In.pressed('forward')) { pg.slotSel = (pg.slotSel + 2) % 3; pg.slotBtn = 0; }
     if (menuDown(In)) { pg.slotSel = (pg.slotSel + 1) % 3; pg.slotBtn = 0; }
-    if (In.pressed('secondary') && pg.slotMode === 'load' && cur && !cur.empty) pauseSlotActivate('delete', cur.slot);
+    if (In.pressed('secondary') && pg.slotMode === 'load' && slotUsed(cur)) pauseSlotActivate('delete', cur.slot);
     if (In.pressed('confirm')) {
       if (!cur) return true;
       if (pg.slotMode === 'save') pauseSlotActivate('save', cur.slot);
+      else if (cur.corrupt) pauseSlotActivate(pg.slotBtn === 1 ? 'delete' : 'new', cur.slot);
       else if (cur.empty) pauseSlotActivate('new', cur.slot);
       else pauseSlotActivate(pg.slotBtn === 1 ? 'delete' : 'load', cur.slot);
-    } else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
+    }
     return true;
   }
   // the phone / map page: tabs along the top, the full-screen map in the first
@@ -1963,11 +2157,18 @@
       var tx = tx0 + i * tabW, sel = i === pg.tab;
       panel(ctx, tx + px(2), ty, tabW - px(4), px(28), px(6), sel ? 'rgba(46,230,255,0.2)' : 'rgba(255,255,255,0.05)', sel ? COL.cyan : 'rgba(255,255,255,0.1)');
       txt(ctx, PHONE_TABS[i], tx + tabW / 2, ty + px(19), { font: F(portrait || tabW < px(80) ? 9 : 11, 'bold'), color: sel ? COL.ink : COL.muted, align: 'center', outline: false, maxW: tabW - px(8) });
-      hit(tx, ty, tabW, px(28), (function (k) { return function () { pg.tab = k; pg.sel = 0; pg.scroll = 0; pg.row = 0; if (k === 0) mapCenterOnPlayer(); }; })(i), 'tab-' + i);
+      hit(tx, ty, tabW, px(28), (function (k) { return function () { pg.tab = k; pg.sel = 0; pg.scroll = 0; pg.row = 0; pg.rows = []; if (k === 0) mapCenterOnPlayer(); }; })(i), 'tab-' + i);
     }
-    var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(74);
+    // a close control on every tab, for touch above all (QA-B-TCH-01)
+    var clw = px(30), clx = x + pw - clw - px(8), cly = y + px(6);
+    panel(ctx, clx, cly, clw, px(22), px(6), hovering(clx, cly, clw, px(22)) ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)');
+    txt(ctx, '✕', clx + clw / 2, cly + px(16), { font: F(12, 'bold'), color: COL.ink, align: 'center', outline: false });
+    // a finger-sized target (~42 x 30 px on a phone; QA-B-TCH-01), above the tab row so it never takes a tab's tap
+    var tw2 = Math.max(clw + px(12), px(64));
+    hit(clx + clw / 2 - tw2 / 2, cly - px(20), tw2, px(46), phoneClose, 'phone-close');
+    var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(92);   // the list stops above the help line (QA-B-TCH-09)
     ctx.save(); ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
-    var tid = tabId();
+    var tid = tabId(); ui.pause.maxScroll = null;   // a list tab sets its own
     if (tid === 'MAP') drawBigMap(ctx, cx, cy, cw, ch);
     else if (tid === 'STORY') drawPhoneStory(ctx, cx, cy, cw, ch);
     else if (tid === 'MISSIONS') drawPhoneMissions(ctx, cx, cy, cw, ch);
@@ -1976,14 +2177,20 @@
     else if (tid === 'STRANDS') { ui.pause.rows = []; drawPhoneStrands(ctx, cx, cy, cw, ch); }
     else drawPhoneReplay(ctx, cx, cy, cw, ch);
     ctx.restore();
-    var help = full ? (device() === 'gamepad' ? 'LS pans · RS / LT RT zoom · A waypoint · Y tabs · B close' : ui.touch.visible ? 'drag pans · pinch zooms · tap sets a waypoint' : 'drag / WASD pan · wheel / + - zoom · click sets a waypoint · Tab cycles tabs · M / Esc close') : '← → tabs   ·   ' + glyph('map') + ' / ' + glyph('cancel') + ' close';
+    var help = full ? (device() === 'gamepad' ? 'LS pans · RS / LT RT zoom · A waypoint · Y tabs · B close' : ui.touch.visible ? 'drag pans · pinch zooms · tap sets a waypoint' : 'drag / WASD pan · wheel / + - zoom · click sets a waypoint · Tab cycles tabs · M / Esc close') : device() === 'touch' ? 'swipe scrolls  ·  tap a tab  ·  ✕ closes' : device() === 'gamepad' ? 'LB RB tabs  ·  LS pick  ·  A choose  ·  B close' : '← → tabs   ·   ' + glyph('map') + ' / ' + glyph('cancel') + ' close';
     var hw = measure(ctx, help, F(10)) + px(24);
     if (full) panel(ctx, W / 2 - hw / 2, y + ph - px(22), hw, px(18), px(6), 'rgba(10,12,24,0.85)', null);
     txt(ctx, help, W / 2, y + ph - px(9), { font: F(10), color: COL.muted, align: 'center', outline: false, maxW: pw - px(20) });
   }
   // --------------------------------------------------------- the big map ----
   var MAP_LEGEND = [['mission', 'Mission', '#4aa8ff'], ['objective', 'Objective', COL.amber], ['gunshop', 'Both Sides Arms', COL.green], ['rampage', 'Ratio Rampage', COL.pink], ['race', 'Loop Race', COL.white], ['ramp', 'Stunt ramp', COL.pink], ['violation', 'HOA target', COL.cream], ['home', 'Home', COL.white], ['stranger', 'Stranger', '#c084fc'], ['waypoint', 'Waypoint', COL.white], ['dot', 'GPS route', COL.gold]];
-  function mapCenterOnPlayer() { var p = player(); if (p) { ui.map.cx = p.x; ui.map.cz = p.z; } }
+  function mapCenterOnPlayer() { var p = player(); if (p) { ui.map.cx = p.x; ui.map.cz = p.z; } ui.map.cursor = null; }   // the pad cursor re-seeds on the player
+  // the zoom focus: the player's spot on the map when it is in view, else the map's centre (QA-B-HUD-07)
+  function mapPlayerFocus(r) {
+    var M = ui.map, p0 = player(), focus = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    if (p0) { var k0 = mapScale(r.w, r.h), fx0 = r.x + r.w / 2 + (p0.x - M.cx) * k0, fy0 = r.y + r.h / 2 + (p0.z - M.cz) * k0; if (fx0 > r.x && fx0 < r.x + r.w && fy0 > r.y && fy0 < r.y + r.h) focus = { x: fx0, y: fy0 }; }
+    return focus;
+  }
   function mapScale(w, h) { var bake = ensureMap(); if (!bake) return 1; return Math.min(w / bake.width, h / bake.height) * ui.map.zoom; }
   function mapClampCenter(w, h) {
     var bake = ensureMap(); if (!bake) return;
@@ -2025,16 +2232,21 @@
       var d = ds[i], a = toS(d.px, d.pz);
       ctx.fillStyle = tint[d.style] || tint[d.id] || 'rgba(255,255,255,0.05)'; ctx.fillRect(a.x, a.y, d.pw * k, d.ph * k);
     }
-    for (i = 0; i < ds.length; i++) { s = toS(ds[i].cx, ds[i].cz); txt(ctx, String(ds[i].name || ds[i].id).toUpperCase(), s.x, s.y, { font: F(M.zoom >= 2 ? 13 : 10, '900', FONT_DISPLAY), color: COL.gold, align: 'center', lw: px(3) }); }
+    // labels are placed with a collision test: districts first, then missions, landmarks and markers (QA-B-HUD-06)
+    var placed = [], distLabels = [];
+    var place = function (text, cx0, cy0, font) { ctx.font = font; var tw0 = ctx.measureText(text).width + px(6), th0 = px(12), r0 = { x: cx0 - tw0 / 2, y: cy0 - th0, w: tw0, h: th0 + px(2) }; for (var q = 0; q < placed.length; q++) { var o = placed[q]; if (r0.x < o.x + o.w && r0.x + r0.w > o.x && r0.y < o.y + o.h && r0.y + r0.h > o.y) return false; } placed.push(r0); return true; };
+    for (i = 0; i < ds.length; i++) { s = toS(ds[i].cx, ds[i].cz); var dn = String(ds[i].name || ds[i].id).toUpperCase(), df = F(M.zoom >= 2 ? 13 : 10, '900', FONT_DISPLAY); if (place(dn, s.x, s.y, df)) distLabels.push([dn, s.x, s.y, df]); }
+    var shopMarks = allMarkers().filter(function (mk0) { return mk0.kind === 'shop'; });
     // landmark icons by kind, labels from 2x (3x on a narrow map, where they would pile up)
     var lms = (Wd && Wd.landmarks) || [], labelZoom = w < px(600) ? 3 : 2;
     for (i = 0; i < lms.length; i++) {
       var lm = lms[i]; s = toS(lm.x, lm.z);
       if (s.x < x - px(20) || s.x > x + w + px(20) || s.y < y - px(20) || s.y > y + h + px(20)) continue;
+      if (lm.kind === 'gunshop' && shopMarks.some(function (mk0) { return U.dist2d(mk0.x, mk0.z, lm.x, lm.z) < 40; })) continue;   // the shop marker draws it once
       var size = px(M.zoom >= 2 ? 11 : 8);
       ctx.fillStyle = 'rgba(8,10,20,0.7)'; ctx.beginPath(); ctx.arc(s.x, s.y, size * 0.75, 0, Math.PI * 2); ctx.fill();
       drawKindIcon(ctx, lm.kind, s.x, s.y, size, lm.kind === 'gunshop' ? COL.green : 'rgba(238,241,251,0.9)');
-      if (M.zoom >= labelZoom) txt(ctx, landmarkLabel(lm), s.x, s.y + size + px(10), { font: F(9, 'bold'), color: COL.ink, align: 'center', lw: 2, maxW: px(140) });
+      if (M.zoom >= labelZoom) { var ll = landmarkLabel(lm); if (place(ll, s.x, s.y + size + px(10), F(9, 'bold'))) txt(ctx, ll, s.x, s.y + size + px(10), { font: F(9, 'bold'), color: COL.ink, align: 'center', lw: 2, maxW: px(140) }); }
     }
     // the route and the waypoint
     var wp = waypoint();
@@ -2045,15 +2257,18 @@
       s = toS(wp.x, wp.z); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.restore();
     }
     drawGpsBigMap(ctx, toS);
-    // markers
-    var marks = allMarkers();
+    // markers (missions and objectives last, on top)
+    var marks = markersByLayer();
     for (i = 0; i < marks.length; i++) {
       var mk = marks[i]; s = toS(mk.x, mk.z);
       if (s.x < x || s.x > x + w || s.y < y || s.y > y + h) continue;
       drawMarkerIcon(ctx, mk, s.x, s.y, px(mk.kind === 'objective' || mk.kind === 'mission' ? 12 : 11));
-      if (mk.title && (mk.kind === 'mission' || mk.kind === 'objective' || M.zoom >= labelZoom)) txt(ctx, mk.title, s.x, s.y - px(11), { font: F(9, 'bold'), color: mk.kind === 'objective' ? COL.amber : '#bfe3ff', align: 'center', lw: 2, maxW: px(160) });
+      if (mk.title && (mk.kind === 'mission' || mk.kind === 'objective' || M.zoom >= labelZoom) && (mk.kind === 'objective' || place(mk.title, s.x, s.y - px(11), F(9, 'bold')))) txt(ctx, mk.title, s.x, s.y - px(11), { font: F(9, 'bold'), color: mk.kind === 'objective' ? COL.amber : '#bfe3ff', align: 'center', lw: 2, maxW: px(160) });
     }
     if (wp) { s = toS(wp.x, wp.z); drawKindIcon(ctx, 'waypoint', s.x, s.y - px(6), px(20), COL.white); txt(ctx, Math.round(U.dist2d(p.x, p.z, wp.x, wp.z)) + ' m', s.x, s.y - px(20), { font: F(9, 'bold'), color: COL.white, align: 'center', lw: 2 }); }
+    for (i = 0; i < distLabels.length; i++) txt(ctx, distLabels[i][0], distLabels[i][1], distLabels[i][2], { font: distLabels[i][3], color: COL.gold, align: 'center', lw: px(3) });
+    // the pad's map cursor (QA-B-HUD-08)
+    if (device() === 'gamepad' && M.cursor) { var cxp = x + M.cursor.x * w, cyp = y + M.cursor.y * h; ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = px(2); ctx.beginPath(); ctx.arc(cxp, cyp, px(9), 0, Math.PI * 2); ctx.moveTo(cxp - px(15), cyp); ctx.lineTo(cxp - px(5), cyp); ctx.moveTo(cxp + px(5), cyp); ctx.lineTo(cxp + px(15), cyp); ctx.moveTo(cxp, cyp - px(15)); ctx.lineTo(cxp, cyp - px(5)); ctx.moveTo(cxp, cyp + px(5)); ctx.lineTo(cxp, cyp + px(15)); ctx.stroke(); ctx.restore(); }
     // the player arrow
     s = toS(p.x, p.z);
     ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(-(p.yaw || 0));
@@ -2073,8 +2288,8 @@
     var bx = x + w - px(60), by = y + h - px(64);
     panel(ctx, bx, by, px(24), px(24), px(6), 'rgba(10,12,24,0.85)', 'rgba(255,255,255,0.25)'); txt(ctx, '-', bx + px(12), by + px(17), { font: F(14, 'bold'), color: COL.ink, align: 'center', outline: false });
     panel(ctx, bx + px(28), by, px(24), px(24), px(6), 'rgba(10,12,24,0.85)', 'rgba(255,255,255,0.25)'); txt(ctx, '+', bx + px(40), by + px(17), { font: F(14, 'bold'), color: COL.ink, align: 'center', outline: false });
-    hit(bx, by, px(24), px(24), function () { mapZoomAt(1 / 1.5, x + w / 2, y + h / 2); }, 'map-zoom-out');
-    hit(bx + px(28), by, px(24), px(24), function () { mapZoomAt(1.5, x + w / 2, y + h / 2); }, 'map-zoom-in');
+    hit(bx, by, px(24), px(24), function () { var f = mapPlayerFocus({ x: x, y: y, w: w, h: h }); mapZoomAt(1 / 1.5, f.x, f.y); }, 'map-zoom-out');
+    hit(bx + px(28), by, px(24), px(24), function () { var f = mapPlayerFocus({ x: x, y: y, w: w, h: h }); mapZoomAt(1.5, f.x, f.y); }, 'map-zoom-in');
     var cbw = px(110);
     panel(ctx, x + w - px(8) - cbw, y + px(40), cbw, px(22), px(6), 'rgba(10,12,24,0.85)', 'rgba(255,255,255,0.2)');
     txt(ctx, 'CENTRE ON ME', x + w - px(8) - cbw / 2, y + px(55), { font: F(9, 'bold'), color: COL.ink, align: 'center', outline: false });
@@ -2088,11 +2303,25 @@
     if (In.down('left')) M.cx -= pan; if (In.down('right')) M.cx += pan;
     if (In.down('forward')) M.cz -= pan; if (In.down('back') && !In.pressed('cancel')) M.cz += pan;
     var pad = In.gamepad;
-    if (pad && pad.index >= 0 && In.gamepadEnabled) { M.cx += pad.lx * pan * 1.5; M.cz += pad.ly * pan * 1.5; if (pad.ry) mapZoomAt(1 - pad.ry * 0.04, r.x + r.w / 2, r.y + r.h / 2); }
+    // keys and pad zoom around the player (or the pad cursor), not the city centre (QA-B-HUD-07)
+    var focus = mapPlayerFocus(r);
+    var pad = In.gamepad;
+    if (pad && pad.index >= 0 && In.gamepadEnabled && device() === 'gamepad') {
+      // the pad moves a cursor (seeded on the player when the map opens); the map pans when it pushes an edge (QA-B-HUD-08)
+      if (!M.cursor) M.cursor = { x: (focus.x - r.x) / r.w, y: (focus.y - r.y) / r.h };
+      M.cursor.x += pad.lx * dt * 0.6; M.cursor.y += pad.ly * dt * 0.6 * (r.w / r.h);
+      if (M.cursor.x < 0.05) { M.cx -= pan * 1.5; M.cursor.x = 0.05; } if (M.cursor.x > 0.95) { M.cx += pan * 1.5; M.cursor.x = 0.95; }
+      if (M.cursor.y < 0.05) { M.cz -= pan * 1.5; M.cursor.y = 0.05; } if (M.cursor.y > 0.95) { M.cz += pan * 1.5; M.cursor.y = 0.95; }
+      focus = { x: r.x + M.cursor.x * r.w, y: r.y + M.cursor.y * r.h };
+      if (pad.ry) mapZoomAt(1 - pad.ry * 0.04, focus.x, focus.y);
+    }
     if (In.wheelDelta) mapZoomAt(In.wheelDelta < 0 ? 1.15 : 1 / 1.15, In.mouse.x, In.mouse.y);
-    if (In.pressed('zoomIn')) mapZoomAt(1.5, r.x + r.w / 2, r.y + r.h / 2);
-    if (In.pressed('zoomOut')) mapZoomAt(1 / 1.5, r.x + r.w / 2, r.y + r.h / 2);
-    if (In.pressed('waypoint') || (In.pressed('confirm') && device() === 'gamepad')) setWaypoint(M.cx, M.cz);
+    if (In.pressed('zoomIn')) mapZoomAt(1.5, focus.x, focus.y);
+    if (In.pressed('zoomOut')) mapZoomAt(1 / 1.5, focus.x, focus.y);
+    if (In.pressed('waypoint') || (In.pressed('confirm') && device() === 'gamepad')) {
+      var wpt = M.cursor && device() === 'gamepad' ? mapToWorld(r.x + M.cursor.x * r.w, r.y + M.cursor.y * r.h) : { x: M.cx, z: M.cz };
+      if (wpt) setWaypoint(wpt.x, wpt.z);
+    }
     // mouse: a press starts a drag, a release without much movement is a tap
     var m = In.mouse;
     if (m.down && !M.drag) M.drag = { x: m.x, y: m.y, sx: m.x, sy: m.y, moved: 0 };
@@ -2106,12 +2335,17 @@
     if (st && st.active) rows.push({ kind: 'active', title: st.mission ? st.mission.title : st.active, sub: st.objectiveText || 'In progress' });
     if (canRetry && lf) rows.push({ kind: 'retry', title: lf.m.title, sub: (lf.text || 'Context stamped') + '  ·  RETRY from the checkpoint', id: lf.id });
     var av = Ms && Ms.available ? Ms.available() : [];
-    for (i = 0; i < av.length; i++) { var lm = GTP.World.landmark(av[i].marker); rows.push({ kind: 'avail', title: av[i].title, sub: castName(av[i].giver) + '  ·  ' + (lm ? landmarkLabel(lm) : av[i].marker) + '  ·  ' + U.fmtMoney(av[i].reward || 0) }); }
-    // v0.3 strangers: Strangers.list() -> [{id, title, giver, status, line, x, z}] (else their markers)
-    var Sg = GTP.Strangers, sl = null;
-    try { sl = Sg && typeof Sg.list === 'function' ? Sg.list() : null; } catch (e) { sl = null; }
-    if (!sl) sl = allMarkers().filter(function (m2) { return m2.kind === 'stranger'; }).map(function (m2) { return { id: m2.strangerId, title: m2.title, giver: m2.giver, x: m2.x, z: m2.z, status: 'available' }; });
-    for (i = 0; i < (sl || []).length; i++) { var sx = sl[i]; if (!sx || sx.status === 'done' || sx.status === 'locked') continue; rows.push({ kind: 'stranger', title: '? ' + (sx.title || sx.name || sx.id), sub: (sx.giver ? castName(sx.giver) + '  ·  ' : '') + (sx.line || (sx.status === 'active' ? 'In progress' : 'Somebody wants a word')), x: sx.x, z: sx.z, id: sx.id }); }
+    // the strangers' next missions (GTP.Strangers.summary(): {id, name, giver, state, done, total, next}) are purple rows
+    // with a GPS button; the story's are blue
+    var Sg = GTP.Strangers, strands = {}, mk0 = null;
+    try { (Sg && Sg.summary ? Sg.summary() : []).forEach(function (x2) { if (x2) strands[x2.id] = x2; }); } catch (e) { strands = {}; }
+    for (i = 0; i < av.length; i++) {
+      var lm = GTP.World.landmark(av[i].marker), sid = strandOf(av[i].id), where = lm ? landmarkLabel(lm) : av[i].marker;
+      if (sid) {
+        var sx = strands[sid] || {}; mk0 = null; allMarkers().forEach(function (m2) { if (m2.missionId === av[i].id) mk0 = m2; });
+        rows.push({ kind: 'stranger', title: '? ' + av[i].title, sub: (sx.name ? sx.name + ' ' + ((sx.done | 0) + 1) + '/' + (sx.total || 1) + '  ·  ' : '') + castName(av[i].giver) + '  ·  ' + where, x: mk0 ? mk0.x : (lm && lm.door ? lm.door.x : null), z: mk0 ? mk0.z : (lm && lm.door ? lm.door.z : null), id: av[i].id });
+      } else rows.push({ kind: 'avail', title: av[i].title, sub: castName(av[i].giver) + '  ·  ' + where + '  ·  ' + U.fmtMoney(av[i].reward || 0) });
+    }
     for (i = 0; i < all.length; i++) if (st && st.completed && st.completed.has(all[i].id)) { var bt = Ms.bestTime ? Ms.bestTime(all[i].id) : null; rows.push({ kind: 'done', title: all[i].title, sub: 'Completed  ·  ' + U.fmtMoney(all[i].reward || 0) + (bt != null ? '  ·  best ' + U.fmtTime(bt) : ''), id: all[i].id }); }
     var done = st && st.completed ? st.completed.size : 0;
     txt(ctx, 'MISSIONS  ' + done + ' / ' + all.length, x, y + px(14), { font: F(12, 'bold'), color: COL.cyan, outline: false });
@@ -2136,6 +2370,7 @@
       ry += rh;
     }
     ui.pause.rows = rows;
+    ui.pause.maxScroll = Math.max(0, rows.length * rh + px(36) - h);   // a swipe stops at the last row
   }
   function missionRowActivate(r) {
     var Ms = GTP.Missions; if (!Ms || !r) return;
@@ -2156,12 +2391,14 @@
   }
   function abortMission() {
     var Ms = GTP.Missions; if (!Ms || !Ms.state || !Ms.state.active) return;
-    Ms.abort(); closePause();
+    // never without asking (QA-B-TCH-04: a stray confirm on another tab used to abandon the mission)
+    askConfirm({ title: 'ABANDON THE MISSION?', lines: ['Back to the marker. The checkpoint is gone.'], yes: 'ABANDON', no: 'BACK', danger: true, onYes: function () { if (Ms.state && Ms.state.active) Ms.abort(); closePause(); } });
   }
+  function phoneClose() { var pg = ui.pause; if (pg.phoneFrom === 'pause') { pg.page = 'pause'; pg.phoneFrom = null; } else closePause(); }
   function drawPhoneStats(ctx, x, y, w, h) {
     var p = player(), g = game(), st = (p && p.stats) || {}, Ms = GTP.Missions;
     var wl = (GTP.AI && GTP.AI.wanted) ? GTP.AI.wanted.level : 0, subs = Ms && Ms.subscribers ? Ms.subscribers() : null;
-    var rows = [
+    var rows = hasStatsPage() ? [['Subscribers', (subs ? fmtSubs(subs.count) + '  ·  ' + subs.name : '0')], ['Day / time', g ? 'Day ' + g.time.day + ', ' + U.fmtClock(g.time.clock) : ''], ['Wanted', wl ? wl + ' star' + (wl > 1 ? 's' : '') : 'clean']] : [   // the systems' page carries the career numbers
       ['Cash', p ? U.fmtMoney(p.money) : '$0'], ['Subscribers', (subs ? fmtSubs(subs.count) + '  ·  ' + subs.name : '0')], ['Missions passed', String(Ms && Ms.state ? Ms.state.completed.size : 0)],
       ['Retries', String(st.retries || 0)], ['Play time', fmtPlay(g ? g.playTime : 0)], ['Day / time', g ? 'Day ' + g.time.day + ', ' + U.fmtClock(g.time.clock) : ''], ['Wanted', wl ? wl + ' star' + (wl > 1 ? 's' : '') : 'clean'],
       ['Distance on foot', Math.round(st.distance || 0) + ' m'], ['Distance driven', Math.round(st.distanceDriven || 0) + ' m'],
@@ -2286,9 +2523,11 @@
     else if (res && res.reason === 'funds') { sh.msg = { text: 'NOT ENOUGH CASH. Need ' + U.fmtMoney(res.need || 0) + ' more.', color: COL.red }; sh.bark = pick(barks.funds, 'That\'s the price.'); sfx('fail', 0.3); }
     else if (res && res.reason === 'locked') { sh.msg = { text: 'LOCKED. ' + ((X.shop && X.shop.lockFormat) || 'Unlocks after: {mission}').replace('{mission}', res.lockedBy || 'the story'), color: COL.amber }; sh.bark = pick(barks.locked, 'Not yet.'); sfx('ui', 0.2); }
     else if (res && res.reason === 'owned') { sh.msg = { text: 'Already on your back. Buy ammo instead.', color: COL.muted }; sfx('ui', 0.2); }
+    else if (res && res.reason === 'full') { sh.msg = { text: 'You are full up. Nothing to buy that for.', color: COL.muted }; sfx('ui', 0.2); }   // QA-B-TCH-13
+    else if (res && res.reason === 'notOwned') { sh.msg = { text: 'Buy the weapon first.', color: COL.amber }; sfx('ui', 0.2); }
     else if (res && res.reason === 'flagship') { sh.msg = { text: 'The range is at the flagship on the Strip.', color: COL.muted }; sfx('ui', 0.2); }
     else { sh.msg = { text: 'No sale.', color: COL.muted }; }
-    sh.msgT = 3;
+    sh.msgT = 3; sh.msgKey = sh.tab + ':' + sh.sel;   // the message belongs to this card: another tab or row hides it (QA-B-TCH-13)
   }
   function drawShop(ctx) {
     var sh = ui.shop, CB = GTP.Combat, p = player(), X = expansion(), shopC = X.shop || {};
@@ -2303,17 +2542,17 @@
     var disc = CB && CB.shop && CB.shop.discount ? CB.shop.discount() : 0;
     if (disc > 0) txt(ctx, Math.round(disc * 100) + '% OFF (loyalty, allegedly)', x + pw - px(20), y + px(52), { font: F(10, 'bold'), color: COL.amber, align: 'right', outline: false });
     // tabs
-    var tabW = Math.min(px(120), (pw - px(40)) / tabs.length), ty = y + px(62), i;
+    var tabW = Math.min(px(120), (pw - px(40) - px(100)) / tabs.length), ty = y + px(62), i;   // the tabs stop short of EXIT (QA-B-TCH-10)
     for (i = 0; i < tabs.length; i++) {
       var tx = x + px(20) + i * tabW, sel = i === sh.tab;
       panel(ctx, tx + px(2), ty, tabW - px(4), px(26), px(6), sel ? 'rgba(63,210,127,0.22)' : 'rgba(255,255,255,0.05)', sel ? COL.green : 'rgba(255,255,255,0.1)');
       txt(ctx, tabs[i], tx + tabW / 2, ty + px(18), { font: F(11, 'bold'), color: sel ? COL.ink : COL.muted, align: 'center', outline: false });
-      hit(tx, ty, tabW, px(26), (function (k) { return function () { sh.tab = k; sh.sel = 0; }; })(i), 'shop-tab-' + i);
+      hit(tx, ty, tabW, px(26), (function (k) { return function () { sh.tab = k; sh.sel = 0; sh.msgT = 0; }; })(i), 'shop-tab-' + i);
     }
     // exit button
     var ew = px(90), ex = x + pw - px(20) - ew;
     panel(ctx, ex, ty, ew, px(26), px(6), hovering(ex, ty, ew, px(26)) ? 'rgba(255,59,48,0.3)' : 'rgba(255,255,255,0.05)', 'rgba(255,255,255,0.2)');
-    txt(ctx, 'EXIT  ' + glyph('cancel'), ex + ew / 2, ty + px(18), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+    txt(ctx, device() === 'touch' ? 'EXIT  ✕' : 'EXIT  ' + glyph('cancel'), ex + ew / 2, ty + px(18), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
     hit(ex, ty, ew, px(26), closeShop, 'shop-exit');
     // the list (left) and the card (right); stacked on a phone
     var ly = ty + px(36), lh = y + ph - ly - px(16), lw = narrow ? pw - px(40) : pw * 0.46, lx = x + px(20), rh = px(40);
@@ -2333,7 +2572,7 @@
       var priceS = U.fmtMoney(it.price), pc = it.locked ? COL.muted : (p && p.money >= it.price ? COL.lime : COL.red);
       txt(ctx, priceS, lx + lw - px(12), ry + px(24), { font: F(13, 'bold'), color: pc, align: 'right', outline: false });
       if (it.listPrice && it.listPrice !== it.price) txt(ctx, U.fmtMoney(it.listPrice), lx + lw - px(12) - measure(ctx, priceS, F(13, 'bold')) - px(8), ry + px(24), { font: F(9), color: COL.muted, align: 'right', outline: false });
-      hit(lx, ry, lw, rh - px(4), (function (k, id) { return function () { if (sh.sel === k) shopBuy(id); else sh.sel = k; }; })(i, it.id), 'shop-item-' + i);
+      if (ry + rh > ly && ry < ly + lh) hit(lx, Math.max(ly, ry), lw, Math.min(rh - px(4), ly + lh - Math.max(ly, ry)), (function (k, id) { return function () { if (sh.sel === k) shopBuy(id); else sh.sel = k; }; })(i, it.id), 'shop-item-' + i);   // only rows on screen take taps (QA-B-TCH-11)
       ry += rh;
     }
     if (!items.length) txt(ctx, 'Nothing on this wall.', lx + px(10), ly + px(30), { font: F(12, '', FONT_TEXT), color: COL.muted, outline: false });
@@ -2360,9 +2599,11 @@
       for (i = 0; i < Math.min(3, fl.length); i++) txt(ctx, fl[i], tx2, cy + px(76) + i * px(14), { font: F(10, 'italic', FONT_TEXT), color: COL.muted, outline: false });
       // five stat bars
       var by = cy + px(30) + icoS + px(10), bars = shopC.statBars || ['DAMAGE', 'RATE', 'RANGE', 'ACCURACY', 'VOLUME'], keys = ['damage', 'rate', 'range', 'accuracy', 'volume'];
+      var bbyTop = cy + chh - px(50);
       if (cur.stats) {
         for (i = 0; i < bars.length; i++) {
           var v = clamp01(cur.stats[keys[i]] || 0), bx = cx + px(90), bw = cw - px(110), yy = by + i * px(18);
+          if (yy + px(10) > bbyTop) break;   // a short (portrait) card shows the bars that fit (QA-B-TCH-10)
           txt(ctx, bars[i], cx + px(20), yy + px(8), { font: F(9, 'bold'), color: COL.muted, outline: false });
           panel(ctx, bx, yy, bw, px(8), px(4), 'rgba(255,255,255,0.1)', null);
           ctx.fillStyle = i === 0 ? COL.red : i === 1 ? COL.amber : i === 2 ? COL.cyan : i === 3 ? COL.lime : COL.pink; rr(ctx, bx, yy, bw * v, px(8), px(4)); ctx.fill();
@@ -2370,23 +2611,23 @@
         by += bars.length * px(18) + px(6);
       }
       // Merle's pitch with his portrait, and the message line
-      var ps = px(44), pyy = Math.min(by + px(6), cy + chh - ps - px(50));
-      castPortrait(ctx, shopC.clerk || 'merle', cx + px(20), pyy, ps);
-      var pitch = wrap(ctx, '“' + (sh.msgT > 0 && sh.bark ? sh.bark : (cur.pitch || sh.bark || '')) + '”', F(11, 'italic', FONT_TEXT), cw - ps - px(50));
-      for (i = 0; i < Math.min(3, pitch.length); i++) txt(ctx, pitch[i], cx + px(30) + ps, pyy + px(16) + i * px(14), { font: F(11, 'italic', FONT_TEXT), color: '#bfe3ff', outline: false });
-      txt(ctx, castName(shopC.clerk || 'merle'), cx + px(20), pyy + ps + px(12), { font: F(8, 'bold'), color: COL.green, outline: false, maxW: ps + px(20) });
+      var ps = px(44), pyy = Math.min(by + px(6), cy + chh - ps - px(50)), roomForMerle = pyy >= by - px(2);
+      if (roomForMerle) castPortrait(ctx, shopC.clerk || 'merle', cx + px(20), pyy, ps);
+      var pitch = wrap(ctx, '“' + (sh.msgT > 0 && sh.bark && sh.msgKey === sh.tab + ':' + sh.sel ? sh.bark : (cur.pitch || sh.bark || '')) + '”', F(11, 'italic', FONT_TEXT), cw - ps - px(50));
+      for (i = 0; i < (roomForMerle ? Math.min(3, pitch.length) : 0); i++) txt(ctx, pitch[i], cx + px(30) + ps, pyy + px(16) + i * px(14), { font: F(11, 'italic', FONT_TEXT), color: '#bfe3ff', outline: false });
+      if (roomForMerle) txt(ctx, castName(shopC.clerk || 'merle'), cx + px(20), pyy + ps + px(12), { font: F(8, 'bold'), color: COL.green, outline: false, maxW: ps + px(20) });
       // the buy button
       var bbw = Math.min(px(220), cw - px(40)), bbx = cx + cw - bbw - px(20), bby = cy + chh - px(44), can = cur.canBuy;
       var label = cur.locked ? 'LOCKED' : cur.owned && cur.tab === 'weapons' ? 'OWNED' : can ? 'BUY  ' + glyph('confirm') : 'NOT ENOUGH CASH';
       panel(ctx, bbx, bby, bbw, px(32), px(8), can ? (sh.flash > 0 ? 'rgba(157,255,60,0.5)' : hovering(bbx, bby, bbw, px(32)) ? 'rgba(63,210,127,0.45)' : 'rgba(63,210,127,0.25)') : 'rgba(255,255,255,0.05)', can ? COL.green : 'rgba(255,255,255,0.2)', can ? 2 : 1);
       txt(ctx, label, bbx + bbw / 2, bby + px(21), { font: F(13, 'bold'), color: can ? COL.ink : COL.muted, align: 'center', outline: false });
       hit(bbx, bby, bbw, px(32), (function (id) { return function () { shopBuy(id); }; })(cur.id), 'shop-buy');
-      if (sh.msgT > 0 && sh.msg) txt(ctx, sh.msg.text, cx + px(20), bby + px(21), { font: F(10, 'bold'), color: sh.msg.color, outline: false, maxW: cw - bbw - px(50) });
+      if (sh.msgT > 0 && sh.msg && sh.msgKey === sh.tab + ':' + sh.sel) txt(ctx, sh.msg.text, cx + px(20), bby + px(21), { font: F(10, 'bold'), color: sh.msg.color, outline: false, maxW: cw - bbw - px(50) });
     }
     if (tabs[sh.tab] === ((shopC.flagshipTab) || 'RANGE') && CB && CB.shop) {
       var rt = CB.shop.rangeT || 0, best = CB.shop.rangeBest;
       txt(ctx, (rt > 0 ? 'RANGE TIMER ' + U.fmtTime(Math.ceil(rt)) : 'Six cutouts out back. $50 resets them and starts a 60 s timer.') + (best != null ? '   BEST ' + U.fmtTime(best) : ''), x + px(20), y + ph - px(12), { font: F(10, 'bold'), color: COL.amber, outline: false, maxW: pw - px(40) });
-    } else txt(ctx, (device() === 'gamepad' ? 'LS picks · A buys · LB RB tabs · B leaves' : '↑ ↓ pick  ·  Enter buys  ·  ← → tabs  ·  Esc leaves') + '   ·   ' + (sh.store && sh.store.gag ? sh.store.gag : 'Loyalty points: one. Nobody has qualified.'), x + px(20), y + ph - px(12), { font: F(10), color: COL.muted, outline: false, maxW: pw - px(40) });
+    } else txt(ctx, (device() === 'touch' ? 'tap a row to pick, tap it again to buy' : device() === 'gamepad' ? 'LS picks · A buys · LB RB tabs · B leaves' : '↑ ↓ pick  ·  Enter buys  ·  ← → tabs  ·  Esc leaves') + '   ·   ' + (sh.store && sh.store.gag ? sh.store.gag : 'Loyalty points: one. Nobody has qualified.'), x + px(20), y + ph - px(12), { font: F(10), color: COL.muted, outline: false, maxW: pw - px(40) });
     drawConfirm(ctx);
   }
   function shopInput(In) {
@@ -2397,7 +2638,6 @@
     if (In.pressed('left') || In.pressed('weaponPrev')) { sh.tab = (sh.tab + tabs.length - 1) % tabs.length; sh.sel = 0; }
     if (In.pressed('right') || In.pressed('weaponNext') || In.pressed('tabNext')) { sh.tab = (sh.tab + 1) % tabs.length; sh.sel = 0; }
     if (In.pressed('confirm') && items[sh.sel]) shopBuy(items[sh.sel].id);
-    else if (In.pressed('shoot') && In.mouse && In.mouse.down) pointerTap(In.mouse.x, In.mouse.y);
     return true;
   }
 
@@ -2446,6 +2686,8 @@
       lines.push({ t: c.name.toUpperCase() + ' as ' + c.role, who: ids[i] });
       if (ads.length) lines.push({ t: ads[(i * 5) % ads.length], tag: 'AD' });
     }
+    // everyone else the content casts with a role (Merle Firmness, the v0.3 strangers and bosses: QA-B-TXT-08)
+    Object.keys(Cc.cast || {}).forEach(function (k) { var c2 = Cc.cast[k]; if (ids.indexOf(k) < 0 && k !== 'panel' && k !== 'freshman' && c2 && c2.name && c2.role) lines.push({ t: String(c2.name).toUpperCase() + ' as ' + c2.role, who: k }); });
     lines.push({ t: '' }, { t: 'THE PANEL: FIVE GUESTS, ONE MEMO', who: 'panel' }, { t: 'WENDELL SYLLABUS, who did the reading', who: 'freshman' }, { t: '' });
     lines.push({ t: 'Minds changed: zero.', sub: true }, { t: 'No real pundits were harmed. All characters are fictional.', sub: true }, { t: 'Every script in this city ends "Respectfuly." One L.', sub: true }, { t: '' });
     lines.push({ t: 'KIP GRATIS asks: Is this paid?', who: 'kip' }, { t: '' }, { t: id === 'm15b_liveread' ? 'Reward: $11. One per listener.' : id ? 'Rated a ten by the man who rates it.' : 'Thanks for listening to listening.', sub: true });
@@ -2502,6 +2744,15 @@
   var COUNTER_KEYS = [{ id: 'SOURCE?', action: 'forward', glyph: '↑', key: 'W' }, { id: 'LOUDER', action: 'left', glyph: '←', key: 'A' }, { id: 'PIVOT', action: 'right', glyph: '→', key: 'D' }, { id: 'DEFINE TERMS', action: 'back', glyph: '↓', key: 'S' }];
   var CARD_COLOR = { FACT: '#4aa8ff', FEELING: '#ff3fa4', GOTCHA: '#ffbe3c', ANECDOTE: '#9dff3c' };
   var mgSerial = 0;
+  // SHOUT: Shift held, the pad's LT held (menu map), or the touch SHOUT toggle (QA-B-TCH-06)
+  function shoutDown() { var In = GTP.Input; return !!(In && (In.down('run') || In.down('zoomOut'))) || !!ui.mgShout; }
+  function mgKey(kind) {
+    var d = device();
+    if (kind === 'shout') return d === 'gamepad' ? 'LT' : d === 'touch' ? 'SHOUT' : 'Shift';
+    if (kind === 'post') return d === 'gamepad' ? 'A' : d === 'touch' ? 'tap' : 'E / Space';
+    if (kind === 'hottake') return d === 'gamepad' ? 'X' : d === 'touch' ? 'tap' : 'Ctrl / click';
+    return '';
+  }
   function mgRng() { return GTP.rng && GTP.rng.fork ? GTP.rng.fork(0x51D0 + (mgSerial++)) : (urng || { random: function () { return 0.5; }, pick: function (a) { return a[0]; }, chance: function () { return false; }, shuffle: function (a) { return a; } }); }
   function debateOpponent(id) {
     var D = GTP.Content && GTP.Content.debate, o = D && D.opponents ? D.opponents[id] : null;
@@ -2581,7 +2832,7 @@
             c.card = nt; c.text = pickd.text; c.who = pickd.who || c.who; c.flipped = true; st.captionOpp = c.text; st.flash = { text: 'FLIP!', t: 0.3, small: true }; sfx('ui', 0.4);
           }
           if (c.t >= st.timer) { st.result = { text: 'LATE  -20', color: COL.red, ok: false }; st.crowd = U.clamp(st.crowd - 20, 0, 100); st.captionMe = '...'; st.phase = 'reveal'; st.phaseT = 0; sfx('hit', 0.4); break; }
-          var shout = In.down('run');
+          var shout = shoutDown();
           for (var i = 0; i < COUNTER_KEYS.length; i++) if (In.pressed(COUNTER_KEYS[i].action)) { debate.answer(COUNTER_KEYS[i].id, shout); return; }
           if (In.pressed('action') || In.pressed('confirm')) debate.answer('WHATABOUT', false);
           break;
@@ -2697,13 +2948,19 @@
         var fill = pressed ? (okc === true ? 'rgba(157,255,60,0.3)' : okc === false ? 'rgba(255,59,48,0.3)' : 'rgba(255,255,255,0.2)') : it.grey ? 'rgba(255,255,255,0.03)' : hexA(col2, 0.12);
         panel(ctx, cxx, cyy, cwid, chgt, px(10), fill, it.grey ? 'rgba(255,255,255,0.18)' : col2, pressed ? 3 : 1.5);
         txt(ctx, it.glyph, cxx + cwid / 2, cyy + chgt * 0.4, { font: F(24 * ts, '900', FONT_DISPLAY), color: it.grey ? COL.muted : col2, align: 'center', outline: false });
-        txt(ctx, it.grey ? 'E / Space' : it.key + ' / arrow', cxx + cwid - px(6), cyy + px(13), { font: F(8 * ts, 'bold'), color: 'rgba(238,241,251,0.55)', align: 'right', outline: false });
+        txt(ctx, device() === 'touch' ? '' : device() === 'gamepad' ? (it.grey ? 'A' : 'D-pad ' + it.glyph) : it.grey ? 'E / Space' : it.key + ' / arrow', cxx + cwid - px(6), cyy + px(13), { font: F(8 * ts, 'bold'), color: 'rgba(238,241,251,0.55)', align: 'right', outline: false });
         txt(ctx, it.id, cxx + cwid / 2, cyy + chgt * 0.68, { font: F((it.id === 'DEFINE TERMS' ? 10 : 12) * ts, 'bold'), color: it.grey ? COL.muted : COL.ink, align: 'center', outline: false, maxW: cwid - px(8) });
         txt(ctx, it.grey ? 'never wins, never loses (-5)' : 'beats ' + COUNTERS[it.id], cxx + cwid / 2, cyy + chgt * 0.86, { font: F(8 * ts, ''), color: COL.muted, align: 'center', outline: false, maxW: cwid - px(6) });
-        hit(cxx, cyy, cwid, chgt, (function (id) { return function () { debate.answer(id, GTP.Input.down('run')); }; })(it.id), 'card-' + it.id);
+        hit(cxx, cyy, cwid, chgt, (function (id) { return function () { debate.answer(id, shoutDown()); ui.mgShout = false; }; })(it.id), 'card-' + it.id);
       }
-      var shoutOn = GTP.Input.down('run');
-      txt(ctx, shoutOn ? 'SHOUT ARMED (Shift): +40 on a hit, double loss on a miss' : 'hold Shift to SHOUT: +40 on a hit, double loss on a miss, heat on exit', bx + pad, cardsY + blockH + px(16), { font: F(10 * ts, 'bold'), color: shoutOn ? COL.pink : COL.muted, outline: false, maxW: bw - pad * 2 });
+      var shoutOn = shoutDown();
+      if (device() === 'touch') {   // a SHOUT toggle for touch
+        var sbw = px(96), sbx = bx + bw - pad - sbw, sby = cardsY + blockH + px(2);
+        panel(ctx, sbx, sby, sbw, px(22), px(6), shoutOn ? 'rgba(255,63,164,0.4)' : 'rgba(255,255,255,0.06)', COL.pink, 1.2);
+        txt(ctx, shoutOn ? 'SHOUT ON' : 'SHOUT', sbx + sbw / 2, sby + px(15), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+        hit(sbx, sby, sbw, px(22), function () { ui.mgShout = !ui.mgShout; }, 'shout');
+      }
+      txt(ctx, shoutOn ? 'SHOUT ARMED (' + mgKey('shout') + '): +40 on a hit, double loss on a miss' : (device() === 'touch' ? 'SHOUT' : 'hold ' + mgKey('shout')) + ' to SHOUT: +40 on a hit, double loss on a miss, heat on exit', bx + pad, cardsY + blockH + px(16), { font: F(10 * ts, 'bold'), color: shoutOn ? COL.pink : COL.muted, outline: false, maxW: bw - pad * 2 });
       // caption strip
       var capY = by + bh - capH - px(8);
       panel(ctx, bx + pad, capY, bw - pad * 2, capH, px(8), 'rgba(255,255,255,0.05)', 'rgba(255,255,255,0.1)');
@@ -2795,7 +3052,7 @@
           if (st.replyN % 3 === 0) { st.dogpile = 3; st.flash = { text: 'DOGPILE!', color: COL.red, t: 0 }; sfx('fail', 0.3); }
         }
         if (In.pressed('action') || In.pressed('confirm')) ratio.post();
-        if (In.pressed('shoot')) ratio.hottake();
+        if ((In.pressed('shoot') && !(In.mouse && In.mouse.down)) || In.pressed('secondary')) ratio.hottake();   // Ctrl / pad X; a mouse click goes through the HOTTAKE button only (QA-B-TCH-03)
       } else if (st.phase === 'summary') {
         if (st.phaseT > 3.2 || (st.phaseT > 0.6 && (In.pressed('confirm') || In.pressed('action')))) ratio._finish();
       }
@@ -2835,7 +3092,7 @@
       var colY = ppy + pph + px(12), meterH = px(86) * ts, colH = by + bh - colY - meterH - px(16);
       var rightW = narrow ? ppw : px(200) * ts, leftW = narrow ? ppw : ppw - rightW - px(12);
       var lx = bx + pad, rx = narrow ? bx + pad : lx + leftW + px(12);
-      if (narrow) { colH -= px(70); }
+      if (narrow) { colH -= px(150); }   // room for the counters, the HOTTAKE and the NOTES under the replies (QA-B-TCH-08)
       // reply column
       var cardH = px(40) * ts, maxCards = Math.max(1, Math.floor(colH / (cardH + px(6)))), cards = st.cards.slice(-maxCards);
       var cyy = colY + colH - cardH;
@@ -2866,12 +3123,12 @@
       var rr0 = st.theirs > 0 ? st.mine / st.theirs : st.mine, y3 = narrow ? y1 + px(44) : ry + px(126);
       txt(ctx, 'RATIO ' + rr0.toFixed(1) + (st.combo > 1 ? '   COMBO x' + st.combo : ''), narrow ? bx + pad + ppw / 2 : rx + rightW / 2, y3, { font: F(12 * ts, 'bold'), color: rr0 > 1 ? COL.lime : COL.ink, align: 'center', outline: false });
       // hottake icon + noted boxes
-      var hx = narrow ? bx + pad + ppw / 2 - px(60) : rx + px(14), hy = narrow ? y3 + px(10) : ry + px(142), hs = px(34) * ts;
+      var hx = narrow ? bx + pad : rx + px(14), hy = narrow ? y3 + px(10) : ry + px(142), hs = px(34) * ts;
       panel(ctx, hx, hy, hs, hs, px(8), st.hottake ? 'rgba(255,122,32,0.25)' : 'rgba(255,255,255,0.04)', st.hottake ? '#ff7a20' : 'rgba(255,255,255,0.15)', 1.5);
       drawWeaponIcon(ctx, 'hottake', hx + hs * 0.1, hy + hs * 0.1, hs * 0.8, st.hottake ? '#ffd0a0' : 'rgba(255,255,255,0.25)');
-      txt(ctx, st.hottake ? 'HOTTAKE (Ctrl / click)' : st.primed ? 'PRIMED' : 'USED', hx + hs + px(8), hy + hs * 0.62, { font: F(9 * ts, 'bold'), color: st.hottake ? '#ffd0a0' : COL.muted, outline: false, maxW: narrow ? px(90) : rightW - hs - px(26) });
+      txt(ctx, st.hottake ? 'HOTTAKE (' + mgKey('hottake') + ')' : st.primed ? 'PRIMED' : 'USED', hx + hs + px(8), hy + hs * 0.62, { font: F(9 * ts, 'bold'), color: st.hottake ? '#ffd0a0' : COL.muted, outline: false, maxW: narrow ? px(90) : rightW - hs - px(26) });
       hit(hx, hy, hs + px(90), hs, function () { ratio.hottake(); }, 'hottake');
-      var nby = hy + hs + px(12), nbx = narrow ? hx : rx + px(14);
+      var nby = narrow ? hy + px(10) : hy + hs + px(12), nbx = narrow ? bx + pad + ppw - 3 * (px(44) * ts + px(6)) : rx + px(14);
       txt(ctx, 'NOTES', nbx, nby - px(2), { font: F(9 * ts, 'bold'), color: COL.muted, outline: false });
       for (i = 0; i < 3; i++) {
         var filled = i < st.noted, nbw = px(44) * ts;
@@ -2898,7 +3155,7 @@
       ctx.fillRect(nx - 1.5, my, 3, mh);
       var pbw = Math.min(px(220), mw), pbx = mx0 + mw / 2 - pbw / 2, pby = my + mh + px(8), pbh = px(26) * ts;
       panel(ctx, pbx, pby, pbw, pbh, px(8), st.primed ? 'rgba(255,122,32,0.3)' : 'rgba(255,63,164,0.2)', st.primed ? '#ff7a20' : COL.pink, 1.5);
-      txt(ctx, st.primed ? 'POST (guaranteed DUNK)' : 'POST  (E / Space / tap)', pbx + pbw / 2, pby + pbh * 0.68, { font: F(11 * ts, 'bold'), color: COL.ink, align: 'center', outline: false, maxW: pbw - px(10) });
+      txt(ctx, st.primed ? 'POST (guaranteed DUNK)' : 'POST  (' + mgKey('post') + ')', pbx + pbw / 2, pby + pbh * 0.68, { font: F(11 * ts, 'bold'), color: COL.ink, align: 'center', outline: false, maxW: pbw - px(10) });
       hit(mx0, my - px(14), mw, mh + px(14) + pbh + px(10), function () { ratio.post(); }, 'post');
       if (st.flash) { var fk = st.flash.t / 0.9; txt(ctx, st.flash.text, W / 2, H * 0.42, { font: F(st.flash.big ? 44 : 30, '900', FONT_DISPLAY), color: st.flash.color, align: 'center', alpha: fk < 0.1 ? fk / 0.1 : 1 - Math.max(0, fk - 0.6) / 0.4, lw: px(6) }); }
       if (st.phase === 'summary') {
@@ -2924,14 +3181,15 @@
       { id: 'weapon', action: 'wheel', label: 'WPN', carLabel: 'CAM', carAction: 'cameraMode', x: right - big - px(10), y: bottom - big * 2 - r * 3 - px(56), r: px(24), color: COL.ink, hold: true },
       { id: 'reload', action: 'reload', label: 'RLD', carLabel: 'AIM', carAction: 'aim', airLabel: 'SPCL', airAction: 'special', x: right - big * 2 - r - px(30), y: bottom - r * 5 - px(84), r: px(22), color: COL.amber },
       { id: 'cover', action: 'cover', label: 'COVER', carLabel: 'BOOST', carAction: 'special', airLabel: 'YAW L', airAction: 'yawLeft', x: right - big * 3 - r * 2 - px(44), y: bottom - r - px(28), r: px(24), color: COL.cyan },
-      { id: 'special', action: 'special', label: 'SPCL', carLabel: null, carAction: null, airLabel: 'YAW R', airAction: 'yawRight', x: right - big * 3 - r * 2 - px(44), y: bottom - r * 3 - px(46), r: px(24), color: COL.pink },
+      { id: 'special', action: 'special', label: 'SPCL', carLabel: 'JOB', carAction: 'action', airLabel: 'YAW R', airAction: 'yawRight', x: right - big * 3 - r * 2 - px(44), y: bottom - r * 3 - px(46), r: px(24), color: COL.pink },
       { id: 'map', action: 'map', label: 'MAP', carLabel: 'MAP', carAction: 'map', x: W / 2 + px(portrait ? 32 : 44), y: safe.t + px(14), r: px(14), hw: px(portrait ? 28 : 40), color: COL.ink, pill: true },
       { id: 'pause', action: 'pause', label: 'PAUSE', carLabel: 'PAUSE', carAction: 'pause', x: W / 2 - px(portrait ? 32 : 44), y: safe.t + px(14), r: px(14), hw: px(portrait ? 28 : 40), color: COL.ink, pill: true }
     ];
   }
   function canvasPoint(t) {
-    var cv = GTP.Render && GTP.Render.hudCanvas, r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0 };
-    return { x: t.clientX - r.left, y: t.clientY - r.top };
+    var Rd = GTP.Render, cv = Rd && Rd.hudCanvas, r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+    var kx = r.width && Rd && Rd.width ? Rd.width / r.width : 1, ky = r.height && Rd && Rd.height ? Rd.height / r.height : 1;   // a stage smaller than the logical size (QAC-55)
+    return { x: (t.clientX - r.left) * kx, y: (t.clientY - r.top) * ky };
   }
   // the touch context: foot, car (boats too) or air (the aircraft labels and actions)
   function touchCtx() { var p = player(), In = GTP.Input; if (!p || !p.inVehicle) return 'foot'; return In && In.inAircraft && In.inAircraft() ? 'air' : 'car'; }
@@ -2962,6 +3220,10 @@
           T.ids[id] = { kind: 'map', x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, moved: 0 };
           continue;
         }
+        var gS = game() && game().state;
+        if (gS === 'paused' && ui.pause.page === 'phone' && !ui.confirm) { T.ids[id] = { kind: 'scroll', y: pt.y, sx: pt.x, sy: pt.y, moved: 0 }; continue; }   // drag scrolls, a still tap taps (QA-B-TCH-09)
+        // a cutscene: hold anywhere = HOLD TO SKIP (with a line on screen too: the press advances it), a tap = the next shot (QA-B-TCH-02)
+        if (gS === 'cutscene') { T.ids[id] = { kind: 'skip', t0: ui.t, dlg: !!ui.dialogue }; In.set('confirm', true); continue; }
         if (menuState() || ui.dialogue) { pointerTap(pt.x, pt.y); T.ids[id] = { kind: 'tap' }; continue; }
         var hb = touchButtonAt(pt.x, pt.y);
         if (hb) {
@@ -2986,6 +3248,12 @@
           In.touch.look.dx += (p2.x - T.look.x) * 1.6; In.touch.look.dy += (p2.y - T.look.y) * 1.6;
           T.look.x = p2.x; T.look.y = p2.y;
           if (In._markLook) In._markLook();
+        } else if (rec.kind === 'scroll') {
+          var sdy = p2.y - rec.y; rec.moved += Math.abs(sdy); rec.y = p2.y;
+          ui.pause.scroll = Math.max(0, Math.min(ui.pause.maxScroll != null ? ui.pause.maxScroll : (ui.pause.contentH || 4000), ui.pause.scroll - sdy));
+        } else if (rec.kind === 'button' && rec.hold && GTP.Combat && GTP.Combat.wheel && GTP.Combat.wheel.open) {
+          // the finger holding WPN drags the wheel's selection (QA-B-TCH-12)
+          In.touch.look.dx += (p2.x - (rec.lx == null ? p2.x : rec.lx)) * 1.6; In.touch.look.dy += (p2.y - (rec.ly == null ? p2.y : rec.ly)) * 1.6; rec.lx = p2.x; rec.ly = p2.y;
         } else if (rec.kind === 'map') {
           var mdx = p2.x - rec.x, mdy = p2.y - rec.y; rec.moved += Math.abs(mdx) + Math.abs(mdy); rec.x = p2.x; rec.y = p2.y;
           if (T.pinch && (T.pinch.a == id || T.pinch.b == id)) {
@@ -3000,6 +3268,8 @@
         delete T.ids[id];
         if (rec.kind === 'stick') { T.stick = null; In.touch.stick.x = 0; In.touch.stick.y = 0; In.touch.stick.active = false; In.touch.buttons.run = false; }
         else if (rec.kind === 'look') T.look = null;
+        else if (rec.kind === 'scroll') { if (rec.moved < px(10)) pointerTap(rec.sx, rec.sy); }
+        else if (rec.kind === 'skip') { In.set('confirm', false); if (ui.t - rec.t0 < 0.25 && !rec.dlg) In.press('back'); }
         else if (rec.kind === 'button') {
           In.set(rec.action, false); T.btnDown[rec.b.id] = false;
           if (rec.hold && ui.t - rec.t0 < 0.18) In.press('weaponNext');   // a short tap on WPN cycles; a hold opened the wheel and the release equipped
@@ -3053,7 +3323,7 @@
       if (tt.page === 'slots' && tt.seedFocus) { tt.seedFocus = false; GTP.Input.text.capture = false; }
       return false;
     }
-    if (g.state === 'cutscene' && ui.dialogue) { advanceDialogue(); return true; }
+    if ((g.state === 'cutscene' || g.state === 'playing') && ui.dialogue) { if (ui.dialogue.t > 0.12) { if (GTP.Input.latch) GTP.Input.latch(['shoot', 'action']); advanceDialogue(); } return true; }
     if (g.state === 'paused' && ui.pause.page === 'credits') { endCredits(); return true; }
     if (onMapPage()) return mapTap(x, y);
     return false;
@@ -3080,21 +3350,20 @@
   // called every step before Game's own global input; returns true when the frame's menu input is consumed
   function handleInput(state) {
     var In = GTP.Input, g = game(); if (!In || !g) return false;
-    var click = In.pressed('shoot') && In.mouse && In.mouse.down;
     var dt = C.STEP;
     switch (state) {
       case 'title': {
         var tt = ui.title;
         if (ui.confirm) return confirmInput(In);
-        if (tt.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
-        if (tt.page === 'controls') { if (menuBack(In) || In.pressed('confirm') || In.pressed('enter') || In.pressed('pause')) { if (click) pointerTap(In.mouse.x, In.mouse.y); else { tt.page = ui.settings.from === 'settings' ? 'settings' : 'menu'; ui.settings.from = null; } } else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
+        if (tt.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); return true; }
+        if (tt.page === 'controls') { if (menuBack(In) || In.pressed('confirm') || In.pressed('enter') || In.pressed('pause')) { { tt.page = ui.settings.from === 'settings' ? 'settings' : 'menu'; ui.settings.from = null; } } return true; }
         if (tt.page === 'settings') return settingsInput(In, function () { tt.page = 'menu'; saveSettings(); });
         if (tt.page === 'slots') return titleSlotsInput(In);
         var items = titleItems();
         if (In.pressed('forward')) { tt.sel = (tt.sel - 1 + items.length) % items.length; sfx('ui', 0.2); }
         if (menuDown(In)) { tt.sel = (tt.sel + 1) % items.length; sfx('ui', 0.2); }
         if (In.pressed('confirm') || In.pressed('enter')) titleActivate(items[tt.sel] ? items[tt.sel].id : 'play');
-        else if (click) pointerTap(In.mouse.x, In.mouse.y);
+       
         return true;
       }
       case 'playing':
@@ -3104,48 +3373,51 @@
         if (retryInput(In)) return true;
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         if (In.pressed('pause')) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
+        // pad A is 'jump' on foot (the prompt says A): it advances the line too, and the step's consume keeps the jump (QA-B-FE-05)
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || (In.lastDevice === 'gamepad' && In.pressed('jump')))) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (ui.golf && golfInput(In)) return true;
         if (ui.interior && ui.interior.kind === 'armory' && In.pressed('lockOn')) { openArmory(ui.interior.store && (ui.interior.store.id || ui.interior.store), null); return true; }
-        if (click && ui.card && ui.card.kind === 'failed' && retryOffer()) pointerTap(In.mouse.x, In.mouse.y);
         quickSlots(In);
         return false;
       case 'cutscene': {
         // Escape skips the shot as the pill says (the cutscene reads back / cancel itself); P / Start still pause (QA-C1-08)
         var Cs = GTP.Cutscenes, chh = Cs && Cs.hud ? Cs.hud() : null, skippable = !!(chh && chh.active && chh.skippable !== false);
         if (In.pressed('pause') && !(skippable && In.pressed('cancel'))) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || click)) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
+        if (skippable && In.pressed('cancel') && !In.pressed('back') && Cs.skipShot) { try { Cs.skipShot(); } catch (e) { U.reportError(e, 'ui.skipShot'); } return true; }   // Esc / Backspace / pad B skip the shot as the pill says
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action'))) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         return true;
       }
       case 'paused': {
         var pg = ui.pause;
         if (ui.confirm) return confirmInput(In);
-        if (pg.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
-        if (pg.page === 'controls') { if (menuBack(In) || In.pressed('pause') || In.pressed('confirm')) { pg.page = ui.settings.from === 'settings' ? 'settings' : 'pause'; ui.settings.from = null; } else if (click) pointerTap(In.mouse.x, In.mouse.y); return true; }
+        if (pg.page === 'credits') { if (In.pressed('confirm') || menuBack(In) || In.pressed('pause')) endCredits(); return true; }
+        if (pg.page === 'controls') { if (menuBack(In) || In.pressed('pause') || In.pressed('confirm')) { pg.page = ui.settings.from === 'settings' ? 'settings' : 'pause'; ui.settings.from = null; } return true; }
         if (pg.page === 'settings') return settingsInput(In, function () { pg.page = 'pause'; saveSettings(); });
         if (pg.page === 'slots') return pauseSlotsInput(In);
         if (pg.page === 'shop') return shopInput(In);
         if (pg.page === 'phone') {
+          if (menuBack(In) && pg.phoneFrom === 'pause') { pg.page = 'pause'; pg.phoneFrom = null; return true; }   // back to the pause menu it came from (QA-B-FE-09)
           if (In.pressed('map') || In.pressed('pause') || menuBack(In)) { closePause(); return true; }
-          if (In.pressed('tabNext') || In.pressed('lockOn')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
+          if (In.pressed('tabNext') || In.pressed('lockOn')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; pg.rows = []; if (pg.tab === 0) mapCenterOnPlayer(); }
           if (pg.tab === 0) {
-            if (In.pressed('weaponPrev')) { pg.tab = PHONE_TABS.length - 1; pg.scroll = 0; pg.row = 0; }
-            if (In.pressed('weaponNext')) { pg.tab = 1; pg.scroll = 0; pg.row = 0; }
+            if (In.pressed('weaponPrev')) { pg.tab = PHONE_TABS.length - 1; pg.scroll = 0; pg.row = 0; pg.rows = []; }
+            if (In.pressed('weaponNext')) { pg.tab = 1; pg.scroll = 0; pg.row = 0; pg.rows = []; }
             mapInput(In, dt);
             return true;
           }
-          if (In.pressed('left') || In.pressed('weaponPrev')) { pg.tab = (pg.tab + PHONE_TABS.length - 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
-          if (In.pressed('right') || In.pressed('weaponNext')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
+          if (In.pressed('left') || In.pressed('weaponPrev')) { pg.tab = (pg.tab + PHONE_TABS.length - 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; pg.rows = []; if (pg.tab === 0) mapCenterOnPlayer(); }
+          if (In.pressed('right') || In.pressed('weaponNext')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; pg.rows = []; if (pg.tab === 0) mapCenterOnPlayer(); }
           var rows = pg.rows || [];
+          var row0 = pg.row;
           if (In.pressed('forward')) { if (rows.length) pg.row = (pg.row - 1 + rows.length) % rows.length; else pg.scroll = Math.max(0, pg.scroll - px(24)); }
           if (menuDown(In)) { if (rows.length) pg.row = (pg.row + 1) % rows.length; else pg.scroll += px(24); }
-          if (rows.length && tabId() !== 'STORY') pg.scroll = Math.max(0, pg.row * px(44) - px(200));
+          // the keys bring the selected row into view; a swipe or the wheel scrolls freely (QA-B-TCH-09: this ran every step)
+          if (rows.length && tabId() !== 'STORY' && pg.row !== row0) pg.scroll = Math.max(0, pg.row * px(44) - px(200));
           if (In.wheelDelta) pg.scroll = Math.max(0, pg.scroll + In.wheelDelta * 0.5);
           if (In.pressed('confirm') && rows[pg.row]) missionRowActivate(rows[pg.row]);
           if (In.pressed('secondary') && tabId() === 'MISSIONS' && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active) abortMission();
           if (tabId() === 'STOCKS' && rows[pg.row] && rows[pg.row].stock) { if (In.pressed('secondary')) stockTrade(rows[pg.row].stock, -10); }
-          if (click) pointerTap(In.mouse.x, In.mouse.y);
           return true;
         }
         if (In.pressed('pause') || menuBack(In)) { closePause(); return true; }
@@ -3153,11 +3425,11 @@
         if (In.pressed('forward')) { pg.sel = (pg.sel - 1 + PAUSE_ITEMS.length) % PAUSE_ITEMS.length; sfx('ui', 0.2); }
         if (menuDown(In)) { pg.sel = (pg.sel + 1) % PAUSE_ITEMS.length; sfx('ui', 0.2); }
         if (In.pressed('confirm')) pauseActivate(PAUSE_ITEMS[pg.sel].id);
-        else if (click) pointerTap(In.mouse.x, In.mouse.y);
+       
         return true;
       }
       case 'minigame':
-        if (click) pointerTap(In.mouse.x, In.mouse.y);
+        if (In.pressed('pause') || In.pressed('map')) { openPause(In.pressed('map') ? 'phone' : 'pause'); return true; }   // QA-D SAVE-14
         return true;
       case 'wasted': case 'busted': case 'gameover':
         return true;
@@ -3191,7 +3463,9 @@
     var Ev = GTP.Events; if (!Ev || ui._events) return;
     ui._events = true;
     Ev.on('memo', function (e) { if (e) ui.memoFloat = { n: e.n | 0, total: e.total | 0, t: 0 }; });
-    Ev.on('saved', function (e) { if (e && e.auto) { ui.saved.t = 1.2; ui.saved.slot = e.slot; } });
+    Ev.on('saved', function (e) { slotsDirty(); if (e && e.auto) { ui.saved.t = 1.2; ui.saved.slot = e.slot; } });
+    ['save:deleted', 'save:migrated', 'loaded', 'state'].forEach(function (n) { Ev.on(n, slotsDirty); });
+    try { window.addEventListener('storage', slotsDirty); } catch (e) { /* optional */ }
     Ev.on('shop:close', function () { leaveShopPage(true); });
     Ev.on('shop:open', function (e) { var CB = GTP.Combat; if (ui.shopOpen || !(CB && CB.shop && CB.shop.state && CB.shop.state.open)) return; openShop(e && e.store, e && e.landmark); });
     Ev.on('hint', function (e) { if (e) ui.hint = { id: e.id, text: e.text, keys: e.keys || [], t: 0 }; });
@@ -3209,6 +3483,7 @@
     ui.prevState = prev; ui.state = s;
     var In = GTP.Input;
     if (s !== 'playing' && s !== 'paused' && ui.modal) closeModal();
+    if (s === 'playing' && prev === 'paused' && ui.minigame) endMinigame();   // RESTART / NEW GAME from a minigame's pause drops it (else SAVE stays refused; QA-D SAVE-14)
     if (s === 'cutscene' && ui.card && ui.card.kind === 'passed') ui.card = null;   // the MISSION PASSED card never covers a letterboxed cinematic (QA-C1-12)
     if (s === 'playing' && prev && prev !== 'playing' && In && In.latch) In.latch(['shoot', 'action']);   // the press that left a menu / dialogue never fires (QA CMB-06)
     if (s !== 'playing' && ui.shopOpen) { leaveShopPage(s !== 'cutscene'); var CBs = GTP.Combat; if (CBs && CBs.shop && CBs.shop.state.open) { try { CBs.shop.close(); } catch (e) { /* optional */ } } }
@@ -3247,8 +3522,8 @@
         var k = clamp01(ch.skip || 0), pw = px(170), ph = px(26), pxx = W - safe.r - pw, py = H - bar + (bar > ph + px(8) ? (bar - ph) / 2 : -ph - px(10));
         panel(ctx, pxx, py, pw, ph, px(13), 'rgba(10,12,24,0.85)', k > 0 ? COL.pink : 'rgba(255,255,255,0.25)');
         if (k > 0) { ctx.save(); rr(ctx, pxx, py, pw, ph, px(13)); ctx.clip(); ctx.fillStyle = 'rgba(255,63,164,0.45)'; ctx.fillRect(pxx, py, pw * k, ph); ctx.restore(); }
-        txt(ctx, 'HOLD ' + glyph('confirm') + ' TO SKIP', pxx + pw / 2, py + px(17), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
-        txt(ctx, glyph('cancel') + ' skips the shot', pxx + pw / 2, py - px(6), { font: F(8, 'bold'), color: COL.muted, align: 'center' });
+        txt(ctx, device() === 'touch' ? 'HOLD TO SKIP' : 'HOLD ' + glyph('confirm') + ' TO SKIP', pxx + pw / 2, py + px(17), { font: F(10, 'bold'), color: COL.ink, align: 'center', outline: false });
+        txt(ctx, device() === 'touch' ? 'a tap skips the shot' : glyph('cancel') + ' skips the shot', pxx + pw / 2, py - px(6), { font: F(8, 'bold'), color: COL.muted, align: 'center' });
       }
       return;
     }
@@ -3282,6 +3557,7 @@
     ui.hit.length = 0;
     var g = game(); if (!g) return;
     var st = g.state;
+    trackMouseMove();
     try {
       if (g.loading && g.loading.active) { drawLoading(ctx); return; }
       if (st === 'title') { drawTitle(ctx); drawConfirm(ctx); drawToasts(ctx); return; }
@@ -3400,38 +3676,47 @@
   // gps:set {x, z, label, kind} / gps:clear. The route comes from GTP.World.route (v0.3 world track), else
   // World.findPath (car mode), else a straight line; it is trimmed as the player drives it and rebuilt every 3 s or when
   // the player strays 35 m off it. The minimap and the big map draw it in the kind's colour, the HUD shows a turn chip.
-  function gpsColor(kind) { return kind === 'story' ? COL.gold : kind === 'stranger' ? '#c084fc' : kind === 'job' ? COL.cyan : kind === 'shop' ? COL.green : kind === 'property' ? COL.white : '#c084fc'; }
+  function gpsColor(kind) { return kind === 'story' ? COL.gold : kind === 'objective' ? COL.amber : kind === 'stranger' ? '#c084fc' : kind === 'job' ? COL.cyan : kind === 'shop' ? COL.green : kind === 'property' ? COL.white : '#c084fc'; }
   function gpsSet(e) {
     if (!e || typeof e.x !== 'number' || typeof e.z !== 'number') return;
-    ui.gps = { x: e.x, z: e.z, label: String(e.label || ''), kind: e.kind || 'story', route: null, routeT: 0, dist: 0, len: 0, turn: null, t: 0 };
+    // story sends {x, z, label, kind:'story'|'objective', route, missionId}; a route in the payload is used as is
+    var rt = Array.isArray(e.route) && e.route.length > 1 ? e.route.slice() : null;
+    ui.gps = { x: e.x, z: e.z, label: String(e.label || ''), kind: e.kind || 'story', missionId: e.missionId || null, route: rt, routeT: rt ? 3 : 0, dist: 0, len: 0, turn: null, t: 0 };
   }
-  function computeRoute(ax, az, bx, bz) {
-    var Wd = GTP.World, path = null;
+  function computeRoute(ax, az, bx, bz, o) {
+    var Wd = GTP.World, path = null, failed = false;
     try { if (Wd && typeof Wd.route === 'function') path = Wd.route(ax, az, bx, bz); } catch (e) { path = null; }
-    if (!path || path.length < 2) { try { if (Wd && Wd.findPath) path = Wd.findPath(ax, az, bx, bz, { mode: 'car', maxExpansions: 20000 }); } catch (e) { path = null; } }
-    if (!path || !path.length) path = [{ x: ax, z: az }];
+    // World.route answers a failed search with the straight two-point line: that is a failure here (the back-off needs it)
+    if (path && path.length === 2 && U.dist2d(ax, az, bx, bz) > 24) { failed = true; path = path.slice(); path.failed = true; return path; }
+    if (!path || path.length < 2) { try { if (Wd && Wd.findPath) path = Wd.findPath(ax, az, bx, bz, { mode: 'car', fromY: o && o.fromY, maxExpansions: 20000 }); } catch (e) { path = null; } }
+    if (!path || !path.length) { path = [{ x: ax, z: az }]; failed = true; }
     var last = path[path.length - 1];
     if (!last || U.dist2d(last.x, last.z, bx, bz) > 1) path = path.concat([{ x: bx, z: bz }]);
+    path.failed = failed;
     return path;
   }
   function updateGps(dt) {
     var G = ui.gps, p = player(); if (!G || !p) return;
     G.t += dt;
     G.dist = U.dist2d(p.x, p.z, G.x, G.z);
-    if (G.kind !== 'story' && G.dist < 12) { ui.gps = null; toast('Arrived: ' + (G.label || 'destination')); return; }
+    if (G.kind !== 'story' && G.kind !== 'objective' && G.kind !== 'stranger' && G.dist < 12) { ui.gps = null; toast('Arrived: ' + (G.label || 'destination')); return; }   // story-owned routes are moved on by the story
     G.routeT -= dt;
     if (G.route && G.route.length > 1) {
       var best = 0, bd = 1e9, n = Math.min(G.route.length - 1, 16);
       for (var i = 0; i <= n; i++) { var d = U.dist2d(p.x, p.z, G.route[i].x, G.route[i].z); if (d < bd) { bd = d; best = i; } }
-      if (bd > 35) G.routeT = 0;
-      else if (best > 0) G.route = G.route.slice(best);
+      if (bd > 35) { G.routeT = 0; G.offRoute = true; } else { G.offRoute = false; if (best > 0) G.route = G.route.slice(best); }
     }
-    if (G.routeT <= 0 || !G.route) { G.routeT = 3; G.route = computeRoute(p.x, p.z, G.x, G.z); }
+    if (G.routeT <= 0 || !G.route) {
+      var moved = G.lastFrom ? U.dist2d(p.x, p.z, G.lastFrom.x, G.lastFrom.z) : 1e9;
+      if (!G.route || moved > (G.failed ? 30 : 10) || bdNeeded(G)) { G.route = computeRoute(p.x, p.z, G.x, G.z, { fromY: p.y }); G.failed = !!G.route.failed; G.lastFrom = { x: p.x, z: p.z }; }
+      G.routeT = G.failed ? 10 : 3;
+    }
     var len = 0, px0 = p.x, pz0 = p.z;
     for (var j = 0; j < G.route.length; j++) { len += U.dist2d(px0, pz0, G.route[j].x, G.route[j].z); px0 = G.route[j].x; pz0 = G.route[j].z; }
     G.len = len;
     G.turn = gpsTurn(G.route, p);
   }
+  function bdNeeded(G) { return !!G.offRoute && !G.failed; }   // a failed (straight-line) route is not chased every frame
   // the next turn along the route: {dir: 'straight'|'left'|'right'|'around', dist}
   function gpsTurn(route, p) {
     if (!route || route.length < 2) return { dir: 'straight', dist: ui.gps ? ui.gps.dist : 0 };
@@ -3507,7 +3792,7 @@
   }
   // the route chip: the next turn and the distance, the destination and the total underneath
   function drawGpsChip(ctx) {
-    var G = ui.gps, g = game(); if (!G || !g || g.state !== 'playing' || !G.turn) return;
+    var G = ui.gps, g = game(); if (!G || !g || g.state !== 'playing' || !G.turn || indoors() || (ui.golf && ui.golf.active)) return;
     var col = gpsColor(G.kind), m = minimapRect(), w = Math.min(px(250), m.left ? W - safe.l - safe.r : px(260)), h = px(46);
     var x, y;
     if (m.top) { x = m.left ? m.x : m.x + m.s - w; y = ui.chipBottom + px(6); }
@@ -3518,7 +3803,7 @@
     drawTurnArrow(ctx, arrived ? 'straight' : G.turn.dir, x + px(28), y + h / 2, px(30), col);
     var head = arrived ? 'ARRIVED' : G.turn.dir === 'around' ? 'TURN AROUND' : G.turn.dir === 'straight' ? fmtDist(G.len) : fmtDist(G.turn.dist) + '  ' + (G.turn.dir === 'left' ? 'TURN LEFT' : 'TURN RIGHT');
     txt(ctx, head, x + px(52), y + px(20), { font: F(13, 'bold'), color: COL.ink, outline: false, maxW: w - px(60) });
-    var sub = (G.kind === 'story' ? 'STORY  ·  ' : '') + (G.label || 'Destination') + (arrived || G.turn.dir === 'straight' ? '' : '  ·  ' + fmtDist(G.len));
+    var sub = (G.kind === 'story' ? 'STORY  ·  ' : G.kind === 'objective' ? 'OBJECTIVE  ·  ' : '') + (G.label || 'Destination') + (arrived || G.turn.dir === 'straight' ? '' : '  ·  ' + fmtDist(G.len));
     txt(ctx, sub, x + px(52), y + px(36), { font: F(10, 'bold'), color: col, outline: false, maxW: w - px(60) });
   }
 
@@ -3547,7 +3832,7 @@
   }
   function drawMarkerLabels(ctx) {
     var Rd = GTP.Render, p = player(), g = game(); if (!Rd || !Rd.worldToScreen || !p || !g || g.state !== 'playing') return;
-    var list = labelTargets(), rects = [], G = ui.gps;
+    var list = indoors() ? [] : labelTargets(), rects = [], G = ui.gps;
     ui.labelsDrawn = 0; ui.gpsLabelDrawn = false;
     for (var i = 0; i < list.length; i++) {
       var L = list[i], y = (typeof L.y === 'number' ? L.y : groundY(L.x, L.z)) + 3.6, s;
@@ -3580,8 +3865,9 @@
   // a call that arrives in a cutscene or a menu waits for play. Lines are strings or {who, text}.
   function phoneCall(e) {
     if (!e) return;
-    var lines = (e.lines || []).map(function (l) { return typeof l === 'string' ? { who: e.from, text: l } : { who: l.who || l.from || e.from, text: String(l.text || l.line || '') }; }).filter(function (l) { return l.text; });
-    ui.callQueue.push({ from: e.from || 'everyone', lines: lines, missionId: e.missionId || null });
+    // story sends lines as {who, name, color, text}: the resolved name and colour win over the cast table
+    var lines = (e.lines || []).map(function (l) { return typeof l === 'string' ? { who: e.from, name: e.name || null, text: l } : { who: l.who || l.from || e.from, name: l.name || (l.who === e.from ? e.name : null) || null, color: l.color || null, text: String(l.text || l.line || '') }; }).filter(function (l) { return l.text; });
+    ui.callQueue.push({ from: e.from || 'everyone', name: e.name || null, lines: lines, missionId: e.missionId || null, title: e.title || null });
   }
   function lineSecs(l) { return 2.2 + String(l.text || '').length * 0.045; }
   function updateCalls(dt) {
@@ -3618,7 +3904,8 @@
     var slide = c.phase === 'ring' ? (1 - ease(Math.min(1, c.t / 0.3))) * px(40) : c.phase === 'end' ? ease(Math.min(1, (c.endT || 0) / 0.8)) * px(40) : 0;
     var a = c.phase === 'end' ? 1 - Math.min(1, (c.endT || 0) / 0.8) : 1;
     ctx.save(); ctx.globalAlpha = a; ctx.translate(slide, 0);
-    var who = l ? l.who : c.from, cm = cast(who), col = (cm && cm.color) || COL.cyan;
+    var who = l ? l.who : c.from, cm = cast(who), col = (l && l.color) || (cm && cm.color) || COL.cyan, whoName = (l && l.name) || (!l && c.name) || castName(who);
+    if (typeof col === 'number') col = '#' + ('000000' + col.toString(16)).slice(-6);
     glass(ctx, x, y, w, h, COL.lime, px(14));
     // the portrait in a ring that pulses while it rings
     var pcx = x + px(16) + ps / 2, pcy = y + px(12) + ps / 2;
@@ -3626,7 +3913,7 @@
     ctx.save(); ctx.beginPath(); ctx.arc(pcx, pcy, ps / 2, 0, Math.PI * 2); ctx.clip(); castPortrait(ctx, who, x + px(16), y + px(12), ps); ctx.restore();
     ctx.strokeStyle = col; ctx.lineWidth = px(2); ctx.beginPath(); ctx.arc(pcx, pcy, ps / 2, 0, Math.PI * 2); ctx.stroke();
     var tx = x + ps + px(28);
-    txt(ctx, castName(who).toUpperCase(), tx, y + px(24), { font: F(13, 'bold'), color: col, outline: false, maxW: w - ps - px(110) });
+    txt(ctx, String(whoName).toUpperCase(), tx, y + px(24), { font: F(13, 'bold'), color: col, outline: false, maxW: w - ps - px(110) });
     var status = c.phase === 'ring' ? (Math.floor(c.t * 3) % 2 ? 'INCOMING CALL' : 'INCOMING CALL ·') : U.fmtTime(Math.floor(c.t));
     txt(ctx, status, x + w - px(14), y + px(23), { font: F(10, 'bold'), color: c.phase === 'ring' ? COL.lime : COL.muted, align: 'right', outline: false });
     if (c.phase === 'ring') {
@@ -3645,7 +3932,9 @@
   // -------------------------------------------------------- chapter cards ----
   // chapter {act, title}: a full-width cinematic card for 5 s on top of everything (play or cutscene)
   var ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
-  function chapterCard(e) { if (!e) return; ui.chapter = { act: e.act, title: String(e.title || ''), t: 0, dur: 5.2 }; ui.chapterSeen = { act: e.act, title: e.title }; sfx('chapter', 0.6); }
+  // chapter {act, title, roman}: the parity titles already carry "Act I: ..."; the card prints the act once
+  function chapterTitle(t) { return String(t || '').replace(/^\s*(act|chapter)\s+[ivxlc0-9]+\s*[:.\-–]\s*/i, ''); }
+  function chapterCard(e) { if (!e) return; ui.chapter = { act: e.act, roman: e.roman || null, title: chapterTitle(e.title), t: 0, dur: 5.2 }; ui.chapterSeen = { act: e.act, title: chapterTitle(e.title) }; sfx('chapter', 0.6); }
   function drawChapter(ctx) {
     var c = ui.chapter; if (!c) return;
     var k = c.t / c.dur, a = k < 0.08 ? k / 0.08 : k > 0.86 ? (1 - k) / 0.14 : 1;
@@ -3654,7 +3943,7 @@
     ctx.fillStyle = vg; ctx.fillRect(0, H * 0.3, W, H * 0.4);
     var wipe = ease(Math.min(1, c.t / 0.9)), lw = Math.min(W * 0.5, px(520)) * wipe, cy = H * 0.5;
     ctx.fillStyle = COL.gold; ctx.fillRect(W / 2 - lw, cy - px(46), lw * 2, px(2)); ctx.fillRect(W / 2 - lw, cy + px(40), lw * 2, px(2));
-    var act = typeof c.act === 'number' ? 'ACT ' + (ROMAN[c.act] || c.act) : String(c.act || '').toUpperCase();
+    var act = c.roman ? 'ACT ' + c.roman : typeof c.act === 'number' ? 'ACT ' + (ROMAN[c.act] || c.act) : String(c.act || '').toUpperCase();
     txt(ctx, act, W / 2, cy - px(18), { font: F(14, 'bold'), color: COL.gold, align: 'center', outline: false });
     var rise = (1 - ease(Math.min(1, c.t / 0.7))) * px(12);
     txt(ctx, c.title.toUpperCase(), W / 2, cy + px(24) + rise, { font: F(portrait ? 26 : 40, '900', FONT_DISPLAY), color: COL.ink, align: 'center', lw: px(5), outline: 'rgba(0,0,0,0.6)', maxW: W - px(40) });
@@ -3705,10 +3994,21 @@
   function updateFade(dt) { var f = ui.fade; if (!f) return; f.t += dt; if ((f.phase === 'in' && f.t > 0.35) || (f.phase === 'out' && f.t > 3)) ui.fade = null; }
   function drawFade(ctx) { var a = fadeAlpha(); if (a <= 0.001) return; ctx.fillStyle = 'rgba(0,0,0,' + a.toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); }
   var INTERIOR_NAMES = { armory: 'Both Sides Arms', clothing: 'Lanyard & Co.', barber: 'Clip Joint', safehouse: 'Safehouse', range: 'The Range' };
+  // a store is a landmark id (GTP.Interiors' interior:enter {store}); its name is the Combat shop's store, else the landmark's
+  function storeLabel(store, kind) {
+    if (store && typeof store === 'object') return store.name || store.title || storeLabel(store.id, kind);
+    if (store) {
+      var CB = GTP.Combat, list = CB && CB.shop && CB.shop._stores, Wd = GTP.World, lm = null;
+      if (list) for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === store && list[i].name) return list[i].name;
+      if (Wd && typeof Wd.landmark === 'function') lm = call(Wd.landmark, Wd, [store], null);
+      if (lm && (lm.name || lm.label)) return landmarkLabel(lm) || lm.name;
+    }
+    return INTERIOR_NAMES[kind] || '';
+  }
   function interiorEnter(e) {
     if (!e) return;
-    ui.interior = { id: e.id, kind: e.kind || e.id, store: e.store || null, t: 0 };
-    var name = (e.store && (e.store.name || e.store.title)) || e.name || INTERIOR_NAMES[e.kind] || String(e.id || '').replace(/_/g, ' ');
+    ui.interior = { id: e.id, kind: e.kind || e.id, store: e.store || null, landmark: e.landmark || null, t: 0 };
+    var name = storeLabel(e.store || e.landmark, e.kind) || e.name || String(e.id || '').replace(/_/g, ' ');
     ui.placeCard = { title: name, sub: e.kind === 'armory' ? 'We arm both sides. That\'s balance.' : e.kind === 'clothing' ? 'Dress for the outrage you want.' : e.kind === 'barber' ? 'Hair that holds a take.' : e.kind === 'safehouse' ? 'Bed saves. Wardrobe changes.' : '', t: 0 };
   }
   function drawPlaceCard(ctx) {
@@ -3734,6 +4034,8 @@
   function vehicleName(v) {
     if (!v) return '';
     if (v.name) return v.name;
+    var Vs = GTP.Vehicles, h = Vs && typeof Vs.hud === 'function' ? call(Vs.hud, Vs, [v], null) : null;
+    if (h && h.name && h.name !== v.type) return h.name;
     var T = { sedan: 'Pundit Sedan', sports: 'Hot Take GT', suv: 'HOA Patrol SUV', van: 'Podcast Van', truck: 'Mattress Truck', taxi: 'Loud Cab', cop: 'Cruiser', police: 'Cruiser', moto: 'Mic Drop 600', bike: 'Mic Drop 600', heli: 'Spin Cycle Helicopter', plane: 'Op-Ed Prop', jet: 'Thinkpiece Jet', speedboat: 'Hot Water Speedboat', jetski: 'Sidebar Jet Ski', boat: 'Boat', parachute: 'Parachute' };
     return T[v.type] || String(v.type || 'vehicle').replace(/_/g, ' ').replace(/\b\w/g, function (m) { return m.toUpperCase(); });
   }
@@ -3754,8 +4056,8 @@
   // (a bare dot after a shot without aiming), scope (the Fact Checker's sight).
   function isHostile(t) { return !!t && (t.role === 'cop' || t.role === 'swat' || t.role === 'thug' || t.hostile || (t.kind === 'vehicle' && t.isPolice) || t.kind === 'heli' || t.kind === 'boss' || t.boss); }
   function crossState(hud, aim, p) {
-    var hm = hud && hud.hitmark, w = hud && hud.weapon, t = aim.target || aim.hoverEntity || null, wd = w ? weaponDef(w.id) : null;
-    var cov = p && p.pose && p.pose.cover;
+    var hm = hud && hud.hitmark, w = hud && hud.weapon, t = aim.target || (aim.hover && typeof aim.hover === 'object' ? aim.hover : null) || aim.hoverEntity || null, wd = w ? weaponDef(w.id) : null;
+    var cov = (hud && hud.cover && hud.cover.active ? hud.cover : null) || (p && p.pose && p.pose.cover), ch = hud && hud.crosshair;
     if (w && w.reloading) return 'reload';
     if (hm && hm.kill && hm.age < 0.4) return 'kill';
     if (hm && hm.zone === 'head' && hm.age < 0.45) return 'headshot';
@@ -3763,9 +4065,9 @@
     if (cov && cov.blind) return 'blind';
     if (w && (w.cls === 'melee' || w.id === 'fist' || w.id === 'tableleg' || (wd && /melee/.test(String(wd.class || ''))))) return 'melee';
     if (w && (w.cls === 'thrown' || w.cls === 'lobbed' || w.id === 'hottake' || w.id === 'hotmic' || (wd && wd.projectile === 'lobbed'))) return 'throw';
-    if (isHostile(t)) return 'hostile';
-    if (t || aim.hover) return 'friendly';
-    if (aim.inRange === false) return 'range';
+    if (isHostile(t) || (!t && ch && ch.hostile)) return 'hostile';
+    if (t || aim.hover || (ch && ch.target)) return 'friendly';
+    if (aim.inRange === false || (ch && ch.inRange === false)) return 'range';
     return 'aim';
   }
   var CROSS_COL = { aim: '#ffffff', hostile: '#ff3b30', friendly: '#ffbe3c', range: 'rgba(200,205,220,0.55)', hit: '#ffffff', headshot: '#ffd23c', kill: '#ff3fa4', reload: '#ffbe3c', blind: '#ffffff', melee: '#ffffff', throw: '#ffffff' };
@@ -3843,10 +4145,10 @@
       var bracket = function () { ctx.beginPath(); ctx.moveTo(-half, -half + c); ctx.lineTo(-half, -half); ctx.lineTo(-half + c, -half); ctx.moveTo(half - c, -half); ctx.lineTo(half, -half); ctx.lineTo(half, -half + c); ctx.moveTo(half, half - c); ctx.lineTo(half, half); ctx.lineTo(half - c, half); ctx.moveTo(-half + c, half); ctx.lineTo(-half, half); ctx.lineTo(-half, half - c); ctx.stroke(); };
       ctx.lineWidth = px(5); ctx.strokeStyle = 'rgba(0,0,0,0.55)'; bracket();
       ctx.lineWidth = px(2.2); ctx.strokeStyle = flash ? '#ffffff' : isHostile(t) ? COL.red : COL.amber; bracket();
-      var hp = U.clamp((t.hp || 0) / (t.maxHp || 1), 0, 1);
+      var hp = targetHp(t);
       ctx.fillStyle = 'rgba(10,12,20,0.75)'; rr(ctx, -half, half + px(6), size, px(6), px(3)); ctx.fill();
       ctx.fillStyle = hp > 0.5 ? COL.lime : hp > 0.25 ? COL.amber : COL.red; rr(ctx, -half, half + px(6), size * hp, px(6), px(3)); ctx.fill();
-      var label = t.kind === 'vehicle' ? (t.isPolice ? 'CRUISER' : String(t.type || 'car').toUpperCase()) : t.kind === 'heli' ? 'WEATHER BALLOON' : (t.castId ? castName(t.castId) : roleLabel(t.role));
+      var label = targetLabel(t);
       txt(ctx, label, 0, half + px(24), { font: F(11, 'bold'), color: COL.ink, align: 'center' });
       ctx.restore();
     }
@@ -3882,8 +4184,14 @@
     txt(ctx, label, kx + px(4), y + px(17), { font: font, color: opts.color || COL.ink, outline: false });
     return w;
   }
+  // GTP.Combat.hud().cover: {active, high, edge, canVault, blind, ...} in cover, else {near, nearHigh}; hud().prompt is
+  // 'counter' | 'cover' | 'vault' | 'peek'
+  function coverHud() { var CB = GTP.Combat, h = CB && CB.hud ? call(CB.hud, CB, [], null) : null; return h && h.cover ? h.cover : null; }
   function coverAvailable(p) {
-    var CB = GTP.Combat, cv = CB && CB.cover;
+    var CB = GTP.Combat, cv = CB && CB.cover, ch = coverHud();
+    if (ch && ch.active) return null;
+    if (ch && ch.near) return { high: ch.nearHigh };
+    if (!ch && p && p._coverNear) return p._coverNear;   // hud().cover is built from _coverNear: trust it when it exists
     if (p && p.coverHint) return p.coverHint;
     if (!cv) return null;
     if (typeof cv.available === 'function') return call(cv.available, cv, [p], null);
@@ -3891,30 +4199,51 @@
     if (typeof cv.candidate === 'function') return call(cv.candidate, cv, [p], null);
     return null;
   }
-  function inCover(p) { return !!((p && p.pose && p.pose.cover) || ui.cover.on); }
+  function nearDoor(p) {
+    var Ms = GTP.Missions, o = Ms && Ms.current ? call(Ms.current, Ms, [], null) : null, want = o && o.def && o.def.type === 'enter_vehicle';
+    if (!want && (ui.carsEntered | 0) >= 3) return null;
+    var E = GTP.Entities; if (!E || !E.near) return null;
+    var list = call(E.near, E, [p.x, p.z, 5, 'vehicle'], []) || [];
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i]; if (!v || v.wreck || v.sinking || v.removed || (v.driver && v.driver !== p)) continue;
+      var d = typeof v.doorWorld === 'function' ? call(v.doorWorld, v, [0], null) : null, dd = d ? U.dist2d(p.x, p.z, d.x, d.z) : U.dist2d(p.x, p.z, v.x, v.z) - 1.5;
+      if (dd < 2.6) return v;
+    }
+    return null;
+  }
+  function inCover(p) { var ch = coverHud(); if (ch && ch.active) return true; return !!((p && (p.cover || (p.pose && p.pose.cover))) || ui.cover.on); }
   function promptList() {
     var p = player(), g = game(), out = []; if (!p || !g || g.state !== 'playing' || ui.modal || ui.shopOpen || ui.dialogue) return out;
     var CB = GTP.Combat, hud = CB && CB.hud ? CB.hud() : null, w = hud && hud.weapon, aiming = !!(CB && CB.aim && CB.aim.active), v = p.inVehicle;
     if (ui.golf && ui.golf.active) return out;
     if (v) {
       var cat = vehCat(v), alt = p.y - groundY(p.x, p.z);
-      if ((cat === 'heli' || cat === 'plane') && alt > 30) out.push({ keys: [glyph('enter')], label: 'BAIL OUT', color: COL.amber });
-      if (cat === 'chute') out.push({ keys: [glyph('enter')], label: 'CUT AWAY' });
+      var vhp = vehHud(v), bail = vhp && vhp.family ? vhp.prompt === 'Bail out' : alt > 30;
+      if ((cat === 'heli' || cat === 'plane') && bail) out.push({ keys: [glyph('enter')], label: 'BAIL OUT', color: COL.amber });
+      if (cat === 'chute' && chuteState(p) === 'open') out.push({ keys: [glyph('enter')], label: 'CUT AWAY' });
       return out;
     }
     if (chuteState(p) === 'freefall') return out;   // the big DEPLOY prompt is drawn on its own
+    if (hud && hud.prompt === 'counter') out.push({ keys: [glyph('jump')], label: 'COUNTER', color: COL.red });
     if (inCover(p)) {
-      var cov = (p.pose && p.pose.cover) || {};
-      out.push({ keys: [glyph('aim')], label: 'PEEK' });
+      var cov = (hud && hud.cover && hud.cover.active ? hud.cover : null) || p.cover || (p.pose && p.pose.cover) || {};
+      out.push({ keys: [glyph('aim')], label: cov.edge || cov.high === false ? 'PEEK' : 'AIM' });
       out.push({ keys: [glyph('shoot')], label: aiming ? 'FIRE' : 'BLIND FIRE' });
-      if (cov.high === false || ui.cover.low) out.push({ keys: [glyph('jump')], label: 'VAULT' });
+      if (cov.canVault || cov.high === false || ui.cover.low) out.push({ keys: [glyph('jump')], label: 'VAULT' });
       out.push({ keys: [glyph('cover')], label: 'LEAVE COVER' });
       return out;
     }
+    // GET IN at a car door while an objective asks for it, and for the first few cars (QA-B-NP-04: h_enter fires once,
+    // often next to a random parked car, and the pod van then had nothing on screen)
+    var nearCar = nearDoor(p);
+    if (nearCar) out.push({ keys: [glyph('enter')], label: 'GET IN', color: COL.lime });
     var ca = coverAvailable(p);
     if (ca) out.push({ keys: [glyph('cover')], label: 'TAKE COVER', color: COL.cyan });
     var ranged = w && !w.infinite && w.id !== 'fist' && w.cls !== 'melee';
-    if (ranged && !aiming && ui.aimTutor.n < 3 && ui.aimTutor.shown < 40) {
+    var hintUp = GTP.Hints && GTP.Hints.current ? GTP.Hints.current() : null;
+    // the AIM / FIRE tutor: until the first aim or shot (or 8 s on screen), never under the h_aim card and never in the same
+    // row as GET IN / TAKE COVER
+    if (ranged && !aiming && ui.aimTutor.n < 1 && ui.aimTutor.shown < 8 && !(hintUp && hintUp.id === 'h_aim') && !nearCar && !ca) {
       out.push({ keys: [glyph('aim')], label: 'AIM' });
       out.push({ keys: [glyph('shoot')], label: 'FIRE' });
     }
@@ -3939,7 +4268,7 @@
   function chuteState(p) {
     if (!p) return null;
     var v = p.inVehicle;
-    if (v && (v.type === 'parachute' || v.kind === 'parachute')) return 'open';
+    if (v && (v.type === 'parachute' || v.kind === 'parachute' || (v.cls && v.cls.family === 'chute'))) return v.chute === 'free' ? 'freefall' : v.chute === 'landed' ? null : 'open';   // GTP.Vehicles: 'free' | 'open' | 'landed'
     var c = p.parachute;
     if (c && typeof c === 'object') return c.state || (c.open ? 'open' : c.freefall ? 'freefall' : null);
     if (p.freefall) return 'freefall';
@@ -3948,7 +4277,7 @@
   function drawParachute(ctx) {
     var p = player(), g = game(); if (!p || !g || g.state !== 'playing') return;
     var st = chuteState(p); if (!st) return;
-    var alt = Math.max(0, p.y - groundY(p.x, p.z));
+    var vh = p.inVehicle ? vehHud(p.inVehicle) : null, alt = Math.max(0, vh && vh.alt != null ? vh.alt : p.y - groundY(p.x, p.z));
     ui.chuteShown = st;
     if (st === 'freefall') {
       var pulse = 1 + 0.06 * Math.sin(ui.t * 10), y = H * 0.66;
@@ -3962,7 +4291,7 @@
       return;
     }
     // canopy open: the altitude, the descent and the steering line
-    var vy = p.vy != null ? p.vy : 0, x = W / 2, yy = H - safe.b - px(ui.touch.visible ? 220 : 110);
+    var vy = vh && vh.vs != null ? vh.vs : (p.vy != null ? p.vy : 0), x = W / 2, yy = H - safe.b - px(ui.touch.visible ? 220 : 110);
     var cw = px(240);
     glass(ctx, x - cw / 2, yy, cw, px(54), COL.cyan, px(10));
     txt(ctx, Math.round(alt) + ' m', x - cw / 2 + px(18), yy + px(32), { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false });
@@ -3974,7 +4303,9 @@
   // -------------------------------------------------------- vehicle HUDs ----
   // vehicle.hud() -> {speed (m/s), alt (m), pitch, roll, heading (rad), throttle (0..1), gear}: a bike gauge with the lean,
   // an aircraft panel (attitude ball, heading tape, altitude and speed boxes, throttle / collective, PULL UP), a boat panel.
+  var FAMILY_CAT = { car: 'car', moto: 'bike', heli: 'heli', plane: 'plane', boat: 'boat', chute: 'chute' };
   function vehCat(v) {
+    if (v && v.cls && FAMILY_CAT[v.cls.family]) return FAMILY_CAT[v.cls.family];   // GTP.Vehicles' family
     var t = String((v && (v.type || v.kind)) || '').toLowerCase();
     if (/moto|bike|scooter|cycle/.test(t)) return 'bike';
     if (/heli/.test(t)) return 'heli';
@@ -3985,7 +4316,8 @@
   }
   function vehHud(v) { if (!v || typeof v.hud !== 'function') return null; try { return v.hud() || null; } catch (e) { return null; } }
   var CARD = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  function headingDeg(h) { var d = (h || 0) * 180 / Math.PI; d = ((d % 360) + 360) % 360; return d; }
+  // Vehicle.hud().heading is in degrees (0 = north, clockwise); an older hud without `family` gave radians
+  function headingDeg(h, deg) { var d = deg ? (h || 0) : (h || 0) * 180 / Math.PI; d = ((d % 360) + 360) % 360; return d; }
   function drawVehicleHud(ctx) {
     var p = player(), g = game(); if (!p || !g || g.state !== 'playing' || !p.inVehicle) return;
     var v = p.inVehicle, h = vehHud(v), cat = vehCat(v);
@@ -3997,20 +4329,20 @@
     glass(ctx, x, y, w, hh, cat === 'boat' ? COL.cyan : cat === 'bike' ? COL.pink : COL.amber, px(12));
     var spd = Math.abs(h.speed || 0);
     if (cat === 'bike') {
-      var mph = spd * 2.237, cx = x + px(56), cy = y + px(62), r = px(38), k = clamp01(mph / 140);
+      var mph = h.mph != null ? h.mph : spd * 2.237, cx = x + px(56), cy = y + px(62), r = px(38), k = clamp01(mph / 140);
       ctx.lineCap = 'round'; ctx.lineWidth = px(7); ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI * 0.8, Math.PI * 2.2); ctx.stroke();
       ctx.strokeStyle = k > 0.85 ? COL.red : COL.pink; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI * 0.8, Math.PI * 0.8 + Math.PI * 1.4 * k); ctx.stroke();
       txt(ctx, String(Math.round(mph)), cx, cy + px(6), { font: F(24, '900', FONT_DISPLAY), color: COL.ink, align: 'center', outline: false });
       txt(ctx, 'MPH', cx, cy + px(20), { font: F(8, 'bold'), color: COL.muted, align: 'center', outline: false });
       // the lean: a bike seen from behind tilting with the roll
-      var lx = x + px(150), ly = y + px(54), roll = U.clamp(h.roll || 0, -1.2, 1.2);
+      var lx = x + px(150), ly = y + px(54), roll = U.clamp(h.lean != null ? h.lean : (h.roll || 0), -1.2, 1.2);
       ctx.save(); ctx.translate(lx, ly + px(18)); ctx.rotate(roll);
       ctx.fillStyle = COL.ink; rr(ctx, -px(4), -px(34), px(8), px(34), px(3)); ctx.fill(); ctx.fillStyle = COL.pink; rr(ctx, -px(9), -px(42), px(18), px(8), px(3)); ctx.fill();
       ctx.restore();
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(lx, ly + px(18), px(40), Math.PI * 1.2, Math.PI * 1.8); ctx.stroke();
       txt(ctx, 'LEAN ' + Math.round(Math.abs(roll) * 57.3) + '°', lx, y + px(88), { font: F(9, 'bold'), color: COL.muted, align: 'center', outline: false });
       if (h.gear != null) txt(ctx, 'GEAR ' + h.gear, x + w - px(10), y + px(18), { font: F(10, 'bold'), color: COL.cyan, align: 'right', outline: false });
-      if ((h.pitch || 0) > 0.3) txt(ctx, 'WHEELIE', x + w / 2, y + px(18), { font: F(11, '900'), color: COL.lime, align: 'center', outline: false });
+      if ((h.wheelie != null ? h.wheelie : h.pitch || 0) > 0.3) txt(ctx, 'WHEELIE', x + w / 2, y + px(18), { font: F(11, '900'), color: COL.lime, align: 'center', outline: false });
       return;
     }
     if (cat === 'boat') {
@@ -4018,7 +4350,7 @@
       txt(ctx, String(Math.round(kts)), x + px(20), y + px(52), { font: F(34, '900', FONT_DISPLAY), color: COL.ink, outline: false });
       txt(ctx, 'KNOTS', x + px(22), y + px(68), { font: F(8, 'bold'), color: COL.muted, outline: false });
       throttleBar(ctx, x + w - px(30), y + px(14), px(12), hh - px(30), h.throttle, 'THR');
-      var hd = headingDeg(h.heading);
+      var hd = headingDeg(h.heading, !!h.family);
       txt(ctx, CARD[Math.round(hd / 45) % 8] + ' ' + Math.round(hd) + '°', x + px(110), y + px(36), { font: F(13, 'bold'), color: COL.cyan, outline: false });
       if (h.planing || kts > 18) txt(ctx, 'PLANING', x + px(110), y + px(56), { font: F(9, 'bold'), color: COL.lime, outline: false });
       return;
@@ -4027,7 +4359,7 @@
     var ax = x + px(70), ay = y + px(72), ar = px(48);
     attitude(ctx, ax, ay, ar, h.pitch || 0, h.roll || 0);
     // heading tape across the top
-    var hd2 = headingDeg(h.heading), tx0 = x + px(128), tw = w - px(176), ty = y + px(10);
+    var hd2 = headingDeg(h.heading, !!h.family), tx0 = x + px(128), tw = w - px(176), ty = y + px(10);
     ctx.save(); rr(ctx, tx0, ty, tw, px(22), px(5)); ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill(); ctx.clip();
     for (var dd = -60; dd <= 60; dd += 15) {
       var deg = Math.round((hd2 + dd) / 15) * 15, off = (deg - hd2) / 60 * (tw / 2), gx = tx0 + tw / 2 + off;
@@ -4041,7 +4373,7 @@
     var alt = h.alt != null ? h.alt : (p.y - groundY(p.x, p.z));
     readout(ctx, tx0, y + px(40), tw / 2 - px(4), 'ALT', Math.round(alt) + ' m', alt < 25 ? COL.red : COL.ink);
     readout(ctx, tx0 + tw / 2 + px(4), y + px(40), tw / 2 - px(4), cat === 'heli' ? 'SPEED' : 'AIRSPEED', Math.round(spd * 1.944) + ' kt', (h.stall || (cat === 'plane' && spd < 18 && alt > 10)) ? COL.red : COL.ink);
-    var vs = h.vspeed != null ? h.vspeed : (p.inVehicle.vy || 0);
+    var vs = h.vs != null ? h.vs : h.vspeed != null ? h.vspeed : (p.inVehicle.vy || 0);
     txt(ctx, 'V/S ' + (vs >= 0 ? '+' : '') + vs.toFixed(1), tx0, y + px(100), { font: F(10, 'bold'), color: COL.muted, outline: false });
     if (h.gear != null && cat === 'plane') txt(ctx, 'GEAR ' + (h.gear === true || h.gear === 'down' || h.gear === 1 ? 'DOWN' : 'UP'), tx0 + tw, y + px(100), { font: F(10, 'bold'), color: h.gear === true || h.gear === 'down' || h.gear === 1 ? COL.lime : COL.muted, align: 'right', outline: false });
     if (cat === 'heli' && h.rotor != null && h.rotor < 0.98) txt(ctx, 'ROTOR ' + Math.round(h.rotor * 100) + '%', tx0 + tw, y + px(100), { font: F(10, 'bold'), color: COL.amber, align: 'right', outline: false });
@@ -4080,14 +4412,26 @@
   }
 
   // ------------------------------------------------------------ boss bar ----
-  // boss:phase {id, phase, hp, maxHp, name}: a bar bottom-centre (the name, PHASE n, the hp with a white damage trail);
-  // a phase change flashes and announces; boss:defeated {id} stamps RATIO'D over the name.
+  // GTP.Bosses (UI.drawsBossBar): boss:start {id, name, phases}, boss:phase {id, phase, phases, hp, maxHp, name, shield,
+  // state, hint}, boss:end {id, reason}; GTP.Bosses.hud() refreshes the shield text, hint and colour every frame.
+  // A bar bottom-centre (the name, PHASE n / m, the hp with a white damage trail, grey while shielded, the shield
+  // text or the hint under it); a phase change flashes (the bosses track banners the phase itself); boss:defeated
+  // stamps RATIO'D over the name.
+  function bossHud() { var B = GTP.Bosses; return B && typeof B.hud === 'function' ? call(B.hud, B, [], null) : null; }
+  function bossStart(e) {
+    if (!e) return;
+    var h = bossHud(), hp = h && h.id === e.id ? h.hp : 1, mx = h && h.id === e.id ? h.maxHp : 1;
+    if (!ui.boss || ui.boss.id !== e.id) ui.boss = { id: e.id, name: e.name || String(e.id || 'BOSS'), phase: 1, phases: e.phases || null, hp: hp, maxHp: mx, trail: hp, trailT: 0, t: 0, flashT: 0.8 };
+    ui.bossDown = null;
+  }
+  function bossEnd(e) { if (ui.boss && (!e || !e.id || ui.boss.id === e.id)) ui.boss = null; }
   function bossPhase(e) {
     if (!e) return;
     var b = ui.boss;
+    if (e.state === 'done' || e.state === 'ended') { if (b && b.id === e.id) ui.boss = null; return; }
     if (!b || b.id !== e.id) b = ui.boss = { id: e.id, name: e.name || String(e.id || 'BOSS'), phase: e.phase || 1, phases: e.phases || null, hp: e.hp, maxHp: e.maxHp || e.hp || 1, trail: e.hp, trailT: 0, t: 0, flashT: 0.8 };
     else {
-      if (e.phase != null && e.phase !== b.phase) { b.flashT = 1.6; b.announce = { text: 'PHASE ' + e.phase, t: 0 }; }
+      if (e.phase != null && e.phase !== b.phase) b.flashT = 1.6;
       if (e.hp != null && e.hp < b.hp) b.trailT = 0.6;
       if (e.name) b.name = e.name;
       if (e.phase != null) b.phase = e.phase;
@@ -4095,18 +4439,25 @@
       if (e.maxHp) b.maxHp = e.maxHp;
       if (e.hp != null) b.hp = e.hp;
     }
+    if (e.shield !== undefined) b.shield = !!e.shield;
+    if (e.hint !== undefined) b.hint = e.hint || '';
+    if (e.state) b.state = e.state;
     if (b.hp > b.trail) b.trail = b.hp;
   }
   function bossDefeated(e) { var b = ui.boss; ui.bossDown = { name: b && (!e || b.id === e.id) ? b.name : (e && e.name) || 'BOSS', t: 0 }; if (!e || !b || b.id === e.id) ui.boss = null; sfx('chapter', 0.5); }
   function updateBoss(dt) {
     var b = ui.boss;
+    if (b) {
+      var h = bossHud();
+      if (h && h.id === b.id) { b.shield = !!h.shield; b.shieldText = h.shieldText || ''; b.hint = h.hint || ''; b.color = h.color || null; b.state = h.state; if (h.hp != null && h.hp < b.hp) { b.trailT = 0.6; b.hp = h.hp; } }
+    }
     if (b) { b.t += dt; if (b.flashT > 0) b.flashT -= dt; if (b.trailT > 0) b.trailT -= dt; else b.trail = U.damp(b.trail, b.hp, 6, dt); if (b.announce) { b.announce.t += dt; if (b.announce.t > 2) b.announce = null; } }
     if (ui.bossDown) { ui.bossDown.t += dt; if (ui.bossDown.t > 4.5) ui.bossDown = null; }
   }
   function bossRect() {
     var m = minimapRect(), left = safe.l + px(10), right = m.top ? W - safe.r - px(10) : m.x - px(16);
     var w = Math.min(px(620), right - left), x = left + (right - left - w) / 2;
-    var y = ui.touch.visible ? Math.max(ui.objBottom, m.top ? ui.chipBottom : 0) + px(30) : H - safe.b - px(36);
+    var y = ui.touch.visible ? Math.max(ui.objBottom, m.top ? ui.chipBottom : 0) + px(30) : H - safe.b - px(52);
     if (ui.touch.visible && !portrait) { w = Math.min(px(460), W - safe.l - safe.r - m.s - px(40)); x = (W - w) / 2; y = ui.objBottom + px(26); }
     else if (ui.touch.visible) { x = safe.l + px(6); w = W - safe.l - safe.r - px(12); }
     return { x: x, y: y, w: w };
@@ -4114,7 +4465,7 @@
   function drawBoss(ctx) {
     var b = ui.boss, g = game();
     if (ui.bossDown) drawBossDown(ctx);
-    if (!b || !g || (g.state !== 'playing' && g.state !== 'cutscene')) return;
+    if (!b || !g || g.state !== 'playing' || ui.dialogue || b.state === 'done') return;
     var r = bossRect(), k = clamp01(b.hp / Math.max(1, b.maxHp)), tk = clamp01(b.trail / Math.max(1, b.maxHp)), bh = px(14), a = Math.min(1, b.t / 0.4);
     ctx.save(); ctx.globalAlpha = a;
     txt(ctx, String(b.name).toUpperCase(), r.x, r.y - px(8), { font: F(15, '900', FONT_DISPLAY), color: COL.ink, lw: px(4), maxW: r.w * 0.7 });
@@ -4123,14 +4474,14 @@
     panel(ctx, r.x, r.y, r.w, bh, px(3), 'rgba(6,7,13,0.82)', 'rgba(255,255,255,0.3)');
     ctx.fillStyle = 'rgba(255,200,120,0.75)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * tk, bh - 4);
     var gr = ctx.createLinearGradient(0, r.y, 0, r.y + bh); gr.addColorStop(0, '#ff6a5e'); gr.addColorStop(1, '#b3121f');
+    if (b.shield) { gr = ctx.createLinearGradient(0, r.y, 0, r.y + bh); gr.addColorStop(0, '#b9bec8'); gr.addColorStop(1, '#6a6f79'); }
     ctx.fillStyle = b.flashT > 0 && Math.floor(ui.t * 10) % 2 ? '#ff9d93' : gr; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, bh - 4);
     ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(r.x + 2, r.y + 2, (r.w - 4) * k, (bh - 4) * 0.4);
     if (b.phases > 1) { ctx.fillStyle = 'rgba(0,0,0,0.6)'; for (var i = 1; i < b.phases; i++) ctx.fillRect(r.x + r.w * i / b.phases - 1, r.y, 2, bh); }
+    var line = b.shield ? (b.shieldText || '') : '', hint = b.hint || '';
+    if (line) txt(ctx, line, r.x + r.w / 2, r.y + bh + px(14), { font: F(11, 'bold'), color: '#d0d4dc', align: 'center', maxW: r.w });
+    if (hint) txt(ctx, hint, r.x + r.w / 2, r.y + bh + px(line ? 28 : 14), { font: F(11, 'bold'), color: line ? COL.gold : COL.lime, align: 'center', maxW: r.w });
     ctx.restore();
-    if (b.announce) {
-      var ak = b.announce.t / 2, aa = ak < 0.1 ? ak / 0.1 : ak > 0.7 ? (1 - ak) / 0.3 : 1;
-      txt(ctx, b.announce.text, W / 2, H * 0.36, { font: F(portrait ? 28 : 40, '900', FONT_DISPLAY), color: COL.amber, align: 'center', lw: px(6), alpha: aa });
-    }
   }
   function drawBossDown(ctx) {
     var d = ui.bossDown, k = d.t / 4.5, a = k < 0.06 ? k / 0.06 : k > 0.8 ? (1 - k) / 0.2 : 1, sc = 1 + (1 - ease(Math.min(1, d.t / 0.35))) * 1.2;
@@ -4149,7 +4500,7 @@
   // fills with the meter, glows while active; a full one shows its key. Only specials that reported a state are shown.
   var SPECIALS = { focus: { name: 'FOCUS', col: '#2ee6ff', how: 'while aiming' }, shout: { name: 'SHOUT', col: '#ffbe3c', how: 'tap' }, chatmob: { name: 'CHAT MOB', col: '#ff3fa4', how: 'hold' }, boost: { name: 'BOOST', col: '#9dff3c', how: 'in a vehicle' } };
   var SPECIAL_ORDER = ['focus', 'shout', 'chatmob', 'boost'];
-  function specialState(e) { if (!e || !e.id) return; var s = ui.specials[e.id] || (ui.specials[e.id] = { meter: 0, active: false, t: 0, fullT: 0 }); var was = k01(s.meter) >= 0.999; s.meter = e.meter; s.active = !!e.active; if (!was && k01(e.meter) >= 0.999) s.fullT = 1.2; }
+  function specialState(e) { if (!e || !e.id) return; if (e.unlocked === false) { delete ui.specials[e.id]; return; } var s = ui.specials[e.id] || (ui.specials[e.id] = { meter: 0, active: false, t: 0, fullT: 0 }); var was = k01(s.meter) >= 0.999; s.meter = e.meter; s.active = !!e.active; if (!was && k01(e.meter) >= 0.999) s.fullT = 1.2; }
   function specialIcon(ctx, id, x, y, s, col) {
     ctx.save(); ctx.translate(x, y); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = s * 0.12; ctx.lineCap = 'round';
     if (id === 'focus') { ctx.beginPath(); ctx.ellipse(0, 0, s * 0.45, s * 0.26, 0, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 0, s * 0.13, 0, Math.PI * 2); ctx.fill(); }
@@ -4187,18 +4538,41 @@
   // range:start [{seconds, medals:{bronze, silver, gold}}], range:hit {points}, range:end {score, medal}: the timer,
   // the score with +points floats, a medal track; the end card with the medal. GTP.Interiors.range.hud() (if it exists)
   // overrides the local clock and score.
+  // GTP.Interiors runs the round: range:start {store, weapon, seconds} opens a 3 s countdown, range:hit {points, score}
+  // (a moderator cutout is -10), range:end {score, medal, hits, shots, best, aborted}; GTP.Interiors.range is its raw
+  // state ({running, t (countdown included), score, hits, shots, best}) and GTP.Interiors.MEDALS the thresholds.
+  var RANGE_COUNTDOWN = 3;
+  function rangeMedals() { var I = GTP.Interiors, P = parity(); return (I && I.MEDALS) || (P.range && P.range.medals) || null; }
   function rangeStart(e) {
     e = e || {};
-    var P = parity(), med = e.medals || (P.range && P.range.medals) || null;
-    ui.range = { t: 0, dur: e.seconds || e.duration || 60, score: 0, floats: [], medals: med, hits: 0 };
+    ui.range = { t: 0, dur: e.seconds || e.duration || 60, score: 0, floats: [], medals: e.medals || rangeMedals(), hits: 0, shots: 0, weapon: e.weapon || null, countdown: RANGE_COUNTDOWN };
     ui.rangeEnd = null;
   }
-  function rangeHit(e) { var R = ui.range; if (!R) return; var n = (e && (e.points != null ? e.points : e.score)) || 0; R.score += n; R.hits++; R.floats.push({ n: n, t: 0, x: ((R.hits * 0.37) % 1) }); if (R.floats.length > 6) R.floats.shift(); }
-  function rangeEnd(e) { var R = ui.range; ui.rangeEnd = { score: e && e.score != null ? e.score : (R ? R.score : 0), medal: e && e.medal ? String(e.medal) : null, t: 0, best: e && e.best }; ui.range = null; if (ui.rangeEnd.medal) sfx('achievement', 0.5); }
-  function rangeHud() { var I = GTP.Interiors, r = I && I.range; return r && typeof r.hud === 'function' ? call(r.hud, r, [], null) : null; }
+  function rangeHit(e) {
+    var R = ui.range; if (!R) return; e = e || {};
+    var n = e.points != null ? e.points : 0; R.hits++; if (e.score != null) R.score = e.score; else R.score += n;
+    R.floats.push({ n: n, t: 0, x: ((R.hits * 0.37) % 1), mod: !!e.moderator || n < 0 }); if (R.floats.length > 6) R.floats.shift();
+  }
+  function rangeEnd(e) {
+    var R = ui.range; e = e || {};
+    ui.range = null;
+    if (e.aborted) { ui.rangeEnd = null; toast('Round called off. The cutouts are relieved.'); return; }
+    ui.rangeEnd = { score: e.score != null ? e.score : (R ? R.score : 0), medal: e.medal ? String(e.medal) : null, t: 0, best: e.best, hits: e.hits != null ? e.hits : (R ? R.hits : 0), shots: e.shots, bonus: e.bonus };
+    if (ui.rangeEnd.medal) sfx('achievement', 0.5);
+  }
+  function rangeRaw() { var I = GTP.Interiors, r = I && I.range; if (!r) return null; if (typeof r.hud === 'function') return call(r.hud, r, [], null); return r; }
   function updateRange(dt) {
     var R = ui.range;
-    if (R) { var h = rangeHud(); R.t += dt; if (h) { if (h.time != null) R.left = h.time; if (h.score != null) R.score = h.score; if (h.medals) R.medals = h.medals; } for (var i = R.floats.length - 1; i >= 0; i--) { R.floats[i].t += dt; if (R.floats[i].t > 1.2) R.floats.splice(i, 1); } if (R.t > R.dur + 15) ui.range = null; }
+    if (R) {
+      var h = rangeRaw(); R.t += dt;
+      if (h && h.running !== false) {
+        if (h.time != null) R.left = h.time;
+        else if (h.t != null) { R.countdown = Math.max(0, RANGE_COUNTDOWN - h.t); R.left = Math.max(0, R.dur - Math.max(0, h.t - RANGE_COUNTDOWN)); }
+        if (h.score != null) R.score = h.score; if (h.hits != null) R.hits = h.hits; if (h.shots != null) R.shots = h.shots; if (h.medals) R.medals = h.medals;
+      } else if (!h) { R.countdown = Math.max(0, RANGE_COUNTDOWN - R.t); R.left = Math.max(0, R.dur - Math.max(0, R.t - RANGE_COUNTDOWN)); }
+      for (var i = R.floats.length - 1; i >= 0; i--) { R.floats[i].t += dt; if (R.floats[i].t > 1.2) R.floats.splice(i, 1); }
+      if (R.t > R.dur + RANGE_COUNTDOWN + 15) ui.range = null;
+    }
     if (ui.rangeEnd) { ui.rangeEnd.t += dt; if (ui.rangeEnd.t > 5) ui.rangeEnd = null; }
   }
   var MEDAL_COL = { bronze: '#cd7f32', silver: '#cfd6e0', gold: '#ffd23c', platinum: '#b9f2ff' };
@@ -4218,11 +4592,16 @@
     if (ui.rangeEnd) drawRangeEnd(ctx);
     if (!R || !g || g.state !== 'playing') return;
     var left = R.left != null ? R.left : Math.max(0, R.dur - R.t), w = Math.min(px(420), W - safe.l - safe.r), x = (W - w) / 2, y = ui.objBottom + px(4), h = px(70);
+    if (R.countdown > 0) {   // 3, 2, 1 over the lane before the first cutout rises
+      var cd = Math.ceil(R.countdown), fr = R.countdown - Math.floor(R.countdown);
+      txt(ctx, String(cd), W / 2, H * 0.42, { font: F(64 + 30 * fr, '900', FONT_DISPLAY), color: COL.amber, align: 'center', lw: px(6), alpha: 0.4 + 0.6 * fr });
+      txt(ctx, 'HECKLERS +10 · +5 · +2   ·   MODERATORS -10', W / 2, H * 0.42 + px(34), { font: F(12, 'bold'), color: COL.ink, align: 'center', maxW: W - px(30) });
+    }
     glass(ctx, x, y, w, h, COL.amber, px(12));
     txt(ctx, 'SHOOTING RANGE', x + px(16), y + px(18), { font: F(10, 'bold'), color: COL.amber, outline: false });
     txt(ctx, U.fmtTime(Math.ceil(left)), x + px(16), y + px(52), { font: F(30, '900', FONT_DISPLAY), color: left < 10 && Math.floor(ui.t * 4) % 2 ? COL.red : COL.ink, outline: false });
     txt(ctx, String(R.score | 0), x + w - px(16), y + px(40), { font: F(26, '900', FONT_DISPLAY), color: COL.ink, align: 'right', outline: false });
-    txt(ctx, 'SCORE  ·  ' + R.hits + ' hit' + (R.hits === 1 ? '' : 's'), x + w - px(16), y + px(18), { font: F(9, 'bold'), color: COL.muted, align: 'right', outline: false });
+    txt(ctx, 'SCORE  ·  ' + R.hits + ' hit' + (R.hits === 1 ? '' : 's') + (R.shots ? ' / ' + R.shots : ''), x + w - px(16), y + px(18), { font: F(9, 'bold'), color: COL.muted, align: 'right', outline: false });
     var M = R.medals;
     if (M && M.gold) {   // the medal track: bronze, silver and gold ticks along a bar under the score
       var tx = x + px(120), tw = w - px(140), ty = y + px(54), top = M.gold * 1.15;
@@ -4231,7 +4610,7 @@
       ['bronze', 'silver', 'gold'].forEach(function (mk) { if (M[mk] == null) return; var mx = tx + tw * clamp01(M[mk] / top); ctx.fillStyle = R.score >= M[mk] ? MEDAL_COL[mk] : 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.arc(mx, ty + px(3), px(5), 0, Math.PI * 2); ctx.fill(); });
     }
     // +points floats rising over the crosshair area
-    for (var i = 0; i < R.floats.length; i++) { var f = R.floats[i], k = f.t / 1.2; txt(ctx, '+' + f.n, W / 2 + (f.x - 0.5) * px(80), H * 0.44 - k * px(40), { font: F(16, '900', FONT_DISPLAY), color: f.n >= 50 ? COL.gold : COL.ink, align: 'center', alpha: 1 - k }); }
+    for (var i = 0; i < R.floats.length; i++) { var f = R.floats[i], k = f.t / 1.2; txt(ctx, (f.n < 0 ? '−' + (-f.n) + (f.mod ? '  MODERATOR' : '') : '+' + f.n), W / 2 + (f.x - 0.5) * px(80), H * 0.44 - k * px(40), { font: F(16, '900', FONT_DISPLAY), color: f.n < 0 ? COL.red : f.n >= 10 ? COL.gold : COL.ink, align: 'center', alpha: 1 - k }); }
   }
   function drawRangeEnd(ctx) {
     var E = ui.rangeEnd, k = E.t / 5, a = k < 0.06 ? k / 0.06 : k > 0.85 ? (1 - k) / 0.15 : 1, pop = 1 + (1 - ease(Math.min(1, E.t / 0.4))) * 0.4;
@@ -4241,31 +4620,47 @@
     txt(ctx, 'RANGE COMPLETE', W / 2, y + px(26), { font: F(12, 'bold'), color: COL.muted, align: 'center', outline: false });
     if (E.medal) { ctx.save(); ctx.translate(W / 2, y + px(96)); ctx.scale(pop, pop); medal(ctx, 0, 0, px(30), E.medal); ctx.restore(); }
     else txt(ctx, 'NO MEDAL', W / 2, y + px(100), { font: F(22, '900', FONT_DISPLAY), color: COL.muted, align: 'center', outline: false });
+    if (E.shots) txt(ctx, E.hits + ' / ' + E.shots + ' HITS' + (E.best ? '  ·  BEST ' + E.best : '') + (E.bonus ? '  ·  +' + U.fmtMoney(E.bonus) : ''), W / 2, y + px(46), { font: F(10, 'bold'), color: COL.muted, align: 'center', outline: false, maxW: w - px(20) });
     txt(ctx, (E.medal ? E.medal.toUpperCase() + '  ·  ' : '') + 'SCORE ' + (E.score | 0), W / 2, y + px(158), { font: F(18, '900', FONT_DISPLAY), color: E.medal ? MEDAL_COL[E.medal] || COL.ink : COL.ink, align: 'center', outline: false });
     txt(ctx, E.medal === 'gold' ? 'Merle says that\'s "fine". High praise.' : E.medal ? 'Respectable. Merle nods at a wall.' : 'The cutouts thank you for your restraint.', W / 2, y + px(182), { font: F(11, 'italic', FONT_TEXT), color: COL.muted, align: 'center', outline: false, maxW: w - px(20) });
     ctx.restore();
   }
 
   // ---------------------------------------------------------------- golf ----
-  // golf:start [{hole, par, wind, club, dist}], golf:end {strokes, par}. The systems track simulates; GTP.Systems.golf.hud()
-  // (if it exists) feeds the panel every frame. The swing meter is the UI's: left / right aim, a first press of shoot or
-  // jump starts the meter, the second sets the power and emits golf:shot {power, angle} (unless Systems.golf.hud()
-  // reports its own power, then the UI only draws).
-  function golfHud() { var S = GTP.Systems, gf = S && S.golf; return gf && typeof gf.hud === 'function' ? call(gf.hud, gf, [], null) : null; }
+  // GTP.Systems.golf owns the round: it reads the input itself (left / right aim, forward / back club, shoot / jump / confirm
+  // starts and stops the meter, enter quits), freezes the player, and emits golf:start {hole (0-based), holes, par},
+  // golf:hole {hole, strokes, par, name} per hole and golf:end {strokes, par, toPar, holes, full, reason}. The UI only
+  // draws from golf.state() ({phase 'aim'|'swing'|'flight'|'holed', hole, par, strokes, clubName, distToPin, meter, power,
+  // wind {speed, dir}, aim, ball.lie, total, totalPar, message}). Without the systems module a local meter stands in
+  // (golf:shot {power, angle} on the second press).
+  function golfSys() { var S = GTP.Systems, gf = S && S.golf; return gf && typeof gf.state === 'function' ? gf : null; }
+  function golfHud() {
+    var gf = golfSys(); if (gf) { var st = call(gf.state, gf, [], null); return st && st.active ? st : null; }
+    var S = GTP.Systems, g2 = S && S.golf; return g2 && typeof g2.hud === 'function' ? call(g2.hud, g2, [], null) : null;
+  }
   function golfStart(e) {
     e = e || {};
-    var p = player(), G = ui.golf;
+    var p = player(), G = ui.golf, sys = !!golfSys();
     var cont = G && G.active;
-    ui.golf = { active: true, hole: e.hole || (cont ? G.hole : 1), par: e.par || (cont ? G.par : 4), strokes: e.strokes || 0, wind: e.wind || (cont ? G.wind : null), club: e.club || 'Driver', dist: e.dist, phase: 'aim', power: 0, angle: e.angle || 0, swingT: 0, waitT: 0, total: e.total || (cont ? G.total : 0) };
-    ui.golfEnd = null;
+    ui.golf = { active: true, sys: sys, hole: e.hole != null ? (sys ? e.hole + 1 : e.hole) : (cont ? G.hole : 1), holes: e.holes || null, par: e.par || (cont ? G.par : 4), strokes: e.strokes || 0, wind: e.wind || (cont ? G.wind : null), club: e.club || 'Driver', dist: e.dist, phase: 'aim', power: 0, angle: e.angle || 0, swingT: 0, waitT: 0, total: e.total || (cont ? G.total : 0), course: e.course || null };
+    if (!cont) ui.golfEnd = null;
+    if (sys) return;   // the systems module freezes the player's control itself
     if (p && !cont) { ui.golf.restoreControl = p.controlEnabled !== false; p.controlEnabled = false; }
     else if (cont) ui.golf.restoreControl = G.restoreControl;
   }
+  // golf:hole: the hole's score card; golf:end: the round's (queued behind a hole card still showing)
+  function golfHole(e) {
+    if (!e) return;
+    ui.golfEnd = { strokes: e.strokes | 0, par: e.par | 0, t: 0, hole: (e.hole | 0) + (golfSys() ? 1 : 0), name: e.name || null };
+  }
   function golfEnd(e) {
-    var G = ui.golf, p = player();
-    var strokes = e && e.strokes != null ? e.strokes : (G ? G.strokes : 0), par = e && e.par != null ? e.par : (G ? G.par : 4);
-    ui.golfEnd = { strokes: strokes, par: par, t: 0, hole: G ? G.hole : null };
-    if (G && p && G.restoreControl) p.controlEnabled = true;
+    var G = ui.golf, p = player(); e = e || {};
+    var strokes = e.strokes != null ? e.strokes : (G ? G.strokes : 0), par = e.par != null ? e.par : (G ? G.par : 4);
+    var card = { strokes: strokes, par: par, t: 0, hole: G ? G.hole : null };
+    if (e.holes != null) { card.round = true; card.holes = e.holes; card.full = !!e.full; card.reason = e.reason || null; card.hole = null; }
+    if (card.round && !card.holes) card = null;   // quit before a single hole: nothing to show
+    if (card && ui.golfEnd && ui.golfEnd.t < 3 && !ui.golfEnd.round) ui.golfEnd.next = card; else if (card) ui.golfEnd = card;
+    if (G && p && G.restoreControl && !G.sys) p.controlEnabled = true;
     ui.golf = null;
   }
   function golfTerm(strokes, par) {
@@ -4273,12 +4668,19 @@
     var d = strokes - par;
     return d <= -3 ? 'ALBATROSS' : d === -2 ? 'EAGLE' : d === -1 ? 'BIRDIE' : d === 0 ? 'PAR' : d === 1 ? 'BOGEY' : d === 2 ? 'DOUBLE BOGEY' : '+' + d;
   }
-  function golfOwnSwing() { var h = golfHud(); return !(h && h.power != null); }
+  function golfOwnSwing() { if (golfSys()) return false; var h = golfHud(); return !(h && h.power != null); }
   function updateGolf(dt) {
     var G = ui.golf;
-    if (ui.golfEnd) { ui.golfEnd.t += dt; if (ui.golfEnd.t > 4.5) ui.golfEnd = null; }
+    if (ui.golfEnd) { ui.golfEnd.t += dt; if (ui.golfEnd.t > 4.5) ui.golfEnd = ui.golfEnd.next || null; }
     if (!G) return;
     var h = golfHud();
+    if (h && golfSys()) {
+      G.hole = h.hole + 1; G.holes = h.holes; G.par = h.par; G.strokes = h.strokes; G.wind = h.wind; G.club = h.clubName || h.club; G.carry = h.clubCarry;
+      G.dist = h.distToPin; G.lie = h.ball && h.ball.lie; G.phase = h.phase; G.power = h.phase === 'swing' ? h.meter : h.power; G.aim = h.aim;
+      G.total = h.total; G.totalPar = h.totalPar; G.name = h.name; G.course = h.course; G.message = h.message;
+      if (h.phase === 'flight' && G.lastPower !== h.power) G.lastPower = h.power;
+      return;
+    }
     if (h) { ['hole', 'par', 'strokes', 'wind', 'club', 'dist', 'lie', 'phase', 'total'].forEach(function (k) { if (h[k] != null) G[k] = h[k]; }); if (h.power != null) G.power = h.power; if (h.angle != null) G.angle = h.angle; }
     if (golfOwnSwing()) {
       if (G.phase === 'swing') { G.swingT += dt; var c = (G.swingT / 0.9) % 2; G.power = c < 1 ? c : 2 - c; if (G.swingT > 5.4) { G.phase = 'aim'; G.power = 0; } }
@@ -4312,18 +4714,18 @@
     // the scorecard chip top-left under the bars
     var x = safe.l, y = ui.hudTop + px(48), w = px(210);
     glass(ctx, x, y, w, px(86), COL.lime, px(12));
-    txt(ctx, 'GOLDPLATE LINKS', x + px(14), y + px(18), { font: F(9, 'bold'), color: COL.lime, outline: false });
-    txt(ctx, 'HOLE ' + G.hole, x + px(14), y + px(44), { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false });
+    txt(ctx, String(G.course || 'Goldplate Links').toUpperCase() + (G.name ? '  ·  ' + String(G.name).toUpperCase() : ''), x + px(14), y + px(18), { font: F(9, 'bold'), color: COL.lime, outline: false, maxW: w - px(28) });
+    txt(ctx, 'HOLE ' + G.hole + (G.holes ? '/' + G.holes : ''), x + px(14), y + px(44), { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false });
     txt(ctx, 'PAR ' + G.par, x + w - px(14), y + px(30), { font: F(12, 'bold'), color: COL.ink, align: 'right', outline: false });
-    txt(ctx, 'STROKE ' + ((G.strokes | 0) + (G.phase === 'flight' ? 0 : 1)), x + w - px(14), y + px(46), { font: F(12, 'bold'), color: COL.amber, align: 'right', outline: false });
+    txt(ctx, 'STROKE ' + ((G.strokes | 0) + (G.phase === 'flight' || G.phase === 'holed' ? 0 : 1)), x + w - px(14), y + px(46), { font: F(12, 'bold'), color: COL.amber, align: 'right', outline: false });
     txt(ctx, (G.club || 'Driver').toUpperCase() + (G.dist != null ? '  ·  PIN ' + Math.round(G.dist) + ' m' : '') + (G.lie ? '  ·  ' + String(G.lie).toUpperCase() : ''), x + px(14), y + px(70), { font: F(10, 'bold'), color: COL.muted, outline: false, maxW: w - px(28) });
     // wind: an arrow in a disc, top-right of the chip
     var wd = G.wind, wx = x + w + px(34), wy = y + px(36);
     if (wd) {
       var sp = wd.speed != null ? wd.speed : (typeof wd === 'number' ? wd : 0), dir = wd.dir != null ? wd.dir : (wd.angle || 0);
       ctx.fillStyle = 'rgba(9,11,22,0.85)'; ctx.beginPath(); ctx.arc(wx, wy, px(26), 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.save(); ctx.translate(wx, wy); ctx.rotate(dir); ctx.fillStyle = COL.cyan; ctx.beginPath(); ctx.moveTo(0, -px(16)); ctx.lineTo(px(7), px(4)); ctx.lineTo(px(2), px(2)); ctx.lineTo(px(2), px(14)); ctx.lineTo(-px(2), px(14)); ctx.lineTo(-px(2), px(2)); ctx.lineTo(-px(7), px(4)); ctx.closePath(); ctx.fill(); ctx.restore();
-      txt(ctx, Math.round(sp) + ' mph', wx, wy + px(40), { font: F(10, 'bold'), color: COL.cyan, align: 'center' });
+      ctx.save(); ctx.translate(wx, wy); ctx.rotate(G.sys && G.aim != null ? -(dir - G.aim) : dir); ctx.fillStyle = COL.cyan; ctx.beginPath(); ctx.moveTo(0, -px(16)); ctx.lineTo(px(7), px(4)); ctx.lineTo(px(2), px(2)); ctx.lineTo(px(2), px(14)); ctx.lineTo(-px(2), px(14)); ctx.lineTo(-px(2), px(2)); ctx.lineTo(-px(7), px(4)); ctx.closePath(); ctx.fill(); ctx.restore();
+      txt(ctx, Math.round(sp) + (G.sys ? ' m/s' : ' mph'), wx, wy + px(40), { font: F(10, 'bold'), color: COL.cyan, align: 'center' });
     }
     // the swing meter bottom-centre: the power fill, the sweet spot, the aim readout
     var mw = Math.min(px(420), W - px(40)), mx = (W - mw) / 2, my = H - safe.b - px(ui.touch.visible ? 190 : 84), mh = px(18);
@@ -4332,17 +4734,27 @@
     var pg = ctx.createLinearGradient(mx, 0, mx + mw, 0); pg.addColorStop(0, COL.cyan); pg.addColorStop(0.8, COL.lime); pg.addColorStop(1, COL.red);
     ctx.fillStyle = pg; rr(ctx, mx + 2, my + 2, (mw - 4) * clamp01(G.power), mh - 4, px(7)); ctx.fill();
     if (G.lastPower != null) { ctx.fillStyle = '#fff'; ctx.fillRect(mx + mw * clamp01(G.lastPower) - 1, my - px(4), 2, mh + px(8)); }
-    var help = G.phase === 'aim' ? glyph('left') + ' / ' + glyph('right') + ' aim  ·  ' + glyph('shoot') + ' swing' : G.phase === 'swing' ? glyph('shoot') + ' set the power' : 'In flight...';
+    var help = G.phase === 'aim' ? glyph('left') + ' / ' + glyph('right') + ' aim  ·  ' + (G.sys ? glyph('forward') + ' / ' + glyph('back') + ' club  ·  ' : '') + glyph('shoot') + ' swing' + (G.sys ? '  ·  ' + glyph('enter') + ' quit' : '')
+      : G.phase === 'swing' ? glyph('shoot') + ' set the power' : G.phase === 'holed' ? glyph('shoot') + ' next hole' : (G.message || 'In flight...');
     txt(ctx, help, W / 2, my - px(10), { font: F(11, 'bold'), color: COL.ink, align: 'center' });
     txt(ctx, 'POWER ' + Math.round(clamp01(G.power) * 100) + '%', mx, my + mh + px(14), { font: F(10, 'bold'), color: COL.muted });
-    txt(ctx, 'AIM ' + (G.angle >= 0 ? 'R ' : 'L ') + Math.abs(Math.round((G.angle || 0) * 57.3)) + '°', mx + mw, my + mh + px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right' });
+    txt(ctx, G.sys ? (G.carry ? 'CARRY ' + Math.round(G.carry) + ' m' : '') + (G.total ? '  ·  CARD ' + G.total + ' (' + fmtToPar(G.total - (G.totalPar || 0)) + ')' : '') : 'AIM ' + (G.angle >= 0 ? 'R ' : 'L ') + Math.abs(Math.round((G.angle || 0) * 57.3)) + '°', mx + mw, my + mh + px(14), { font: F(10, 'bold'), color: COL.muted, align: 'right' });
   }
+  function fmtToPar(d) { return d === 0 ? 'E' : (d > 0 ? '+' : '−') + Math.abs(d); }
   function drawGolfEnd(ctx) {
-    var E = ui.golfEnd, k = E.t / 4.5, a = k < 0.08 ? k / 0.08 : k > 0.82 ? (1 - k) / 0.18 : 1, term = golfTerm(E.strokes, E.par);
+    var E = ui.golfEnd, k = E.t / 4.5, a = k < 0.08 ? k / 0.08 : k > 0.82 ? (1 - k) / 0.18 : 1;
     var good = E.strokes - E.par <= 0;
+    if (E.round) {
+      ctx.save(); ctx.globalAlpha = clamp01(a);
+      txt(ctx, E.full ? 'ROUND COMPLETE' : 'ROUND OVER', W / 2, H * 0.38, { font: F(portrait ? 28 : 44, '900', FONT_DISPLAY), color: good ? COL.lime : COL.amber, align: 'center', lw: px(7), outline: 'rgba(0,0,0,0.85)', maxW: W - px(30) });
+      txt(ctx, E.strokes + ' strokes  ·  par ' + E.par + '  ·  ' + fmtToPar(E.strokes - E.par) + '  ·  ' + E.holes + ' hole' + (E.holes === 1 ? '' : 's'), W / 2, H * 0.38 + px(30), { font: F(14, 'bold'), color: COL.ink, align: 'center', maxW: W - px(30) });
+      ctx.restore();
+      return;
+    }
+    var term = golfTerm(E.strokes, E.par);
     ctx.save(); ctx.globalAlpha = clamp01(a);
     txt(ctx, term, W / 2, H * 0.4, { font: F(portrait ? 32 : 52, '900', FONT_DISPLAY), color: good ? COL.lime : COL.amber, align: 'center', lw: px(7), outline: 'rgba(0,0,0,0.85)', maxW: W - px(30) });
-    txt(ctx, (E.hole ? 'HOLE ' + E.hole + '  ·  ' : '') + E.strokes + ' stroke' + (E.strokes === 1 ? '' : 's') + '  ·  par ' + E.par, W / 2, H * 0.4 + px(30), { font: F(14, 'bold'), color: COL.ink, align: 'center' });
+    txt(ctx, (E.hole ? 'HOLE ' + E.hole + (E.name ? ' "' + E.name + '"' : '') + '  ·  ' : '') + E.strokes + ' stroke' + (E.strokes === 1 ? '' : 's') + '  ·  par ' + E.par, W / 2, H * 0.4 + px(30), { font: F(14, 'bold'), color: COL.ink, align: 'center' });
     ctx.restore();
   }
   // =============================================================== modals ====
@@ -4469,9 +4881,10 @@
     if (!s) { var m = /(muzzle|mag|optic|grip|light|scope|suppress|barrel|stock)/.exec(it.id + ' ' + (it.name || '').toLowerCase()); s = m ? (m[1] === 'suppress' || m[1] === 'barrel' ? 'muzzle' : m[1] === 'scope' ? 'optic' : m[1]) : 'other'; }
     return String(s).toLowerCase();
   }
+  // a catalog tint is {variant}; its colour is GTP.Assets.weaponTints[variant].main
   function tintColor(it, i) {
-    var P = parity(), d = findById(P.tints, it.tintId || it.id);
-    return it.color || it.hex || (d && (d.color || d.hex)) || TINT_FALLBACK[(i || 0) % TINT_FALLBACK.length];
+    var A = GTP.Assets, T = (A && A.weaponTints) || [], d = findById(T, it.variant || it.tintId) || findById(parity().tints, it.tintId || it.variant || it.id);
+    return it.color || it.hex || (d && (d.main || d.color || d.hex)) || TINT_FALLBACK[(i || 0) % TINT_FALLBACK.length];
   }
   function weaponStats(row) {
     if (!row) return null;
@@ -4479,7 +4892,9 @@
     var d = weaponDef(row.weaponId || row.id); if (!d) return null;
     return { damage: clamp01((d.dmg || 10) / 100), rate: clamp01((d.rate || 1) / 12), range: clamp01((d.range || 30) / 200), accuracy: clamp01(1 - (d.spread || 0.05) * 5), mobility: d.hold === 'one' ? 0.8 : 0.5 };
   }
+  // openArmory(storeId, weaponId), or GTP.Interiors' openArmory({store, landmark, counter, weaponId})
   function openArmory(storeId, weaponId) {
+    if (storeId && typeof storeId === 'object' && !storeId.name && (storeId.store !== undefined || storeId.counter || storeId.landmark !== undefined)) { weaponId = weaponId || storeId.weaponId; storeId = storeId.store || (storeId.landmark && (storeId.landmark.id || storeId.landmark)) || null; }
     var cat = armoryCatalog(storeId), rows = weaponRows(cat), sel = 0;
     for (var i = 0; i < rows.length; i++) if ((rows[i].weaponId || rows[i].id) === weaponId) { sel = i; break; }
     var m = openModal('armory', { store: storeId || (ui.interior && ui.interior.store) || null, weaponId: weaponId || null, row: sel, tab: 0, isel: 0, focus: weaponId ? 1 : 0, turn: 0 });
@@ -4498,12 +4913,13 @@
   }
   function armoryBuy(item) {
     var m = ui.modal, CB = GTP.Combat; if (!m || !item) return;
-    var res = null, opts = { storeId: m.store && m.store.id ? m.store.id : m.store, weaponId: item.weaponId || null, equip: true };
+    var res = null, opts = { store: m.store && m.store.id ? m.store.id : m.store };   // an owned attachment toggles on and off
     if (CB && typeof CB.buy === 'function' && !item._legacy) res = call(CB.buy, CB, [item.id, opts], null);
     else if (CB && CB.shop && CB.shop.buy) res = call(CB.shop.buy, CB.shop, [item.id], null);
     var X = expansion(), barks = (X.shop && X.shop.barks) || {}, pick = function (list, d) { return list && list.length ? list[(urng ? Math.floor(urng.random() * list.length) : 0) % list.length] : d; };
     var why = res && (res.reason || res.why);
-    if (res && res.ok) { modalMsg(m, (item.owned && (item.kind === 'attachment' || item.kind === 'tint') ? 'EQUIPPED: ' : 'SOLD: ') + item.name + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1; m.bark = pick(barks.sale, 'Sold. Both sides thank you.'); sfx('cash', 0.6); }
+    if (res && res.ok && item.owned && res.equipped === false) { modalMsg(m, 'REMOVED: ' + item.name, COL.muted); sfx('ui', 0.4); }
+    else if (res && res.ok) { modalMsg(m, (item.owned && (item.kind === 'attachment' || item.kind === 'tint') ? 'EQUIPPED: ' : 'SOLD: ') + item.name + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1; m.bark = pick(barks.sale, 'Sold. Both sides thank you.'); sfx('cash', 0.6); }
     else if (why === 'funds') modalMsg(m, 'NOT ENOUGH CASH' + (res.need ? '. Need ' + U.fmtMoney(res.need) + ' more.' : '.'), COL.red);
     else if (why === 'locked') modalMsg(m, 'LOCKED. ' + (item.lockReason || res.lockReason || ('Unlocks after: ' + (res.lockedBy || 'the story'))), COL.amber);
     else if (why === 'owned') modalMsg(m, 'Already yours. Pick ammo or a mod.', COL.muted);
@@ -4516,7 +4932,7 @@
     var m = ui.modal, S2 = armoryState(), rows = S2.rows, row = S2.row, p = player();
     var pw = Math.min(px(1060), W - safe.l - safe.r), ph = Math.min(px(640), H - safe.t - safe.b), x = (W - pw) / 2, y = (H - ph) / 2, narrow = pw < px(720);
     ctx.fillStyle = 'rgba(4,5,10,0.55)'; ctx.fillRect(0, 0, W, H);
-    var storeName = (m.store && (m.store.name || m.store.title)) || (ui.interior && ui.interior.store && ui.interior.store.name) || 'Both Sides Arms';
+    var storeName = storeLabel(m.store || (ui.interior && ui.interior.store), 'armory') || 'Both Sides Arms';
     modalFrame(ctx, x, y, pw, ph, String(storeName).toUpperCase(), null, COL.green);
     moneyChip(ctx, x + pw - px(110), y + px(34));
     exitButton(ctx, x + pw - px(16), y + px(14));
@@ -4675,7 +5091,27 @@
     { id: 'turbo', name: 'Turbo', values: [false, true], labels: ['None', 'Hot Take Turbo'], prices: [0, 2600] },
     { id: 'horn', name: 'Horn', values: ['stock', 'airhorn', 'debate_bell', 'kazoo', 'applause'], labels: ['Stock', 'Air Horn', 'Debate Bell', 'Kazoo', 'Canned Applause'], prices: [0, 200, 350, 120, 480] }
   ];
-  function modCats() {
+  // with the vehicles track: GTP.Vehicles.modCatalog(v) -> [{part, value, name, price, current, owned, stat}] gives the
+  // parts, names and prices (aircraft and boats get engine / armour only); colours ride on the 'paint' part
+  var PART_NAMES = { engine: 'Engine', brakes: 'Brakes', armor: 'Armor', turbo: 'Turbo', wheels: 'Wheels', spoiler: 'Spoiler', tint: 'Window tint', horn: 'Horn', paint: 'Finish', repair: 'Repair' };
+  function modCatsReal(v) {
+    var Vs = GTP.Vehicles, cat = call(Vs.modCatalog, Vs, [v], null); if (!cat || !cat.length) return null;
+    var base = modCats(null), out = [base[0], base[1]], by = {}, order = [];
+    var pp = typeof Vs.priceOf === 'function' ? call(Vs.priceOf, Vs, ['paint', { finish: (v.mods && v.mods.paint && v.mods.paint.finish) || 'gloss' }], null) : null;
+    if (pp != null) out = [Object.assign({}, base[0], { price: pp }), Object.assign({}, base[1], { price: pp })];   // a colour costs a respray
+    cat.forEach(function (it) { var k = it.part; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(it); });
+    order.forEach(function (k) {
+      var list = by[k], c = { id: k === 'paint' ? 'finish' : k, part: k, name: PART_NAMES[k] || k, real: true, values: [], labels: [], prices: [], stats: [] };
+      if (k === 'turbo') { c.values.push(false); c.labels.push('No Turbo'); c.prices.push(0); c.stats.push(null); }
+      list.forEach(function (it) { c.values.push(k === 'paint' ? it.value.finish : it.value); c.labels.push(it.name); c.prices.push(it.price | 0); c.stats.push(it.stat || null); });
+      if (k === 'repair' && !(list[0] && list[0].price > 0)) return;   // nothing to repair
+      out.push(c);
+    });
+    return out;
+  }
+  function modCats(v) {
+    var Vs = GTP.Vehicles;
+    if (v && Vs && typeof Vs.modCatalog === 'function') { var real = modCatsReal(v); if (real) return real; }
     var P = parity().modshop, out = MOD_CATS.map(function (c) { return Object.assign({}, c); });
     var over = P && (P.categories || P.cats);
     if (over) asList(over).forEach(function (o) { var c = findById(out, o.id); if (c) Object.assign(c, o); else out.push(Object.assign({}, o)); });
@@ -4713,15 +5149,33 @@
     var applied = defaultMods(v);
     return openModal('modshop', { vehicle: v, applied: applied, preview: applied, previewT: -1, cat: 0, opt: 0, focus: 0, cam: v ? { target: v, dist: 7.6, height: 2.3, lookY: 0.7, yaw: 0.6, spin: 0.22 } : null, onClose: function (m) { if (m.vehicle && m.onVehicle && m.onVehicle !== JSON.stringify(m.applied)) applyMods(m.vehicle, m.applied); } });
   }
-  function modPreview(m, cid, val) { m.preview = withMod(m.applied, cid, val); m.previewT = 0.15; }
+  function modPreview(m, cid, val) {
+    if (cid === 'repair') return; m.preview = withMod(m.applied, cid, val); m.previewT = 0.15; }
   function modPerf(mods) { return { accel: 0.35 + mods.engine * 0.1 + (mods.turbo ? 0.12 : 0), top: 0.45 + mods.engine * 0.08 + (mods.turbo ? 0.06 : 0), brakes: 0.4 + mods.brakes * 0.17, armor: 0.1 + mods.armor * 0.17 }; }
   function modBuy(m) {
-    var cats = modCats(), c = cats[m.cat], opts = modOptions(c), o = opts[m.opt]; if (!c || !o) return;
+    var cats = modCats(m.vehicle), c = cats[m.cat], opts = modOptions(c), o = opts[m.opt]; if (!c || !o) return;
     var cur = modValue(m.applied, c.id);
     if (cur === o.value || (cur == null && o.value == null)) { modalMsg(m, 'Already installed.', COL.muted); return; }
     var Vs = GTP.Vehicles, res = null;
-    if (Vs && typeof Vs.buyMod === 'function') res = call(Vs.buyMod, Vs, [m.vehicle, c.id, o.value, o.price], null);
-    if (res && res.ok === false) { modalMsg(m, res.reason === 'funds' ? 'NOT ENOUGH CASH.' : 'No sale.', COL.red); return; }
+    if (Vs && typeof Vs.buyMod === 'function' && c.id !== 'repair' && (c.id === 'primary' || c.id === 'secondary') && o.value == null) {
+      // back to the stock colour is free
+      m.applied = withMod(m.applied, c.id, null); applyMods(m.vehicle, m.applied); m.onVehicle = JSON.stringify(m.applied); m.preview = m.applied; m.previewT = -1;
+      modalMsg(m, 'Stock colour back on.', COL.lime); return;
+    }
+    if (Vs && typeof Vs.buyMod === 'function') {
+      // the vehicles track charges, applies and emits shop:buy {item: 'mod:<part>:<value>'}
+      var part = c.part || (c.id === 'primary' || c.id === 'secondary' || c.id === 'finish' ? 'paint' : c.id), val = o.value;
+      if (c.id === 'primary' || c.id === 'secondary') { val = { finish: (m.applied.paint && m.applied.paint.finish) || 'gloss' }; val[c.id] = o.value; }
+      else if (c.id === 'finish') val = { finish: o.value };
+      res = call(Vs.buyMod, Vs, [m.vehicle, part, val], null);
+      if (res && res.ok === false) { modalMsg(m, res.reason === 'money' || res.reason === 'funds' ? 'NOT ENOUGH CASH' + (res.price ? '. It is ' + U.fmtMoney(res.price) + '.' : '.') : res.reason === 'owned' ? 'Already installed.' : 'No sale (' + (res.reason || 'unknown') + ').', COL.red); sfx('fail', 0.3); return; }
+      if (res && res.ok) {
+        var nm = defaultMods(m.vehicle); if (c.id === 'primary' || c.id === 'secondary') nm.paint[c.id] = o.value;
+        m.applied = nm; m.preview = m.applied; m.previewT = -1; m.onVehicle = JSON.stringify(m.applied);
+        modalMsg(m, 'INSTALLED: ' + o.label + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1; sfx('cash', 0.6);
+        return;
+      }
+    }
     if (!res) {
       if (!payMoney(o.price)) { modalMsg(m, 'NOT ENOUGH CASH. Need ' + U.fmtMoney(o.price - ((player() || {}).money | 0)) + ' more.', COL.red); sfx('fail', 0.3); return; }
     }
@@ -4736,7 +5190,7 @@
     return { x: x, y: y, w: w, h: h };
   }
   function drawModShop(ctx) {
-    var m = ui.modal, cats = modCats(), c = cats[m.cat], opts = modOptions(c), R = sidePanelRect(), p = player();
+    var m = ui.modal, cats = modCats(m.vehicle), c = cats[m.cat], opts = modOptions(c), R = sidePanelRect(), p = player();
     var vg = ctx.createLinearGradient(R.x, 0, R.x + R.w + px(160), 0); vg.addColorStop(0, 'rgba(4,5,10,0.55)'); vg.addColorStop(1, 'rgba(4,5,10,0)');
     if (!portrait) { ctx.fillStyle = vg; ctx.fillRect(0, 0, R.x + R.w + px(160), H); }
     modalFrame(ctx, R.x, R.y, R.w, R.h, 'SPIN DOCTOR CUSTOMS', m.vehicle ? vehicleName(m.vehicle) : 'Bring a car. We bring the spin.', COL.pink);
@@ -4767,7 +5221,7 @@
     helpLine(ctx, navKeys() + '  ·  drag / right stick turns the car', R.x + px(18), R.y + R.h - px(10), R.w - px(36));
   }
   function modShopInput(In) {
-    var m = ui.modal, cats = modCats(), c = cats[m.cat], opts = modOptions(c);
+    var m = ui.modal, cats = modCats(m.vehicle), c = cats[m.cat], opts = modOptions(c);
     if (m.focus === 0) {
       if (menuBack(In)) { closeModal(); return true; }
       if (In.pressed('forward')) { m.cat = (m.cat - 1 + cats.length) % cats.length; m.opt = 0; sfx('ui', 0.15); }
@@ -4800,7 +5254,32 @@
     { id: 'color', name: 'Color', items: [{ id: 'hc_brown', name: 'Brown', price: 25, hex: '#5a3a22' }, { id: 'hc_black', name: 'Black', price: 25, hex: '#16161a' }, { id: 'hc_blond', name: 'Blond', price: 35, hex: '#d8b866' }, { id: 'hc_grey', name: 'Distinguished Grey', price: 40, hex: '#a8a8ad' }, { id: 'hc_pink', name: 'Rebrand Pink', price: 60, hex: '#ff3fa4' }] },
     { id: 'beard', name: 'Facial hair', items: [{ id: 'beard_none', name: 'Clean', price: 15 }, { id: 'beard_stubble', name: 'Deadline Stubble', price: 20 }, { id: 'beard_full', name: 'Full (Serious)', price: 45 }] }
   ];
-  function wardrobeCats(mode) {
+  // GTP.Systems owns the purchase: wardrobe.items(slot, store) rows {id, slot, name, price, look, flavor, owned, equipped,
+  // locked} and wardrobe.buy(id) (buys, wears, applies the look); barber.options() {styles, colors} (each with `current`)
+  // and barber.buy(styleId, colorId). Its rows carry _sys so the buy goes back to the same ids. Without it: the content
+  // tables and a local purchase.
+  var SLOT_NAMES = { top: 'Tops', bottom: 'Bottoms', shoes: 'Shoes', hat: 'Hats', glasses: 'Glasses', hair: 'Cut', color: 'Colour' };
+  function wardrobeCatsSys(mode, store) {
+    var S = GTP.Systems; if (!S) return null;
+    if (mode === 'barber') {
+      var B = S.barber; if (!B || typeof B.options !== 'function') return null;
+      var o = call(B.options, B, [], null); if (!o) return null;
+      return [{ id: 'hair', name: 'Cut', items: asList(o.styles).map(function (st) { return Object.assign({}, st, { style: st.style || st.hair || st.id, _sys: 'style' }); }) },
+        { id: 'color', name: 'Colour', items: asList(o.colors).map(function (c) { return Object.assign({}, c, { hex: c.hex || c.color, _sys: 'color' }); }) }].filter(function (c) { return c.items.length; });
+    }
+    var Wr = S.wardrobe; if (!Wr || typeof Wr.items !== 'function') return null;
+    var list = call(Wr.items, Wr, [null, store || null], null); if (!list || !list.length) return null;
+    // 14_systems' table('clothing') runs asList over parity.clothing ({name, tagline, stores, clerk, items}) and so lists its
+    // keys as items; keep only rows that are real clothing (a name, and an id the content lists), else use the content
+    var src = parity().clothing, known = src && Array.isArray(src.items) ? src.items.map(function (it) { return it.id; }) : Array.isArray(src) ? src.map(function (it) { return it && it.id; }) : null;
+    list = list.filter(function (it) { return it && typeof it.name === 'string' && (!known || known.indexOf(it.id) >= 0); });
+    if (!list.length) return null;
+    var by = {}, order = [];
+    list.forEach(function (it) { var k = String(it.slot || 'other'); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(Object.assign({}, it, { _sys: 'clothing' })); });
+    return order.map(function (k) { return { id: k, name: SLOT_NAMES[k] || k.charAt(0).toUpperCase() + k.slice(1), items: by[k] }; });
+  }
+  function wardrobeCats(mode, store) {
+    var sys = wardrobeCatsSys(mode, store); if (sys && sys.length) return sys;
     var P = parity(), src = mode === 'barber' ? P.barber : P.clothing, out = [];
     function group(list) { var by = {}, order = []; asList(list).forEach(function (it) { var k = String(it.slot || it.category || it.cat || it.type || 'other'); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(it); }); return order.map(function (k) { return { id: k, name: k.charAt(0).toUpperCase() + k.slice(1), items: by[k] }; }); }
     if (Array.isArray(src)) out = src.length && src[0] && src[0].items ? src : group(src);
@@ -4815,6 +5294,7 @@
   function cloneLook(l) { return JSON.parse(JSON.stringify(l || {})); }
   function applyItemToLook(look, mode, slot, it) {
     slot = String(slot || '').toLowerCase();
+    if (it.look && typeof it.look === 'object') { Object.assign(look, it.look); if (mode !== 'barber') { look.outfit = look.outfit || {}; look.outfit[slot] = it.id; } return look; }
     var style = it.style || String(it.id || '').replace(/^(hair|hat|glasses|beard)_/, '');
     if (mode === 'barber') {
       if (/col/.test(slot)) look.hairColor = it.hex || it.color || look.hairColor;
@@ -4830,38 +5310,49 @@
     return look;
   }
   function isWorn(p, mode, slot, it) {
+    if (it._sys) return it._sys === 'clothing' ? !!it.equipped : !!it.current;
     var l = lookOf(p); slot = String(slot || '').toLowerCase();
     var style = it.style || String(it.id || '').replace(/^(hair|hat|glasses|beard)_/, '');
     if (mode === 'barber') { if (/col/.test(slot)) return (it.hex || it.color) === l.hairColor; if (/beard|facial/.test(slot)) return l.beard === style; return l.hair === style; }
     return !!(l.outfit && l.outfit[slot] === it.id);
   }
-  function ownsItem(p, id) {
+  function ownsItem(p, id, it) {
+    if (it && it._sys) return it._sys === 'clothing' ? !!it.owned : false;
     var S = GTP.Systems;
     if (S && typeof S.owns === 'function') { var r = call(S.owns, S, [id], null); if (r != null) return !!r; }
     var o = p.wardrobe || p.owned; if (Array.isArray(o)) return o.indexOf(id) >= 0; if (o && typeof o === 'object') return !!o[id];
     return false;
   }
-  function openWardrobe(mode) {
+  function openWardrobe(mode, opts) {
     var p = player(); if (!p) return null;
     var barber = mode === 'barber';
     var committed = cloneLook(lookOf(p));
-    return openModal('wardrobe', { mode: barber ? 'barber' : 'clothing', committed: committed, cat: 0, opt: 0, focus: 0, previewT: -1,
+    return openModal('wardrobe', { mode: barber ? 'barber' : 'clothing', store: (opts && opts.store) || null, committed: committed, cat: 0, opt: 0, focus: 0, previewT: -1,
       cam: { target: p, dist: barber ? 1.5 : 3.1, height: barber ? 1.72 : 1.45, lookY: barber ? 1.62 : 1.05, yaw: barber ? 0.35 : 0.25, spin: 0 },
       onClose: function (m) { var pl = player(), want = JSON.stringify(m.committed); if (pl && (JSON.stringify(pl.look) !== want || (m.meshLook && m.meshLook !== want))) { pl.look = cloneLook(m.committed); rebuildMesh(pl); } } });
   }
   function wardrobePreview(m) {
-    var p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
+    var p = player(), cats = wardrobeCats(m.mode, m.store), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
     p.look = applyItemToLook(cloneLook(m.committed), m.mode, c.id, it); m.previewT = 0.12;
   }
   function wardrobeBuy(m) {
-    var p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
+    var p = player(), cats = wardrobeCats(m.mode, m.store), c = cats[m.cat], it = c && c.items[m.opt]; if (!p || !it) return;
     if (isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it)) { modalMsg(m, 'You are already wearing that. Bold.', COL.muted); return; }
-    var S = GTP.Systems, res = null, price = ownsItem(p, it.id) ? 0 : (it.price || 0);
+    var S = GTP.Systems, res = null, price = ownsItem(p, it.id, it) ? 0 : (it.price || 0);
+    if (it._sys === 'clothing' && S.wardrobe && S.wardrobe.buy) res = call(S.wardrobe.buy, S.wardrobe, [it.id], null);
+    else if (it._sys && S.barber && S.barber.buy) res = call(S.barber.buy, S.barber, [it._sys === 'style' ? it.id : null, it._sys === 'color' ? it.id : null], null);
+    if (res && !res.ok && res.reason === 'unknown') res = null;   // an id the systems table does not know: the local purchase
+    if (it._sys && res && res.ok) {   // the systems module applied the look (applyLook); keep it as the committed one
+      m.committed = cloneLook(p.look); rebuildMesh(p); m.meshLook = JSON.stringify(p.look); m.previewT = -1;
+      modalMsg(m, (res.price ? 'BOUGHT: ' : 'WEARING: ') + it.name + (res.price ? '  -' + U.fmtMoney(res.price) : ''), COL.lime); m.flash = 1;
+      return;
+    }
     var fns = m.mode === 'barber' ? [[S, 'buyHaircut'], [S && S.barber, 'buy']] : [[S, 'buyClothing'], [S && S.clothing, 'buy']];
     for (var i = 0; i < fns.length && res == null; i++) if (fns[i][0] && typeof fns[i][0][fns[i][1]] === 'function') res = call(fns[i][0][fns[i][1]], fns[i][0], [it.id, { slot: c.id }], null);
     if (res == null && S && typeof S.buy === 'function') res = call(S.buy, S, [m.mode, it.id, { slot: c.id }], null);
+    if (res && res.ok === false && res.reason === 'unknown') res = null;   // a content item the systems table does not know: buy it here
     var ok = res === true || (res && res.ok);
-    if (res != null && !ok) { modalMsg(m, (res && res.reason === 'funds') ? 'NOT ENOUGH CASH.' : 'No sale.', COL.red); sfx('fail', 0.3); return; }
+    if (res != null && !ok) { var rz = res && res.reason; modalMsg(m, rz === 'funds' || rz === 'money' ? 'NOT ENOUGH CASH.' + (res.need ? ' Need ' + U.fmtMoney(res.need) + ' more.' : '') : rz === 'locked' ? 'LOCKED. ' + (it.unlock && it.unlock.mission ? 'Unlocks after "' + missionTitle(it.unlock.mission) + '".' : 'Not yet.') : 'No sale.', COL.red); sfx('fail', 0.3); return; }
     if (res == null) {
       if (!payMoney(price)) { modalMsg(m, 'NOT ENOUGH CASH. Need ' + U.fmtMoney(price - (p.money | 0)) + ' more.', COL.red); sfx('fail', 0.3); return; }
       p.wardrobe = Array.isArray(p.wardrobe) ? p.wardrobe : []; if (p.wardrobe.indexOf(it.id) < 0) p.wardrobe.push(it.id);
@@ -4874,7 +5365,7 @@
     modalMsg(m, (price ? 'BOUGHT: ' : 'WEARING: ') + it.name + (price ? '  -' + U.fmtMoney(price) : ''), COL.lime); m.flash = 1; sfx('cash', 0.5);
   }
   function drawWardrobe(ctx) {
-    var m = ui.modal, p = player(), cats = wardrobeCats(m.mode), c = cats[m.cat] || cats[0], items = c ? c.items : [], R = sidePanelRect();
+    var m = ui.modal, p = player(), cats = wardrobeCats(m.mode, m.store), c = cats[m.cat] || cats[0], items = c ? c.items : [], R = sidePanelRect();
     var barber = m.mode === 'barber', accent = barber ? COL.amber : COL.cyan;
     var vg = ctx.createLinearGradient(R.x, 0, R.x + R.w + px(160), 0); vg.addColorStop(0, 'rgba(4,5,10,0.5)'); vg.addColorStop(1, 'rgba(4,5,10,0)');
     if (!portrait) { ctx.fillStyle = vg; ctx.fillRect(0, 0, R.x + R.w + px(160), H); }
@@ -4892,22 +5383,22 @@
     }
     var ly = top + px(34), lh = R.h - (ly - R.y) - px(100), rh = px(36);
     listBox(ctx, items.length, m.opt, R.x + px(16), ly, R.w - px(36), lh, rh, function (k, x, y, w, h, sel) {
-      var it = items[k], worn = isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it), own = ownsItem(p, it.id);
+      var it = items[k], worn = isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it), own = ownsItem(p, it.id, it);
       panel(ctx, x, y, w, h - px(4), px(7), sel && m.focus === 1 ? hexA(accent, 0.24) : 'rgba(255,255,255,0.04)', sel ? accent : 'rgba(255,255,255,0.08)', sel ? 1.5 : 1);
-      var sw = it.hex || it.color;
+      var sw = it.hex || it.color || (it.look && (it.look.shirt || it.look.pants || it.look.shoes || it.look.hatColor));
       if (sw) { ctx.fillStyle = sw; rr(ctx, x + px(10), y + px(8), px(16), px(16), px(4)); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.stroke(); }
       txt(ctx, it.name || it.id, x + (sw ? px(34) : px(12)), y + px(21), { font: F(12, 'bold'), color: COL.ink, outline: false, maxW: w - px(120) });
       txt(ctx, worn ? 'WEARING' : own ? 'OWNED' : it.price ? U.fmtMoney(it.price) : 'FREE', x + w - px(10), y + px(21), { font: F(11, 'bold'), color: worn ? accent : own ? COL.lime : (p.money >= (it.price || 0) ? COL.ink : COL.red), align: 'right', outline: false });
     }, function (k) { if (m.opt === k && m.focus === 1) wardrobeBuy(m); else { m.opt = k; m.focus = 1; wardrobePreview(m); } }, 'ward-item');
     var it2 = items[m.opt], worn2 = it2 && isWorn(Object.assign({}, p, { look: m.committed }), m.mode, c.id, it2);
     var bw = px(160), bx = R.x + R.w - bw - px(16), byy = R.y + R.h - px(52);
-    button(ctx, bx, byy, bw, px(30), worn2 ? 'WEARING' : it2 && (ownsItem(p, it2.id) || !it2.price) ? 'WEAR' : 'BUY ' + U.fmtMoney(it2 ? it2.price : 0), { color: accent, disabled: !it2 || worn2 || m.focus !== 1, sel: m.flash > 0, fn: function () { wardrobeBuy(m); }, id: 'ward-buy' });
+    button(ctx, bx, byy, bw, px(30), worn2 ? 'WEARING' : it2 && it2.locked ? 'LOCKED' : it2 && (ownsItem(p, it2.id, it2) || !it2.price) && it2._sys !== 'style' && it2._sys !== 'color' ? 'WEAR' : 'BUY ' + U.fmtMoney(it2 ? it2.price : 0), { color: accent, disabled: !it2 || worn2 || m.focus !== 1, sel: m.flash > 0, fn: function () { wardrobeBuy(m); }, id: 'ward-buy' });
     exitButton(ctx, bx - px(8), byy + px(2));
     if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, R.x + px(18), byy - px(8), { font: F(10, 'bold'), color: m.msg.color, outline: false, maxW: R.w - px(36) });
     helpLine(ctx, navKeys() + '  ·  drag turns the camera', R.x + px(18), R.y + R.h - px(10), R.w - px(36));
   }
   function wardrobeInput(In) {
-    var m = ui.modal, cats = wardrobeCats(m.mode), n = Math.max(1, (cats[m.cat] || { items: [] }).items.length);
+    var m = ui.modal, cats = wardrobeCats(m.mode, m.store), n = Math.max(1, (cats[m.cat] || { items: [] }).items.length);
     if (m.focus === 0) {
       if (menuBack(In)) { closeModal(); return true; }
       if (In.pressed('left')) { m.cat = (m.cat - 1 + cats.length) % cats.length; m.opt = 0; sfx('ui', 0.15); }
@@ -4928,11 +5419,13 @@
   // property:open {id}: the listing card (name, district, price, income per day, garage slots, the perks) with BUY.
   // Data: GTP.Systems.properties.get(id) / GTP.Content.parity.properties; buying calls Systems.buyProperty(id) or
   // Systems.properties.buy(id), else pays here and emits property:buy {id, price}.
+  // GTP.Systems.properties.list() rows: {id, name, kind ('safehouse' | 'business'), price, income, garage, flavor, landmark,
+  // owned, locked, lockReason ('mission' | 'flag'), unlock}; property:open {id, ..., handled} gets handled = true here
   function propertyDef(id) {
     var S = GTP.Systems, sp = S && S.properties, d = null;
-    if (sp && typeof sp.get === 'function') d = call(sp.get, sp, [id], null);
+    if (sp && typeof sp.list === 'function') d = findById(call(sp.list, sp, [], []), id);
+    if (!d && sp && typeof sp.get === 'function') d = call(sp.get, sp, [id], null);
     if (!d && sp && Array.isArray(sp.list)) d = findById(sp.list, id);
-    if (!d && sp && typeof sp.list === 'function') d = findById(call(sp.list, sp, [], []), id);
     return d || findById(parity().properties, id) || { id: id, name: String(id || 'Property').replace(/_/g, ' '), price: 50000, income: 0 };
   }
   function propertyOwned(id) {
@@ -4942,14 +5435,36 @@
     var d = propertyDef(id); if (d && d.owned != null) return !!d.owned;
     var p = player(); return !!(p && p.properties && (Array.isArray(p.properties) ? p.properties.indexOf(id) >= 0 : p.properties[id]));
   }
-  function openProperty(e) { var id = e && (e.id || e.propertyId); if (!id) return null; return openModal('property', { id: id, sel: 0 }); }
+  function openProperty(e) { var id = e && (e.id || e.propertyId); if (!id) return null; var m = openModal('property', { id: id, sel: 0 }); if (m && e) e.handled = true; return m; }
+  function propertyDistrict(d) {
+    if (d.district) return String(d.district);
+    var Wd = GTP.World, lm = Wd && typeof Wd.landmark === 'function' ? call(Wd.landmark, Wd, [d.landmark || d.near], null) : null;
+    var dd = lm && (lm.districtName || lm.district);
+    return dd ? String(dd).replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : '';
+  }
+  // an owned safehouse: sleep six hours and save (Systems.properties.sleep), refused while wanted or on a mission
+  function propertySleep(m) {
+    var S = GTP.Systems, sp = S && S.properties, g = game(), res = null;
+    var why = saveBlocker(g);
+    if (why) { modalMsg(m, why, COL.amber); sfx('fail', 0.3); return; }
+    if (sp && typeof sp.sleep === 'function') res = call(sp.sleep, sp, [m.id], null);
+    else if (g && g.saveSlot) res = { ok: !!call(g.saveSlot, g, [g.activeSlot || 1, { reason: 'safehouse' }], false) };
+    if (res && res.ok) { closeModal(); toast('Slept six hours. Saved.'); return; }
+    var r = res && res.reason;
+    modalMsg(m, r === 'wanted' ? 'Lose the heat before you sleep.' : r === 'mission' ? 'Finish the mission first.' : 'Could not save.', COL.red); sfx('fail', 0.3);
+  }
   function propertyBuy(m) {
     var d = propertyDef(m.id), S = GTP.Systems, sp = S && S.properties, res = null, p = player();
-    if (propertyOwned(m.id)) { modalMsg(m, 'You already own it. The HOA has noticed.', COL.muted); return; }
+    if (propertyOwned(m.id) || m.bought) { if (d.kind === 'safehouse') propertySleep(m); else modalMsg(m, 'You already own it. The HOA has noticed.', COL.muted); return; }
+    if (d.locked) { modalMsg(m, 'NOT ON THE MARKET YET.' + (d.unlock && d.unlock.mission ? ' Unlocks after "' + missionTitle(d.unlock.mission) + '".' : ''), COL.amber); sfx('fail', 0.3); return; }
     if (S && typeof S.buyProperty === 'function') res = call(S.buyProperty, S, [m.id], null);
     else if (sp && typeof sp.buy === 'function') res = call(sp.buy, sp, [m.id], null);
     var ok = res === true || (res && res.ok);
-    if (res != null && !ok) { modalMsg(m, res && res.reason === 'funds' ? 'NOT ENOUGH CASH.' : 'The seller "has other offers".', COL.red); sfx('fail', 0.3); return; }
+    if (res != null && !ok) {
+      var r = res && res.reason, need = res && res.need;
+      modalMsg(m, r === 'money' || r === 'funds' ? 'NOT ENOUGH CASH.' + (need ? ' Need ' + U.fmtMoney(need) + ' more.' : '') : r === 'mission' ? 'Not during a mission. The seller wants your full attention.' : r === 'locked' ? 'NOT ON THE MARKET YET.' : r === 'owned' ? 'You already own it.' : 'The seller "has other offers".', COL.red);
+      sfx('fail', 0.3); return;
+    }
     if (res == null) {
       if (!payMoney(d.price || 0)) { modalMsg(m, 'NOT ENOUGH CASH. Need ' + U.fmtMoney((d.price || 0) - (p.money | 0)) + ' more.', COL.red); sfx('fail', 0.3); return; }
       p.properties = p.properties && typeof p.properties === 'object' && !Array.isArray(p.properties) ? p.properties : {}; p.properties[m.id] = true;
@@ -4981,9 +5496,9 @@
     ctx.save(); ctx.translate(x + pw - px(70), y + px(40)); ctx.rotate(0.35); ctx.fillStyle = owned || m.bought ? COL.lime : COL.red; ctx.fillRect(-px(70), -px(12), px(140), px(24)); txt(ctx, owned || m.bought ? 'OWNED' : 'FOR SALE', 0, px(5), { font: F(12, '900'), color: '#0b1020', align: 'center', outline: false }); ctx.restore();
     var ty = y + ah + px(48);
     txt(ctx, String(d.name || m.id).toUpperCase(), x + px(22), ty, { font: F(22, '900', FONT_DISPLAY), color: COL.ink, outline: false, maxW: pw - px(44) });
-    var dist = d.district || d.area || '';
+    var dist = propertyDistrict(d);
     txt(ctx, (dist ? String(dist) + '  ·  ' : '') + (d.kind ? String(d.kind).toUpperCase() : 'PROPERTY'), x + px(22), ty + px(20), { font: F(10, 'bold'), color: COL.cyan, outline: false });
-    var facts = [['PRICE', U.fmtMoney(d.price || 0), p && p.money >= (d.price || 0) ? COL.lime : COL.red], ['INCOME', d.income ? U.fmtMoney(d.income) + ' / day' : '—', COL.ink], ['GARAGE', d.garage != null ? d.garage + ' car' + (d.garage === 1 ? '' : 's') : '—', COL.ink]];
+    var facts = [[owned || m.bought ? 'PAID' : 'PRICE', d.price ? U.fmtMoney(d.price) : 'FREE', owned || m.bought || (p && p.money >= (d.price || 0)) ? COL.lime : COL.red], ['INCOME', d.income ? U.fmtMoney(d.income) + ' / day' : '—', COL.ink], ['GARAGE', d.garage != null ? d.garage + ' car' + (d.garage === 1 ? '' : 's') : '—', COL.ink]];
     var fw = (pw - px(44)) / 3;
     for (var i = 0; i < facts.length; i++) {
       var fx = x + px(22) + i * fw;
@@ -4991,54 +5506,83 @@
       txt(ctx, facts[i][0], fx + px(10), ty + px(50), { font: F(8, 'bold'), color: COL.muted, outline: false });
       txt(ctx, facts[i][1], fx + px(10), ty + px(74), { font: F(14, '900', FONT_DISPLAY), color: facts[i][2], outline: false, maxW: fw - px(24) });
     }
-    var desc = d.desc || d.description || d.flavor || (d.save !== false ? 'A safehouse: the bed saves your game, the garage keeps your ride.' : 'A business that pays out every game day. Allegedly.');
+    var desc = d.flavor || d.desc || d.description || (d.kind === 'safehouse' ? 'A safehouse: the bed saves your game, the garage keeps your ride.' : 'A business that pays out every game day. Allegedly.');
+    if (d.locked && !owned) desc = 'Not on the market yet' + (d.unlock && d.unlock.mission ? ': unlocks after "' + missionTitle(d.unlock.mission) + '". ' : '. ') + desc;
     var dl = wrap(ctx, desc, F(12, '', FONT_TEXT), pw - px(44));
     for (i = 0; i < Math.min(3, dl.length); i++) txt(ctx, dl[i], x + px(22), ty + px(106) + i * px(16), { font: F(12, '', FONT_TEXT), color: COL.muted, outline: false });
     var bw = px(180), bx = x + pw - bw - px(22), byy = y + ph - px(48);
-    button(ctx, bx, byy, bw, px(34), owned || m.bought ? 'OWNED' : 'BUY  ' + glyph('confirm'), { color: COL.lime, disabled: owned || m.bought, sel: m.flash > 0, fn: function () { propertyBuy(m); }, id: 'prop-buy' });
+    var sleeper = (owned || m.bought) && d.kind === 'safehouse';
+    button(ctx, bx, byy, bw, px(34), sleeper ? 'SLEEP & SAVE  ' + glyph('confirm') : owned || m.bought ? 'OWNED' : d.locked ? 'LOCKED' : 'BUY  ' + glyph('confirm'), { color: sleeper ? COL.cyan : COL.lime, disabled: !sleeper && (owned || m.bought || d.locked), sel: m.flash > 0, fn: function () { propertyBuy(m); }, id: 'prop-buy' });
     button(ctx, x + px(22), byy, px(110), px(34), 'BACK  ' + glyph('cancel'), { color: COL.muted, fn: closeModal, id: 'prop-back' });
     if (m.msgT > 0 && m.msg) txt(ctx, m.msg.text, x + pw / 2, byy - px(10), { font: F(11, 'bold'), color: m.msg.color, align: 'center', outline: false, maxW: pw - px(40) });
   }
   function propertyInput(In) { var m = ui.modal; if (menuBack(In)) { closeModal(); return true; } if (In.pressed('confirm')) propertyBuy(m); return true; }
 
   // ------------------------------------------------------- the heist board ----
-  // heist:board {missionId}: a corkboard with the approach cards and the crew (driver, hacker, muscle) as pinned
-  // polaroids, each with a cut; the estimated take updates live. CONFIRM emits heist:plan {approach, crew:[castIds],
-  // missionId}. Data: the parity mission's `heist` block ({approaches, roles, take}), else built-in defaults.
+  // heist:board {missionId, approaches:[{id,name,hostiles,payout,wanted,line}], crew:[{id,name,cut,perk}], mission} comes
+  // from the story (GTP.Heist): its ids are the ones heist:plan must carry back, so the payload is authoritative. The
+  // content's parity.heists.<id> only enriches it (an approach's pitch, a crew member's role and pitch, the board title).
+  // A corkboard: approach index cards, the crew as polaroids (toggle up to four), the job's pay after the cuts on a sticky
+  // note. CONFIRM emits heist:plan {approach, crew:[ids], missionId}.
   var HEIST_DEFAULT = {
-    take: 240000,
     approaches: [
-      { id: 'quiet', name: 'The Quiet Take', desc: 'In through the loading dock with a clipboard. Nobody questions a clipboard.', mult: 1.0, risk: 'LOW', color: '#2ee6ff' },
-      { id: 'loud', name: 'Full Volume', desc: 'Front door, megaphones, a live stream. Faster, louder, more cruisers.', mult: 1.3, risk: 'HIGH', color: '#ff3b30' },
-      { id: 'panel', name: 'The Fake Panel', desc: 'Book a debate in the building, walk out during the Q&A with the goods.', mult: 1.15, risk: 'MEDIUM', color: '#ffbe3c' }
+      { id: 'quiet', name: 'The Quiet Take', hostiles: 0.6, payout: 1.0, wanted: 2, line: 'In through the loading dock, out before the panel ends.' },
+      { id: 'loud', name: 'The Loud Take', hostiles: 1.5, payout: 1.3, wanted: 4, line: 'Through the front door, on air, with a megaphone.' }
     ],
-    roles: [
-      { id: 'driver', name: 'Driver', options: [{ id: 'gus', cut: 0.08, skill: 0.75 }, { id: 'kip', cut: 0.02, skill: 0.3 }, { id: 'sloane', cut: 0.12, skill: 0.9 }] },
-      { id: 'hacker', name: 'Hacker', options: [{ id: 'freshman', cut: 0.05, skill: 0.7 }, { id: 'moonsworth', cut: 0.14, skill: 0.85 }, { id: 'kip', cut: 0.02, skill: 0.2 }] },
-      { id: 'muscle', name: 'Muscle', options: [{ id: 'roz', cut: 0.07, skill: 0.65 }, { id: 'thug', cut: 0.04, skill: 0.45 }, { id: 'cop', cut: 0.1, skill: 0.8 }] }
-    ]
+    crew: [{ id: 'gus', name: 'Gus', cut: 0.1, perk: 'driver' }, { id: 'roz', name: 'Roz', cut: 0.08, perk: 'crowd' }, { id: 'kip', name: 'Kip', cut: 0.02, perk: 'hacker' }]
   };
-  function heistDef(missionId) {
-    var P = parity(), pm = findById(P.missions, missionId), h = (pm && pm.heist) || (P.heists && (P.heists[missionId] || findById(P.heists, missionId))) || null;
-    var out = Object.assign({}, HEIST_DEFAULT, h || {});
-    out.approaches = asList(out.approaches); out.roles = asList(out.roles).map(function (r) { return Object.assign({}, r, { options: asList(r.options).map(function (o) { return typeof o === 'string' ? { id: o, cut: 0.05, skill: 0.5 } : o; }) }); });
+  var HEIST_MAX_CREW = 4;
+  function heistDef(src) {
+    src = src || {};
+    var P = parity(), H = GTP.Heist, ph = null, hs = asList(P.heists);
+    for (var i = 0; i < hs.length; i++) if (hs[i] && (hs[i].missions || []).indexOf(src.missionId) >= 0) ph = hs[i];
+    var aps = asList(src.approaches).length ? asList(src.approaches) : (H && H.approaches ? H.approaches() : HEIST_DEFAULT.approaches);
+    var crew = asList(src.crew).length ? asList(src.crew) : (H && H.crewList ? H.crewList() : HEIST_DEFAULT.crew);
+    var pa = ph ? asList(ph.approaches) : [], pc = ph ? asList(ph.crew) : [], roles = ph ? asList(ph.roles) : [];
+    var COLS = ['#2ee6ff', '#ff3b30', '#ffbe3c', '#b06bff'];
+    var out = {
+      title: (ph && ph.board && ph.board.title) || String(missionTitle(src.missionId) || 'THE JOB').toUpperCase(),
+      note: (ph && ph.board && (ph.board.note || ph.board.subtitle)) || 'Pick an approach, pick a crew. The string is decorative.',
+      approaches: aps.map(function (a, k) {
+        var e = findById(pa, a.id) || {}, hm = a.hostiles != null ? a.hostiles : (e.guardsMul != null ? e.guardsMul : 1);
+        return { id: a.id, name: a.name || e.name || a.id, desc: a.line || e.pitch || a.desc || '', mult: a.payout != null ? a.payout : (e.payoutMul != null ? e.payoutMul : (a.mult || 1)),
+          wanted: a.wanted != null ? a.wanted : e.wanted, risk: hm < 0.9 ? 'LOW' : hm < 1.2 ? 'MEDIUM' : 'HIGH', color: a.color || COLS[k % COLS.length] };
+      }),
+      crew: crew.map(function (c) {
+        var id = c.id || c.castId, e = null;
+        for (var j = 0; j < pc.length; j++) if (pc[j].castId === id) e = pc[j];
+        var role = e && findById(roles, e.role);
+        return { id: id, name: c.name || castName(id), cut: c.cut != null ? c.cut : (e ? e.cut : 0), role: String((role && role.name) || c.perk || (e && e.role) || ''), pitch: (e && e.pitch) || c.line || '' };
+      })
+    };
+    var job = findById(P.missions, (ph && ph.missions && ph.missions[ph.missions.length - 1]) || 'h03_job');
+    out.base = (job && job.reward) || (src.mission && src.mission.reward) || 2500;
     return out;
   }
   function openHeistBoard(e) {
-    var id = e && e.missionId, d = heistDef(id);
-    return openModal('heist', { missionId: id, approach: 0, picks: d.roles.map(function () { return 0; }), row: 0 });
+    e = e || {};
+    var d = heistDef(e), plan = GTP.Heist && GTP.Heist.plan ? GTP.Heist.plan() : null, ai = 0, picks = {};
+    if (plan) { d.approaches.forEach(function (a, k) { if (a.id === plan.approach) ai = k; }); (plan.crew || []).forEach(function (id) { picks[id] = true; }); }
+    else if (d.crew[0]) picks[d.crew[0].id] = true;
+    var r = openModal('heist', { missionId: e.missionId, src: e, def: d, approach: ai, picks: picks, cursor: 0, row: 0 });
+    if (r) e.handled = true;
+    return r;
   }
-  function heistTake(m, d) {
-    var ap = d.approaches[m.approach] || { mult: 1 }, cut = 0, skill = 0;
-    d.roles.forEach(function (r, i) { var o = r.options[m.picks[i]] || {}; cut += o.cut || 0; skill += o.skill || 0.5; });
-    skill /= Math.max(1, d.roles.length);
-    var gross = Math.round((d.take || 200000) * (ap.mult || 1) * (0.7 + 0.5 * skill));
-    return { gross: gross, cut: cut, net: Math.round(gross * (1 - cut)), skill: skill };
+  function heistCrew(m) { return m.def.crew.filter(function (c) { return m.picks[c.id]; }); }
+  function heistTake(m) {
+    var d = m.def, ap = d.approaches[m.approach] || { mult: 1 }, cut = 0;
+    heistCrew(m).forEach(function (c) { cut += c.cut || 0; });
+    var gross = Math.round(d.base * (ap.mult || 1));
+    return { gross: gross, cut: cut, net: Math.max(0, Math.round(gross * (1 - Math.min(0.6, cut)))), n: heistCrew(m).length };
+  }
+  function heistToggle(m, k) {
+    var c = m.def.crew[k]; if (!c) return;
+    if (!m.picks[c.id] && heistCrew(m).length >= HEIST_MAX_CREW) { toast('Four is a crew. Five is a panel.'); sfx('error', 0.3); return; }
+    m.picks[c.id] = !m.picks[c.id]; sfx('ui', 0.2);
   }
   function heistConfirm(m) {
-    var d = heistDef(m.missionId), ap = d.approaches[m.approach];
-    var crew = d.roles.map(function (r, i) { var o = r.options[m.picks[i]]; return o ? o.id : null; }).filter(Boolean);
-    GTP.Events.emit('heist:plan', { approach: ap ? ap.id : null, crew: crew, missionId: m.missionId, take: heistTake(m, d).net });
+    var ap = m.def.approaches[m.approach];
+    GTP.Events.emit('heist:plan', { approach: ap ? ap.id : null, crew: heistCrew(m).map(function (c) { return c.id; }), missionId: m.missionId, take: heistTake(m).net });
     toast('Plan pinned. Nobody touch the string.');
     sfx('cash', 0.5);
     closeModal();
@@ -5056,80 +5600,93 @@
     ctx.restore();
   }
   function drawHeist(ctx) {
-    var m = ui.modal, d = heistDef(m.missionId), tk = heistTake(m, d);
+    var m = ui.modal, d = m.def, tk = heistTake(m), i, k;
     ctx.fillStyle = 'rgba(4,5,10,0.6)'; ctx.fillRect(0, 0, W, H);
     var pw = Math.min(px(1080), W - safe.l - safe.r), ph = Math.min(px(660), H - safe.t - safe.b), x = (W - pw) / 2, y = (H - ph) / 2, narrow = pw < px(760);
     // the cork
     var cg = ctx.createLinearGradient(x, y, x + pw, y + ph); cg.addColorStop(0, '#9c6b3e'); cg.addColorStop(1, '#7d5230');
     panel(ctx, x, y, pw, ph, px(10), cg, '#4a2e14', px(8));
     ctx.save(); rr(ctx, x, y, pw, ph, px(10)); ctx.clip();
-    var r = 7; for (var i = 0; i < 260; i++) { r = (r * 9301 + 49297) % 233280; var dx = x + (r / 233280) * pw; r = (r * 9301 + 49297) % 233280; var dy = y + (r / 233280) * ph; ctx.fillStyle = 'rgba(40,20,5,0.25)'; ctx.fillRect(dx, dy, px(2), px(2)); }
+    var r = 7; for (i = 0; i < 260; i++) { r = (r * 9301 + 49297) % 233280; var dx = x + (r / 233280) * pw; r = (r * 9301 + 49297) % 233280; var dy = y + (r / 233280) * ph; ctx.fillStyle = 'rgba(40,20,5,0.25)'; ctx.fillRect(dx, dy, px(2), px(2)); }
     ctx.restore();
     // the title card
     ctx.save(); ctx.translate(x + px(24), y + px(18)); ctx.rotate(-0.015);
     ctx.fillStyle = '#f4efe4'; ctx.fillRect(0, 0, Math.min(px(420), pw - px(48)), px(58));
-    txt(ctx, 'THE PLAN: ' + String(missionTitle(m.missionId) || 'THE JOB').toUpperCase(), px(14), px(26), { font: F(15, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: Math.min(px(400), pw - px(70)) });
-    txt(ctx, 'Pick an approach, pick a crew. The string is decorative.', px(14), px(46), { font: F(10, 'italic', FONT_TEXT), color: '#555', outline: false, maxW: Math.min(px(400), pw - px(70)) });
+    txt(ctx, 'THE PLAN: ' + d.title, px(14), px(26), { font: F(15, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: Math.min(px(400), pw - px(70)) });
+    txt(ctx, d.note, px(14), px(46), { font: F(10, 'italic', FONT_TEXT), color: '#555', outline: false, maxW: Math.min(px(400), pw - px(70)) });
     ctx.restore();
+    // the sticky note's column on wide boards; the cards and the crew stay left of it
+    var sw = narrow ? pw - px(48) : px(230), leftW = narrow ? pw - px(48) : pw - sw - px(72);
     // approaches: index cards
-    var ay = y + px(96), aw = narrow ? (pw - px(48) - (d.approaches.length - 1) * px(8)) / d.approaches.length : Math.min(px(220), (pw * 0.62) / d.approaches.length - px(14)), ah = narrow ? px(128) : px(150);
+    var na = Math.max(1, d.approaches.length), gap = narrow ? px(8) : px(14), ay = y + px(96);
+    var aw = Math.min(px(230), (leftW - (na - 1) * gap) / na), ah = narrow ? px(132) : px(156);
     txt(ctx, 'APPROACH', x + px(24), ay - px(6), { font: F(11, '900'), color: '#fff3d6', outline: 'rgba(0,0,0,0.4)' });
     for (i = 0; i < d.approaches.length; i++) {
-      var ap = d.approaches[i], ax = x + px(24) + i * (aw + (narrow ? px(8) : px(14))), on = i === m.approach, foc = m.row === 0 && on;
+      var ap = d.approaches[i], ax = x + px(24) + i * (aw + gap), on = i === m.approach, foc = m.row === 0 && on;
       ctx.save(); ctx.translate(ax + aw / 2, ay + ah / 2); ctx.rotate((i % 2 ? 1 : -1) * 0.02); ctx.translate(-aw / 2, -ah / 2);
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = on ? '#fffbe8' : '#ece4d0'; ctx.fillRect(0, 0, aw, ah); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-      ctx.fillStyle = ap.color || COL.cyan; ctx.fillRect(0, 0, aw, px(6));
-      var tl = wrap(ctx, String(ap.name || ap.id).toUpperCase(), F(narrow ? 10 : 12, '900', FONT_DISPLAY), aw - px(26));
-      for (var k = 0; k < Math.min(2, tl.length); k++) txt(ctx, tl[k], px(8), px(24) + k * px(14), { font: F(narrow ? 10 : 12, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: aw - px(16) });
-      var dfont = F(narrow ? 9 : 10, '', FONT_TEXT), dl = wrap(ctx, ap.desc || '', dfont, aw - px(16)), dy0 = px(30) + Math.min(2, tl.length) * px(14), maxL = Math.max(1, Math.floor((ah - dy0 - px(22)) / px(13)));
+      ctx.fillStyle = ap.color; ctx.fillRect(0, 0, aw, px(6));
+      var tfont = F(narrow ? 10 : 12, '900', FONT_DISPLAY), tl = wrap(ctx, String(ap.name).toUpperCase(), tfont, aw - px(30));
+      for (k = 0; k < Math.min(2, tl.length); k++) txt(ctx, tl[k], px(8), px(24) + k * px(14), { font: tfont, color: '#20202a', outline: false, maxW: aw - px(30) });
+      var dfont = F(narrow ? 9 : 10, '', FONT_TEXT), dl = wrap(ctx, ap.desc, dfont, aw - px(16)), dy0 = px(30) + Math.min(2, tl.length) * px(14), maxL = Math.max(1, Math.floor((ah - dy0 - px(24)) / px(13)));
       for (k = 0; k < Math.min(maxL, dl.length); k++) txt(ctx, k === maxL - 1 && dl.length > maxL ? dl[k].replace(/\s*\S*$/, '…') : dl[k], px(8), dy0 + k * px(13), { font: dfont, color: '#444', outline: false });
-      txt(ctx, 'RISK: ' + (ap.risk || '?'), px(10), ah - px(10), { font: F(9, 'bold'), color: ap.risk === 'HIGH' ? '#b3121f' : '#2a5a2a', outline: false });
+      var foot = 'RISK ' + ap.risk + (ap.wanted ? '  ·  ' + '★'.repeat(Math.min(6, ap.wanted)) : '') + '  ·  ×' + (+ap.mult).toFixed(2).replace(/\.?0+$/, '');
+      txt(ctx, foot, px(8), ah - px(10), { font: F(9, 'bold'), color: ap.risk === 'HIGH' ? '#b3121f' : ap.risk === 'MEDIUM' ? '#8a5a00' : '#2a5a2a', outline: false, maxW: aw - px(14) });
       if (on) { ctx.strokeStyle = foc ? COL.pink : '#20202a'; ctx.lineWidth = px(foc ? 4 : 2); ctx.strokeRect(-px(2), -px(2), aw + px(4), ah + px(4)); txt(ctx, '✔', aw - px(14), px(26), { font: F(16, '900'), color: '#b3121f', align: 'center', outline: false }); }
       ctx.fillStyle = '#2ee6ff'; ctx.beginPath(); ctx.arc(aw / 2, px(3), px(5), 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       hit(ax, ay, aw, ah, (function (kk) { return function () { m.approach = kk; m.row = 0; sfx('ui', 0.2); }; })(i), 'heist-ap-' + i);
     }
-    // crew polaroids, one row per role
-    var cy = ay + ah + px(36), availH = y + ph - px(60) - cy, rowH = Math.min(px(76) * 1.24 + px(30), availH / Math.max(1, d.roles.length)), pwid = Math.max(px(40), (rowH - px(30)) / 1.24);
-    if (narrow) pwid = Math.min(pwid, (pw * 0.55 - px(60)) / 3);
-    for (var ri = 0; ri < d.roles.length; ri++) {
-      var role = d.roles[ri], ry = cy + ri * rowH, rowOn = m.row === ri + 1;
-      if (ry + rowH > y + ph - px(10) && ri > 0) { /* small screens: rows overlap the summary less than they clip */ }
-      txt(ctx, String(role.name || role.id).toUpperCase(), x + px(24), ry + px(4), { font: F(11, '900'), color: rowOn ? '#fff' : '#fff3d6', outline: 'rgba(0,0,0,0.45)' });
-      for (var oi = 0; oi < role.options.length; oi++) {
-        var o = role.options[oi], ox = x + px(24) + oi * (pwid + px(narrow ? 12 : 22)), oy = ry + px(14), osel = m.picks[ri] === oi;
-        polaroid(ctx, o.id, ox, oy, pwid, osel && rowOn, (oi - 1) * 0.04, castName(o.id).split(' ')[0], Math.round((o.cut || 0) * 100) + '% CUT');
-        if (osel) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), x + pw * 0.78, y + px(150)); ctx.stroke(); }
-        hit(ox, oy, pwid, pwid * 1.24, (function (a, b) { return function () { m.picks[a] = b; m.row = a + 1; sfx('ui', 0.2); }; })(ri, oi), 'heist-crew-' + ri + '-' + oi);
-      }
+    // the crew: polaroids in one row, toggled; the focused one's pitch underneath
+    var nc = Math.max(1, d.crew.length), cy = ay + ah + px(36), pitchH = px(34);
+    // where the strings end: the sticky note (right column on wide boards, bottom-left on narrow ones)
+    var noteAx = narrow ? x + px(24) + Math.min(pw - px(48), px(260)) / 2 : x + pw - sw / 2 - px(24), noteAy = narrow ? y + ph - px(64) - px(88) : y + px(116);
+    var sumH = narrow ? px(96) : 0, availH = y + ph - px(64) - cy - pitchH - sumH;
+    var pwid = Math.max(px(40), Math.min(px(134), (leftW - (nc - 1) * px(14)) / nc, availH / 1.24 - px(4)));
+    txt(ctx, 'CREW  ' + tk.n + '/' + HEIST_MAX_CREW, x + px(24), cy - px(10), { font: F(11, '900'), color: m.row === 1 ? '#fff' : '#fff3d6', outline: 'rgba(0,0,0,0.45)' });
+    for (i = 0; i < d.crew.length; i++) {
+      var c = d.crew[i], ox = x + px(24) + i * (pwid + px(14)), oy = cy, picked = !!m.picks[c.id], cf = m.row === 1 && m.cursor === i;
+      ctx.save(); if (!picked) ctx.globalAlpha = 0.6;
+      polaroid(ctx, c.id, ox, oy, pwid, cf, ((i % 3) - 1) * 0.04, String(c.name).split(' ')[0], Math.round((c.cut || 0) * 100) + '% CUT');
+      ctx.restore();
+      if (picked) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), noteAx, noteAy); ctx.stroke(); txt(ctx, '✔', ox + pwid - px(4), oy + px(12), { font: F(14, '900'), color: '#d7262e', align: 'center', outline: '#fff' }); }
+      if (c.role) txt(ctx, c.role.toUpperCase(), ox + pwid / 2, oy + pwid * 1.24 + px(12), { font: F(8, '900'), color: '#fff3d6', align: 'center', outline: 'rgba(0,0,0,0.5)', maxW: pwid + px(10) });
+      hit(ox, oy, pwid, pwid * 1.24, (function (kk) { return function () { m.row = 1; m.cursor = kk; heistToggle(m, kk); }; })(i), 'heist-crew-' + i);
     }
-    // the take summary (a sticky note) and CONFIRM
-    var sw = narrow ? Math.min(px(170), pw * 0.4) : px(230), sx = x + pw - sw - px(24), sy = y + (narrow ? px(96) + ah + px(30) : px(110));
-    if (narrow) sx = x + pw - sw - px(12);
-    ctx.save(); ctx.translate(sx + sw / 2, sy + px(80)); ctx.rotate(0.03); ctx.translate(-sw / 2, -px(80));
-    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = '#ffe873'; ctx.fillRect(0, 0, sw, px(160)); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    txt(ctx, 'EST. TAKE', px(14), px(26), { font: F(10, 'bold'), color: '#5a4a00', outline: false });
-    txt(ctx, U.fmtMoney(tk.net), px(14), px(56), { font: F(narrow ? 18 : 24, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: sw - px(20) });
-    txt(ctx, 'gross ' + U.fmtMoney(tk.gross) + '  ·  crew ' + Math.round(tk.cut * 100) + '%', px(14), px(76), { font: F(9, 'bold'), color: '#5a4a00', outline: false, maxW: sw - px(20) });
-    txt(ctx, 'CREW SKILL', px(14), px(100), { font: F(9, 'bold'), color: '#5a4a00', outline: false });
-    ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(px(14), px(106), sw - px(28), px(8)); ctx.fillStyle = '#2a5a2a'; ctx.fillRect(px(14), px(106), (sw - px(28)) * tk.skill, px(8));
+    var fc = d.crew[m.cursor];
+    if (fc && fc.pitch) {
+      var pl = wrap(ctx, fc.name + ': ' + fc.pitch, F(10, 'italic', FONT_TEXT), leftW);
+      for (k = 0; k < Math.min(2, pl.length); k++) txt(ctx, pl[k], x + px(24), cy + pwid * 1.24 + px(30) + k * px(13), { font: F(10, 'italic', FONT_TEXT), color: '#fff3d6', outline: 'rgba(0,0,0,0.5)' });
+    }
+    // the take (a sticky note) and CONFIRM
+    var sh = narrow ? px(84) : px(160), sx = narrow ? x + px(24) : x + pw - sw - px(24), sy = narrow ? y + ph - px(64) - sh - px(4) : y + px(110);
+    if (narrow) sw = Math.min(sw, px(260));
+    ctx.save(); ctx.translate(sx + sw / 2, sy + sh / 2); ctx.rotate(narrow ? -0.015 : 0.03); ctx.translate(-sw / 2, -sh / 2);
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = px(6); ctx.shadowOffsetY = px(3); ctx.fillStyle = '#ffe873'; ctx.fillRect(0, 0, sw, sh); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    txt(ctx, 'THE JOB PAYS', px(14), px(22), { font: F(10, 'bold'), color: '#5a4a00', outline: false });
+    txt(ctx, U.fmtMoney(tk.net), px(14), narrow ? px(50) : px(56), { font: F(narrow ? 18 : 24, '900', FONT_DISPLAY), color: '#20202a', outline: false, maxW: sw - px(20) });
+    txt(ctx, U.fmtMoney(tk.gross) + ' less crew ' + Math.round(Math.min(0.6, tk.cut) * 100) + '%', px(14), narrow ? px(70) : px(78), { font: F(9, 'bold'), color: '#5a4a00', outline: false, maxW: sw - px(20) });
+    if (!narrow) {
+      var apn = d.approaches[m.approach];
+      txt(ctx, 'HEAT', px(14), px(108), { font: F(9, 'bold'), color: '#5a4a00', outline: false });
+      txt(ctx, apn && apn.wanted ? '★'.repeat(Math.min(6, apn.wanted)) : '—', px(14), px(128), { font: F(14, '900'), color: '#b3121f', outline: false });
+      if (!tk.n) txt(ctx, 'No crew. Bold.', px(14), px(148), { font: F(9, 'italic', FONT_TEXT), color: '#5a4a00', outline: false });
+    }
     ctx.restore();
     var cbw = Math.min(px(230), pw - px(48)), cbx = x + pw - cbw - px(24), cby = y + ph - px(56);
-    button(ctx, cbx, cby, cbw, px(38), 'CONFIRM PLAN  ' + glyph('confirm'), { color: COL.pink, sel: m.row === d.roles.length + 1, fn: function () { heistConfirm(m); }, id: 'heist-confirm', font: F(13, '900') });
-    txt(ctx, (device() === 'gamepad' ? 'LS pick · A confirm · B back' : '↑ ↓ rows  ·  ← → choose  ·  Enter confirm  ·  Esc back'), x + px(24), y + ph - px(14), { font: F(10, 'bold'), color: '#fff3d6', outline: 'rgba(0,0,0,0.5)', maxW: pw - cbw - px(70) });
+    button(ctx, cbx, cby, cbw, px(38), 'CONFIRM PLAN  ' + glyph('confirm'), { color: COL.pink, sel: m.row === 2, fn: function () { heistConfirm(m); }, id: 'heist-confirm', font: F(13, '900') });
+    var help = device() === 'touch' ? 'Tap a card, tap the crew' : device() === 'gamepad' ? 'LS row · ← → pick · A toggle · B back' : '↑ ↓ rows  ·  ← → pick  ·  Enter toggle  ·  Esc back';
+    txt(ctx, help, x + px(24), y + ph - px(14), { font: F(10, 'bold'), color: '#fff3d6', outline: 'rgba(0,0,0,0.5)', maxW: pw - cbw - px(70) });
   }
   function heistInput(In) {
-    var m = ui.modal, d = heistDef(m.missionId), rows = d.roles.length + 2;
+    var m = ui.modal, d = m.def, rows = 3;
     if (menuBack(In)) { closeModal(); return true; }
     if (In.pressed('forward')) { m.row = (m.row - 1 + rows) % rows; sfx('ui', 0.15); }
     if (menuDown(In)) { m.row = (m.row + 1) % rows; sfx('ui', 0.15); }
     var dir = In.pressed('left') ? -1 : In.pressed('right') ? 1 : 0;
-    if (dir) {
-      if (m.row === 0) m.approach = (m.approach + dir + d.approaches.length) % d.approaches.length;
-      else if (m.row <= d.roles.length) { var r = d.roles[m.row - 1]; m.picks[m.row - 1] = (m.picks[m.row - 1] + dir + r.options.length) % r.options.length; }
-      sfx('ui', 0.15);
-    }
-    if (In.pressed('confirm')) { if (m.row === rows - 1) heistConfirm(m); else m.row = Math.min(rows - 1, m.row + 1); }
+    if (dir && m.row === 0 && d.approaches.length) { m.approach = (m.approach + dir + d.approaches.length) % d.approaches.length; sfx('ui', 0.15); }
+    if (dir && m.row === 1 && d.crew.length) { m.cursor = (m.cursor + dir + d.crew.length) % d.crew.length; sfx('ui', 0.15); }
+    if (In.pressed('confirm')) { if (m.row === 2) heistConfirm(m); else if (m.row === 1) heistToggle(m, m.cursor); else m.row = 1; }
     return true;
   }
 
@@ -5175,7 +5732,8 @@
   function drawPhoneStory(ctx, x, y, w, h) {
     var ch = chapterLabel(storyChapter()), card = nextStoryCard(), Ms = GTP.Missions, st = Ms && Ms.state, all = Ms && Ms.allMissions ? call(Ms.allMissions, Ms, [], []) : [];
     var ry = y - ui.pause.scroll, rows = [], p = player();
-    var done = st && st.completed ? st.completed.size : 0, total = all.length || 35;
+    var prog = GTP.Story && typeof GTP.Story.progress === 'function' ? call(GTP.Story.progress, GTP.Story, [], null) : null;   // the story chain only, not the side missions
+    var done = prog && prog.done != null ? prog.done : st && st.completed ? st.completed.size : 0, total = prog && prog.total ? prog.total : all.length || 35;
     // the chapter header with the story progress
     var hh = px(64);
     var hg = ctx.createLinearGradient(x, 0, x + w, 0); hg.addColorStop(0, 'rgba(232,181,58,0.24)'); hg.addColorStop(1, 'rgba(232,181,58,0.04)');
@@ -5250,8 +5808,10 @@
     if (!live) l = asList(parity().stocks);
     return (l || []).map(function (o) {
       var hist = o.history || o.hist || o.prices || [], price = o.price != null ? o.price : (hist.length ? hist[hist.length - 1] : (o.base || o.start || 0));
-      var prev = hist.length > 1 ? hist[hist.length - 2] : (o.prev != null ? o.prev : (o.open != null ? o.open : null)), chg = prev ? (price - prev) / prev : (o.change != null ? (Math.abs(o.change) > 1 ? o.change / 100 : o.change) : 0);
-      return { id: o.id || o.symbol || o.ticker, sym: String(o.symbol || o.ticker || o.id || '').toUpperCase(), name: o.name || o.company || '', price: +price || 0, change: chg, history: hist, shares: o.shares || o.owned || o.held || 0, avg: o.avg || o.cost || null, live: live, flavor: o.flavor || o.desc || '' };
+      // GTP.Systems.stocks.list(): {ticker, name, flavor, price, change (24 h, a fraction), history, qty, avg, value, gain}
+      var prev = hist.length > 1 ? hist[hist.length - 2] : (o.prev != null ? o.prev : (o.open != null ? o.open : null));
+      var chg = o.change != null ? (Math.abs(o.change) > 1 ? o.change / 100 : o.change) : prev ? (price - prev) / prev : 0;
+      return { id: o.ticker || o.id || o.symbol, sym: String(o.ticker || o.symbol || o.id || '').toUpperCase(), name: o.name || o.company || '', price: +price || 0, change: chg, history: hist, shares: o.qty != null ? o.qty : (o.shares || o.owned || o.held || 0), avg: o.avg || null, gain: o.gain, live: live, flavor: o.flavor || o.desc || '' };
     });
   }
   function stockTrade(row, n) {
@@ -5259,8 +5819,8 @@
     if (!row.live || !A) { toast('Market closed. The bell is "on order".'); return; }
     var fn = n > 0 ? A.buy : A.sell, res = typeof fn === 'function' ? call(fn, A, [row.id, Math.abs(n)], null) : null;
     var ok = res === true || (res && res.ok);
-    if (ok) { sfx('cash', 0.5); toast((n > 0 ? 'Bought ' : 'Sold ') + Math.abs(n) + ' ' + row.sym + ' at ' + U.fmtMoney(row.price)); }
-    else toast(res && res.reason === 'funds' ? 'Not enough cash for ' + Math.abs(n) + ' ' + row.sym + '.' : res && (res.reason === 'shares' || res.reason === 'none') ? 'You do not own that many ' + row.sym + '.' : 'Trade refused' + (res && res.reason ? ' (' + res.reason + ')' : '') + '.');
+    if (ok) toast((n > 0 ? 'Bought ' : 'Sold ') + Math.abs(n) + ' ' + row.sym + ' at ' + U.fmtMoney(row.price) + (res && res.total ? '  (' + U.fmtMoney(res.total) + ' with the fee)' : ''));   // Systems plays the register
+    else toast(res && (res.reason === 'money' || res.reason === 'funds') ? 'Not enough cash for ' + Math.abs(n) + ' ' + row.sym + (res.need ? ' (' + U.fmtMoney(res.need) + ' short)' : '') + '.' : res && (res.reason === 'shares' || res.reason === 'none' || res.reason === 'qty') ? 'You do not own that many ' + row.sym + '.' : 'Trade refused' + (res && res.reason ? ' (' + res.reason + ')' : '') + '.');
   }
   function sparkline(ctx, hist, x, y, w, h, col) {
     if (!hist || hist.length < 2) { ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2); ctx.stroke(); return; }
@@ -5313,8 +5873,11 @@
   // ------------------------------------------------------- phone: STATS extras ----
   // GTP.Systems.stats() -> [{label, value}] | [[label, value]] | {sections:[{title, rows}]}; the achievements list from
   // GTP.Content.parity.achievements with Systems.unlocked(id) / Systems.achievements.unlocked (else the toasts seen).
+  function hasStatsPage() { var S = GTP.Systems; return !!(S && typeof S.statsPage === 'function'); }
   function systemsStats() {
-    var S = GTP.Systems, st = S ? (typeof S.stats === 'function' ? call(S.stats, S, [], null) : S.stats) : null;
+    var S = GTP.Systems;
+    if (hasStatsPage()) return asList(call(S.statsPage, S, [], [])).map(function (s) { return { title: s.title || s.id || '', rows: normRows(s.rows) }; });   // [{id, title, rows:[{label, value}]}]
+    var st = S ? (typeof S.stats === 'function' ? call(S.stats, S, [], null) : S.stats) : null;
     if (!st) return [];
     if (st.sections) return asList(st.sections).map(function (s) { return { title: s.title || '', rows: normRows(s.rows) }; });
     return [{ title: 'CAREER', rows: normRows(st) }];
@@ -5341,21 +5904,24 @@
         ry += rh;
       }
     }
-    var ach = asList(parity().achievements);
+    // GTP.Systems.achievements.list() {id, name, desc, unlocked, progress, goal}; a def with hidden: true reads ??? until unlocked
+    var SA = GTP.Systems && GTP.Systems.achievements, ach = SA && typeof SA.list === 'function' ? asList(call(SA.list, SA, [], [])) : asList(parity().achievements);
+    ach = ach.map(function (a) { var d = SA && SA.def ? call(SA.def, SA, [a.id], null) : null; return Object.assign({}, a, { secret: a.secret || a.hidden || !!(d && (d.hidden || d.secret)) }); });
     if (ach.length) {
-      var got = ach.filter(function (a) { return achUnlocked(a.id); }).length;
+      var got = ach.filter(function (a) { return a.unlocked != null ? !!a.unlocked : achUnlocked(a.id); }).length;
       ry += px(14);
       if (ry > y - rh && ry < y + h + rh) { txt(ctx, 'ACHIEVEMENTS  ' + got + ' / ' + ach.length, x, ry, { font: F(10, 'bold'), color: COL.gold, outline: false }); }
       ry += px(10);
       var cols = w > px(440) ? 2 : 1, cw = (w - (cols - 1) * px(8)) / cols, ah = px(40);
       for (i = 0; i < ach.length; i++) {
-        var a = ach[i], on = achUnlocked(a.id), ax = x + (i % cols) * (cw + px(8)), ay = ry + Math.floor(i / cols) * (ah + px(6));
+        var a = ach[i], on = a.unlocked != null ? !!a.unlocked : achUnlocked(a.id), ax = x + (i % cols) * (cw + px(8)), ay = ry + Math.floor(i / cols) * (ah + px(6));
         if (ay + ah > y && ay < y + h) {
           panel(ctx, ax, ay, cw, ah, px(8), on ? 'rgba(232,181,58,0.12)' : 'rgba(255,255,255,0.03)', on ? 'rgba(232,181,58,0.5)' : 'rgba(255,255,255,0.08)');
           ctx.fillStyle = on ? COL.gold : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(ax + px(20), ay + ah / 2, px(12), 0, Math.PI * 2); ctx.fill();
           trophy(ctx, ax + px(20), ay + ah / 2, px(16), on ? '#2a1c04' : 'rgba(0,0,0,0.4)');
           txt(ctx, on || !a.secret ? (a.name || a.id) : '???', ax + px(40), ay + px(17), { font: F(11, 'bold'), color: on ? COL.ink : COL.muted, outline: false, maxW: cw - px(48) });
           txt(ctx, on || !a.secret ? (a.desc || a.description || '') : 'Secret.', ax + px(40), ay + px(31), { font: F(9, '', FONT_TEXT), color: COL.muted, outline: false, maxW: cw - px(48) });
+          if (!on && !a.secret && a.goal && a.progress > 0) { ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(ax + px(40), ay + ah - px(5), cw - px(52), px(2)); ctx.fillStyle = COL.gold; ctx.fillRect(ax + px(40), ay + ah - px(5), (cw - px(52)) * clamp01(a.progress), px(2)); }
         }
       }
       ry += Math.ceil(ach.length / cols) * (ah + px(6));
@@ -5372,22 +5938,26 @@
     Ev.on('interior:fade', interiorFade);
     Ev.on('interior:enter', interiorEnter);
     Ev.on('interior:exit', function () { ui.interior = null; if (ui.modal && ui.modal.kind === 'armory') closeModal(); ui.range = null; });
-    Ev.on('armory:inspect', function (e) { var st = ui.interior && ui.interior.store; if (ui.modal && ui.modal.kind === 'armory') { var S2 = armoryState(); for (var i = 0; i < S2.rows.length; i++) if ((S2.rows[i].weaponId || S2.rows[i].id) === (e && e.weaponId)) { ui.modal.row = i; ui.modal.isel = 0; ui.modal.focus = 1; } return; } openArmory(e && e.storeId || (st && (st.id || st)) || null, e && e.weaponId); });
+    Ev.on('armory:inspect', function (e) { var st = ui.interior && ui.interior.store; if (ui.modal && ui.modal.kind === 'armory') { var S2 = armoryState(); for (var i = 0; i < S2.rows.length; i++) if ((S2.rows[i].weaponId || S2.rows[i].id) === (e && e.weaponId)) { ui.modal.row = i; ui.modal.isel = 0; ui.modal.focus = 1; } return; } openArmory((e && (e.store || e.storeId)) || (st && (st.id || st)) || null, e && e.weaponId); });
     Ev.on('range:start', rangeStart);
     Ev.on('range:hit', rangeHit);
     Ev.on('range:end', rangeEnd);
-    Ev.on('clothing:open', function () { openWardrobe('clothing'); });
-    Ev.on('barber:open', function () { openWardrobe('barber'); });
-    Ev.on('modshop:open', openModShop);
+    Ev.on('clothing:open', function (e) { openWardrobe('clothing', e); });
+    Ev.on('barber:open', function (e) { openWardrobe('barber', e); });
+    Ev.on('modshop:open', function (e) { if (ui.modal && ui.modal.kind === 'modshop' && e && ui.modal.vehicle === e.vehicle) return; openModShop(e); });
+    Ev.on('modshop:close', function () { if (ui.modal && ui.modal.kind === 'modshop') closeModal(); });
     Ev.on('property:open', openProperty);
     Ev.on('heist:board', openHeistBoard);
     Ev.on('boss:phase', bossPhase);
+    Ev.on('boss:start', bossStart);
+    Ev.on('boss:end', bossEnd);
     Ev.on('boss:defeated', bossDefeated);
     Ev.on('special:state', specialState);
     Ev.on('achievement', achievementToast);
     Ev.on('golf:start', golfStart);
     Ev.on('golf:end', golfEnd);
-    Ev.on('vehicle:enter', function (e) { var p = player(), v = e && (e.vehicle || e); if (!v || (e && e.ped && e.ped !== p) || (e && e.driver && e.driver !== p)) return; ui.vehName = { name: vehicleName(v), sub: v.mods && v.mods.engine ? 'TUNED' : '', t: 0 }; });
+    Ev.on('golf:hole', golfHole);
+    Ev.on('vehicle:enter', function (e) { var p = player(), v = e && (e.vehicle || e); if (!v || (e && e.ped && e.ped !== p) || (e && e.driver && e.driver !== p)) return; ui.carsEntered = (ui.carsEntered | 0) + 1; ui.vehName = { name: vehicleName(v), sub: v.mods && v.mods.engine ? 'TUNED' : '', t: 0 }; });
     Ev.on('vehicle:exit', function () { ui.vehName = null; });
     Ev.on('cover:enter', function (e) { ui.cover.on = true; ui.cover.low = !!(e && (e.low || e.high === false)); });
     Ev.on('cover:exit', function () { ui.cover.on = false; });
@@ -5399,11 +5969,30 @@
     if (ui.chapter) { ui.chapter.t += dt; if (ui.chapter.t > ui.chapter.dur) ui.chapter = null; }
     if (ui.placeCard) { ui.placeCard.t += dt; if (ui.placeCard.t > 3.6) ui.placeCard = null; }
     if (ui.vehName) { ui.vehName.t += dt; if (ui.vehName.t > 3) ui.vehName = null; }
-    // the aim tutor: counts aims, retires after three or 40 s on screen
+    // the aim tutor: counts aims, retires after the first aim or 15 s on screen
     var CB = GTP.Combat, aiming = !!(CB && CB.aim && CB.aim.active);
     if (aiming && !ui.aimTutor.was) ui.aimTutor.n++;
+    var pl = player(), sh = pl && pl.stats ? pl.stats.shots | 0 : 0;   // a shot from the hip retires the tutor too
+    if (ui.aimTutor.shots0 == null) ui.aimTutor.shots0 = sh; else if (sh > ui.aimTutor.shots0) ui.aimTutor.n = Math.max(ui.aimTutor.n, 1);
     ui.aimTutor.was = aiming;
     if (ui.prompts && ui.prompts.indexOf('AIM') >= 0) ui.aimTutor.shown += dt;
+    hintActed(dt, aiming);
+  }
+  // a GTP.Hints card leaves a second after the player has done what it asks (it otherwise stays its full six seconds:
+  // the coordinator's run saw "Hold the right mouse button to aim" linger after the player had aimed)
+  function hintActed(dt, aiming) {
+    var Hs = GTP.Hints, h = Hs && Hs.current ? Hs.current() : null, In = GTP.Input, p = player(), g = game();
+    if (!h || !Hs.dismiss || !p || !g) { ui.hintDone = null; return; }
+    var shots = (p.stats && p.stats.shots) | 0;
+    if (!ui.hintDone || ui.hintDone.id !== h.id) ui.hintDone = { id: h.id, acted: false, shots: shots };
+    // an on-foot hint means nothing in a car, and no hint outstays 4.5 s (the coordinator's 18:35 run: h_aim still up while driving)
+    if ((p.inVehicle && /^h_(aim|reload|wheel|move|look)$/.test(h.id)) || (h.t || 0) > 4.5) { Hs.dismiss(); ui.hintDone = null; return; }
+    var mv = In && In.move, w = GTP.Combat && GTP.Combat.hud ? (call(GTP.Combat.hud, GTP.Combat, [], null) || {}).weapon : null;
+    var acted = (h.id === 'h_aim' && (aiming || shots > ui.hintDone.shots || (In && In.down && In.down('shoot')))) || (h.id === 'h_move' && mv && Math.abs(mv.x) + Math.abs(mv.z) > 0.3) ||
+      (h.id === 'h_look' && In && In.lastLookTime > g.time.t - (h.t || 0) + 0.05) || (h.id === 'h_reload' && w && w.reloading) ||
+      (h.id === 'h_wheel' && GTP.Combat && GTP.Combat.wheel && GTP.Combat.wheel.open) || (h.id === 'h_map' && g.state === 'paused' && ui.pause.page === 'phone');
+    if (acted) ui.hintDone.acted = true;
+    if (ui.hintDone.acted && (h.t || 0) > 1) { Hs.dismiss(); ui.hintDone = null; }
   }
   // world-space labels and HUD pieces drawn while playing (the core HUD is drawn first)
   function drawPlayV3(ctx) {
@@ -5413,6 +6002,8 @@
 
   // ----------------------------------------------------------------- API ----
   var UI = GTP.UI = {
+    // the other tracks' fallbacks stand down when these are set: GTP.Interiors' DOM fade, GTP.Bosses' plain boss bar and special meters
+    interiorFade: true, drawsBossBar: true, drawsSpecials: true,
     drawsBarks: true,
     minigames: { debate: debate, ratio: ratio },
     init: function () {
@@ -5426,8 +6017,10 @@
       // saved settings apply at once; the quality preset only when the URL did not pick one (tests and ?quality= win)
       var had = loadSettings(), opts = (g && g.opts) || {};
       var urlQuality = !!(opts.quality || opts.low) || (g && g.headless);
-      if (had) applyAllSettings({ skipQuality: urlQuality }); else { if (GTP.Input) GTP.Input.gamepadEnabled = true; applyVolumes(); }
-      if (urlQuality && Rd && Rd.quality) ui.settings.quality = Rd.quality.auto ? 'auto' : Rd.quality.current;
+      if (had) applyAllSettings({ skipQuality: urlQuality, skipDraw: !!opts.low }); else { if (GTP.Input) GTP.Input.gamepadEnabled = true; applyVolumes(); }
+      ui.storedQuality = ui.settings.quality; ui.storedDraw = ui.settings.drawDistance;
+      if (urlQuality && Rd && Rd.quality) { ui.settings.quality = Rd.quality.auto ? 'auto' : Rd.quality.current; ui.qualityFromUrl = true; }
+      if (opts.low) ui.lowFromUrl = true;
       bindEvents();
       var cv = Rd && Rd.hudCanvas;
       if (cv && !ui._bound) {
@@ -5448,6 +6041,7 @@
       var g = game(); if (!g) return;
       ui.t += dt;
       try {
+        trackPointer();
         if (ui.inputStep !== g.steps) handleInput(g.state);
         ui.inputStep = -1;
         updateLoading(dt);
@@ -5463,7 +6057,17 @@
     },
     draw: draw,
     onState: onState,
-    handleInput: function (state) { ui.inputStep = GTP.game ? GTP.game.steps : 0; return handleInput(state); },
+    handleInput: function (state) {
+      var g = GTP.game, In = GTP.Input;
+      ui.inputStep = g ? g.steps : 0;
+      var r = handleInput(state);
+      // a key a menu or a dialogue used is used up: the Enter that resumes, loads or advances a line never also exits the
+      // car, jumps or fires in play on the same step (QA-B-FE-03, QA-D SAVE-03)
+      // the same for the RESUME that returns to a debate / ratio war: it never also answers WHATABOUT or posts (QA-D SAVE-14)
+      var to = g && g.state;
+      if (In && In.consume && ((to === 'playing' && (r || state !== 'playing')) || (to === 'minigame' && state !== 'minigame'))) In.consume(['confirm', 'enter', 'jump', 'action', 'shoot', 'cancel', 'pause', 'map']);
+      return r;
+    },
     // mission hooks
     banner: banner, card: card, showDialogue: showDialogue, hideDialogue: hideDialogue, advanceDialogue: advanceDialogue,
     ticker: function (text) { ui.ticker.queue.unshift({ text: String(text || ''), tag: 'BREAKING', color: COL.red }); ui.ticker.forceT = 14; if (ui.ticker.cur && !ui.ticker.cur.nap) ui.ticker.cur.done = true; },
@@ -5483,11 +6087,12 @@
     openPause: openPause, closePause: closePause, setMuted: setMuted, isMuted: function () { return ui.muted; },
     // v0.3 screens (the events in PLAN_V03 open them too)
     openArmory: openArmory, openModShop: function (vehicle) { return openModShop({ vehicle: vehicle }); }, openWardrobe: openWardrobe,
-    openProperty: function (id) { return openProperty({ id: id }); }, openHeistBoard: function (missionId) { return openHeistBoard({ missionId: missionId }); },
+    openProperty: function (id) { return openProperty({ id: id }); }, openHeistBoard: function (e) { return openHeistBoard(typeof e === 'object' && e ? e : { missionId: e }); },
     closeModal: closeModal, modal: function () { return ui.modal; },
     gps: { set: gpsSet, clear: function () { ui.gps = null; }, get: function () { return ui.gps; } },
     skipCall: skipCallLine,
-    phoneTabs: PHONE_TABS, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
+    wantsMenuPad: function () { var c = ui.card; return !!(c && c.kind === 'failed' && retryOffer() && c.t >= 0.8); },
+    phoneTabs: PHONE_TABS, allMarkers: allMarkers, pauseItems: function () { return PAUSE_ITEMS.map(function (it) { return { id: it.id, label: it.id === 'mute' ? 'MUTE: ' + (ui.muted ? 'ON' : 'OFF') : it.label }; }); }, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
     state: ui,
     _v3: { crossState: crossState, drawCrosshair: drawCrosshair, gpsTurn: gpsTurn, armoryState: function () { return ui.modal && ui.modal.kind === 'armory' ? armoryState() : null; }, retryOffer: retryOffer, stockList: stockList, wardrobeCats: wardrobeCats, modCats: modCats, heistDef: heistDef, vehCat: vehCat, chuteState: chuteState, promptList: promptList, missionRowActivate: missionRowActivate, retryActivate: retryActivate }
   };

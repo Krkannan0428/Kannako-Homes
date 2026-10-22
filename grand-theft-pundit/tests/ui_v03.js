@@ -172,7 +172,7 @@ H.run('ui_v03', async (t) => {
   const legacy = await page.evaluate(() => { const CB = GTP.Combat, cat = CB.catalog, buy = CB.buy; delete CB.catalog; delete CB.buy; GTP.UI.openArmory(null, 'pistol'); const s = GTP.UI._v3.armoryState(); const a = { rows: s.rows.length, legacy: !!s.row._legacy, gear: s.rows.some((r) => r.kind === 'gearpage') }; GTP.game.render(); GTP.UI.closeModal(); CB.catalog = cat; CB.buy = buy; return a; });
   console.log('  armory: ' + JSON.stringify({ armory, insp, att, tint, ammo, locked, closed, legacy }));
   t.assert(armory.interior === 'armory' && insp.modal === 'armory' && insp.row === 'pistol' && insp.ctl === false, 'armory:inspect opens the weapon card on the pistol with the player held: ' + JSON.stringify(insp));
-  t.assert(att.tab === 2 && att.items.join(',') === 'pistol_sup,pistol_ext,pistol_light,pistol_red_dot' && att.buy[0] === 'pistol_sup' && att.buy[1].weaponId === 'pistol' && att.buy[1].storeId === 'strip' && att.money1 === att.money0 - 900, 'ATTACHMENTS lists the pistol slots and buys through Combat.buy(id, {storeId, weaponId, equip}): ' + JSON.stringify(att));
+  t.assert(att.tab === 2 && att.items.join(',') === 'pistol_sup,pistol_ext,pistol_light,pistol_red_dot' && att.buy[0] === 'pistol_sup' && att.buy[1].store === 'strip' && att.money1 === att.money0 - 900, 'ATTACHMENTS lists the pistol slots and buys through Combat.buy(id, {store}): ' + JSON.stringify(att));
   t.assert(ammo.items.join(',') === 'ammo_pistol' && /LOCKED/.test(locked.msg || ''), 'AMMO lists the pistol rounds; a locked weapon says why: ' + JSON.stringify([ammo, locked]));
   t.assert(!closed.modal && closed.ctl === true, 'cancel twice leaves the card and gives control back');
   t.assert(legacy.rows >= 10 && legacy.legacy && legacy.gear, 'without Combat.catalog the v0.2 shop items fill the card: ' + JSON.stringify(legacy));
@@ -202,15 +202,17 @@ H.run('ui_v03', async (t) => {
     const m = T_.ui.modal, p = GTP.game.player;
     T_.press('confirm'); T_.press('back'); T_.press('back'); T_.adv(0.3); GTP.game.render();   // into PRIMARY COLOR, two down: a preview
     const a = { focus: m.focus, previews: MODS.length, preview: m.preview.paint.primary, money0: p.money };
-    T_.press('confirm'); a.money1 = p.money; a.applied = m.applied.paint.primary; a.ev = T_.last('shop:buy') && T_.last('shop:buy').item.kind;
-    T_.press('left'); m.cat = 6; T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.engPreview = m.preview.engine;
+    const cats = GTP.UI._v3.modCats(MODV), row = cats[m.cat], opt = row && row.price;   // the real catalog: a colour costs the respray (Vehicles.priceOf)
+    a.price = opt != null ? opt : 300;
+    T_.press('confirm'); a.money1 = p.money; a.applied = m.applied.paint.primary; const ev = T_.last('shop:buy'); a.ev = ev && (typeof ev.item === 'string' ? ev.item.split(':')[0] : ev.item.kind);
+    T_.press('left'); m.cat = cats.findIndex((c) => c.id === 'engine'); T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.engPreview = m.preview.engine;
     return a;
   });
   await shot('modshop_engine');
   const mod3 = await page.evaluate(() => { T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); const v = MODV; return { modal: !!T_.ui.modal, free: GTP.Render.free, engine: v.mods.engine, primary: v.mods.paint.primary, ctl: GTP.game.player.controlEnabled }; });
   console.log('  modshop: ' + JSON.stringify([mod, mod2, mod3]));
   t.assert(mod.modal === 'modshop' && mod.free === true, 'modshop:open opens Spin Doctor Customs with the orbit camera');
-  t.assert(mod2.previews >= 1 && mod2.preview && mod2.money1 === mod2.money0 - 300 && mod2.applied === mod2.preview && mod2.ev === 'mod', 'a paint previews through Vehicles.mod, BUY pays and emits shop:buy: ' + JSON.stringify(mod2));
+  t.assert(mod2.previews >= 1 && mod2.preview && mod2.money1 === mod2.money0 - mod2.price && mod2.applied === mod2.preview && mod2.ev === 'mod' && mod2.engPreview >= 1, 'a paint previews through Vehicles.mod, BUY pays and emits shop:buy: ' + JSON.stringify(mod2));
   t.assert(!mod3.modal && !mod3.free && mod3.engine === 0 && mod3.primary === mod2.applied && mod3.ctl, 'leaving reverts the unbought engine preview and gives the camera back: ' + JSON.stringify(mod3));
 
   // ---- 8. wardrobe and barber ----
@@ -218,54 +220,72 @@ H.run('ui_v03', async (t) => {
     const g = GTP.game, p = g.player; p.money = 2000; const look0 = JSON.stringify(p.look);
     GTP.Events.emit('clothing:open'); T_.adv(0.8); g.render();
     const m = T_.ui.modal; const a = { modal: m && m.kind, free: GTP.Render.free };
-    T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.preview = p.look.outfit && p.look.outfit.top;
-    T_.press('confirm'); a.money = p.money; a.ev = T_.last('shop:buy') && T_.last('shop:buy').item.id;
-    T_.press('back'); T_.adv(0.3); a.preview2 = p.look.outfit.top;
+    // the data: the systems' rows when they are real clothing, else the content's (GTP.UI._v3.wardrobeCats)
+    const c0 = GTP.UI._v3.wardrobeCats('clothing')[0], it1 = c0.items[1], it2 = c0.items[2];
+    a.slot = c0.id; a.want = [it1.id, it2.id]; a.price = it1.owned ? 0 : (it1.price || 0);
+    T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.preview = p.look.outfit && p.look.outfit[c0.id];
+    T_.press('confirm'); a.money = p.money; const ev = T_.last('shop:buy'); a.ev = ev && (typeof ev.item === 'string' ? ev.item : ev.item.id);
+    T_.press('back'); T_.adv(0.3); a.preview2 = p.look.outfit[c0.id];
     g.render();
     window.LOOK0 = look0;
     return a;
   });
   await shot('wardrobe');
-  const ward2 = await page.evaluate(() => { const p = GTP.game.player; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); return { modal: !!T_.ui.modal, top: p.look.outfit && p.look.outfit.top, shirt: p.look.shirt }; });
-  await page.evaluate(() => { GTP.Events.emit('barber:open'); T_.adv(0.8); T_.press('confirm'); T_.press('back'); T_.adv(0.3); GTP.game.render(); });
+  const ward2 = await page.evaluate((slot) => { const p = GTP.game.player; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); return { modal: !!T_.ui.modal, top: p.look.outfit && p.look.outfit[slot], shirt: p.look.shirt }; }, ward.slot);
+  await page.evaluate(() => { window.HAIR0 = GTP.game.player.look.hair; const c0 = GTP.UI._v3.wardrobeCats('barber')[0]; window.HAIRW = c0.items[1].style || String(c0.items[1].id).replace(/^hair_/, ''); GTP.Events.emit('barber:open'); T_.adv(0.8); T_.press('confirm'); T_.press('back'); T_.adv(0.3); GTP.game.render(); });
   await shot('barber');
-  const barb = await page.evaluate(() => { const p = GTP.game.player, a = { hair: p.look.hair }; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); a.after = p.look.hair; a.free = GTP.Render.free; return a; });
+  const barb = await page.evaluate(() => { const p = GTP.game.player, a = { hair: p.look.hair, want: HAIRW, before: HAIR0 }; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); a.after = p.look.hair; a.free = GTP.Render.free; return a; });
   console.log('  wardrobe: ' + JSON.stringify([ward, ward2, barb]));
-  t.assert(ward.modal === 'wardrobe' && ward.free && ward.preview === 'top_quarterzip' && ward.money === 1820 && ward.ev === 'top_quarterzip' && ward.preview2 === 'top_blazer', 'clothing previews on player.look, buys the quarter-zip and previews the next: ' + JSON.stringify(ward));
-  t.assert(!ward2.modal && ward2.top === 'top_quarterzip', 'leaving keeps what was bought and drops the preview: ' + JSON.stringify(ward2));
-  t.assert(barb.hair === 'slick' && barb.after === 'short' && !barb.free, 'the barber previews a cut and reverts it on exit: ' + JSON.stringify(barb));
+  t.assert(ward.modal === 'wardrobe' && ward.free && ward.preview === ward.want[0] && ward.money === 2000 - ward.price && (ward.price === 0 || ward.ev === ward.want[0]) && ward.preview2 === ward.want[1], 'clothing previews on player.look, buys the second item and previews the third: ' + JSON.stringify(ward));
+  t.assert(!ward2.modal && ward2.top === ward.want[0], 'leaving keeps what was bought and drops the preview: ' + JSON.stringify(ward2));
+  t.assert(barb.hair === barb.want && barb.after === barb.before && !barb.free, 'the barber previews a cut and reverts it on exit: ' + JSON.stringify(barb));
 
   // ---- 9. property ----
   const prop = await page.evaluate(() => { const p = GTP.game.player; p.money = 100000; GTP.Events.emit('property:open', { id: 'safe_brownstone' }); T_.adv(0.3); GTP.game.render(); return { modal: T_.ui.modal && T_.ui.modal.kind }; });
   await shot('property');
-  const prop2 = await page.evaluate(() => { const p = GTP.game.player; T_.press('confirm'); GTP.game.render(); const a = { money: p.money, ev: T_.last('property:buy'), owned: p.properties && p.properties.safe_brownstone }; return a; });
+  const prop2 = await page.evaluate(() => { const p = GTP.game.player; T_.press('confirm'); GTP.game.render(); const S = GTP.Systems && GTP.Systems.properties, a = { money: p.money, ev: T_.last('property:buy'), owned: !!((S && S.owned && S.owned('safe_brownstone')) || (p.properties && p.properties.safe_brownstone)), label: T_.ui.modal && T_.ui.modal.msg && T_.ui.modal.msg.text }; return a; });
   await shot('property_owned');
   await page.evaluate(() => { T_.press('cancel'); });
-  t.assert(prop.modal === 'property' && prop2.money === 15000 && prop2.ev && prop2.ev.id === 'safe_brownstone' && prop2.owned, 'the property card buys The Brownstone: ' + JSON.stringify(prop2));
+  t.assert(prop.modal === 'property' && prop2.ev && prop2.ev.id === 'safe_brownstone' && prop2.money === 100000 - prop2.ev.price && prop2.owned, 'the property card buys the brownstone through Systems.properties.buy: ' + JSON.stringify(prop2));
 
   // ---- 10. heist board ----
-  await page.evaluate(() => { GTP.Events.emit('heist:board', { missionId: 'h01_casing' }); T_.adv(0.3); GTP.game.render(); });
+  await page.evaluate(() => { GTP.Events.emit('heist:board', { missionId: 'h01_casing', approaches: GTP.Heist && GTP.Heist.approaches(), crew: GTP.Heist && GTP.Heist.crewList() }); T_.adv(0.3); GTP.game.render(); });
   await shot('heist');
-  const heist = await page.evaluate(() => { T_.press('right'); T_.press('back'); T_.press('right'); T_.press('back'); T_.press('back'); T_.press('back'); T_.press('confirm'); return { plan: T_.last('heist:plan'), modal: !!T_.ui.modal }; });
+  const heist = await page.evaluate(() => { const d = T_.ui.modal && T_.ui.modal.def; T_.press('right'); T_.press('back'); T_.press('right'); T_.press('confirm'); T_.press('right'); T_.press('confirm'); T_.press('back'); T_.press('confirm'); return { plan: T_.last('heist:plan'), modal: !!T_.ui.modal, ids: d && d.crew.map((c) => c.id), aps: d && d.approaches.map((a) => a.id), heistIds: GTP.Heist ? GTP.Heist.crewList().map((c) => c.id) : null }; });
   console.log('  heist: ' + JSON.stringify(heist));
-  t.assert(heist.plan && heist.plan.approach === 'loud' && heist.plan.crew.length === 3 && heist.plan.crew[0] === 'kip' && !heist.modal, 'the board emits heist:plan {approach, crew}: ' + JSON.stringify(heist.plan));
+  t.assert(heist.plan && heist.plan.approach === heist.aps[1] && heist.plan.crew.join() === heist.ids.slice(0, 3).join() && (!heist.heistIds || heist.ids.join() === heist.heistIds.join()) && !heist.modal, 'the board emits heist:plan {approach, crew}: ' + JSON.stringify(heist.plan));
 
-  // ---- 11. golf ----
-  await page.evaluate(() => { GTP.Events.emit('golf:start', { hole: 3, par: 4, wind: { speed: 9, dir: 0.7 }, club: 'Driver', dist: 312 }); T_.adv(0.2); T_.press('right', 20); T_.press('shoot'); T_.adv(0.55); GTP.game.render(); });
+  // ---- 11. golf: GTP.Systems.golf owns the round and reads the input; the UI draws its state ----
+  await page.evaluate(() => {
+    const S = GTP.Systems; window.GOLF_SHOTS = 0; GTP.Events.on('golf:shot', () => { GOLF_SHOTS++; });
+    window.GOLF_START = S.golf.start({ force: true, hole: 2 }); T_.adv(0.2);
+    T_.press('shoot'); T_.adv(0.4); GTP.game.render();   // the first press starts Systems' meter
+  });
   await shot('golf');
-  const golf = await page.evaluate(() => { const G = T_.ui.golf, a = { power: G.power, phase: G.phase, ctl: GTP.game.player.controlEnabled }; T_.press('shoot'); a.shot = T_.last('golf:shot'); GTP.Events.emit('golf:end', { strokes: 3, par: 4 }); T_.adv(0.5); GTP.game.render(); a.term = T_.ui.golfEnd && T_.ui.golfEnd.strokes; a.ctl2 = GTP.game.player.controlEnabled; return a; });
+  const golf = await page.evaluate(() => {
+    const G = T_.ui.golf, st = GTP.Systems.golf.state(), a = { start: GOLF_START, hole: G && G.hole, sysHole: st.hole, phase: G && G.phase, sysPhase: st.phase, meter: G && G.power, ctl: GTP.game.player.controlEnabled, club: G && G.club };
+    T_.press('shoot'); T_.adv(0.1); a.shots = GOLF_SHOTS; a.phase2 = T_.ui.golf && T_.ui.golf.phase;   // the second press: one golf:shot, from Systems
+    GTP.Systems.golf.settle(30); T_.adv(0.2);
+    GTP.Systems.golf.quit(); T_.adv(0.5); GTP.game.render();
+    a.card = T_.ui.golfEnd && { round: !!T_.ui.golfEnd.round, strokes: T_.ui.golfEnd.strokes }; a.after = !!T_.ui.golf; a.ctl2 = GTP.game.player.controlEnabled;
+    return a;
+  });
   await shot('golf_end');
   console.log('  golf: ' + JSON.stringify(golf));
-  t.assert(golf.phase === 'swing' && golf.ctl === false && golf.shot && golf.shot.power > 0.2 && golf.shot.angle > 0 && golf.ctl2 === true, 'the swing meter emits golf:shot {power, angle}; golf:end hands control back: ' + JSON.stringify(golf));
+  t.assert(golf.start && golf.start.ok && golf.hole === golf.sysHole + 1 && golf.phase === 'swing' && golf.sysPhase === 'swing' && golf.meter > 0 && golf.club && golf.shots === 1 && golf.phase2 === 'flight' && !golf.after && golf.ctl2 !== false, 'golf draws Systems.golf.state() (1-based hole, its meter, its club), the UI emits no golf:shot of its own, golf:end clears the panel: ' + JSON.stringify(golf));
   await page.evaluate(() => T_.adv(4.6));
 
   // ---- 12. prompts, crosshair, fuse, parachute, vehicle HUDs, boss, specials, achievement, fade ----
   const prompts = await page.evaluate(() => {
     const g = GTP.game, p = g.player, CB = GTP.Combat;
     g.debug.giveWeapon('pistol', 24); p.weapon = 'pistol';
+    const fl = GTP.Missions && GTP.Missions.state && GTP.Missions.state.flags; if (fl) fl.hint_h_aim = true;   // the h_aim card would hide the tutor (by design)
+    T_.ui.aimTutor.n = 0; T_.ui.aimTutor.shown = 0; T_.ui.aimTutor.shots0 = null; if (GTP.Hints && GTP.Hints.dismiss) GTP.Hints.dismiss();   // the tutor retires after the first aim or shot
     CB.cover = Object.assign(CB.cover || {}, { available: () => ({ low: true }) });
     T_.adv(0.2); g.render();
     const a = { foot: T_.ui.prompts.slice() };
+    const cv0 = CB.cover, hud0 = CB.hud; CB.cover = Object.assign({}, cv0, { available: () => null }); CB.hud = function () { return Object.assign({}, hud0.apply(CB, arguments), { cover: { active: false, near: false } }); };
+    if (GTP.Hints && GTP.Hints.dismiss) GTP.Hints.dismiss(); T_.adv(0.1); g.render(); a.open = T_.ui.prompts.slice(); a.hint = GTP.Hints && GTP.Hints.current() && GTP.Hints.current().id; a.tutor = Object.assign({}, T_.ui.aimTutor); CB.cover = cv0; CB.hud = hud0; T_.adv(0.1); g.render();
     GTP.Events.emit('cover:enter', { low: true }); T_.adv(0.1); g.render(); a.cover = T_.ui.prompts.slice();
     return a;
   });
@@ -296,7 +316,7 @@ H.run('ui_v03', async (t) => {
   });
   await page.screenshot({ path: t.OUT + '/v3_cross_gallery.png' });
   console.log('  prompts / cross: ' + JSON.stringify([prompts, cross]));
-  t.assert(prompts.foot.indexOf('TAKE COVER') >= 0 && prompts.foot.indexOf('AIM') >= 0, 'near cover with a gun out: TAKE COVER and AIM / FIRE prompts: ' + prompts.foot.join(','));
+  t.assert(prompts.foot.indexOf('TAKE COVER') >= 0 && prompts.foot.indexOf('AIM') < 0 && prompts.open.indexOf('AIM') >= 0, 'near cover with a gun out: TAKE COVER alone (the AIM / FIRE tutor never shares the row), away from cover AIM / FIRE: ' + prompts.foot.join(',') + ' / ' + prompts.open.join(',') + ' ' + JSON.stringify([prompts.hint, prompts.tutor]));
   t.assert(prompts.cover.indexOf('BLIND FIRE') >= 0 && prompts.cover.indexOf('VAULT') >= 0 && prompts.cover.indexOf('LEAVE COVER') >= 0, 'in low cover: PEEK, BLIND FIRE, VAULT, LEAVE COVER: ' + prompts.cover.join(','));
   t.assert(cross.state && cross.hostile === 'hostile' && cross.friendly === 'friendly' && cross.head === 'headshot' && cross.kill === 'kill' && cross.range === 'range' && cross.blind === 'blind' && cross.throw === 'throw', 'crosshair states: ' + JSON.stringify(cross));
   const fuse = await page.evaluate(() => { const CB = GTP.Combat, h0 = CB.hud; CB.hud = function () { const h = h0.call(CB); h.cook = { t: 1.2, total: 2.5, k: 0.48 }; return h; }; GTP.game.render(); const a = T_.ui.cookShown; CB.hud = h0; return a; });
@@ -377,21 +397,25 @@ H.run('ui_v03', async (t) => {
   console.log('  radio: ' + JSON.stringify(radio));
   t.assert(radio.some((l) => /^ON AIR: Call Me Maybe Wrong/.test(l)) && radio.some((l) => /^NEWS 14:00/.test(l)) && radio.some((l) => /^CALLER: Deb/.test(l)), 'the ticker shows the show on air, the hourly bulletin and a caller: ' + JSON.stringify(radio));
   const strangers = await page.evaluate(() => {
-    const p = GTP.game.player;
-    GTP.Strangers = { markers: () => [{ id: 's01_birdwatch', x: p.x + 60, z: p.z - 20, title: 'Birds Aren\'t Real Estate', giver: 'moonsworth' }], list: () => [{ id: 's01_birdwatch', title: 'Birds Aren\'t Real Estate', giver: 'moonsworth', status: 'available', line: 'He has a theory about pigeons and zoning.', x: p.x + 60, z: p.z - 20 }] };
-    T_.lookAt(p.x + 60, p.z - 20); T_.adv(0.1); GTP.game.render();
-    const a = { labels: T_.ui.labelsDrawn };
+    // the real GTP.Strangers: open the first strand by completing its gate for the duration of the check
+    const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = Sg.list()[0].id, first = Sg.missions(sid)[0], added = [];
+    (first.requires || []).forEach((id) => { if (!Ms.state.completed.has(id)) { Ms.state.completed.add(id); added.push(id); } });
+    window.__strAdded = added; if (Ms.refreshMarkers) Ms.refreshMarkers();   // Missions caches the available list
+    const mk = GTP.UI.allMarkers().find((m) => m.missionId === first.id) || {};
+    if (mk.x != null) { p.x = mk.x - 30; p.z = mk.z; T_.lookAt(mk.x, mk.z); }
+    T_.adv(0.1); GTP.game.render();
+    const a = { labels: T_.ui.labelsDrawn, kind: mk.kind, icon: mk.icon, strand: sid };
     GTP.UI.openMap(); T_.ui.pause.tab = GTP.UI.phoneTabs.indexOf('MISSIONS'); T_.adv(0.05); GTP.game.render();
-    const rows = T_.ui.pause.rows || [], k = rows.findIndex((r) => r.kind === 'stranger'); a.row = k >= 0;
+    const rows = T_.ui.pause.rows || [], k = rows.findIndex((r) => r.kind === 'stranger'); a.row = k >= 0; a.sub = k >= 0 ? rows[k].sub : null;
     if (k >= 0) { T_.ui.pause.row = k; GTP.game.render(); }
     return a;
   });
   await shot('strangers_phone');
   const strangers2 = await page.evaluate(() => { const rows = T_.ui.pause.rows || [], r = rows.find((x) => x.kind === 'stranger'); GTP.UI._v3.missionRowActivate(r); const G = T_.ui.gps; GTP.UI.closePause(); T_.adv(0.1); GTP.game.render(); return { gps: G && G.kind }; });
   await shot('strangers_map');
-  await page.evaluate(() => { delete GTP.Strangers; GTP.Events.emit('gps:clear'); });
+  await page.evaluate(() => { (window.__strAdded || []).forEach((id) => GTP.Missions.state.completed.delete(id)); if (GTP.Missions.refreshMarkers) GTP.Missions.refreshMarkers(); GTP.Events.emit('gps:clear'); });
   console.log('  strangers: ' + JSON.stringify([strangers, strangers2]));
-  t.assert(strangers.labels >= 1 && strangers.row && strangers2.gps === 'stranger', 'stranger missions get a label, a phone row and a GPS route: ' + JSON.stringify([strangers, strangers2]));
+  t.assert(strangers.kind === 'stranger' && strangers.icon === 'stranger' && strangers.labels >= 1 && strangers.row && strangers2.gps === 'stranger', 'stranger missions get a label, a phone row and a GPS route: ' + JSON.stringify([strangers, strangers2]));
 
   // night readability: the GPS chip, labels, specials and the call card over a night street
   await page.evaluate(() => { const g = GTP.game; g.debug.setClock(23.2); GTP.Events.emit('phone:call', { from: 'gus', lines: ['The van makes a new noise. I think it is a podcast.'] }); T_.adv(2); g.render(); });

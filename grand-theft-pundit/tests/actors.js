@@ -2,7 +2,7 @@
  *  1 camera-relative movement   2 walls stop the ped         3 jump
  *  4 enter, drive, brake, reverse   5 crash: damage, shake, no tunnelling   6 the Loop ramp and a fall
  *  7 hp 0 -> smoke -> explosion -> wreck, player ejected   8 exit beside the door   9 pier -> water -> swim -> shore
- * 10 the chase camera never sits inside a building while driving downtown
+ * 10 the chase camera never sits inside a building while driving downtown   11 the real F key (a tap and a hold) gets in
  * Screenshots in tests/out: actors_*.png (look at them). */
 'use strict';
 const H = require('./_harness');
@@ -151,7 +151,7 @@ H.run('actors', async (t) => {
     GTP.game.advance(0.05);
     const hp0 = v.hp;
     let peak = 0, shake = 0, inside = 0, minSpeedAfterPeak = 1e9, hitAt = -1, imp = null, sparks = 0;
-    GTP.Events.on('vehicle:impact', (e) => { if (!imp) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });
+    GTP.Events.on('vehicle:impact', (e) => { if (!imp && e.vehicle === v) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });   // this car's impact, not traffic's anywhere on the map
     GTP.Input.set('forward', true);
     for (let i = 0; i < 240; i++) {
       GTP.game.advance(1 / 60);
@@ -160,7 +160,7 @@ H.run('actors', async (t) => {
       shake = Math.max(shake, GTP.Render.rig.shakeAmt);
       if (v.x > b.x && v.x < b.x + b.w && v.z > b.z && v.z < b.z + b.d) inside++;
       if (imp && hitAt < 0) { hitAt = i; GTP.Input.set('forward', false); }
-      if (hitAt >= 0) { minSpeedAfterPeak = Math.min(minSpeedAfterPeak, sp); sparks = Math.max(sparks, GTP.Render.fx.list.filter((f) => f.type === 'spark').length); }
+      if (hitAt >= 0) { minSpeedAfterPeak = Math.min(minSpeedAfterPeak, sp); sparks = Math.max(sparks, GTP.Render.fx.list.filter((f) => f.type === 'spark' && Math.hypot(f.x - v.x, f.z - v.z) < 8).length); }
       if (hitAt >= 0 && i > hitAt + 6) break;
     }
     GTP.Input.set('forward', false);
@@ -417,6 +417,32 @@ H.run('actors', async (t) => {
   });
   console.log('  beam: ' + JSON.stringify(beam));
   t.assert(beam.on > beam.off + 6, 'the headlight spot lights the road ahead: ' + JSON.stringify(beam));
+
+  // ---- 11. the real F key gets in (keyboard events through the page, not Input.set): a tap whose keyup lands before the next
+  // step, and a key held across steps; a sports car 3 m to the side, as in the coordinator's play-through ----
+  const keyEnter = [];
+  for (const mode of ['tap', 'hold']) {
+    await page.evaluate(() => {
+      // out of the last section's car at a standstill (bailing out of a moving car is a tumble, and a floored player ignores F)
+      const p = GTP.game.player, cv = p.inVehicle; if (cv) { cv.vx = cv.vz = 0; cv.speed = 0; cv.angVel = 0; GTP.game.advance(0.1); p.exitVehicle(); }
+      for (let i = 0; i < 300 && (p.knockedDown || p.entering || p.exitLock > 0); i++) GTP.game.advance(1 / 60);
+      if (cv && !cv.removed) cv.destroy();   // F takes the nearest door: only the test car may be in reach
+      GTP.Entities.near(p.x, p.z, 8, 'vehicle').forEach((o) => { if (!o.removed && !o.hasPlayer()) o.destroy(); });
+      GTP.game.advance(0.3);
+      const v = GTP.game.debug.spawnVehicle(p.x + 3, p.z, 'sports'); window.__keyCar = v; GTP.game.advance(0.2);
+    });
+    if (mode === 'tap') await page.keyboard.press('KeyF');
+    else { await page.keyboard.down('KeyF'); await page.evaluate(() => GTP.game.advance(1 / 60)); await page.keyboard.up('KeyF'); }
+    keyEnter.push(await page.evaluate((mode) => {
+      const p = GTP.game.player, v = window.__keyCar; let at = -1;
+      for (let i = 0; i < 90 && at < 0; i++) { GTP.game.advance(1 / 60); if (p.inVehicle === v) at = +(i / 60).toFixed(2); }
+      const out = { mode, inCar: p.inVehicle === v, at, door: +v.doorDistance(p.x, p.z).toFixed(2) };
+      if (p.inVehicle) p.exitVehicle(); GTP.game.advance(0.5); v.destroy(); GTP.game.advance(0.1);
+      return out;
+    }, mode));
+  }
+  console.log('  key enter: ' + JSON.stringify(keyEnter));
+  for (const k of keyEnter) t.assert(k.inCar && k.at >= 0 && k.at < 1.0, 'the real F key (' + k.mode + ') gets the player into the car beside them within a second: ' + JSON.stringify(k));
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

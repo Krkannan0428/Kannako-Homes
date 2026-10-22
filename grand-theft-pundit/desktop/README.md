@@ -8,7 +8,97 @@ and electron-builder wraps the result into installers. Around the game the deskt
 boot splash, remembered window size and full screen, automatic updates from GitHub Releases, a
 crash log, a mods folder and native menus.
 
-Targets:
+## Download and install (for players)
+
+Grand Theft Pundit is free and made for friends; it is not from a big studio, so your computer may
+warn you the first time because the download is not signed with a paid developer certificate. The
+game is safe to open. These steps take a minute and you only do them once.
+
+### 1. Pick your download
+
+Open the **Releases** page of this repository (<https://github.com/Krkannan0428/Kannako-Homes/releases/latest>)
+and download **one** file under *Assets*:
+
+| Your computer | Download this | How to tell |
+| --- | --- | --- |
+| Mac with Apple Silicon (M1, M2, M3, M4, ...) | `Grand-Theft-Pundit-<version>-mac-arm64.dmg` | Apple menu > **About This Mac** says *Chip: Apple M...* |
+| Mac with an Intel processor | `Grand-Theft-Pundit-<version>-mac-x64.dmg` | **About This Mac** says *Processor: ... Intel* |
+| Windows 10 or 11 | `Grand-Theft-Pundit-<version>-win-x64-setup.exe` | (or `...-portable.exe` if you do not want to install anything) |
+| Linux | `Grand-Theft-Pundit-<version>-linux-x86_64.AppImage` | |
+
+Ignore the `.yml` and `.blockmap` files; the game uses them to update itself.
+
+### 2. Install and open it
+
+**Mac**
+
+1. Double-click the `.dmg`. In the window that opens, drag **Grand Theft Pundit** onto the
+   **Applications** folder, then eject the disk (the eject button next to it in Finder).
+2. Open your **Applications** folder and **right-click** (or Control-click) **Grand Theft Pundit**,
+   then choose **Open**. In the message that says Apple cannot check it, click **Open**.
+3. On **macOS 15 Sequoia or newer** that **Open** button is gone. Instead: double-click the game,
+   click **Done** in the message, then open **System Settings > Privacy & Security**, scroll down
+   and click **Open Anyway** next to *Grand Theft Pundit*, and confirm with your password or Touch ID.
+
+From then on it opens with a normal double-click. If the Mac says the app **"is damaged and can't be
+opened"** (this happens with some downloads), open the **Terminal** app, paste this line and press
+Return, then open the game again:
+
+```sh
+xattr -cr "/Applications/Grand Theft Pundit.app"
+```
+
+(It removes the "downloaded from the internet" flag macOS put on the app; it changes nothing else.)
+
+**Windows**
+
+1. Double-click `...-setup.exe`. If a blue box says **"Windows protected your PC"**, click
+   **More info**, then **Run anyway**.
+2. Click through the installer (you can keep every default). It adds *Grand Theft Pundit* to the
+   Start menu and the desktop.
+
+The portable `.exe` needs no installer: double-click it (same **More info > Run anyway** the first
+time). It cannot update itself; the game tells you when a new version is out.
+
+**Linux**
+
+Make the file executable (right-click > *Properties* > *Allow executing file as program*, or
+`chmod +x Grand-Theft-Pundit-*.AppImage`) and double-click it. If it says *"AppImages require
+FUSE to run"*, install your distribution's FUSE 2 package (Ubuntu 24.04 and newer:
+`sudo apt install libfuse2t64`; Ubuntu 22.04: `sudo apt install libfuse2`).
+
+### 3. Playing, updates, saves and mods
+
+- **Full screen:** F11 (or Cmd+F on a Mac). **Esc** is the game's pause menu.
+- **Updates:** the game checks for new versions by itself. On Windows (installed) and Linux it
+  downloads them in the background and asks **Restart to Update** when you are on the title screen
+  or paused (or it installs when you quit). On a Mac it says **Version X is available**: click
+  **Open Release Page**, download the new `.dmg` and drag it over the old app (choose **Replace**).
+  *Check for Updates...* is in the game's menu (on Windows/Linux press **Alt** to show the menu).
+- **Saves** are kept on your computer in the game's data folder, so updating or reinstalling the
+  game keeps them. Deleting that folder deletes your saves.
+- **Mods**: drop `.js`, `.css` or image files into the `mods` folder in the same data folder (press
+  **Cmd+Shift+M** on a Mac; on Windows/Linux press **Alt** and choose *Game > Open Mods Folder*).
+  See "Mods folder" below.
+
+| Your computer | Data folder (saves, mods, logs) |
+| --- | --- |
+| Mac | `~/Library/Application Support/Grand Theft Pundit` (in Finder: **Go > Go to Folder...** and paste it) |
+| Windows | `%APPDATA%\Grand Theft Pundit` (paste into the File Explorer address bar) |
+| Linux | `~/.config/Grand Theft Pundit` |
+
+**Something went wrong?** In the game's menu choose **Help > Open Crash Log** and send that file
+with a description of what happened.
+
+**Uninstall:** Mac: drag the app from Applications to the Bin. Windows: *Settings > Apps*, find
+Grand Theft Pundit, *Uninstall*. Linux: delete the AppImage. Your saves stay in the data folder until
+you delete it too.
+
+---
+
+The rest of this file is for whoever builds and releases the game.
+
+## What gets built
 
 | Platform | Output in `dist/` | Notes |
 | --- | --- | --- |
@@ -41,7 +131,7 @@ Other scripts:
 
 | Script | What it does |
 | --- | --- |
-| `npm run sync` | copy `../index.html`, `../js`, `../vendor` into `app/` (runs automatically before every other script and as electron-builder's `beforePack` hook) |
+| `npm run sync` | copy `../index.html`, `../js`, `../vendor` into `app/` (runs automatically before `start`, `pack` and every `dist*` script, and as electron-builder's `beforePack` hook) |
 | `npm run pack` | unpacked app for the current platform in `dist/<platform>-unpacked/`, no installer; the quickest way to test the packaged app |
 | `npm run dist` | everything electron-builder can build on this machine (dmg/zip on macOS, nsis/portable on Windows, AppImage on Linux) |
 | `npm run dist:win` | Windows installer + portable exe (run on Windows; works on macOS/Linux too if [Wine](https://www.electron.build/multi-platform-build) is installed) |
@@ -54,30 +144,49 @@ In the game:
 
 | Keys | What |
 | --- | --- |
-| **F11**, **Cmd+F** (macOS), **Ctrl+F** (Windows/Linux) | toggle full screen (**Ctrl+Cmd+F** too on macOS) |
-| **Cmd+Shift+M** / **Ctrl+Shift+M** | open the mods folder |
+| **F11**, **Cmd+F** (macOS) | toggle full screen (**Ctrl+Cmd+F** too on macOS) |
+| **Cmd+Shift+M** (macOS) | open the mods folder (Windows/Linux: *Game > Open Mods Folder* in the Alt menu) |
 | **Cmd+Option+I** / **Ctrl+Shift+I** | developer tools (console for mod authors) |
 | **Alt** (Windows/Linux) | show the hidden menu bar: *Game* (full screen, mods folder, quit) and *Help* (check for updates, release notes, mods folder, crash log, developer tools, About) |
 
-**Esc** is left to the game, and the shortcuts above are the only keys the shell takes. On macOS
-the same items are in the app menu and the *Help* menu. Starting the game a second time focuses
-the running window instead of opening another one.
+**Esc** is left to the game, and the shortcuts above are the only keys the shell takes. Windows
+and Linux deliberately have no Ctrl+F or Ctrl+Shift+M: the game uses Ctrl to shoot, Shift to run,
+F to get in and out of vehicles and M for the map, so those combinations happen during play. On
+macOS the same items are in the app menu and the *Help* menu. Starting the game a second time
+focuses the running window (or the splash, while the game is still loading) instead of opening
+another one.
 
 What the desktop shell does around the game:
 
-- **Splash.** A small window with the logo shows while the game window loads; the game window
-  appears once the game has booted (`GTP.game.booted`), at most 30 seconds later.
+- **Splash.** A small window with the logo shows while the game's scripts load, then takes over the
+  game's own loading screen: its bar and caption follow `GTP.game.loading` (fraction and stage
+  label). The game window appears only once that loading is done and the title has drawn its first
+  frame, so there is one loading UI and the player never sees a half-built loading screen (60 s
+  cap). On Linux the app starts GTK with `Adwaita:dark` (unless you set `GTK_THEME` yourself) so the
+  moment between showing the window and its first paint is dark rather than a white flash; programs
+  the game launches keep your own theme.
 - **Window memory.** Size, position, maximized and full screen state are saved to
   `window-state.json` in the data folder and restored next time. A position on a monitor that is no
-  longer connected is ignored, so the window never opens off-screen.
+  longer connected is ignored, so the window never opens off-screen. The state is written as it
+  changes and when the window closes; quitting while the splash is still up keeps the previous
+  state, and a window minimized while maximized comes back maximized.
 - **About.** *About Grand Theft Pundit* (app menu on macOS, *Help* on Windows/Linux) shows the
-  version, the Electron and Chromium versions, the update mode and the data folder.
+  version and the Electron and Chromium versions; on Windows/Linux it also shows the update mode
+  and the data folder.
 - **Crash log.** `logs/crash.log` in the data folder collects main-process exceptions, a game or
   GPU process that died, uncaught errors and `console.error` lines from the game, and failed update
   checks, with one `[start]` line per launch (version, OS). *Help > Open Crash Log* opens it; attach
   it to a bug report. It rolls over to `crash.old.log` at 1 MB. Native minidumps (never uploaded) go
   to `Crashpad/`, and everything the updater does goes to `logs/update.log`. If the game process
-  dies, a dialog offers to restart it or open the log.
+  dies, a dialog offers to restart it or open the log. The log also rolls over while the game runs,
+  repeated page errors are folded into one line with a count, and at most 500 page errors are
+  written per session.
+- **Locked down.** The game window runs sandboxed with context isolation and no Node.js, and it can
+  only ever show `app/index.html`: dropping a file on it or a script navigating elsewhere is
+  cancelled (web links open in your browser). The packaged binary has its Electron fuses set (see
+  `electronFuses` in `electron-builder.yml`): it cannot be started as plain Node.js
+  (`ELECTRON_RUN_AS_NODE`), take code through `NODE_OPTIONS` or `--inspect`, or load an app from
+  outside its `app.asar`, whose integrity is checked on macOS and Windows.
 
 The data folder (mods, logs, window state; your saves live in the game's own storage there too):
 
@@ -94,19 +203,25 @@ after it starts and every four hours while it runs. How it updates depends on th
 
 | Build | What happens |
 | --- | --- |
-| Windows installer (`...-setup.exe`) | downloads the update in the background (progress on the taskbar button), then asks **Restart to Update** or **Later**; *Later* installs it silently the next time you quit |
-| Linux AppImage | the same; the AppImage file is replaced in place on restart or quit |
-| macOS, signed with a Developer ID | the same, through Squirrel.Mac (download the `.zip`, swap the app on restart or quit) |
-| macOS, unsigned (the default here) | macOS will not let an unsigned app replace itself, so the game says **Version X is available** and **Open Release Page** takes you to the download; replace the app in Applications by hand (saves and mods are kept) |
-| Windows portable exe, extracted AppImage, unpacked folders | like unsigned macOS: a message with a link to the release page |
+| Windows installer (`...-setup.exe`) | downloads the update in the background (progress on the taskbar button), then asks **Restart to Update** or **Later**; *Restart* installs silently and starts the new version, *Later* installs it silently the next time you quit |
+| Linux AppImage | the same; the old `.AppImage` file is deleted and the new version's file (with the new version in its name) is written to the same folder, so a desktop shortcut to the old file name needs updating |
+| macOS, signed with a Developer ID, in a writable folder | the same, through Squirrel.Mac (download the `.zip`, swap the app on restart or quit) |
+| macOS, unsigned (the default here), or run from the disk image / a translocated path | macOS will not let it replace itself, so the game says **Version X is available** and **Open Release Page** takes you to the download; replace the app in Applications by hand (saves and mods are kept) |
+| Windows portable exe or a copied/unpacked folder (no uninstaller next to the exe), extracted AppImage, an AppImage in a read-only folder | like unsigned macOS: a message with a link to the release page |
 | `npm start` (development) | no checks |
 
-The first check after launch asks with a dialog (you are on the title screen); later checks while
-you play use a system notification you can click, so no dialog interrupts a mission. *Check for
-Updates...* in the menu always answers, also with "You have the latest version". Update failures
-never stop the game; they are written to `logs/update.log` and the crash log. An unsigned macOS
-build decides it is unsigned by asking `codesign` for a *Developer ID Application* authority, so
-the same build switches to in-place updates by itself once releases are signed.
+An update you did not ask about opens a dialog only while the game is on its title screen or
+paused. In the middle of play it shows a system notification instead (click it for the dialog),
+and the dialog comes up the next time you pause or go back to the title, so no dialog interrupts a
+mission (Enter, the game's confirm key, would otherwise press its default button). *Check for
+Updates...* in the menu always answers: "You have the latest version", "Downloading version X",
+or why it could not check. Update failures never stop the game; they are written to
+`logs/update.log` and the crash log. An unsigned macOS build decides it is unsigned by asking
+`codesign` for a *Developer ID Application* authority, so the same build switches to in-place
+updates by itself once releases are signed. Install mode for the AppImage needs the real AppImage
+environment (`APPDIR` containing the running binary and `APPIMAGE` pointing at a file in a writable
+folder), so an `APPIMAGE` variable inherited from another program can never make the updater
+replace that program's file.
 
 **For maintainers.** Nothing extra is needed to ship an update: bump `version` in `package.json`
 and release as below. The release workflow builds with a GitHub publish config and
@@ -133,50 +248,30 @@ publish. Points to keep in mind:
   ```
 
   `GTP_UPDATES=notify` or `GTP_UPDATES=install` forces a mode, `GTP_UPDATES=off` turns checks off.
+  Builds made without a publish config (plain `npm run dist:*`) have no `resources/app-update.yml`;
+  the updater then writes an equivalent one into the data folder, so they update like CI builds.
 
-## Opening an unsigned build
+## Unsigned builds
 
-Unless a build was made with a signing certificate (see "Signing" below), macOS and Windows warn
-that the developer is unknown. The game is still fine to run; this is how to get past the notice.
-These are Apple's documented steps for apps from unidentified developers
-(Apple's guide: <https://support.apple.com/guide/mac-help/mh40616/mac>).
-
-**macOS 14 Sonoma and earlier.** Do this once for the app:
-
-1. Open the `.dmg` and drag *Grand Theft Pundit* into *Applications* (or unzip the `.zip`).
-2. In the Finder, **Control-click (right-click) the app and choose Open** from the menu.
-3. In the dialog that says the developer cannot be verified, click **Open**.
-
-After that it opens with a normal double-click.
-
-**macOS 15 Sequoia and later.** Apple removed the Control-click shortcut for unsigned apps, so:
-
-1. Double-click the app. A message says Apple could not verify it is free of malware. Click **Done**.
-2. Open **System Settings > Privacy & Security**, scroll down to the *Security* section, and click
-   **Open Anyway** next to the message about Grand Theft Pundit.
-3. Confirm with **Open Anyway** again (and your password or Touch ID if asked).
-
-If macOS instead says the app "is damaged and can't be opened", the download's signature could not
-be checked. The proper fix is a signed and notarized build: add the Apple signing secrets described
-below and re-run the release workflow. Until then, use the Control-click > Open flow above on the
-`.zip` build from the release page, which macOS treats more leniently than the `.dmg`.
-
-Both Apple Silicon and Intel builds are plain Electron apps; the arm64 one is the native one for
-M-series Macs and the x64 one also runs there through Rosetta, only slower.
-
-**Windows.** SmartScreen shows "Windows protected your PC" for unsigned installers: click
-**More info**, then **Run anyway**. The portable `.exe` runs without installing anything.
-
-**Linux.** `chmod +x Grand-Theft-Pundit-*.AppImage && ./Grand-Theft-Pundit-*.AppImage`. If your
-distribution has no FUSE 2 (the AppImage prints "AppImages require FUSE to run"), unpack it once
-with `./Grand-Theft-Pundit-*.AppImage --appimage-extract` and start `squashfs-root/AppRun` instead;
-as root, add `--no-sandbox`.
+Unless a build is signed (see "Signing" below), macOS and Windows warn that the developer is
+unknown; the player steps are in "Download and install" at the top (Apple's own guide:
+<https://support.apple.com/guide/mac-help/mh40616/mac>). The "is damaged and can't be opened"
+message on a Mac comes from the quarantine flag on an unsigned download; `xattr -cr` on the app
+clears it, and a signed and notarized build never shows it. Both Apple Silicon and Intel builds are
+plain Electron apps; the arm64 one is native on M-series Macs and the x64 one also runs there
+through Rosetta, only slower. If a Linux distribution has no FUSE 2 at all, the AppImage can be
+unpacked once with `--appimage-extract` and started as `squashfs-root/AppRun` (it then gets
+release-page notices instead of in-place updates).
 
 ## Releases from GitHub Actions
 
 `.github/workflows/desktop-release.yml` builds all three platforms on every push to the
-`game/grand-theft-pundit` branch that touches the game or this folder, then the `smoke` job runs
-the packaged Linux app under xvfb (see "Smoke test"); a release is only published when it passes. The builds appear as
+`game/grand-theft-pundit` branch (and the desktop track's `v03/desktop` branch, which only builds and
+tests) that touches the game or this folder. Each build job reads the Electron fuses back
+(`test/check-fuses.js`) and launches what it built: the macOS job verifies both apps' code
+signatures and boots the Apple Silicon app to the title, the Windows job boots the unpacked app, and
+the `smoke` job runs the Linux AppImage under xvfb through the title and into a new game (see
+"Smoke test"). A release is only published when all of that passes. The builds appear as
 artifacts on the run's page in the Actions tab. To publish a GitHub Release with download links,
 either put `[release]` in the commit message (the release is tagged `v` plus the `version` in
 `desktop/package.json`, so bump that first), or push a tag starting with `v`:
@@ -187,8 +282,9 @@ git commit -m "Ship 0.2.0 [release]"     # or:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-The macOS job runs on `macos-14` and produces the arm64 and x64 dmg/zip, the Windows job the
-installer and portable exe, and the Linux job the AppImage, each with its update metadata. The last job creates (or updates, if it
+The macOS job runs on `macos-14` and produces the arm64 and x64 dmg/zip (and mounts each DMG to
+check the background art and Finder layout are in it), the Windows job the installer and portable
+exe, and the Linux job the AppImage, each with its update metadata. The last job creates (or updates, if it
 exists) the release for that tag with every file attached and auto-generated notes. "Run workflow"
 from the Actions tab builds the same files as workflow artifacts without a tag; fill in
 `release_tag` with an existing tag to publish a release from a manual run.
@@ -203,12 +299,29 @@ cache (through `setup-node`) and the Electron/electron-builder binary caches are
 `test/smoke.js` launches a packaged app with `--remote-debugging-port`, talks to it over the Chrome
 DevTools Protocol with Node 22's built-in `fetch` and `WebSocket` (no dependencies) and fails unless:
 the game page loads and boots, reaches the title screen with the loading screen finished, the
-splash has closed and the window is visible, the 3D canvas and the HUD show a real picture, a test
-mod in the mods folder ran, there were no page exceptions, console errors or `GTP.errors`, and the
-crash log holds nothing but its start line. It then restarts the app with a saved window size and
-checks both the restore and the save on quit. It uses a throw-away data folder
-(`GTP_USER_DATA_DIR`) with updates off, and writes `smoke-title.png` and `smoke-crash.log` to
-`test/out/` (CI uploads them as the `smoke` artifact).
+splash has closed and the window is visible, the 3D canvas and the HUD show a real picture, and a
+test mod in the mods folder ran. Then it plays into a new game with real key presses: Enter on
+NEW GAME, the loading screen, the opening cutscene (held Enter skips it, as its pill says),
+dialogue, until the first mission objective is on the HUD. Throughout, there must be no page
+exceptions, console errors or `GTP.errors`, and the crash log must hold nothing but its start line
+(`--no-new-game` stops after the title). It also checks that the window cannot be taken away from
+the game: a script navigating to another `file://` page and a file dropped on the window must
+both leave `app/index.html` in place. It then restarts the app with a saved window size and a mod
+with a syntax error, and checks the restore, that the broken mod is reported in
+`GTP_MODS.errors` while the next mod still runs, and the save on quit. The app is always quit by
+closing its window, so its close handlers run on every platform. It uses a throw-away data folder
+(`GTP_USER_DATA_DIR`) with updates off, and writes `smoke-title.png`, `smoke-cutscene.png`,
+`smoke-objective.png` and `smoke-crash.log` to `test/out/` (CI uploads them as the `smoke`
+artifact). About 2 minutes under xvfb with software GL; the macOS and Windows CI jobs run it with
+`--no-new-game` (artifacts `smoke-mac`, `smoke-windows`). The macOS runner VM has no GPU and may
+not be able to create a WebGL context at all, so its step adds `--webgl-optional`: when the page
+reports no WebGL, the picture checks and the errors that follow from the missing context are
+skipped with a note, and every other check (boot, title, splash, mods, navigation lock, window
+state, broken mod) still has to pass. On macOS the test also starts the app with
+`--disable-gpu-sandbox` so software GL can start.
+
+`test/check-fuses.js <app binary or .app>` reads the fuses of a packaged app and fails unless they
+match the `electronFuses` block of `electron-builder.yml` (`npm run check-fuses -- <app>`).
 
 ```sh
 npm run pack                                   # dist/linux-unpacked
@@ -225,7 +338,7 @@ On a Mac or Windows desktop no xvfb is needed; pass the app binary
 
 The desktop game loads your own files at startup, so you can change or add things without
 rebuilding. The folder is created on first launch. **Open Mods Folder** is in the app menu on macOS
-and in the Alt menu bar on Windows and Linux, and **Cmd/Ctrl+Shift+M** opens it everywhere:
+(also **Cmd+Shift+M**) and under *Game* in the Alt menu bar on Windows and Linux:
 
 | Platform | Folder |
 | --- | --- |
@@ -240,8 +353,9 @@ Every time the game loads, in file-name order:
 - `*.css` files are added to the page;
 - `*.js` files run after the game's own scripts, so `window.GTP` (the whole game: content tables,
   cast, missions, UI, renderer) is available to them. Each runs in its own `try/catch`; failures are
-  listed in `window.GTP_MODS.errors` and the console (Cmd+Option+I or Ctrl+Shift+I); uncaught
-  errors also land in the crash log.
+  listed in `window.GTP_MODS.errors` and the console (Cmd+Option+I or Ctrl+Shift+I) and written
+  to the crash log. A file with a syntax error is caught before it runs and reported the same way
+  with its line number (`SyntaxError: ... (line 2)`); the other mods still load.
 
 Rename a file (for example to `.js.off`) to turn it off, and restart the game after changes. Mods
 are your own files on your own machine; they are not part of the release builds.
@@ -285,6 +399,7 @@ electron-builder's own guide: <https://www.electron.build/code-signing>.
 | `lib/crash-log.js` | `logs/crash.log`, crash reporter (local minidumps only) |
 | `splash/` | the boot splash page and its 224 px icon |
 | `test/smoke.js` | the packaged-app smoke test CI runs |
+| `test/check-fuses.js` | reads the Electron fuses back from a packaged app and compares them with `electron-builder.yml` |
 | `sync-game.js` | copies the game into `app/` (CLI and `beforePack` hook) |
 | `electron-builder.yml` | packaging config: app id `com.grievancecity.grandtheftpundit`, targets, dmg layout and background, artifact names |
 | `build/dmg-background.html`, `build/make-dmg-background.js`, `build/background.png`, `build/background@2x.png` | the disk-image window artwork (drag arrow, first-launch hints) and its renderer |

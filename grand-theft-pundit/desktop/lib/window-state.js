@@ -50,26 +50,42 @@ function load(defaults) {
   return out;
 }
 
-/* track(win) keeps window-state.json current for this window. */
+/* track(win) keeps window-state.json current for this window. Every move, resize or state change
+ * updates an in-memory snapshot at once and writes it SAVE_DELAY_MS later; 'close' writes it
+ * immediately, and so does 'closed', because a window closed by the page (window.close()) or torn
+ * down on quit can skip 'close'. track() runs once the window shows its saved state (main.js
+ * reveal()), so quitting during the splash never overwrites the saved maximized/full screen. */
 function track(win) {
   let timer = null;
-  const save = () => {
-    clearTimeout(timer);
-    timer = null;
+  let snapshot = null;
+  // a minimized window reports isMaximized() false (Windows, macOS), so remember the last answer
+  // from before it was minimized
+  let lastMaximized = win.isMaximized();
+  win.on('maximize', () => { lastMaximized = true; });
+  win.on('unmaximize', () => { lastMaximized = false; });
+  const capture = () => {
     if (win.isDestroyed()) return;
     // normal bounds are the restore size, also while maximized, minimized or in full screen
     const b = win.getNormalBounds();
-    const state = { x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMaximized(), fullscreen: win.isFullScreen() };
+    snapshot = { x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMinimized() ? lastMaximized : win.isMaximized(), fullscreen: win.isFullScreen() };
+  };
+  const write = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!snapshot) return;
     try {
-      fs.writeFileSync(stateFile(), JSON.stringify(state, null, 2));
+      fs.writeFileSync(stateFile(), JSON.stringify(snapshot, null, 2));
     } catch (_err) { /* best effort */ }
   };
-  const later = () => {
+  const changed = () => {
+    capture();
     clearTimeout(timer);
-    timer = setTimeout(save, SAVE_DELAY_MS);
+    timer = setTimeout(write, SAVE_DELAY_MS);
   };
-  for (const ev of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(ev, later);
-  win.on('close', save);
+  for (const ev of ['resize', 'move', 'maximize', 'unmaximize', 'minimize', 'restore', 'enter-full-screen', 'leave-full-screen']) win.on(ev, changed);
+  win.on('close', () => { capture(); write(); });
+  win.on('closed', write);
+  capture();
 }
 
 module.exports = { load, track, stateFile };
