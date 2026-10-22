@@ -11,14 +11,20 @@ system, melee combos and a 37-weapon arsenal with attachments and tints.
 ## What was built
 
 ### Arsenal (`08_combat.js`, `05b_assets_weapons.js`)
-- **37 weapons**: the twelve of GDD_EXPANSION §2 (ids, names and numbers kept, except the QA retunes below) and 25
-  parody additions: `knuckles` Brass Talking Points, `selfie` Selfie Stick, `gavel` The Gavel of Order, `bat` The Closing
-  Argument, `oped` Op-Ed Compact, `filibuster` The Filibuster, `pocketsmg` Pocket Pundit, `threadpistol` Thread Pistol,
-  `liveblog` The Live Blogger, `combatmg` Comment Section, `lmg` The Endless Segment, `carbine` The Panel, `bullpup` Bullet
-  Points, `battlerifle` The Long Read, `sawnoff` Sawed-Off Soundbite, `doublebarrel` The Both-Sider, `autoshotgun` Town Hall,
-  `marksman` The Peer Reviewer, `heavysniper` The Long Form, `smoke` Smoke & Mirrors, `coffee` Scalding Latte,
-  `stickynote` Sticky Note, `confetti` Confetti Cannon, `firework` Viral Loop, `spin` The Spin Machine (minigun with spin-up).
-  Each has an unlock mission from the existing chain, a price and one of Merle's lines.
+- **The arsenal is the content track's 37** (`GTP.Content.parity.weapons`): the twelve of GDD_EXPANSION §2 plus `clipboard`,
+  `selfie_stick`, `golf_club`, `mic_stand`, `pocket`, `heavy_pistol`, `machine_pistol`, `flare_gun`, `micro_smg`, `pdw`, `carbine`,
+  `battle_rifle`, `bullpup`, `lmg`, `both_barrels`, `auto_shotgun`, `marksman`, `heavy_sniper`, `flashbang`, `sticky`, `spin_smoke`,
+  `grenade_launcher`, `minigun`, `merch_cannon`, `mute_button`. Combat keeps its own **fallback table** (the twelve + 25 parody
+  additions: `knuckles`, `gavel`, `bat`, `oped`, `filibuster`, `pocketsmg`, `threadpistol`, `liveblog`, `combatmg`, `sawnoff`,
+  `doublebarrel`, `autoshotgun`, `heavysniper`, `smoke`, `coffee`, `stickynote`, `confetti`, `firework`, `spin`, ...) for a build
+  without the content: a parity table of 32+ retires the fallback ids it does not list (`LEGACY_ID` / `Combat.canonId` maps an
+  old save's ids onto their parity cousins: rounds, mods and the gun in hand move over); a partial table only overrides by id.
+- **Parity behaviours**: flashbang (fuse, a white-out for the player in view, everyone in `ring` down for `stun` s), flare gun
+  (keeps its 1-round magazine, a 2 m pink stun pop), mute button (a hitscan stun: down for `stun` s, "MUTED"), merch cannon (a
+  lobbed `bump`: no blast, it floors what it hits), sticky (`sticks` + `remote`: no fuse, **R with it in hand detonates**
+  every charge; `Combat.detonate(p)`), spin smoke (`smoke` is the radius, `smokeSeconds` the time), grenade launcher (impact,
+  fuse 0), golf club (`launch`: the victim flies), minigun / lmg (`heavy`: wheel slots 11 / 5; spin-up), per-weapon
+  `mobility`, scope `zoom` (the second zoom step; a long optic's `adsZoom` too; fov = 60 / zoom).
 - **Parity merge**: `syncArsenal()` (run every `Combat.update`, cheap when unchanged) merges `GTP.Content.parity.weapons`
   (array or id-keyed object) over the table by id. Known ids keep their engine-only fields (cook, rocket, cone, pellets,
   drive-by...) and take the content numbers; new ids are normalised (class aliases `handgun heavy_pistol machinepistol mg
@@ -29,10 +35,13 @@ system, melee combos and a 37-weapon arsenal with attachments and tints.
   (a content-track weapon) gets a builder of its class picked by a hash of the id, so it always has a believable mesh.
   Each weapon has fit points: grip (the origin), `support` (the off hand), `muzzle`, `rail`, `under`, `mag`, plus `hold`,
   `holster` and the allowed attachment `slots`.
-- **Attachments** (muzzle: suppressor / compensator; mag: extended; optic: red dot / long scope; grip; light) change the numbers
-  (`Combat.eff(p, id)`: range, damage, quiet, recoil, magazine size, aim spread, ADS zoom, bloom) and the mesh
-  (`Assets.weaponMesh(id, mods)` adds the parts at the fit points; a flashlight has a lit `lens`). **Tints** (8, from
-  Factory to Goldplate) recolour the dark metal and polymer of a cached geometry per (id, tint).
+- **Attachments**: with `GTP.Content.parity.attachments` present its 13 entries *are* the variants (suppressor, compensator,
+  flash_hider, ext_mag, drum_mag, red_dot, holo, scope_4x, scope_8x, fore_grip, angled_grip, flashlight, laser): `mods`
+  multiply the numbers (`noise:-1` = suppressed, `range dmg recoil mag reload spread hipSpread mobility`, `adsZoom` -> the ADS
+  fov and, from 3x, the scope's zoom) and `fits` limits them by class; without the table the fallback variants (suppressor,
+  compensator, extended, reddot, scope, grip, flashlight) apply (`MOD_FX`). `05b` draws every id (`VARIANT` map).
+  **Tints**: the content's 10 (one colour each; 05b's `tintOf` derives the second shade), with their mission locks in the
+  catalog; the fallback 8 without the table.
 
 ### Aiming and firing (`08_combat.js`)
 - **Shoulder camera**: while aiming, a wrapper on `Render.rig.update` puts `CAMERA.aimDist/aimSide/aimHeight/aimLookHeight`
@@ -136,14 +145,17 @@ GTP.Combat.catalog(storeId), buy(itemId, opts), weaponStats(id, player), eff(pla
 GTP.Combat.fire(ped, id), reload(ped), ammo(ped, id), ammoCap(ped, id), giveAmmo(p, id, n, cap)
 GTP.Combat.fillPose(ped, dt), postSync(ped), handTargets(ped) -> {right, left|null, raised, weaponId, gun}, gunFrame(ped, raised), muzzle(ped, id)
 GTP.Combat.coverToggle(p), coverControl(p, dt), coverFind(p), coverEnter(p, cand), coverExit(p, why), coverShield(p, shooter), vaultStep(p, dt)
-GTP.Combat.counter(p), counterReady(p), moveScale(p), inSmoke(x, z), smokes, setAimAssist(on)
+GTP.Combat.counter(p), counterReady(p), moveScale(p), inSmoke(x, z), smokes, setAimAssist(on), detonate(p), canonId(id)
+GTP.Combat.cover.available(p) / candidate(p) / active(p)    (the UI's cover prompt)
+GTP.Combat.hooks.gate / fired / update: arrays other modules push into instead of wrapping fire / update
+GTP.Combat.death.fine (set at the bust: the fine the respawn charges), Combat.flashT (the flashbang white-out, drawn by drawAimOverlay)
 GTP.Combat.hud() -> adds crosshair {mode:'aim'|'hip'|'scope'|'none', k, spreadPx, screen, hostile, target, inRange, assist, locked},
                     cover {active, high, side, edge, peek, kind, canVault, blind | near, nearHigh}, melee {type, t, combo},
                     prompt ('counter'|'cover'|'vault'|'peek'|null), weapon.slot / hold / mods / spin
 GTP.Combat.wheel / hud().wheel: twelve SLOTS; a segment is a slot showing its picked weapon {slot, slotName, id, name, owned, count, ids, ...};
                     R cycles the hovered slot's weapons while the wheel is open
-GTP.Assets.weaponMesh(id, mods), weaponFitFor(id, cls), weaponFit, weaponGeometry(id, tint), weaponMuzzle(id, mods), weaponTints,
-           weaponAttachments, weaponClassOf(id), weaponIds()
+GTP.Assets.weaponMesh(id, mods), weaponFitFor(id, cls), weaponFit (lazy: any id), weaponGeometry(id, tint), weaponMuzzle(id, mods),
+           weaponTints, weaponTintOf(id), weaponAliases, weaponAttachments, weaponClassOf(id), weaponIds()
 ped.pose (contract above), ped.cover, player.weaponMods, player.weaponModsOwned
 Events: cover:enter, cover:exit, melee, aim:assist {target}, plus the existing weapon / hitmarker / reload / scope / wheel / shop:*
 Pickup.collect: Combat.collectPickup may return 'skip' (the crate stays)
@@ -151,8 +163,9 @@ Pickup.collect: Combat.collectPickup may return 'skip' (the crate stays)
 
 ## Interfaces consumed (all feature-detected)
 - `GTP.Content.parity.weapons` / `.attachments` / `.tints` (content track): merged when present; the game works without them.
-- `GTP.Anim` (models track): when present, the fallback arm reach, melee arm poses and crouch are skipped; the gun is still placed
-  by Combat. Bones named `handR` / `handL` are used for the hand frame when they exist, else `armR` / `armL` 0.61 m down.
+- `GTP.Anim` (models track): when present, the fallback arm reach, melee arm poses and crouch are skipped, and once 06c has
+  parented the held gun to the `handR` bone Combat leaves its transform alone (it only reads the hand positions for
+  `handTargets`); the shot's muzzle is still the analytic `gunFrame`. Bones named `handR` / `handL` are used for the hand frame when they exist, else `armR` / `armL` 0.61 m down.
 - `GTP.AI.coverAlert(x, z, info)` (world track).
 - `GTP.SaveRegistry` (story track): `combat` entry.
 - `GTP.Interiors.active` (interiors track): the green shop light does not open while inside an interior.
@@ -179,6 +192,20 @@ Pickup.collect: Combat.collectPickup may return 'skip' (the crate stays)
   `projectile: 'lobbed'` on a `heavy`/launcher class becomes an impact grenade launcher, on a thrown class a fused grenade.
 - **world/AI**: cops/goons in a fight draw their weapon from the holster; AI shots at a player in cover hit the cover from the
   front, so flanking (coverAlert) is how the AI gets through. `Combat.inSmoke(x, z)` can blind the AI's sight.
+
+## Integration round 1 (merge of the 15 tracks)
+- Merged `origin/game/grand-theft-pundit` (`10ba585`); nobody else edited my files. Triage of every QA bug pointing at my files:
+  `docs/v03/triage_shooting.md`.
+- **Wrappers on my modules** (bosses: `Combat.update` -> `Bosses.update` + `Specials.update`; interiors: `Combat.fire` range gate
+  + range scoring, `Combat.update` -> `Interiors.update`): they cannot be folded into `08_combat.js` without their private
+  functions (`canShoot`, `rangeShot` are closures in `13_interiors.js`), so Combat now offers `Combat.hooks.gate / fired /
+  update` (plain arrays, errors reported, not thrown). The owners can register there and drop the wrappers; until then the
+  wrappers keep working on top of the hooks (Combat calls `Combat.fire` / its own `_update`, so nothing runs twice).
+- **Audio**: every `shot` now passes `{weapon, ped, cls, suppressed}` (the vehicles track's routing ask); a suppressed shot plays
+  `shot` with `suppressed: true` (was the `reloadDone` click).
+- **Bosses**: the end of a helicopter-kind lock (a spool, the scooter parts) re-locks the next target like a fresh aim press and
+  eases the pitch down from the sky; close locks allow for the shoulder camera's parallax.
+- Slot 2 is now `Specials` (megaphone, flare gun, merch cannon, mute button).
 
 ## Decisions
 - One shared aim model for keyboard/mouse and pad: the assist snaps on aim press (GTA V "assisted aim"), shots go to the
@@ -209,8 +236,8 @@ NODE_PATH=/opt/node-tools/node_modules node tests/actors.js   # the player contr
 Screenshots to look at: `tests/out/combat_aim.png`, `combat_firefight.png`, `combat_holsters.png`, `combat_held_*.png`,
 `cover_low.png`, `cover_peek.png`, `cover_wall.png`.
 
-Full run on this branch: `node tests/all.js` -> all 20 test files passed (actors, ai, artifact, audio, campaign, combat,
-content_audit, cover, cutscenes, feel, feel2, missions, perf, render, saves, smoke, strands, tune, ui, world).
+Before the merge: `node tests/all.js` -> all 20 files passed. On the merged build: `actors`, `characters`, `combat`, `cover`
+pass (see `triage_shooting.md` for the other tracks' failures).
 
 ## Known issues
 - The fallback rig has no elbows: arms are straight and slightly stretched to reach the gun; the models track's IK should

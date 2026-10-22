@@ -3262,6 +3262,11 @@
     counterReady: function (p) { p = p || player(); return !!p && p.alive && !p.inVehicle && !p.cover && !p.knockedDown && !!counterCandidate(p); },
     setAimAssist: function (on) { settings.aimAssist = !!on; return settings.aimAssist; },
     update: function (dt) {
+      var r = Combat._update(dt), H = Combat.hooks.update;
+      for (var i = 0; i < H.length; i++) { try { H[i](dt); } catch (e) { U.reportError(e, 'combat.hooks.update'); } }
+      return r;
+    },
+    _update: function (dt) {
       ensureHooks();
       var g = GTP.game, p = player(); if (!g || !p) return;
       var st = g.state;
@@ -3288,7 +3293,17 @@
     },
 
     // Fire the ped's weapon toward its target. Rate-limited per ped; the player spends ammo (and reloads an empty magazine).
+    // the hook lists other modules register into instead of wrapping Combat (the bosses and interiors wrappers can move here):
+    //   gate(ped, id) -> false refuses the shot; fired(ped, id) after a shot that went off; update(dt) after each Combat.update
+    hooks: { gate: [], fired: [], update: [] },
     fire: function (ped, weaponId) {
+      var H = Combat.hooks, i;
+      for (i = 0; i < H.gate.length; i++) { try { if (H.gate[i](ped, weaponId) === false) return false; } catch (e) { U.reportError(e, 'combat.hooks.gate'); } }
+      var r = Combat._fire(ped, weaponId);
+      if (r) for (i = 0; i < H.fired.length; i++) { try { H.fired[i](ped, weaponId || (ped && ped.weapon)); } catch (e) { U.reportError(e, 'combat.hooks.fired'); } }
+      return r;
+    },
+    _fire: function (ped, weaponId) {
       if (!ped || !ped.alive || ped.knockedDown || ped.entering || ped.swimming || ped._vault) return false;
       var id = weaponId || ped.weapon || 'fist', w0 = WEAPONS[id]; if (!w0) return false;
       var isPlayer = ped.kind === 'player', w = isPlayer ? eff(ped, id) : w0;
