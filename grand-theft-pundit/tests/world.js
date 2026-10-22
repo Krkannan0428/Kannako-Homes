@@ -522,6 +522,70 @@ H.run('world', async (t) => {
   });
   console.log('  Manifest Ramp climb: ' + JSON.stringify(manifest));
   if (manifest && manifest.placed) t.assert(manifest.maxY > 6 && !(manifest.at[2] > 6 && manifest.at[0] > 400 && manifest.at[0] < 420 && Math.abs(manifest.at[1] - 632) < 6), 'an AI car climbing the Manifest Ramp reaches the Lower Loop deck and drives on (QA-A-TRF-08): ' + JSON.stringify(manifest));
+  // ==== world-collision block (envw2/world-collision): the interior hooks, the fast path, QAC-56/57/22, QA-A-DRV-03/04/05 ====
+  const col = await page.evaluate(() => {
+    const W = GTP.World, T = W.T, out = {};
+    // the six queries are World's own (13_interiors' wrappers adopted or replaced by hooks) and keep the interiors flag
+    out.native = ['heightAt', 'solidAt', 'resolveCapsule', 'raycastBuildings', 'tileAt', 'districtAt'].every((n) => /FAR_X/.test(String(W[n])));
+    out.flag = !!(W.resolveCapsule._interiors && W.heightAt._interiors && W.solidAt._interiors);
+    // hooks: a fake room at x -5000; inside it the hooks answer, outside it (and in the city) World does
+    const prev = W.interiorHooks, fake = { id: 'fake' }, seen = [];
+    W.setInteriorHooks({ roomAt: (x, z) => (x > -5010 && x < -4990 && z > -10 && z < 10 ? fake : null),
+      height: (rm, x, z, y) => { seen.push('h' + y); return 2.5; }, solid: (rm, x, z, y) => { seen.push('s' + y); return true; },
+      resolve: (rm, x, z, y, r) => { seen.push('r' + y + '/' + r); return { x: x + 1, z, hitX: true, hitZ: false, normal: { x: 1, z: 0 }, prop: null }; },
+      ray: (rm) => ({ t: 1, interior: rm.id }), tile: () => T.PLAZA, district: () => ({ id: 'indoors' }) });
+    out.hook = { h: W.heightAt(-5000, 0), s: W.solidAt(-5000, 0), r: W.resolveCapsule(-5000, 0).x, ray: (W.raycastBuildings(-5000, 1, 0, 1, 0, 0, 10) || {}).interior, tile: W.tileAt(-5000, 0), d: (W.districtAt(-5000, 0) || {}).id, seen: seen.join(','),
+      outside: W.heightAt(-4000, 0), city: W.heightAt(300, 300, 0) };
+    W.setInteriorHooks(prev);
+    // the fast path: a road capsule with nothing around answers unchanged; one against a building is pushed
+    let k = 0; while (!(W.tiles[k] === T.ROAD && W._colTile[k] === 0 && !W.deck[k])) k++;
+    const rx = (k % W.w + 0.5) * 4, rz = (Math.floor(k / W.w) + 0.5) * 4, rr = W.resolveCapsule(rx, rz, 0, 0.32);
+    out.fast = { same: rr.x === rx && rr.z === rz && !rr.hitX && !rr.hitZ };
+    const b = W.buildings[5], pb = W.resolveCapsule(b.x - 0.1, b.z + b.d / 2, 0.12, 0.4);
+    out.fast.building = +(b.x - pb.x).toFixed(3);
+    // QAC-57: NaN in, a finite in-map answer out; a NaN height hint reads as no hint
+    const nq = W.resolveCapsule(NaN, 40, 0, 0.4), nx = nq.x, nz = nq.z;
+    const deckI = W.deck.indexOf(T.HIGHWAY), dx = (deckI % W.w + 0.5) * 4, dz = (Math.floor(deckI / W.w) + 0.5) * 4;
+    const a1 = W.resolveCapsule(b.x - 0.1, b.z + b.d / 2, NaN, 0.4).x, a2 = W.resolveCapsule(b.x - 0.1, b.z + b.d / 2, 0, 0.4).x;
+    out.nan = { finite: isFinite(nx) && isFinite(nz) && nx > 0 && nz > 0 && nx < W.bounds.x1 && nz < W.bounds.z1, hint: W.heightAt(dx, dz, NaN) === W.heightAt(dx, dz, null), y: a1 === a2 };
+    // QAC-56: a capsule at a solid prop's exact centre is pushed clear of it, with a normal
+    const bench = W.props.find((p) => p.kind === 'bench' && p.solid && !p.fallen), q56 = W.resolveCapsule(bench.x, bench.z, bench.y, 0.4);
+    out.centre = { d: +Math.hypot(q56.x - bench.x, q56.z - bench.z).toFixed(3), need: bench.r + 0.4, normal: Math.abs(q56.normal.x) + Math.abs(q56.normal.z) };
+    // QA-A-DRV-04 / 05: a container is a 2.4 x 6 m box, a hedge its sx x sz box (a point 2.4 m along a container from its
+    // centre sat outside the old 1.3 m circle)
+    const boxes = W.props.filter((p) => p.kind === 'container' && p.solid && !p.rot);
+    const cont = boxes.find((c) => !boxes.some((q) => q !== c && Math.abs(q.x - c.x - 2.7) < 0.3 && Math.abs(q.z - c.z) < 4)), qc = W.resolveCapsule(cont.x + 1.4, cont.z + 2.4, cont.y + 0.5, 0.4);
+    out.container = { x: +(qc.x - cont.x).toFixed(3), outX: qc.x - cont.x >= 1.2 + 0.4 - 0.01 };
+    const hedge = W.props.find((p) => p.kind === 'hedge' && (p.sz || 0) > 8), qh = W.resolveCapsule(hedge.x - 0.2, hedge.z + hedge.sz / 2 - 1.5, hedge.y, 0.4);
+    out.hedge = { outX: +Math.abs(qh.x - hedge.x).toFixed(3), need: 0.5 + 0.4 };
+    // QA-A-DRV-03: a bridge walkway's railing (0.2 m in from the water edge) stops a walker or a car point
+    let wi = -1, side = 0;
+    for (let i = 0; i < W.w * W.h && wi < 0; i++) if ((W.meta[i] & W.M.WALKWAY) && W.tile(i % W.w + 1, (i / W.w) | 0) === T.WATER) { wi = i; side = 1; }
+    const wx = (wi % W.w + 1) * 4 - 0.15, wz = (Math.floor(wi / W.w) + 0.5) * 4, qw = Object.assign({}, W.resolveCapsule(wx, wz, 0.2, 0.4)), qb = W.resolveCapsule(wx, wz, -0.7, 0.4);
+    out.rail = { found: wi >= 0 && side === 1, x: +(qw.x - (wi % W.w + 1) * 4).toFixed(3), hitX: qw.hitX, boat: qb.x === wx };
+    return out;
+  });
+  console.log('  collision: ' + JSON.stringify(col));
+  t.assert(col.native && col.flag, 'World answers its six queries itself, the interiors flag kept: ' + JSON.stringify(col));
+  t.assert(col.hook.h === 2.5 && col.hook.s === true && col.hook.r === -4999 && col.hook.ray === 'fake' && col.hook.tile === 8 && col.hook.d === 'indoors' && col.hook.seen === 'h0,s0,r0/0.4' && col.hook.outside === -1.2 && (col.hook.city === 0.12 || col.hook.city === 0),'World.setInteriorHooks answers inside a room only (y defaulted, r 0.4): ' + JSON.stringify(col.hook));
+  t.assert(col.fast.same && col.fast.building >= 0.39, 'fast path: an empty road answers unchanged, a building still pushes: ' + JSON.stringify(col.fast));
+  t.assert(col.nan.finite && col.nan.hint && col.nan.y, 'QAC-57: NaN positions and hints recover: ' + JSON.stringify(col.nan));
+  t.assert(col.centre.d >= col.centre.need - 0.01 && col.centre.normal === 1, 'QAC-56: a capsule at a prop centre is pushed out with a normal: ' + JSON.stringify(col.centre));
+  t.assert(col.container.outX, 'QA-A-DRV-04: a container collides as its 2.4 x 6 m box: ' + JSON.stringify(col.container));
+  t.assert(col.hedge.outX >= col.hedge.need - 0.01, 'QA-A-DRV-05: a maze hedge collides along its length: ' + JSON.stringify(col.hedge));
+  t.assert(col.rail.found && col.rail.hitX && col.rail.x <= -0.6 + 0.01 && col.rail.boat, 'QA-A-DRV-03: the walkway railing stops a walker, not a boat: ' + JSON.stringify(col.rail));
+  // QAC-22: a same-seed New Game stands knocked-over props up again
+  const fallen = await page.evaluate(() => {
+    const W = GTP.World, lamp = W.props.find((p) => p.kind === 'lamp' && p.solid), idx = lamp.index;
+    lamp.fallen = { t: 5, dx: 1, dz: 0 }; lamp.solid = false;
+    GTP.game.newGame(GTP.game.seed);
+    const l2 = W.props[idx], q = W.resolveCapsule(l2.x + 0.3, l2.z, l2.y, 0.4);
+    return { same: l2 === lamp, fallen: !!l2.fallen, solid: l2.solid, blocked: Math.hypot(q.x - l2.x, q.z - l2.z) >= l2.r + 0.4 - 0.01 };
+  });
+  console.log('  QAC-22: ' + JSON.stringify(fallen));
+  t.assert(!fallen.fallen && fallen.solid && fallen.blocked, 'QAC-22: a knocked lamp stands again after a same-seed New Game: ' + JSON.stringify(fallen));
+  // ==== end of the world-collision block ====
+
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
 });
