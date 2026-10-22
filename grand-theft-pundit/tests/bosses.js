@@ -98,9 +98,9 @@ function installBot() {
       else if (dist < want - 2.5) { mx = -dx; mz = -dz; }
     }
     // kite inside the arena: past 16 m from its centre the step outward turns along the edge (goons drag a backing-off
-    // player out of the fight otherwise)
+    // player out of the fight otherwise); a dodge goes where it must
     const cx = p.x - enc.center.x, cz = p.z - enc.center.z, cr = Math.hypot(cx, cz), R = enc.id === 'b03_warbanner' ? 30 : 16;
-    if (cr > R && (mx || mz)) {
+    if (cr > R && (mx || mz) && !dodging) {
       const out = (mx * cx + mz * cz) / cr;
       if (out > 0) { mx -= cx / cr * out * 1.3; mz -= cz / cr * out * 1.3; }
     }
@@ -142,12 +142,13 @@ H.run('bosses', async (t) => {
   await page.evaluate(installBot);
   // the boss events, recorded for the whole run
   await page.evaluate(() => {
-    const log = window.__bossLog = { phase: [], defeated: [], start: [], end: [], hits: 0, barks: 0 };
+    const log = window.__bossLog = { phase: [], defeated: [], start: [], end: [], hits: 0, barks: 0, hitStates: {} };
     GTP.Events.on('boss:phase', (e) => { const last = log.phase[log.phase.length - 1]; if (!last || last.id !== e.id || last.phase !== e.phase || last.state !== e.state) log.phase.push({ id: e.id, phase: e.phase, hp: e.hp, maxHp: e.maxHp, state: e.state, name: e.name }); });
     GTP.Events.on('boss:defeated', (e) => log.defeated.push(e.id));
     GTP.Events.on('boss:start', (e) => log.start.push(e.id));
     GTP.Events.on('boss:end', (e) => log.end.push(e.id + ':' + e.reason));
-    GTP.Events.on('boss:hit', () => log.hits++);
+    // the player's state when a telegraph lands (a moving, running player should be dodging them)
+    GTP.Events.on('boss:hit', () => { log.hits++; const p = GTP.game.player, k = (p.state || '?') + (GTP.Input.down('run') ? '+run' : '') + (p.aiming ? '+aim' : '') + ':' + Math.round(Math.hypot(p.vx, p.vz)); log.hitStates[k] = (log.hitStates[k] || 0) + 1; });
     GTP.Events.on('boss:bark', () => log.barks++);
     log.dmg = {};
     GTP.Events.on('damage', (e) => { if (!e || e.target !== GTP.game.player) return; const k = (e.type || '?') + ':' + (e.src ? (e.src.castId || e.src.role || e.src.kind) : 'none'); log.dmg[k] = Math.round((log.dmg[k] || 0) + e.amount); });
@@ -157,7 +158,7 @@ H.run('bosses', async (t) => {
   for (const id of ALL) {
     if (ONLY && !ONLY.includes(id)) continue;
     const t0 = Date.now();
-    await page.evaluate(() => { window.__bossLog.dmg = {}; });
+    await page.evaluate(() => { window.__bossLog.dmg = {}; window.__bossLog.hitStates = {}; });
     // a test mission: one approach objective and the boss, started at the arena like the content's missions will be
     const start = await page.evaluate((id) => {
       const B = GTP.Bosses, M = GTP.Missions, g = GTP.game, p = g.player;
@@ -210,7 +211,7 @@ H.run('bosses', async (t) => {
     const res = await page.evaluate((id) => {
       const M = GTP.Missions, log = window.__bossLog, b = window.__bot;
       const phases = log.phase.filter((e) => e.id === id && e.state === 'fight').map((e) => e.phase);
-      return { completed: M.state.completed.has('t_' + id), phases: Array.from(new Set(phases)), defeated: log.defeated.includes(id), errors: GTP.errors.slice(0, 6).map((e) => e.where + ': ' + e.message + ' @ ' + String(e.stack || '').split('\n').slice(1, 4).join(' < ')), bot: b.stats, dmg: log.dmg, hits: log.hits, barks: log.barks, name: (log.phase.find((e) => e.id === id) || {}).name };
+      return { completed: M.state.completed.has('t_' + id), phases: Array.from(new Set(phases)), defeated: log.defeated.includes(id), errors: GTP.errors.slice(0, 6).map((e) => e.where + ': ' + e.message + ' @ ' + String(e.stack || '').split('\n').slice(1, 4).join(' < ')), bot: b.stats, dmg: log.dmg, hits: log.hits, hitStates: log.hitStates, barks: log.barks, name: (log.phase.find((e) => e.id === id) || {}).name };
     }, id);
     results[id] = Object.assign(res, { simSeconds: simT, ms: Date.now() - t0 });
     console.log('  ' + id + ': ' + JSON.stringify(results[id]));
@@ -225,14 +226,64 @@ H.run('bosses', async (t) => {
     await page.evaluate(() => { GTP.game.advance(2); });
   }
 
+  // the content rules and the approach: the President is never hit (his teleprompter is), Dunk's fight is fists only, a
+  // mission's fight that starts far from its arena waits for the player instead of failing the leash
+  if (!ONLY || ONLY.includes('rules')) {
+    const ru = await page.evaluate(() => {
+      const B = GTP.Bosses, M = GTP.Missions, g = GTP.game, p = g.player, out = {};
+      const skipTalk = () => { if (M.dialogue && M.dialogue.active) { if (GTP.UI && GTP.UI.advanceDialogue) GTP.UI.advanceDialogue(); else M.advanceDialogue(); } };
+      B.endAll('test'); B.debug.clearResume(); if (M.state.active) M.abort();
+      // approach: start the Goldplate objective from Goldplate Tower (the content's approach point, ~208 m out)
+      const tw = GTP.World.landmark('goldplate_tower'), sp = GTP.World.nearestSidewalkPoint(tw.door.x, tw.door.z);
+      g.debug.teleport(sp.x, sp.z); p.hp = p.maxHp; g.debug.giveWeapon('pistol', 300); p.weapon = 'pistol';
+      M.registerTest({ id: 't_rules', title: 'Rules', objectives: [{ type: 'boss', bossId: 'b01_goldplate', text: 'Ground him' }] });
+      M.start('t_rules', { skipIntro: true });
+      for (let i = 0; i < 80; i++) { skipTalk(); g.advance(0.25); }
+      const e = B.active;
+      out.approach = { state: e && e.state, active: M.state.active, far: e ? Math.round(Math.hypot(p.x - e.center.x, p.z - e.center.z)) : -1, hint: M.state.hint || null, target: !!(M.objectiveTarget && M.objectiveTarget()) };
+      g.debug.teleport(e.center.x - 10, e.center.z - 6);
+      for (let i = 0; i < 60 && !(B.active && B.active.state === 'fight'); i++) { skipTalk(); g.advance(0.25); }
+      out.arrived = B.active && B.active.state;
+      // ground him and shoot the man: nothing; the teleprompter: damage
+      const enc = B.active; B.debug.breakParts('spool');
+      for (let i = 0; i < 80 && enc.data.mode !== 'ground'; i++) g.advance(0.25);
+      out.mode = enc.data.mode;
+      const gp = enc.ped, pr = enc.data.prompter, hp0 = enc.hp;
+      out.armed = gp ? gp.weapon : null;
+      if (gp) gp.applyDamage(30, p, 'pistol');
+      out.manDmg = Math.round(hp0 - enc.hp);
+      if (pr) pr.applyDamage(18, p, 'pistol');
+      out.prompterDmg = Math.round(hp0 - enc.hp);
+      out.target = enc.target() && enc.target().entity === pr;
+      M.abort();
+      // Dunk: a gun in hand goes back in the holster, and no weapon crate
+      B.endAll('test');
+      const dq = GTP.World.landmark('campus_quad'); g.debug.teleport(dq.door.x, dq.door.z - 10); g.debug.giveWeapon('pistol', 50); p.weapon = 'pistol';
+      const dk = B.spawn('b05_dunk', {});
+      for (let i = 0; i < 40 && dk.state !== 'fight'; i++) { skipTalk(); g.advance(0.25); }
+      p.weapon = 'pistol'; g.advance(0.5);
+      out.dunk = { weapon: p.weapon, crates: dk.pickups.map((k) => k.pickupType), state: dk.state };
+      B.endAll('test');
+      out.errors = GTP.errors.slice(0, 4).map((x) => x.where + ': ' + x.message);
+      return out;
+    });
+    console.log('  rules: ' + JSON.stringify(ru));
+    t.assert(ru.approach.state === 'approach' && ru.approach.active === 't_rules' && ru.approach.target, 'a fight 200 m away waits in approach (no leash fail) with an arrow: ' + JSON.stringify(ru.approach));
+    t.assert(ru.arrived === 'fight', 'arriving starts the fight: ' + ru.arrived);
+    t.assert(ru.mode === 'ground' && (!ru.armed || ru.armed === 'fist'), 'the landed President is unarmed: ' + ru.armed);
+    t.assert(ru.manDmg === 0 && ru.prompterDmg > 0 && ru.target, 'the President takes no hits, his teleprompter does (and is the target): ' + JSON.stringify(ru));
+    t.assert(ru.dunk.weapon === 'fist' && ru.dunk.crates.indexOf('weapon') < 0, 'Dunk is fists only: ' + JSON.stringify(ru.dunk));
+    t.assert(ru.errors.length === 0, 'rules: no errors: ' + ru.errors.join(' | '));
+  }
+
   // the phase checkpoint: die in phase 2 of the President, RETRY resumes in phase 2 at the phase's start
   if (!ONLY || ONLY.includes('checkpoint')) {
     const cp = await page.evaluate(() => {
       const B = GTP.Bosses, M = GTP.Missions, g = GTP.game, p = g.player;
       B.endAll('test'); B.debug.clearResume(); if (M.state.active) M.abort();
-      const def = B.defs.b01_goldplate, lm = GTP.World.landmark('stadium');
-      g.debug.teleport(lm.door.x - 30, lm.door.z + 8); p.hp = p.maxHp; g.debug.giveWeapon('pistol', 200);
-      M.registerTest({ id: 't_cp', title: 'Checkpoint', objectives: [{ type: 'goto', target: { landmark: 'stadium', offset: { x: -30, z: 8 }, metres: true }, text: 'Arrive' }, { type: 'boss', bossId: 'b01_goldplate', text: 'Ground him' }] });
+      const at = B.arenaTarget('b01_goldplate'), lm = GTP.World.landmark(at.landmark), ox = at.offset.x - 10, oz = at.offset.z - 8;
+      g.debug.teleport(lm.door.x + ox, lm.door.z + oz); p.hp = p.maxHp; g.debug.giveWeapon('pistol', 200);
+      M.registerTest({ id: 't_cp', title: 'Checkpoint', objectives: [{ type: 'goto', target: { landmark: at.landmark, offset: { x: ox, z: oz }, metres: true }, text: 'Arrive' }, { type: 'boss', bossId: 'b01_goldplate', text: 'Ground him' }] });
       M.start('t_cp', { skipIntro: true });
       for (let i = 0; i < 20 && !B.active; i++) g.advance(0.25);
       const out = { spawned: !!B.active };

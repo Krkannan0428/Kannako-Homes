@@ -17,15 +17,17 @@
  *
  * GTP.Specials: four specials with meters 0..1 (focus slow-motion aim, shout area stun, chatmob ally call, boost vehicle nitro),
  * unlocked by story missions or `flags.special_<id>`, triggered by the input action `special` (Focus while aiming, Boost in a
- * vehicle, a hold for Chat Mob, a tap for Shout; without a `special` binding: X, or Shift while aiming for Focus). Emits
- * special:state {id, meter, active, unlocked} on every visible change (1% meter steps, toggles, unlocks).
+ * vehicle, a hold for Chat Mob, a tap for Shout; 02_input.js binds it to X, Shift + right mouse and L3). Emits
+ * special:state {id, meter, active, unlocked} on every visible change of an unlocked special (1% meter steps, toggles,
+ * unlocks; a locked one stays silent, so the HUD shows no ring for it).
  *
  * Wrappers this file installs on other modules (folded in at integration; see docs/v03/bosses.md):
  *   GTP.Combat.update  ticks the bosses and specials in state 'playing' (Combat loads before this file)
  *   GTP.Missions.start / registerTest   the boss objective fallback (only without registerObjectiveType)
- *   GTP.AI.wanted.crime   drops the 'shootHeli' crime for shots at a boss part (parts are kind 'heli' so Combat's hitscan,
- *                         lock-on and blasts reach them)
- *   GTP.UI.draw        a fallback boss bar and special meters, skipped when GTP.UI.drawsBossBar / drawsSpecials is set
+ *   GTP.AI.wanted.crime / addHeat   drop every crime and all heat while a fight is in intro, fight or break (parts are kind
+ *                         'heli' so Combat's hitscan, lock-on and blasts reach them; a shot at one is otherwise 'attackCop')
+ *   GTP.UI.draw        a fallback boss bar and special meters when the UI has none of its own (UI.state.boss /
+ *                      UI.state.specials, or drawsBossBar / drawsSpecials); with the UI's bar, only the shield line
  */
 (function () {
   'use strict';
@@ -574,13 +576,14 @@
     var look = o.look ? Object.assign(rollLook(o.lookRole || role, x, z), o.look) : (o.castId && castOf(o.castId) ? Object.assign({}, castOf(o.castId).look) : rollLook(o.lookRole || role, x, z));
     var weapon = o.weapon || (role === 'cop' ? 'pistol' : 'fist'), WP = GTP.Combat && GTP.Combat.WEAPONS, melee = !WP || !WP[weapon] || !!WP[weapon].melee;
     // ranged goons use the missions' hostile brain; brawlers get this file's (a wind-up before every swing, a breather after)
-    var brain = melee ? { phase: 0.5, mode: 'mission', mission: 'bossadd', ambient: false, role: role, swingT: 0, cool: this.rng.range(0.5, 1.5), barkT: this.rng.range(3, 8), stuckT: 0, side: 1, sideT: 0 } : hostileBrain(role);
+    var brain = melee ? this.brawlerBrain(role) : hostileBrain(role);
     var p = newPed({ x: x, z: z, look: look, role: role, weapon: weapon, hp: o.hp, ai: brain, castId: o.castId, yaw: U.dirToYaw(this.center.x - x, this.center.z - z) });
     p.hostile = true; p.aimTarget = player(); p.bossAdd = this.id; if (o.name) p.name = o.name;
     this.adds.push(p);
     fx({ type: 'puff', x: x, y: p.y + 0.6, z: z, size: 1.4, life: 0.5, color: 0xe0e0e0 });
     return p;
   };
+  EP.brawlerBrain = function (role) { return { phase: 0.5, mode: 'mission', mission: 'bossadd', ambient: false, role: role, swingT: 0, cool: this.rng.range(0.5, 1.5), barkT: this.rng.range(3, 8), stuckT: 0, side: 1, sideT: 0 }; };
   EP.spawnAdds = function (role, n, rMin, rMax, o) {
     var out = [];
     for (var i = 0; i < n; i++) { var s = spotNear(this.rng, this.center.x, this.center.z, rMin || 12, rMax || 22); out.push(this.spawnAdd(role, s.x, s.z, o)); }
@@ -724,7 +727,8 @@
     this.checkpoint();
     this.emitPhase(true);
     sfx('debate', this.center.x, this.center.z, 0.6);
-    var Rd = GTP.UI; if (Rd && Rd.banner && n > 1) { try { Rd.banner(this.name.toUpperCase(), 'PHASE ' + n + ' / ' + this.phases); } catch (e) { /* ui optional */ } }
+    // the ui's own bar announces a new phase (PHASE n, from boss:phase); without it, a banner
+    var Rd = GTP.UI; if (Rd && Rd.banner && n > 1 && !uiDrawsBar()) { try { Rd.banner(this.name.toUpperCase(), 'PHASE ' + n + ' / ' + this.phases); } catch (e) { /* ui optional */ } }
   };
   // RETRY resumes at this phase: the mission checkpoint is refreshed with the player as they are now (topped up a little)
   EP.checkpoint = function () {
@@ -842,6 +846,7 @@
     var k = active.indexOf(this); if (k >= 0) active.splice(k, 1);
     Bosses.active = active[0] || null;
     emit('boss:end', { id: this.id, reason: reason || 'end' });
+    uiDropBar(this.id);
   };
   EP.hud = function () {
     return { id: this.id, name: this.name, castId: this.castId, color: this.color, phase: this.phase, phases: this.phases, hp: this.hp, maxHp: this.maxHp, shield: this.shield, shieldText: this.shieldText, state: this.state, hint: this.hint, card: this.data.card || null, telegraphs: this.tele.length };
@@ -958,6 +963,10 @@
     p.weapon = 'fist'; p.aiming = false;
     if (simT() - (enc._holsterT || -9) > 4) { enc._holsterT = simT(); toast(typeof enc.def.noGuns === 'string' ? enc.def.noGuns : 'Fists only'); }
   }
+  // the ui track's boss bar (11_ui.js keeps it in UI.state.boss, fed by boss:phase); it has no boss:end handler, so an
+  // encounter that ends without a defeat clears it here (see docs/v03/triage_bosses.md)
+  function uiDrawsBar() { var UI = GTP.UI; return !!UI && (!!UI.drawsBossBar || !!(UI.state && Object.prototype.hasOwnProperty.call(UI.state, 'boss'))); }
+  function uiDropBar(id) { var UI = GTP.UI, st = UI && UI.state; if (st && st.boss && st.boss.id === id && !UI.handlesBossEnd) st.boss = null; }
   function bossShoot(enc, p, weapon, every, dt, maxRange) {
     var pl = player(), CB = GTP.Combat; if (!pl || !pl.alive || !p || p.knockedDown || p.inVehicle || !CB || !CB.fire) return;
     var d = U.dist2d(p.x, p.z, pl.x, pl.z); if (d > (maxRange || 26)) { p.aiming = false; return; }
@@ -974,13 +983,15 @@
   // the helicopter sets down and the President steps out to rate the damage. Rating runs (strips) and gold rain (circles).
   DEFS.b01_goldplate = {
     id: 'b01_goldplate', name: 'President Lionel Goldplate', cast: 'goldplate', title: 'Ribbon Cutting',
-    arena: { landmark: 'stadium', offset: { x: -40, z: 30 } },
+    // the park and crossing east of the stadium, off Goldplate Links (14_systems.js's golf course, x 516..556): a President
+    // fight on his own golf course reads as a real event (CONTENT_RULES 2); the helicopter's 16 m orbit stays off the lawns
+    arena: { landmark: 'stadium', offset: { x: 20, z: 60 } },
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.45, windowCap: 56, shieldText: 'IN THE HELICOPTER (TEN OUT OF TEN)',
     spools: [3, 4, 5], orbit: [0.22, 0.28, 0.34], attackEvery: [4.6, 3.8, 3.0], window: 14,
     hints: ['Aim (right mouse) at the gold ribbon spools under the helicopter and shoot them', 'Cut the spools again; his interns are on the field', 'Last ribbon. The helicopter is a ten. Make it a two'],
     // the President is never the target: on the ground he reads his ratings off a gold teleprompter, and the prompter takes the
     // hits (CONTENT_RULES 2 and 4: no shots at a head-of-state stand-in)
-    pedProof: 'NOT THE SUIT. THE TELEPROMPTER.', place: 'the lot by the stadium',
+    pedProof: 'NOT THE SUIT. THE TELEPROMPTER.', place: 'the park east of the stadium',
     ticker: 'BREAKING: PRESIDENT RATES OWN HELICOPTER LANDING A TEN; HELICOPTER DISAGREES',
     lines: {
       intro: [
@@ -1006,9 +1017,15 @@
       d.heliY = c.y + 15; d.ang = 0; d.mode = 'air'; d.spoolList = [];
       enc.heli = enc.addRig({ x: c.x + 16, y: d.heliY, z: c.z, mesh: Meshes.goldHeli(), sync: function (r, m) {
         var ud = m.userData; ud.rotor.rotation.y = r.data.rotor || 0; ud.tail.rotation.x = (r.data.rotor || 0) * 1.7; ud.body.rotation.z = r.data.bank || 0;
+      }, tick: function (r, dt) {
+        // the rotor voice (03_audio.js forgets it 1.6 s after the last call): kept up from where the helicopter is, softer on
+        // the ground, coasting down after the last ribbon
+        r.data.audT = (r.data.audT || 0) - dt; if (r.data.audT > 0 || !GTP.Audio || !GTP.Audio.heli) return;
+        r.data.audT = 0.5;
+        var md = enc.data.mode, lvl = enc.state === 'approach' ? 0.7 : md === 'ground' ? 0.45 : md === 'landing' ? 0.85 : md === 'dead' || enc.state === 'defeated' || enc.state === 'done' ? Math.max(0, 0.45 - enc.stateT * 0.15) : 1;
+        try { GTP.Audio.heli(lvl, r.x, r.z); } catch (e) { /* optional */ }
       } });
       enc.barkAt = function () { return enc.heli; };
-      if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(true, c.x, c.z); } catch (e) { /* optional */ } }
     },
     phase: function (enc, n) {
       var d = enc.data, def = enc.def;
@@ -1427,7 +1444,8 @@
         enc.emitPhase(true);
       } else if (dvr && dvr.alive) {
         v.exit(dvr); dvr.knockDown(1.5, 1.5, 0, null, 'bail');
-        dvr.ai = hostileBrain('swat'); dvr.weapon = 'fist';
+        // a rider on foot brawls (the missions' swat brain holds 12 m off and never lands a fist)
+        dvr.ai = enc.brawlerBrain('swat'); dvr.weapon = 'fist';
         if (enc.phase === 1) enc.hurt((enc.maxHp - enc.def.thresholds[0]) / enc.def.scooters[0]);
       } else if (enc.phase === 1) enc.hurt((enc.maxHp - enc.def.thresholds[0]) / enc.def.scooters[0]);
       if (v.burning && !v.wreck) { v._bossBurn = true; }
@@ -1449,7 +1467,7 @@
     id: 'b04_redacted', name: 'Agent Pat Redacted', cast: 'redacted', title: 'Weather Balloon',
     arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } }, place: 'the balloon depot lot',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 1, shieldText: '[REDACTED]',
-    patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, barEvery: [4.8, 4.0, 3.4], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
+    patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, barEvery: [4.8, 4.2, 3.8], patchHp: [110, 100, 90], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
     hints: ['Shoot the black [REDACTED] patch on the balloon. Grey means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
     ticker: 'BREAKING: OVA WEATHER BALLOON POPS OVER DEPOT; OVA CONFIRMS IT WAS NEVER THERE',
     lines: {
@@ -1487,7 +1505,7 @@
     _patch: function (enc) {
       var c = enc.center, d = enc.data, b = enc.balloon;
       var a0 = enc.rng.range(0, TAU);
-      var pt = enc.addPart({ kind: 'patch', label: '[REDACTED] PATCH', x: b.x, y: b.y, z: b.z, hp: 110, mesh: Meshes.patch(), invulnText: '[CLASSIFIED]',
+      var pt = enc.addPart({ kind: 'patch', label: '[REDACTED] PATCH', x: b.x, y: b.y, z: b.z, hp: enc.def.patchHp[Math.max(0, enc.phase - 1)] || 110, mesh: Meshes.patch(), invulnText: '[CLASSIFIED]',
         follow: function (self, dt) {
           var s = b.data.scale || 1, R = 7.1 * s, a = a0 + (self.age * enc.def.orbit[enc.phase - 1]);
           self.x = b.x + Math.cos(a) * R; self.z = b.z + Math.sin(a) * R; self.y = b.y + Math.sin(self.age * 0.9) * 1.6 * s;
@@ -1577,7 +1595,7 @@
       for (i = enc.vehicles.length - 1; i >= 0; i--) {
         var v = enc.vehicles[i];
         if (v.removed) { enc.vehicles.splice(i, 1); continue; }
-        if (v.wreck || v.burning || !v.driver) { if (!v._bossCounted) { v._bossCounted = true; textFx('VAN DOWN', v.x, v.y + 2.6, v.z, '#9dff3c', 1.4); if (v.driver && v.driver.alive) { var dv = v.driver; v.exit(dv); dv.ai = hostileBrain('thug'); } d.vanRespawn = 25; } continue; }
+        if (v.wreck || v.burning || !v.driver) { if (!v._bossCounted) { v._bossCounted = true; textFx('VAN DOWN', v.x, v.y + 2.6, v.z, '#9dff3c', 1.4); if (v.driver && v.driver.alive) { var dv = v.driver; v.exit(dv); dv.ai = enc.brawlerBrain('thug'); } d.vanRespawn = 25; } continue; }
         liveVans++;
         var vd = v.data;
         vd.dropT -= dt;
@@ -2068,6 +2086,8 @@
     var m = Math.round(sp.meters[id] * 100) / 100, a = !!sp.active[id], u = spUnlocked(id), l = sp.last[id];
     if (!force && l && l.m === m && l.a === a && l.u === u) return;
     sp.last[id] = { m: m, a: a, u: u };
+    // the ui draws a ring for every id that reports a state: a locked special stays off the HUD until it unlocks
+    if (!u && !(l && l.u)) return;
     emit('special:state', { id: id, meter: m, active: a, unlocked: u, name: SK[id].name });
   }
   function fireSpecial(id, quiet) {
@@ -2127,12 +2147,6 @@
     sp.focusOwn = false; emit('special:focus', { on: false }); spEmit('focus', true);
   }
   function stopBoost() { if (!sp.active.boost) return; sp.active.boost = false; sp.boostV = null; emit('special:boost', { on: false }); spEmit('boost', true); }
-  function hasSpecialBinding() {
-    var In = GTP.Input; if (!In) return false;
-    if (In.actions && In.actions.indexOf && In.actions.indexOf('special') >= 0) return true;
-    var B = In.bindings || {}; for (var k in B) if (B[k] && B[k].indexOf && B[k].indexOf('special') >= 0) return true;
-    return false;
-  }
   function allyTick(a, dt) {
     var p = player(); if (!p || a.removed || !a.alive) return;
     if (a.knockedDown) return;
@@ -2180,17 +2194,11 @@
     update: function (dt) {
       var g = game(), p = player(), In = GTP.Input, i, id;
       if (!g || !p) return;
-      if (g.state !== 'playing') { sp.keyPressed = false; if (sp.active.focus && g.state !== 'paused') stopFocus(); return; }
-      // input: the `special` action, or X / Shift-while-aiming without a binding
-      var down = In && In.down('special'), pressed = In && In.pressed('special'), shiftFocus = false;
-      if (!hasSpecialBinding() && In) {
-        down = down || !!sp.keyDown; pressed = pressed || !!sp.keyPressed;
-        if (!pressed && p.aiming && !p.inVehicle && In.pressed('run') && spUnlocked('focus')) shiftFocus = true;
-      }
-      sp.keyPressed = false;
+      if (g.state !== 'playing') { if (sp.active.focus && g.state !== 'paused') stopFocus(); return; }
+      // input: the `special` action (02_input.js: X, Shift + right mouse, L3)
+      var down = In && In.down('special'), pressed = In && In.pressed('special');
       if (p.alive && p.controlEnabled !== false && !p.knockedDown) {
-        if (shiftFocus) fireSpecial('focus', true);
-        else if (pressed) {
+        if (pressed) {
           if (p.inVehicle) fireSpecial('boost');
           else if (p.aiming || sp.active.focus) fireSpecial('focus');
           else sp.holdT = 0;
@@ -2236,11 +2244,6 @@
     for (var i = 0; i < SPECIAL_IDS.length; i++) { var id = SPECIAL_IDS[i]; if (!sp.active[id]) sp.meters[id] = Math.min(1, sp.meters[id] + SK.hitGain * (e.kill ? 3 : 1)); }
   });
   GTP.Events.on('player:respawn', function () { stopFocus(); stopBoost(); });
-  // the fallback key: X while no `special` binding exists (the ui track adds the action)
-  if (typeof window !== 'undefined' && window.addEventListener) {
-    window.addEventListener('keydown', function (e) { var g = game(); if (e.code === 'KeyX' && !e.repeat && g && g.state === 'playing' && !hasSpecialBinding()) { sp.keyDown = true; sp.keyPressed = true; } });
-    window.addEventListener('keyup', function (e) { if (e.code === 'KeyX') sp.keyDown = false; });
-  }
 
   // ------------------------------------------------------------------ installers / wrappers --
   // Combat loads before this file: its update is the per-step hook (Game.step runs it in playing and the respawn states)
@@ -2250,7 +2253,9 @@
     var orig = CB.update;
     CB.update = function (dt) {
       var r = orig.apply(this, arguments);
-      try { installLate(); Bosses.update(dt); Specials.update(dt); } catch (e) { U.reportError(e, 'bosses.tick'); }
+      // once Game.step ticks them itself (it sets game.ticksBosses; docs/v03/triage_bosses.md), this only installs
+      var g = GTP.game;
+      try { installLate(); if (!(g && g.ticksBosses)) { Bosses.update(dt); Specials.update(dt); } } catch (e) { U.reportError(e, 'bosses.tick'); }
       return r;
     };
     CB.update._bosses = true;
@@ -2351,7 +2356,7 @@
     var S = U.clamp(Math.min(w / 1280, h / 720), 0.62, 1.3), UI = GTP.UI;
     var b = Bosses.hud(), M = GTP.Missions, talking = g.state === 'cutscene' || (M && M.dialogue && M.dialogue.active);
     // the ui track's own bar and rings (11_ui.js keeps them in UI.state.boss / UI.state.specials, fed by boss:phase / special:state)
-    var uiBar = !!UI.drawsBossBar || !!(UI.state && Object.prototype.hasOwnProperty.call(UI.state, 'boss'));
+    var uiBar = uiDrawsBar();
     var uiSpecials = !!UI.drawsSpecials || !!(UI.state && UI.state.specials && typeof UI.state.specials === 'object');
     if (b && uiBar && b.shield && b.state === 'fight' && !talking && !UI.drawsBossShield) {
       // its bar has no shield state: the reason the boss takes no damage, a line above the bar's name
