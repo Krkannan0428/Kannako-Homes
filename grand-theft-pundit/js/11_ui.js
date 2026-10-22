@@ -2138,7 +2138,8 @@
     var clw = px(30), clx = x + pw - clw - px(8), cly = y + px(6);
     panel(ctx, clx, cly, clw, px(22), px(6), hovering(clx, cly, clw, px(22)) ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)');
     txt(ctx, '✕', clx + clw / 2, cly + px(16), { font: F(12, 'bold'), color: COL.ink, align: 'center', outline: false });
-    hit(clx - px(6), cly - px(4), clw + px(12), px(30), phoneClose, 'phone-close');
+    var tw2 = Math.max(clw + px(12), px(48)), th2 = Math.max(px(30), px(44));   // a finger-sized target (QA-B-TCH-01)
+    hit(clx + clw / 2 - tw2 / 2, cly + px(11) - th2 / 2, tw2, th2, phoneClose, 'phone-close');
     var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(92);   // the list stops above the help line (QA-B-TCH-09)
     ctx.save(); ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
     var tid = tabId();
@@ -3187,7 +3188,8 @@
         }
         var gS = game() && game().state;
         if (gS === 'paused' && ui.pause.page === 'phone' && !ui.confirm) { T.ids[id] = { kind: 'scroll', y: pt.y, sx: pt.x, sy: pt.y, moved: 0 }; continue; }   // drag scrolls, a still tap taps (QA-B-TCH-09)
-        if (gS === 'cutscene' && !ui.dialogue) { T.ids[id] = { kind: 'skip', t0: ui.t }; In.set('confirm', true); continue; }   // hold anywhere = HOLD TO SKIP, a tap = next shot (QA-B-TCH-02)
+        // a cutscene: hold anywhere = HOLD TO SKIP (with a line on screen too: the press advances it), a tap = the next shot (QA-B-TCH-02)
+        if (gS === 'cutscene') { T.ids[id] = { kind: 'skip', t0: ui.t, dlg: !!ui.dialogue }; In.set('confirm', true); continue; }
         if (menuState() || ui.dialogue) { pointerTap(pt.x, pt.y); T.ids[id] = { kind: 'tap' }; continue; }
         var hb = touchButtonAt(pt.x, pt.y);
         if (hb) {
@@ -3233,7 +3235,7 @@
         if (rec.kind === 'stick') { T.stick = null; In.touch.stick.x = 0; In.touch.stick.y = 0; In.touch.stick.active = false; In.touch.buttons.run = false; }
         else if (rec.kind === 'look') T.look = null;
         else if (rec.kind === 'scroll') { if (rec.moved < px(10)) pointerTap(rec.sx, rec.sy); }
-        else if (rec.kind === 'skip') { In.set('confirm', false); if (ui.t - rec.t0 < 0.25) In.press('back'); }
+        else if (rec.kind === 'skip') { In.set('confirm', false); if (ui.t - rec.t0 < 0.25 && !rec.dlg) In.press('back'); }
         else if (rec.kind === 'button') {
           In.set(rec.action, false); T.btnDown[rec.b.id] = false;
           if (rec.hold && ui.t - rec.t0 < 0.18) In.press('weaponNext');   // a short tap on WPN cycles; a hold opened the wheel and the release equipped

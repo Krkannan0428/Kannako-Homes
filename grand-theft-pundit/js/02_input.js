@@ -71,6 +71,8 @@
   var PAD_AIR = { 0: 'jump', 1: 'horn', 2: 'radio', 3: 'enter', 4: 'yawLeft', 5: 'yawRight', 6: 'throttleDown', 7: 'throttleUp', 8: 'map', 9: 'pause', 10: 'special', 11: 'cameraMode', 12: 'quickUp', 13: 'quickDown', 14: 'quickLeft', 15: 'quickRight' };
   var COVER_TAP_MS = 220;   // a B press shorter than this is a cover tap (B held stays sprint)
   var PAD_MENU = { 0: 'confirm', 1: 'cancel', 2: 'secondary', 3: 'tabNext', 4: 'weaponPrev', 5: 'weaponNext', 6: 'zoomOut', 7: 'zoomIn', 8: 'map', 9: 'pause', 12: 'forward', 13: 'back', 14: 'left', 15: 'right' };
+  // the debate / ratio war: the menu map, but LT holds SHOUT ('run', as Shift on the keyboard) and X is the HOTTAKE (QA-B-TCH-06)
+  var PAD_MINI = Object.assign({}, PAD_MENU, { 6: 'run' });
   var DEAD_ZONE = 0.18, LOOK_PX = 14;   // 14 px per unit deflection per step ~ 2.4 rad/s through the rig's sensitivity
 
   var keyState = {};      // action -> count of physical keys holding it
@@ -85,7 +87,7 @@
   var Input = GTP.Input = {
     actions: ACTIONS,
     bindings: BINDINGS,
-    padMaps: { foot: PAD_FOOT, car: PAD_CAR, air: PAD_AIR, menu: PAD_MENU },
+    padMaps: { foot: PAD_FOOT, car: PAD_CAR, air: PAD_AIR, menu: PAD_MENU, mini: PAD_MINI },
     mouse: { x: 0, y: 0, down: false, right: false, buttons: 0, moved: false, special: false },
     flight: { pitch: 0, roll: 0, yaw: 0, throttle: 0 },   // aircraft axes, -1..1 (pitch +1 nose up, roll +1 right, yaw +1 right)
     look: { dx: 0, dy: 0 },          // look delta for this frame (pixels)
@@ -251,6 +253,7 @@
     _padContext: function () {
       var g = GTP.game;
       // cutscenes and the CONTEXT STAMPED card use the menu map: A confirms / holds to skip, B skips a shot or quits (QA-B-FE-05)
+      if (g && g.state === 'minigame') return 'mini';
       if (!g || g.state !== 'playing') return 'menu';
       var us = GTP.UI && GTP.UI.state;
       if (us && (us.shopOpen || us.modal)) return 'menu';
@@ -274,7 +277,7 @@
       var ax = g.axes || [];
       pad.lx = dz(ax[0] || 0); pad.ly = dz(ax[1] || 0);
       pad.rx = dz(ax[2] || 0); pad.ry = dz(ax[3] || 0);
-      var ctx = Input._padContext(), map = ctx === 'menu' ? PAD_MENU : ctx === 'car' ? PAD_CAR : ctx === 'air' ? PAD_AIR : PAD_FOOT;
+      var ctx = Input._padContext(), map = ctx === 'menu' ? PAD_MENU : ctx === 'mini' ? PAD_MINI : ctx === 'car' ? PAD_CAR : ctx === 'air' ? PAD_AIR : PAD_FOOT;
       pad.context = ctx;
       var nb = {}, b, now, was, used = false;
       for (b in map) {
@@ -286,7 +289,7 @@
       pad.lt = g.buttons[6] ? (g.buttons[6].value || (g.buttons[6].pressed ? 1 : 0)) : 0;
       pad.rt = g.buttons[7] ? (g.buttons[7].value || (g.buttons[7].pressed ? 1 : 0)) : 0;
       // menus: the left stick steps the selection like the d-pad (one press per crossing, a repeat every 0.25 s while held)
-      if (ctx === 'menu') {
+      if (ctx === 'menu' || ctx === 'mini') {
         var st = pad._stick, t = Date.now();
         var sx = pad.lx > 0.5 ? 1 : pad.lx < -0.5 ? -1 : 0, sy = pad.ly > 0.5 ? 1 : pad.ly < -0.5 ? -1 : 0;
         if (sx !== st.x || t - st.tx > 250) { if (sx === 1) pressedFlags.right = true; else if (sx === -1) pressedFlags.left = true; st.tx = t; }
