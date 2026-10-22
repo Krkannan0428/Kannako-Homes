@@ -710,7 +710,11 @@
     emit('boss:start', { id: this.id, name: this.name, phases: this.phases, resumed: this.resumed || 0 });
     sfx('mission', this.center.x, this.center.z, 0.8);
     var intro = from > 1 ? (this.def.lines['p' + from] || []) : (this.def.lines.intro || []);
-    this._intro = function () { self.state = 'intro'; self.stateT = 0; self.hint = ''; self.say(intro, function () { self.beginPhase(from); }); };
+    this._intro = function () {
+      // stars picked up on the way in (the approach counts crimes) don't follow the player into the set piece
+      if (wd && wd.clear && (wd.level > 0 || wd.heat > 0)) { try { wd.clear(); } catch (e) { U.reportError(e, 'bosses.wanted'); } }
+      self.state = 'intro'; self.stateT = 0; self.hint = ''; self.say(intro, function () { self.beginPhase(from); });
+    };
     var p = player();
     // a mission can hand over the fight before the player is there (an approach objective that ends at a door, or none):
     // the set waits for them instead of failing the leash on the way in
@@ -1021,9 +1025,14 @@
       }, tick: function (r, dt) {
         // the rotor voice (03_audio.js forgets it 1.6 s after the last call): kept up from where the helicopter is, softer on
         // the ground, coasting down after the last ribbon
-        r.data.audT = (r.data.audT || 0) - dt; if (r.data.audT > 0 || !GTP.Audio || !GTP.Audio.heli) return;
+        var md = enc.data.mode, dead = md === 'dead' || enc.state === 'defeated' || enc.state === 'done' || enc.state === 'ended';
+        if (dead) r.data.deadT = (r.data.deadT || 0) + dt;
+        r.data.audT = (r.data.audT || 0) - dt; if (r.data.audT > 0 || !GTP.Audio || !GTP.Audio.heli || r.data.audioOff) return;
         r.data.audT = 0.5;
-        var md = enc.data.mode, lvl = enc.state === 'approach' ? 0.7 : md === 'ground' ? 0.45 : md === 'landing' ? 0.85 : md === 'dead' || enc.state === 'defeated' || enc.state === 'done' ? Math.max(0, 0.45 - enc.stateT * 0.15) : 1;
+        // the police helicopter owns the one rotor voice when it is up (06b yields to it the same way)
+        var ph = GTP.AI && GTP.AI.police && GTP.AI.police.heli; if (ph && !ph.removed) return;
+        var lvl = enc.state === 'approach' ? 0.7 : dead ? Math.max(0, 0.45 - r.data.deadT * 0.15) : md === 'ground' ? 0.45 : md === 'landing' ? 0.85 : 1;
+        if (lvl <= 0) r.data.audioOff = true;   // wound down: the last call turns it off and the rig stays quiet as a leftover
         try { GTP.Audio.heli(lvl, r.x, r.z); } catch (e) { /* optional */ }
       } });
       enc.barkAt = function () { return enc.heli; };
@@ -2088,7 +2097,7 @@
     if (!force && l && l.m === m && l.a === a && l.u === u) return;
     sp.last[id] = { m: m, a: a, u: u };
     // the ui draws a ring for every id that reports a state: a locked special stays off the HUD until it unlocks
-    if (!u && !(l && l.u)) return;
+    if (!u) return;
     emit('special:state', { id: id, meter: m, active: a, unlocked: u, name: SK[id].name });
   }
   function fireSpecial(id, quiet) {
@@ -2262,6 +2271,26 @@
     CB.update._bosses = true;
   })();
 
+  // a fists-only fight (def.noGuns) stops a gun shot at the source: the weapon can change and fire inside Player.control,
+  // before this file's tick holsters it
+  (function wrapFire() {
+    var CB = GTP.Combat;
+    if (!CB || typeof CB.fire !== 'function' || CB.fire._bosses) return;
+    var orig = CB.fire;
+    CB.fire = function (ped, weaponId) {
+      if (ped && ped.kind === 'player') {
+        for (var i = 0; i < active.length; i++) {
+          var e = active[i], s = e.state;
+          if (!e.def.noGuns || !(s === 'intro' || s === 'fight' || s === 'break')) continue;
+          var WP = CB.WEAPONS, w = WP && WP[weaponId || ped.weapon];
+          if (w && !w.melee && (weaponId || ped.weapon) !== 'fist') { holster(e, ped); return false; }
+        }
+      }
+      return orig.apply(this, arguments);
+    };
+    CB.fire._bosses = true;
+  })();
+
   var installed = { objective: false, crime: false, ui: false, save: false };
   function patchMission(m) {
     if (!m || m._bossPatched) return m;
@@ -2332,8 +2361,8 @@
   GTP.Events.on('load:progress', installLate);
   if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('load', function () { try { installLate(); } catch (e) { U.reportError(e, 'bosses.install'); } });
   // a new game / load drops every fight and resets the specials
-  GTP.Events.on('loaded', function () { Bosses.endAll('load'); Specials.clear(); });
-  GTP.Events.on('load:begin', function () { Bosses.endAll('load'); Specials.clear(); });
+  GTP.Events.on('loaded', function () { Bosses.endAll('load'); Specials.clear(); sp.last = {}; });
+  GTP.Events.on('load:begin', function () { Bosses.endAll('load'); Specials.clear(); sp.last = {}; });
   // the slow motion never outlives play: a minigame, a menu or the title runs at full speed
   GTP.Events.on('state', function (e) {
     var s = e && e.state;

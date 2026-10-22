@@ -49,6 +49,11 @@ Fights:
   the first star; in the full test sequence the player was then busted at Redacted's start and lost their guns), and crimes
   are dropped during the defeat beat as well.
 - Back in play from a menu or the pause screen, `Input.latch(['special'])` drops a `special` press made while paused.
+- From an adversarial review of this diff (each finding checked by a second reader): stars picked up during the approach are
+  cleared on arrival; the gold helicopter's rotor winds down on its own timer, goes quiet once wound down (it hummed for 40 s
+  as a leftover) and yields to the police helicopter's voice; `Combat.fire` is wrapped so a gun switched in and fired inside
+  `Player.control` never shoots in a fists-only fight; a special that becomes locked again (new game, load) never reports, and
+  the report cache resets on load; the bot compares its lock with the scooter's weak point, not the scooter.
 
 UI seams (feature-detected; each stands down once the UI owns it):
 - The fallback boss bar and special meters no longer draw under the UI's own (`UI.state.boss` / `UI.state.specials` exist on
@@ -143,3 +148,10 @@ Kept as is:
 `NODE_PATH=/opt/node-tools/node_modules node tests/bosses.js` (about 4 minutes; `ONLY=b04_redacted`, `ONLY=rules`, etc.).
 New section `rules`: the far start waits in `approach` with an arrow and starts on arrival; the landed President is unarmed,
 takes no damage, his teleprompter does and is the target; Dunk holsters a gun and drops no weapon crate.
+
+Last full run on this branch (seed 7, one page, all six in sequence): PASS. Goldplate 149 s of play / 52 hp lost, Velvetine
+149 s / 5, Warbanner 124 s / 121, Redacted 124 s / 34, Dunk 119 s / 0, the Panel 65 s / 80; no retries; rules, checkpoint,
+specials and lifecycle sections pass. The pre-merge run (v03/bosses) for comparison: 55 to 155 s each.
+Other suites run against this branch: content_audit and smoke pass; systems (achievement/cheat counts 26/8 vs the expected
+25/6) and ui_v03 (mod shop paint preview) fail exactly as in docs/v03/merge1_all_b.log, not through this file.
+

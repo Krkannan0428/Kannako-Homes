@@ -48,8 +48,8 @@ function installBot() {
     if (g.state !== 'playing') { bot.release(); return; }
     if (p.hp < bot.lastHp) bot.stats.hpLost += bot.lastHp - p.hp;
     if (B.active) { const c = B.active.center, d = Math.round(Math.hypot(p.x - c.x, p.z - c.z)); if (d > (bot.stats.maxOut || 0)) bot.stats.maxOut = d; }
-    if (p.swimming) bot.stats.swimT = +((bot.stats.swimT || 0) + 4 / 60).toFixed(1);
-    if (p.inVehicle) bot.stats.vehT = +((bot.stats.vehT || 0) + 4 / 60).toFixed(1);
+    if (p.swimming) bot.stats.swimT = (bot.stats.swimT || 0) + 4 / 60;
+    if (p.inVehicle) bot.stats.vehT = (bot.stats.vehT || 0) + 4 / 60;
     bot.lastHp = p.hp;
     if (!p.alive || p.knockedDown) { bot.release(); return; }
     const enc = B.active;
@@ -118,7 +118,11 @@ function installBot() {
     // a player re-aims at a new target: looks at it and presses aim again (the lock-on takes what is in front on the press;
     // a held aim only re-acquires what passes under the crosshair, and the camera may still be tilted up at the helicopter)
     let aimOn = attack;
-    if (attack && !melee && tgE && tgE.kind && p.lockTarget !== tgE) {
+    // what the lock can hold: a scooter is locked through its weak point (guns never lock a civilian-class vehicle); the
+    // helicopter or balloon rig is never a lock
+    const lockE = tgE && tgE.weak && !tgE.weak.removed ? tgE.weak : tgE;
+    const lockable = lockE && (lockE.kind === 'ped' || lockE.kind === 'heli');
+    if (attack && !melee && lockable && p.lockTarget !== lockE) {
       if (!(tgE.y > p.y + 4)) GTP.Render.rig.pitch = 0.15;
       if (p.aiming && bot.stats.steps - (bot.reaimAt || -99) > 6) {
         bot.reaimAt = bot.stats.steps;
@@ -188,7 +192,7 @@ H.run('bosses', async (t) => {
       if (p.inVehicle) p.exitVehicle();
       g.debug.teleport(sp.x, sp.z); p.hp = p.maxHp; p.armor = 50;
       g.debug.giveWeapon('pistol', 600); p.weapon = id === 'b05_dunk' ? 'fist' : 'pistol';
-      window.__bot.stats = { steps: 0, jumps: 0, dodges: 0, deaths: 0, retries: 0, debates: 0, hpLost: 0 }; window.__bot.lastHp = p.hp;
+      window.__bot.stats = { steps: 0, jumps: 0, dodges: 0, deaths: 0, retries: 0, debates: 0, hpLost: 0 }; window.__bot.lastHp = p.hp; window.__bot.reaimAt = -99;
       const ok = M.start(mid, { skipIntro: true });
       const enc = B.active;
       return { ok, enc: !!enc, state: enc && enc.state, center: enc && [Math.round(enc.center.x), Math.round(enc.center.z)], mission: M.state.active, objective: M.state.objectiveText };
@@ -227,7 +231,7 @@ H.run('bosses', async (t) => {
     const res = await page.evaluate((id) => {
       const M = GTP.Missions, log = window.__bossLog, b = window.__bot;
       const phases = log.phase.filter((e) => e.id === id && e.state === 'fight').map((e) => e.phase);
-      return { completed: M.state.completed.has('t_' + id), phases: Array.from(new Set(phases)), defeated: log.defeated.includes(id), errors: GTP.errors.slice(0, 6).map((e) => e.where + ': ' + e.message + ' @ ' + String(e.stack || '').split('\n').slice(1, 4).join(' < ')), bot: b.stats, dmg: log.dmg, hits: log.hits, hitStates: log.hitStates, law: log.law, barks: log.barks, name: (log.phase.find((e) => e.id === id) || {}).name };
+      return { completed: M.state.completed.has('t_' + id), phases: Array.from(new Set(phases)), defeated: log.defeated.includes(id), errors: GTP.errors.slice(0, 6).map((e) => e.where + ': ' + e.message + ' @ ' + String(e.stack || '').split('\n').slice(1, 4).join(' < ')), bot: Object.assign({}, b.stats, { swimT: b.stats.swimT && +b.stats.swimT.toFixed(1), vehT: b.stats.vehT && +b.stats.vehT.toFixed(1) }), dmg: log.dmg, hits: log.hits, hitStates: log.hitStates, law: log.law, barks: log.barks, name: (log.phase.find((e) => e.id === id) || {}).name };
     }, id);
     results[id] = Object.assign(res, { simSeconds: simT, ms: Date.now() - t0 });
     console.log('  ' + id + ': ' + JSON.stringify(results[id]));
@@ -279,6 +283,8 @@ H.run('bosses', async (t) => {
       for (let i = 0; i < 40 && dk.state !== 'fight'; i++) { skipTalk(); g.advance(0.25); }
       p.weapon = 'pistol'; g.advance(0.5);
       out.dunk = { weapon: p.weapon, crates: dk.pickups.map((k) => k.pickupType), state: dk.state };
+      // a gun switched in and fired inside the same step never shoots
+      const shots0 = p.stats.shots || 0; p.weapon = 'pistol'; out.dunk.fired = GTP.Combat.fire(p, 'pistol'); out.dunk.shots = (p.stats.shots || 0) - shots0;
       B.endAll('test');
       out.errors = GTP.errors.slice(0, 4).map((x) => x.where + ': ' + x.message);
       return out;
@@ -288,7 +294,7 @@ H.run('bosses', async (t) => {
     t.assert(ru.arrived === 'fight', 'arriving starts the fight: ' + ru.arrived);
     t.assert(ru.mode === 'ground' && (!ru.armed || ru.armed === 'fist'), 'the landed President is unarmed: ' + ru.armed);
     t.assert(ru.manDmg === 0 && ru.prompterDmg > 0 && ru.target, 'the President takes no hits, his teleprompter does (and is the target): ' + JSON.stringify(ru));
-    t.assert(ru.dunk.weapon === 'fist' && ru.dunk.crates.indexOf('weapon') < 0, 'Dunk is fists only: ' + JSON.stringify(ru.dunk));
+    t.assert(ru.dunk.state === 'fight' && ru.dunk.weapon === 'fist' && ru.dunk.crates.indexOf('weapon') < 0 && ru.dunk.fired === false && ru.dunk.shots === 0, 'Dunk is fists only: ' + JSON.stringify(ru.dunk));
     t.assert(ru.errors.length === 0, 'rules: no errors: ' + ru.errors.join(' | '));
   }
 
