@@ -16,7 +16,8 @@
  *   - F11 and Cmd/Ctrl+F toggle full screen; Esc is left alone for the game
  *   - Ctrl+Shift+M (Cmd+Shift+M) opens the mods folder, Ctrl+Shift+I (Cmd+Option+I) the developer tools
  *   - pointer lock and fullscreen permission requests are granted, everything else is denied
- *   - links that leave the app open in the system browser; new windows are never created
+ *   - the window only ever shows app/index.html: any other navigation (a dropped file, a link, a
+ *     script) is cancelled, and http(s) links open in the system browser; new windows are never created
  *   - a single instance: launching the game twice focuses the running window
  *   - a mods folder (see MODS below): *.js and *.css files there are loaded into the game after
  *     every page load, and images there are handed to those scripts as data URLs
@@ -30,6 +31,8 @@
 const { app, BrowserWindow, Menu, shell, dialog, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const vm = require('vm');
+const { fileURLToPath } = require('url');
 
 const PRODUCT = 'Grand Theft Pundit';
 const BG = '#06070d'; // --bg in index.html
@@ -185,11 +188,16 @@ function createWindow() {
     openExternal(url);
     return { action: 'deny' };
   });
+  // The only page this window may show is the game. Dropping a file on the window, a link or a
+  // script would otherwise navigate away (losing unsaved progress, and a dropped .html would share
+  // the game's file:// storage), so everything else is cancelled; web links go to the browser.
   wc.on('will-navigate', (event, url) => {
-    if (!isLocal(url)) {
-      event.preventDefault();
-      openExternal(url);
-    }
+    if (isAppPage(url)) return;
+    event.preventDefault();
+    openExternal(url);
+  });
+  wc.on('will-redirect', (event, url) => {
+    if (!isAppPage(url)) event.preventDefault();
   });
 
   wc.on('render-process-gone', (_event, details) => {
@@ -213,6 +221,11 @@ function createWindow() {
   });
 
   wc.on('did-finish-load', () => {
+    // mods and the boot wait belong to the game page only
+    if (!isAppPage(wc.getURL())) {
+      crashLog.write('main', 'unexpected page finished loading: ' + wc.getURL());
+      return;
+    }
     loadMods(wc);
     waitForGame(wc, (p) => splashProgress(splash, p)).then(reveal);
   });
@@ -372,12 +385,31 @@ async function loadMods(wc) {
     const wrapped = '(function(){try{' + source + '\n;window.GTP_MODS.loaded.push(' + JSON.stringify(name) + ');}catch(e){' +
       'window.GTP_MODS.errors.push({file:' + JSON.stringify(name) + ',message:String(e&&e.message||e)});' +
       'console.error("mod " + ' + JSON.stringify(name) + ' + ": ", e);}})();';
+    // A syntax error stops the whole wrapper from parsing, so its try/catch never runs. Compile it
+    // here first (vm.Script only parses; nothing runs in the main process) and report the error to
+    // the page instead. The wrapper starts on the mod's first line, so line numbers match the file.
+    try {
+      new vm.Script(wrapped, { filename: name });
+    } catch (err) {
+      const where = /:(\d+)\s*$/.exec(String(err.stack || '').split('\n')[0] || '');
+      await reportModError(wc, name, (err && err.name || 'Error') + ': ' + (err && err.message || err) + (where ? ' (line ' + where[1] + ')' : ''));
+      continue;
+    }
     try {
       await wc.executeJavaScript(wrapped, true);
     } catch (err) {
-      console.warn('mods: ' + name + ' did not run: ' + err.message);
+      await reportModError(wc, name, String(err && err.message || err));
     }
   }
+}
+
+/* A mod that could not run: GTP_MODS.errors and the console in the page, and the crash log. */
+async function reportModError(wc, name, message) {
+  crashLog.write('mods', name + ': ' + message);
+  const entry = JSON.stringify({ file: name, message });
+  try {
+    await wc.executeJavaScript('window.GTP_MODS.errors.push(' + entry + '); console.error("mod " + ' + JSON.stringify(name) + ' + " did not run: " + ' + JSON.stringify(message) + ');', true);
+  } catch (_err) { /* the page is gone */ }
 }
 
 function openModsFolder() {
@@ -398,8 +430,17 @@ function openCrashLog() {
   }).catch(() => shell.showItemInFolder(file));
 }
 
-function isLocal(url) {
-  return /^(file|about|devtools):/i.test(url);
+/* Is this URL the game page (app/index.html, any query or hash)? Compared as file paths so
+ * percent-encoding (spaces in "Grand Theft Pundit.app") and drive-letter case cannot mismatch. */
+function isAppPage(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'file:') return false;
+    const p = path.normalize(fileURLToPath(u));
+    return process.platform === 'win32' ? p.toLowerCase() === APP_INDEX.toLowerCase() : p === APP_INDEX;
+  } catch (_err) {
+    return false;
+  }
 }
 
 function openExternal(url) {

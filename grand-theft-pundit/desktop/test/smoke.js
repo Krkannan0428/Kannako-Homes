@@ -16,12 +16,19 @@
  *      user-data folder holds nothing but its "start" line
  *   6. a test mod dropped into the mods folder ran (GTP_MODS.loaded), so the mods loader works
  *   7. the window state is remembered: a second start with a saved size opens at that size, and
- *      quitting writes the state back
+ *      quitting writes the state back; in that second start a mod with a syntax error lands in
+ *      GTP_MODS.errors (QAC-43) while the good mod still runs
  *   8. a new game starts the way a player starts one: Enter on NEW GAME (and on a slot picker if
  *      one comes up), the loading screen finishes, the opening cutscene plays and is skipped by
  *      holding Enter as its on-screen pill says, dialogue is answered with Enter, and the first
  *      mission objective appears on the HUD. Steps 5's error checks run after this, so errors
  *      during the new game fail the test too. (--no-new-game skips this step.)
+ *   9. the window stays on the game: a script navigating to another file:// page and a file
+ *      dropped on the window both leave app/index.html in place with the game still running (QAC-29)
+ * The app is quit the way a player quits it (closing the window), so it runs its close handlers on
+ * every platform; it falls back to SIGTERM/SIGKILL. Runs on Linux (under xvfb), macOS
+ * (".../Grand Theft Pundit.app/Contents/MacOS/Grand Theft Pundit") and Windows
+ * ("...\\win-unpacked\\Grand Theft Pundit.exe").
  * It writes smoke-title.png, smoke-cutscene.png, smoke-objective.png and smoke-crash.log into
  * --out (default: test/out).
  */
@@ -115,11 +122,21 @@ function launch(userData, port) {
   return run;
 }
 
-async function stop(run) {
+/* Quit like a player: close the game window (main.js quits when it closes), so close handlers such
+ * as window-state.js run on every platform; on Windows child.kill() is TerminateProcess, which runs
+ * none. Falls back to SIGTERM and SIGKILL. */
+async function stop(run, client) {
   if (run.exited) return;
-  run.child.kill('SIGTERM');
-  for (let i = 0; i < 50 && !run.exited; i++) await sleep(100);
+  if (client) {
+    client.send('Runtime.evaluate', { expression: 'window.close()' }).catch(() => {});
+    for (let i = 0; i < 100 && !run.exited; i++) await sleep(100);
+  }
+  if (!run.exited) {
+    run.child.kill('SIGTERM');
+    for (let i = 0; i < 50 && !run.exited; i++) await sleep(100);
+  }
   if (!run.exited) run.child.kill('SIGKILL');
+  for (let i = 0; i < 20 && !run.exited; i++) await sleep(100);
 }
 
 async function waitForGamePage(port, run, deadline) {
@@ -214,6 +231,39 @@ async function evaluateIn(client, expr) {
   return r.result.value;
 }
 
+/* 9. a script navigation to another file:// page and a dropped file must both leave the game page in
+ * place (main.js will-navigate). The "foreign" page sets a title the game never uses. */
+async function checkNavigationLock(client, port, userData) {
+  const foreign = path.join(userData, 'smoke-dropped.html');
+  fs.writeFileSync(foreign, '<!doctype html><title>DROPPED</title><p>not the game</p>');
+  const { pathToFileURL } = require('url');
+  const where = async () => ({
+    url: ((await targets(port)).find((t) => t.type === 'page' && !/splash\.html/.test(t.url)) || {}).url || null,
+    page: await evaluateIn(client, '({ title: document.title, game: !!(window.GTP && GTP.game && GTP.game.booted) })').catch(() => null)
+  });
+  const onGame = (w) => !!(w.url && /app\/index\.html/.test(w.url) && w.page && w.page.game && w.page.title !== 'DROPPED');
+
+  await evaluateIn(client, 'location.assign(' + JSON.stringify(pathToFileURL(foreign).href) + '), true').catch(() => null);
+  await sleep(2000);
+  const afterScript = await where();
+  check(onGame(afterScript), 'a script cannot navigate the window away from the game (' + JSON.stringify(afterScript) + ')');
+
+  // a real drag and drop of the file onto the middle of the window
+  const box = await evaluateIn(client, '({ x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) })').catch(() => ({ x: 400, y: 300 }));
+  const data = { items: [], files: [foreign], dragOperationsMask: 1 };
+  try {
+    for (const type of ['dragEnter', 'dragOver', 'drop']) {
+      await client.send('Input.dispatchDragEvent', { type, x: box.x, y: box.y, data });
+      await sleep(150);
+    }
+  } catch (err) {
+    console.log('  note: Input.dispatchDragEvent failed: ' + err.message);
+  }
+  await sleep(2000);
+  const afterDrop = await where();
+  check(onGame(afterDrop), 'dropping a file on the window does not replace the game (' + JSON.stringify(afterDrop) + ')');
+}
+
 /* 7. a saved size is used on the next start, and the state is written back when the game quits.
  * (Electron does not implement CDP's Browser.setWindowBounds, so the size is seeded in the file.) */
 async function checkWindowState(userData) {
@@ -221,6 +271,8 @@ async function checkWindowState(userData) {
   const file = path.join(userData, 'window-state.json');
   // "seeded" is not a field window-state.js writes, so its absence afterwards proves the app saved
   fs.writeFileSync(file, JSON.stringify({ x: 30, y: 20, width: WANT.width, height: WANT.height, maximized: false, fullscreen: false, seeded: true }));
+  // a mod with a syntax error on line 2: it must be reported, and must not stop the next mod
+  fs.writeFileSync(path.join(userData, 'mods', 'zz-bad-mod.js'), 'window.__gtpBadMod = 1;\n}{\n');
   const port = await freePort();
   const run = launch(userData, port);
   let client = null;
@@ -235,9 +287,18 @@ async function checkWindowState(userData) {
       await sleep(250);
     }
     check(size && Math.abs(size.w - WANT.width) <= 2 && Math.abs(size.h - WANT.height) <= 40, 'the saved window size is used on the next start (' + JSON.stringify(size) + ')');
+    let mods = null;
+    for (let i = 0; i < 40; i++) {
+      mods = await evaluateIn(client, '({ loaded: (window.GTP_MODS && GTP_MODS.loaded) || [], errors: (window.GTP_MODS && GTP_MODS.errors) || [], bad: window.__gtpBadMod || null })').catch(() => null);
+      if (mods && mods.loaded.includes('zz-smoke-mod.js')) break;
+      await sleep(250);
+    }
+    const badErr = mods && mods.errors.find((e) => e.file === 'zz-bad-mod.js');
+    check(!!badErr && /SyntaxError/.test(badErr.message) && /line 2/.test(badErr.message) && mods.bad === null && mods.loaded.includes('zz-smoke-mod.js'),
+      'a mod with a syntax error is reported in GTP_MODS.errors and the next mod still runs (' + JSON.stringify(mods) + ')');
   } finally {
+    await stop(run, client);
     if (client) client.close();
-    await stop(run);
   }
   let saved = null;
   try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_e) { /* checked below */ }
@@ -330,7 +391,10 @@ async function main() {
     // 8. a new game up to its first objective
     if (NEW_GAME) await playNewGame(client);
 
-    // 5. no errors anywhere (title and new game)
+    // 9. the window stays on the game
+    await checkNavigationLock(client, port, userData);
+
+    // 5. no errors anywhere (title, new game, navigation attempts)
     const gtpErrors = await evaluate('(window.GTP && GTP.errors || []).map((e) => (e.where || "") + ": " + (e.message || e))');
     check(gtpErrors.length === 0, 'GTP.errors is empty' + (gtpErrors.length ? ': ' + gtpErrors.join(' | ') : ''));
     check(pageErrors.length === 0, 'no page exceptions or console errors' + (pageErrors.length ? ': ' + pageErrors.join(' | ') : ''));
@@ -338,8 +402,8 @@ async function main() {
     failures.push(String(err && err.message || err));
     console.log('  FAIL ' + (err && err.stack || err));
   } finally {
+    await stop(run, client);
     if (client) client.close();
-    await stop(run);
   }
 
   const logPath = path.join(userData, 'logs', 'crash.log');
@@ -363,7 +427,7 @@ async function main() {
     console.log('\nSMOKE FAILED: ' + failures.length + ' problem(s)');
     process.exit(1);
   }
-  fs.rmSync(userData, { recursive: true, force: true });
+  try { fs.rmSync(userData, { recursive: true, force: true }); } catch (_e) { /* Windows may still hold a file for a moment */ }
   console.log('\nSMOKE PASSED in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s');
 }
 
