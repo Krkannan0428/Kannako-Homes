@@ -70,7 +70,7 @@
         road('v', 58, 8, 22, 'Citation Pending Way'),
         road('v', 58, 36, 127, 'Citation Pending Way'),
         road('v', 70, 8, 91, 'Jet Street (extension pending)'),
-        road('v', 70, 106, 127, 'Jet Street (extension pending)'),
+        road('v', 70, 105, 127, 'Jet Street (extension pending)'),   // from the Jet Ramp's foot through the whole Sponsor Boulevard box (QA-A-TRF-09)
         road('v', 82, 21, 127, 'Lower Third Street', 'avenue'),
         road('v', 94, 8, 127, 'Ratio Row'),
         road('v', 110, 37, 91, 'Quote Post Crescent'),
@@ -89,7 +89,10 @@
         road('h', 94, 8, 42, 'Printworks Parade'),
         road('h', 106, 8, 117, 'Sponsor Boulevard'),
         road('h', 114, 8, 117, 'Fresh Takes Drive'),
-        road('h', 122, 8, 117, 'Coupon Code Circle'),
+        // the Print Works (memo_press, x 35..44) stands across this row: the circle stops at Trustless Terrace and picks
+        // up again at Lot C Lane, so no lane runs into its walls (QA-A-GEO-01)
+        road('h', 122, 8, 34, 'Coupon Code Circle'),
+        road('h', 122, 45, 117, 'Coupon Code Circle'),
         road('h', 122, 118, 127, 'Coupon Code Circle', 'street', { bridge: true }),
         road('h', 122, 128, 152, 'Coupon Code Circle'),
         // the island
@@ -115,7 +118,7 @@
         road('h', 70, 162, 214, 'Inheritance Avenue', 'avenue', { district: 'uptown' }),        // the causeway lands here
         road('h', 82, 169, 214, 'Quiet Part Loud Lane', 'street', { district: 'uptown' }),      // these stop at Provenance Place so the Shoreline Stroll runs unbroken
         road('h', 94, 169, 214, 'Stoop Speech Street', 'street', { district: 'uptown' }),
-        road('h', 106, 169, 181, 'Vetted Vista', 'street', { district: 'uptown' }), road('h', 106, 195, 214, 'Vetted Vista', 'street', { district: 'uptown' }),   // gap for Old Money Common
+        road('h', 106, 169, 182, 'Vetted Vista', 'street', { district: 'uptown' }), road('h', 106, 195, 214, 'Vetted Vista', 'street', { district: 'uptown' }),   // gap for Old Money Common; the west part spans Trust Fund Terrace's box (QA-A-TRF-09)
         road('h', 118, 169, 214, 'Generational Way', 'street', { district: 'uptown' }),
         road('h', 130, 169, 214, 'Minds Made Up Mews', 'street', { district: 'uptown' }),
         road('h', 142, 164, 214, 'Portfolio Parade', 'street', { district: 'uptown' }),
@@ -126,7 +129,10 @@
         road('v', 30, 152, 196, 'Baggage Claim Boulevard', 'street', { district: 'airport' }),
         road('v', 50, 152, 196, 'Layover Lane', 'street', { district: 'airport' }),
         road('v', 94, 152, 163, 'Gate Ten Street', 'street', { district: 'airport' }), road('v', 94, 177, 196, 'Gate Ten Street', 'street', { district: 'airport' }),   // the Arrivals Ramp fills 168..176
-        road('h', 158, 8, 107, 'Departures Drive', 'street', { district: 'airport' }),           // x 104..107 sit under the Lower Loop's east leg; the Manifest Ramp fills 108..116
+        // the Manifest Ramp fills 108..116 and its 7 m end faces the Lower Loop's east leg (x 104..107): the drive is a dead
+        // end past Gate Ten Street and stops at the plaza under the leg, so no lane runs into the ramp's end (QA-A-GEO-02)
+        road('h', 158, 8, 94, 'Departures Drive', 'street', { district: 'airport' }),
+        road('h', 158, 95, 103, 'Departures Drive', 'street', { district: 'airport', dead: true }),
         road('h', 182, 8, 109, 'Lost Luggage Lane', 'street', { district: 'airport' }),
         road('h', 196, 8, 109, 'Final Boarding Boulevard', 'street', { district: 'airport' }),  // the runway's north edge
 
@@ -524,72 +530,5 @@
     }
   };
 
-  // ------------------------------------------------- v0.3 prop meshes --
-  // The props World places for the v0.3 places (05_assets belongs to the environment track, so the meshes live here and
-  // a wrapper on GTP.Assets.prop serves them; the environment track's own builder wins when it has one for the kind: the
-  // wrapper asks 05 first and keeps 05's mesh unless it is the crate 05 falls back to for kinds it does not know).
-  // Mesh-local like 05's: yaw 0 faces -z, ground at y 0, built with GTP.GeoBuilder vertex colours.
-  function hex(h) { var n = parseInt(h.slice(1), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
-  var WORLD_PROPS = {
-    // a 12 m concrete pad with a yellow ring and a white H (flush with the ground: y is the surface)
-    helipad: function (g, G) {
-      var conc = hex('#8d9096'), yel = hex('#f2c230'), wht = [0.95, 0.95, 0.95];
-      g.cylinder(0, 0, 0, 6, 6, 0.06, 28, conc);
-      for (var i = 0; i < 28; i++) { var a = i / 28 * Math.PI * 2, b = (i + 0.6) / 28 * Math.PI * 2; g.quad([Math.cos(a) * 5.1, 0.075, Math.sin(a) * 5.1], [Math.cos(b) * 5.1, 0.075, Math.sin(b) * 5.1], [Math.cos(b) * 5.5, 0.075, Math.sin(b) * 5.5], [Math.cos(a) * 5.5, 0.075, Math.sin(a) * 5.5], G.UV0, yel); }
-      g.box(-2, 0.06, -2.6, 0.8, 0.02, 5.2, G.UV0, wht); g.box(1.2, 0.06, -2.6, 0.8, 0.02, 5.2, G.UV0, wht); g.box(-1.2, 0.06, -0.4, 2.4, 0.02, 0.8, G.UV0, wht);
-      for (var k = 0; k < 4; k++) { var q = k / 4 * Math.PI * 2 + Math.PI / 4; g.box(Math.cos(q) * 5.9 - 0.15, 0, Math.sin(q) * 5.9 - 0.15, 0.3, 0.3, 0.3, G.UV0, yel); }
-    },
-    // a tee box: two gold tee markers on a mown square
-    teebox: function (g, G) {
-      g.box(-1.6, 0, -1.6, 3.2, 0.03, 3.2, G.UV0, hex('#4f9a3c'));
-      g.box(-1.2, 0, -0.2, 0.35, 0.3, 0.35, G.UV0, hex('#e8b53a')); g.box(0.85, 0, -0.2, 0.35, 0.3, 0.35, G.UV0, hex('#e8b53a'));
-    },
-    // the barber's pole: a striped cylinder on a bracket (instance scale 1, 2.4 m tall)
-    barberpole: function (g, G) {
-      var red = hex('#d33a3a'), wht = [0.95, 0.95, 0.95], blu = hex('#2f56b0');
-      g.cylinder(0, 0, 0, 0.12, 0.12, 0.9, 8, hex('#3a3d44'));
-      for (var i = 0; i < 8; i++) g.cylinder(0, 0.9 + i * 0.15, 0, 0.16, 0.16, 0.15, 10, i % 3 === 0 ? red : i % 3 === 1 ? wht : blu);
-      g.sphere(0, 2.15, 0, 0.18, 8, 5, hex('#e8b53a'));
-    },
-    // a shop-window mannequin in a blazer
-    mannequin: function (g, G) {
-      g.box(-0.3, 0, -0.3, 0.6, 0.06, 0.6, G.UV0, hex('#2a2a2e'));
-      g.cylinder(0, 0.06, 0, 0.03, 0.03, 0.8, 5, hex('#2a2a2e'));
-      g.box(-0.22, 0.86, -0.13, 0.44, 0.62, 0.26, G.UV0, hex('#2c3e7a'));
-      g.box(-0.05, 1.3, -0.14, 0.1, 0.18, 0.02, G.UV0, hex('#e8b53a'));   // the lanyard tag
-      g.sphere(0, 1.65, 0, 0.13, 8, 5, hex('#e6e1d8'));
-    },
-    // a floating pontoon slip: planks on drums with two cleats (sits at the water line)
-    pontoon: function (g, G) {
-      var wood = hex('#8a6a44');
-      for (var i = 0; i < 8; i++) g.box(-0.9, 0.3, -4 + i * 1.0, 1.8, 0.12, 0.9, G.UV0, i % 2 ? wood : hex('#7a5c3a'));
-      for (var k = 0; k < 4; k++) g.cylinder(k % 2 ? 0.55 : -0.55, 0, -3 + (k >> 1) * 6, 0.3, 0.3, 0.3, 8, hex('#d8d8d8'));
-      g.box(0.6, 0.42, -3.6, 0.2, 0.15, 0.4, G.UV0, hex('#3a3d44')); g.box(0.6, 0.42, 3.2, 0.2, 0.15, 0.4, G.UV0, hex('#3a3d44'));
-    },
-    // a stack of tyres outside the mod shop
-    tirestack: function (g, G) {
-      for (var i = 0; i < 4; i++) { g.cylinder(0, i * 0.24, 0, 0.42, 0.42, 0.24, 12, hex('#1d1d20')); g.cylinder(0, i * 0.24 + 0.005, 0, 0.2, 0.2, 0.235, 10, hex('#4a4a50')); }
-    }
-  };
-  GTP.Content.world.propKinds = Object.keys(WORLD_PROPS);
-  var A = GTP.Assets;
-  if (A && typeof A.prop === 'function' && !A.prop._worldProps) {
-    var baseProp = A.prop;
-    A.prop = function (kind) {
-      var fn = WORLD_PROPS[kind];
-      if (!fn || (A._props && A._props[kind])) return baseProp.apply(this, arguments);   // cached: ours or 05's
-      // 05_assets builds an unknown kind as its crate: when its mesh for this kind is anything else, it has its own builder
-      // (the environment track's version wins); otherwise ours replaces the crate in the cache
-      var theirs = baseProp.apply(this, arguments), crate = baseProp.call(this, 'crate');
-      var tg = theirs && theirs.geometry, cg = crate && crate.geometry;
-      if (tg && cg && tg !== cg && tg.attributes.position.count !== cg.attributes.position.count) return theirs;
-      var G = GTP.GeoBuilder, g = new G({ color: true });
-      fn(g, G);
-      var rec = { geometry: g.build(), material: A.propMaterial(), castShadow: kind !== 'helipad' && kind !== 'teebox', _world: true };
-      if (tg && tg !== cg && tg.dispose) tg.dispose();
-      if (A._props) A._props[kind] = rec;
-      return rec;
-    };
-    A.prop._worldProps = true;
-  }
+  // the v0.3 places' prop meshes (helipad, teebox, barberpole, mannequin, pontoon, tirestack) are js/05_assets.js PROPS builders
 })();
