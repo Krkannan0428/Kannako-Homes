@@ -353,7 +353,16 @@
   }
 
   // ----------------------------------------------------------- plane / jet --
+  function planeInit(v) {
+    // planes made outside spawn() (a save load, a mission, debug.spawnVehicle) get the wingtip contacts and gear too
+    var sp = v.cls;
+    if (v._coll && !v._coll._wings) { v._coll._wings = true; v._coll.pts.push({ r: -sp.span / 2 + 0.4, f: 0, rad: 0.35 }, { r: sp.span / 2 - 0.4, f: 0, rad: 0.35 }); }
+    if (v.gear == null) v.gear = 'down';
+    if (v.thr == null) v.thr = 0;
+    if (v.air == null) v.air = 0;
+  }
   function updatePlane(v, dt) {
+    if (!v._coll || !v._coll._wings) planeInit(v);
     if (parked(v, dt)) return;
     if (!preStep(v, dt)) return;
     if (v.wreck) { wreckFall(v, dt); postStep(v, dt); return; }
@@ -595,6 +604,8 @@
   };
   // armour from the mod shop soaks a share of every hit
   VP.applyDamage = function (n, src, type) {
+    // the canopy is not armour: a hit on a parachute is a hit on the rider (the police door gunner aims at the vehicle)
+    if (fam(this) === 'chute') { var rd = this.driver; return rd && rd.alive && rd.applyDamage ? rd.applyDamage(n, src, type) : false; }
     var m = this.mods;
     if (m && m.armor > 0 && n > 0) n *= 1 - 0.07 * Math.min(5, m.armor);
     return base.applyDamage.call(this, n, src, type);
@@ -1351,18 +1362,23 @@
       else if (R.detach && R.attach) { R.detach(v); v.mesh = null; R.attach(v); }
     } catch (e) { report(e, 'vehicles.rebuild'); }
   }
+  // aircraft, boats and the parachute take engine, armour, paint and repairs only (no wheels, spoiler, tint, brakes, turbo, horn)
+  var CAR_ONLY = { wheels: 1, spoiler: 1, tint: 1, brakes: 1, turbo: 1, horn: 1 };
+  function carOnlyBlocked(v, part) { var f = fam(v); return !!CAR_ONLY[part] && !!f && f !== 'moto'; }
   function mod(v, mods) {
     if (!v || v.kind !== 'vehicle') return { ok: false, reason: 'no vehicle' };
     if (v.wreck || v.sinking) return { ok: false, reason: 'wrecked' };
     var cur = v.mods || DEFAULT_MODS, next = {};
-    for (var k in DEFAULT_MODS) next[k] = mods && mods[k] !== undefined ? mods[k] : cur[k];
+    for (var k in DEFAULT_MODS) next[k] = mods && mods[k] !== undefined && !carOnlyBlocked(v, k) ? mods[k] : cur[k];
     if (mods && mods.paint) next.paint = Object.assign({}, cur.paint || {}, mods.paint);
-    v.mods = clampMods(next);
+    next = clampMods(next);
+    // the UI previews every step through here: an unchanged set is a no-op (no rebuild, no event)
+    if (v.mods && JSON.stringify(next) === JSON.stringify(v.mods)) return { ok: true, mods: v.mods, unchanged: true };
+    v.mods = next;
     if (v.mods.paint && v.mods.paint.primary) v.color = v.mods.paint.primary;
     if (v.mods.paint && v.mods.paint.secondary) v.color2 = v.mods.paint.secondary;
     applyModStats(v);
     rebuild(v);
-    sfx('modApply', v.x, v.z, 0.8);
     emit('vehicle:mod', { vehicle: v, mods: v.mods });
     return { ok: true, mods: v.mods };
   }
@@ -1408,7 +1424,7 @@
     // the UI's categories: primary / secondary (a colour) and finish are paint; its price (4th argument) is the one it showed
     var paintCat = part === 'primary' || part === 'secondary' || part === 'finish';
     var price = typeof shownPrice === 'number' && isFinite(shownPrice) && shownPrice >= 0 ? shownPrice : priceOf(part, value);
-    if (price == null || (!paintCat && part !== 'paint' && !PARTS[part])) return { ok: false, reason: 'unknown part' };
+    if (price == null || (!paintCat && part !== 'paint' && !PARTS[part]) || carOnlyBlocked(v, part)) return { ok: false, reason: 'unknown part' };
     var m = v.mods || DEFAULT_MODS;
     if (!paintCat && part !== 'paint' && part !== 'horn' && (part === 'turbo' ? !!m.turbo === !!value : (m[part] | 0) === (value | 0))) return { ok: false, reason: 'owned', price: 0 };
     if (part === 'horn' && m.horn === value) return { ok: false, reason: 'owned', price: 0 };
@@ -1418,7 +1434,14 @@
     if (paintCat) { patch.paint = {}; patch.paint[part] = value; } else patch[part] = value;
     var r = mod(v, patch);
     if (!r.ok) { p.money += price; return r; }
+    sfx(paintCat || part === 'paint' ? 'modSpray' : 'modApply', v.x, v.z, 0.8);
     p.stats.modsBought = (p.stats.modsBought || 0) + 1;
+    // 'Spin Doctored' (content): engine, brakes and armour all maxed on one car
+    var mm = v.mods;
+    if (mm && !v._maxed && mm.engine >= PARTS.engine.max && mm.brakes >= PARTS.brakes.max && mm.armor >= PARTS.armor.max) {
+      v._maxed = true; p.stats.maxedCars = (p.stats.maxedCars | 0) + 1;
+      if (GTP.Systems && typeof GTP.Systems.unlock === 'function') { try { GTP.Systems.unlock('spin_doctored'); } catch (e) { report(e, 'vehicles.maxed'); } }
+    }
     // the UI mod shop's item shape: {id, kind: 'mod', category, value, name}
     var vs = typeof value === 'object' ? JSON.stringify(value) : String(value);
     emit('shop:buy', { item: { id: 'mod:' + part + ':' + vs, kind: 'mod', category: part, value: value, name: part + ': ' + vs }, price: price, vehicle: v, player: p });
@@ -1435,13 +1458,24 @@
     return typeof g === 'number' ? Math.max(0, g | 0) : 4;
   }
   function recordOf(v) { return { type: v.type, color: v.color || null, color2: v.color2 || null, wrap: v.wrap || null, mods: v.mods ? JSON.parse(JSON.stringify(v.mods)) : null, hp: Math.round(Math.max(1, v.hp)), name: v.cls.name || v.type }; }
+  // why a vehicle cannot go into a garage, or null. `reason` is a sentence (07_ai's garage door toasts it as is), `code` the
+  // short id ('no property', 'no vehicle', 'wrecked', 'not storable', 'too big', 'not yours', 'full')
+  function storeRefusal(propertyId, v) {
+    if (!propertyId) return { code: 'no property', reason: 'There is no garage here.' };
+    if (!v || v.kind !== 'vehicle' || v.removed) return { code: 'no vehicle', reason: 'Nothing to park.' };
+    if (v.wreck || v.sinking || v.burning) return { code: 'wrecked', reason: 'That one belongs in a scrapyard, not a garage.' };
+    if (v.isPolice || v.type === 'cop' || fam(v) === 'chute') return { code: 'not storable', reason: 'The garage will not take that.' };
+    if (isAir(v) || isSea(v)) return { code: 'too big', reason: 'The garage takes cars and bikes.' };
+    if (v.keep || (v.persistent && v.tag && v.tag !== 'fleet')) return { code: 'not yours', reason: 'That one is not yours to keep.' };
+    var n = (garages[propertyId] || []).length, cap = capacity(propertyId);
+    if (n >= cap) return { code: 'full', reason: cap ? 'Garage full (' + n + ' of ' + cap + ').' : 'This place has no garage.' };
+    return null;
+  }
+  function canStore(propertyId, v) { var r = storeRefusal(propertyId, v); return r ? { ok: false, code: r.code, reason: r.reason } : { ok: true }; }
   function store(propertyId, v) {
-    if (!propertyId) return { ok: false, reason: 'no property' };
-    if (!v || v.kind !== 'vehicle' || v.removed) return { ok: false, reason: 'no vehicle' };
-    if (v.wreck || v.sinking || v.burning) return { ok: false, reason: 'wrecked' };
-    if (v.isPolice || v.type === 'cop' || fam(v) === 'chute') return { ok: false, reason: 'not storable' };
+    var no = storeRefusal(propertyId, v);
+    if (no) return { ok: false, code: no.code, reason: no.reason };
     var list = garages[propertyId] = garages[propertyId] || [];
-    if (list.length >= capacity(propertyId)) return { ok: false, reason: 'full' };
     var occ = v.occupants();
     for (var i = 0; i < occ.length; i++) { var o = occ[i]; v.speed = 0; v.vx = v.vz = 0; base.exit.call(v, o); }
     var rec = recordOf(v); list.push(rec);
@@ -1449,7 +1483,21 @@
     emit('garage:store', { propertyId: propertyId, slot: list.length - 1, record: rec });
     return { ok: true, slot: list.length - 1, record: rec };
   }
+  // the world's garage door for a property (World.doors kind 'garage', 04_world), if any
+  function garageDoor(propertyId) {
+    var ds = W().doors || [];
+    for (var i = 0; i < ds.length; i++) if (ds[i].kind === 'garage' && ds[i].property === propertyId) return ds[i];
+    return null;
+  }
+  // a point inside (or just outside) any drive-in door: a car left there would be stored or serviced again at once
+  function nearDriveDoor(x, z, pad) {
+    var ds = W().doors || [];
+    for (var i = 0; i < ds.length; i++) { var d = ds[i]; if (d.mode === 'drive' && U.dist2d(x, z, d.x, d.z) < (d.r || 3) + pad) return true; }
+    return false;
+  }
   function garagePoint(propertyId) {
+    var door = garageDoor(propertyId);
+    if (door) { var dir = U.yawToDir(door.yaw || 0), off = (door.r || 3) + 5; return { x: door.x + dir.x * off, z: door.z + dir.z * off }; }
     var Wd = W(), lm = Wd.landmark ? Wd.landmark(propertyId) : null; if (!lm) return null;
     var pts = lm.points || {};
     return pts.garage || pts.bay || pts.car || lm.door || { x: lm.x, z: lm.z };
@@ -1461,8 +1509,9 @@
     if (!at && p) at = { x: p.x + 3, z: p.z };
     if (!at) return null;
     var boat = SPECS[rec.type] && fam({ cls: SPECS[rec.type] }) === 'boat';
-    var spot = findClear(at.x, at.z, boat ? 'water' : 'land', 3, boat ? 120 : 40) || (boat ? null : { x: at.x, z: at.z });
-    if (!spot) return null;   // a boat in a garage with no water nearby stays stored
+    function clearOfDoors(px, pz) { return !nearDriveDoor(px, pz, 3.5); }
+    var spot = findClear(at.x, at.z, boat ? 'water' : 'land', 3, boat ? 120 : 40, clearOfDoors) || (boat || !clearOfDoors(at.x, at.z) ? null : { x: at.x, z: at.z });
+    if (!spot) return null;   // no room (or a boat with no water nearby): it stays stored
     var v = spawn(rec.type, spot.x, spot.z, { color: rec.color, wrap: rec.wrap });
     if (!v) return null;
     list.splice(slot, 1);
@@ -1472,6 +1521,38 @@
     var rd = W().roadDir ? W().roadDir(v.x, v.z, v.y) : null; if (rd) { v.yaw = U.dirToYaw(rd.dx, rd.dz); v.snap(); }
     emit('garage:retrieve', { propertyId: propertyId, slot: slot, vehicle: v });
     return v;
+  }
+  // taking a car out: on foot at an owned garage door with something inside, the action key (E) rolls the first one out
+  var gtick = { near: null, t: 0 };
+  function ownsProperty(id) {
+    var S = GTP.Systems; if (!S || !id) return null;
+    try {
+      if (typeof S.owns === 'function') return !!S.owns(id);
+      if (S.properties && typeof S.properties.owns === 'function') return !!S.properties.owns(id);
+      if (S.properties && typeof S.properties.owned === 'function') return !!S.properties.owned(id);
+    } catch (e) { report(e, 'vehicles.owns'); }
+    return null;
+  }
+  function garageTick(dt) {
+    gtick.t -= dt;
+    var p = player(), ds = W().doors;
+    if (!p || !p.alive || p.inVehicle || !ds || !ds.length || (GTP.Interiors && GTP.Interiors.active) || (GTP.game && GTP.game.state !== 'playing')) { gtick.near = null; return; }
+    var hit = null;
+    for (var i = 0; i < ds.length; i++) {
+      var d = ds[i]; if (d.kind !== 'garage' || !d.property || !(garages[d.property] || []).length) continue;
+      if (U.dist2d(p.x, p.z, d.x, d.z) > (d.r || 3) + 1.5 || Math.abs(p.y - (d.y || 0)) > 2.5) continue;
+      hit = d; break;
+    }
+    if (!hit || ownsProperty(hit.property) === false) { gtick.near = null; return; }
+    var list = garages[hit.property];
+    if (gtick.near !== hit.id) { gtick.near = hit.id; toast('E: take out the ' + list[0].name + (list.length > 1 ? ' (' + list.length + ' in the garage)' : '')); }
+    if (gtick.t <= 0 && GTP.Input && GTP.Input.pressed('action')) {
+      gtick.t = 0.6;
+      if (GTP.Input.latch) GTP.Input.latch(['action']);   // the same press is a melee tap on foot (08_combat): not this one
+      var v = retrieve(hit.property, 0);
+      if (!v) toast('No room out front to pull it out.');
+      else gtick.near = null;
+    }
   }
 
   // ================================================================ spawning ==
@@ -1484,16 +1565,16 @@
     v.y = opts.y != null ? opts.y : (f === 'boat' ? WATER_Y + (sp.draft || 0) : surfaceAt(x, z, 2));
     v.yaw = opts.yaw != null ? opts.yaw : 0;
     if (opts.persistent) v.persistent = true;
-    if (f === 'plane') { v.gear = 'down'; v.thr = 0; v.air = 0; }
-    if (f === 'plane' && !v._coll._wings) { v._coll._wings = true; v._coll.pts.push({ r: -sp.span / 2 + 0.4, f: 0, rad: 0.35 }, { r: sp.span / 2 - 0.4, f: 0, rad: 0.35 }); }
+    if (f === 'plane') { v.gear = 'down'; v.thr = 0; v.air = 0; planeInit(v); }
     v.snap();
     E().add(v);
     return v;
   }
   // a clear spot near (x, z): 'land' (no building, no water within r) or 'water' (open water within r)
-  function findClear(x, z, kind, r, maxR) {
+  function findClear(x, z, kind, r, maxR, accept) {
     var Wd = W();
     function ok(px, pz) {
+      if (accept && !accept(px, pz)) return false;
       for (var a = 0; a < 8; a++) {
         var ang = a * TAU / 8, sx = px + Math.cos(ang) * r, sz = pz + Math.sin(ang) * r;
         if (kind === 'water') { if (!waterAt(sx, sz) || Wd.solidAt(sx, sz, WATER_Y + 0.5)) return false; }
@@ -1514,42 +1595,69 @@
   // ---- the fleet: parked aircraft, boats and bikes at the airport, helipads, marina, port and garages ----
   var fleet = { slots: [], lmRef: null, t: 0 };
   function lmMatch(lm, re) { return re.test(lm.id || '') || re.test(lm.kind || '') || re.test(lm.name || ''); }
+  // a tile the world keeps free of parked cars (helipads, the apron, the links, the stunt lines; World._noPark)
+  function noPark(x, z) {
+    var Wd = W(), np = Wd._noPark; if (!np || !Wd.w) return false;
+    var tx = Math.floor(x / C.TILE), tz = Math.floor(z / C.TILE);
+    return tx >= 0 && tz >= 0 && tx < Wd.w && !!np[tz * Wd.w + tx];
+  }
   function buildSlots() {
     var Wd = W(), lms = Wd.landmarks || [], out = [], yawE = U.dirToYaw(1, 0);
-    function add(id, type, x, z, yaw, clear) { out.push({ id: id, type: type, x: x, z: z, yaw: yaw || 0, clear: clear || 3, vehicle: null, cooldown: 0, dynamic: true }); }
-    var rw = Wd.landmark('airport_runway');
-    if (rw && rw.points && rw.points.west) { var w = rw.points.west; add('runway_plane', 'plane', w.x + 22, w.z - 6, yawE, 0); add('runway_jet', 'jet', w.x + 22, w.z + 8, yawE, 0); }
-    var pads = 0;
-    lms.forEach(function (lm) {
-      if (lmMatch(lm, /helipad/)) { var p = lm.points && (lm.points.helipad || lm.points.pad) || lm.door || lm; add('heli_' + lm.id, 'heli', p.x, p.z, 0, 6.5); pads++; }
-      else if (lm.points) for (var k in lm.points) if (/helipad/.test(k)) { add('heli_' + lm.id + '_' + k, 'heli', lm.points[k].x, lm.points[k].z, 0, 6.5); pads++; }
-      if (lmMatch(lm, /slip|boatyard|boat_?dock/) && !lmMatch(lm, /ferry/)) { var bp = lm.points && (lm.points.slip || lm.points.boat) || lm.door || lm; add('boat_' + lm.id, 'speedboat', bp.x, bp.z, 0, 4); }
-      else if (lm.points) for (var k2 in lm.points) if (/slip|boat/.test(k2)) add('boat_' + lm.id + '_' + k2, /ski/.test(k2) ? 'jetski' : 'speedboat', lm.points[k2].x, lm.points[k2].z, 0, 4);
-    });
+    function add(id, type, x, z, yaw, clear) { out.push({ id: id, type: type, x: x, z: z, yaw: yaw || 0, clear: clear == null ? 3 : clear, vehicle: null, cooldown: 0, dynamic: true }); }
+    // the world's own spots (04_world): helipads, the aircraft apron and the boat slips, placed exactly (clear 0)
+    var spots = typeof Wd.vehicleSpots === 'function', pads = 0, apron = 0, slips = 0;
+    if (spots) {
+      Wd.vehicleSpots('heli').forEach(function (h) { add('heli_' + h.id, 'heli', h.x, h.z, h.yaw || 0, 0); pads++; });
+      ['plane', 'jet'].forEach(function (t) { Wd.vehicleSpots(t).forEach(function (a) { add(t + '_' + a.id, t, a.x, a.z, a.yaw || 0, 0); apron++; }); });
+      // a jet ski at the small landings (the fish shack, the quay), a speedboat at the piers
+      (Wd.boatSlips || []).forEach(function (b) { add('boat_' + b.id, /fish_shack|manifest_quay/.test(b.landmark || '') ? 'jetski' : 'speedboat', b.x, b.z, b.yaw || 0, 0); slips++; });
+    }
+    if (!apron) {
+      var rw = Wd.landmark('airport_runway');
+      if (rw && rw.points && rw.points.west) { var w = rw.points.west; add('runway_plane', 'plane', w.x + 22, w.z - 6, yawE, 0); add('runway_jet', 'jet', w.x + 22, w.z + 8, yawE, 0); }
+    }
     if (!pads) {
-      // until the world track's helipads land: the airport apron by the tower, and the open protest plaza
+      lms.forEach(function (lm) {
+        if (lmMatch(lm, /helipad/)) { var p = lm.points && (lm.points.helipad || lm.points.pad) || lm.door || lm; add('heli_' + lm.id, 'heli', p.x, p.z, 0, 6.5); pads++; }
+        else if (lm.points) for (var k in lm.points) if (/helipad/.test(k)) { add('heli_' + lm.id + '_' + k, 'heli', lm.points[k].x, lm.points[k].z, 0, 6.5); pads++; }
+      });
+    }
+    if (!pads) {
+      // no helipads anywhere: the airport apron by the tower, and the open protest plaza
       var tw = Wd.landmark('control_tower'), pz = Wd.landmark('protest_plaza');
       if (tw && tw.door) add('heli_apron', 'heli', tw.door.x - 30, tw.door.z + 14, 0, 6.5);
       if (pz) add('heli_plaza', 'heli', pz.x, pz.z, 0, 6.5);
     }
-    [['velvetine_pier', 'speedboat'], ['fish_shack', 'jetski'], ['ferry_terminal', 'speedboat'], ['manifest_quay', 'jetski']].forEach(function (b) {
-      var lm = Wd.landmark(b[0]); if (!lm || !lm.door) return;
-      if (out.some(function (s) { return s.type !== 'heli' && U.dist2d(s.x, s.z, lm.door.x, lm.door.z) < 40; })) return;
-      add('water_' + b[0], b[1], lm.door.x, lm.door.z, 0, b[1] === 'jetski' ? 2.5 : 4);
-    });
+    if (!slips) {
+      lms.forEach(function (lm) {
+        if (lmMatch(lm, /slip|boatyard|boat_?dock/) && !lmMatch(lm, /ferry/)) { var bp = lm.points && (lm.points.slip || lm.points.boat) || lm.door || lm; add('boat_' + lm.id, 'speedboat', bp.x, bp.z, 0, 4); }
+        else if (lm.points) for (var k2 in lm.points) if (/slip|boat/.test(k2)) add('boat_' + lm.id + '_' + k2, /ski/.test(k2) ? 'jetski' : 'speedboat', lm.points[k2].x, lm.points[k2].z, 0, 4);
+      });
+      [['velvetine_pier', 'speedboat'], ['fish_shack', 'jetski'], ['ferry_terminal', 'speedboat'], ['manifest_quay', 'jetski']].forEach(function (b) {
+        var lm = Wd.landmark(b[0]); if (!lm || !lm.door) return;
+        if (out.some(function (s) { return s.type !== 'heli' && U.dist2d(s.x, s.z, lm.door.x, lm.door.z) < 40; })) return;
+        add('water_' + b[0], b[1], lm.door.x, lm.door.z, 0, b[1] === 'jetski' ? 2.5 : 4);
+      });
+    }
     // bikes away from the spawn (a vehicle spawned at the start would change the boot's traffic for every other system)
     [['strip_garage', -6], ['memo_press', 6]].forEach(function (b) {
       var lm = Wd.landmark(b[0]); if (!lm || !lm.door) return; add('moto_' + b[0], 'moto', lm.door.x + b[1], lm.door.z + 4, 0, 1.2);
     });
-    // resolve each to a clear spot of the right kind now (the world is fixed for this seed)
+    // resolve the fallbacks to a clear spot of the right kind now (the world is fixed for this seed): never on a no-park
+    // tile (a stunt line's run-up, a landing), never in a drive-in door
     for (var i = out.length - 1; i >= 0; i--) {
       var s = out[i], kind = fam({ cls: SPECS[s.type] }) === 'boat' ? 'water' : 'land';
-      if (s.clear === 0) continue;   // the runway: placed exactly
-      var c = findClear(s.x, s.z, kind, s.clear, kind === 'water' ? 70 : 40);
+      if (s.clear === 0) continue;   // the world's spots and the runway: placed exactly
+      var reach = s.clear + 2;
+      var c = findClear(s.x, s.z, kind, s.clear, kind === 'water' ? 70 : 40, function (px, pz) {
+        if (nearDriveDoor(px, pz, 2)) return false;
+        for (var a = 0; a < 8; a++) { var an = a * TAU / 8; if (noPark(px + Math.cos(an) * reach, pz + Math.sin(an) * reach)) return false; }
+        return !noPark(px, pz);
+      });
       if (!c) { out.splice(i, 1); continue; }
       s.x = c.x; s.z = c.z;
       if (s.type === 'moto') { var rd = W().roadDir ? W().nearestRoadPoint && W().nearestRoadPoint(c.x, c.z) : null; if (rd) s.yaw = U.dirToYaw(rd.x - c.x, rd.z - c.z) + Math.PI / 2; }
-      if (kind === 'water') { var Wd2 = W(), best = 0; for (var a = 0; a < 8; a++) { var ang = a * TAU / 8, n = 0; for (var d = 4; d <= 40; d += 4) { if (!waterAt(c.x + Math.cos(ang) * d, c.z + Math.sin(ang) * d)) break; n++; } if (n > best) { best = n; s.yaw = U.dirToYaw(Math.cos(ang), Math.sin(ang)); } } void Wd2; }
+      if (kind === 'water') { var best = 0; for (var a2 = 0; a2 < 8; a2++) { var ang = a2 * TAU / 8, n = 0; for (var d = 4; d <= 40; d += 4) { if (!waterAt(c.x + Math.cos(ang) * d, c.z + Math.sin(ang) * d)) break; n++; } if (n > best) { best = n; s.yaw = U.dirToYaw(Math.cos(ang), Math.sin(ang)); } } }
     }
     return out;
   }
@@ -1589,22 +1697,33 @@
     modshop.shops = (Wd.landmarks || []).filter(function (lm) { return lm.kind === 'modshop' || /^spin_doctor/.test(lm.id || '') || /spin doctor/i.test(lm.name || ''); });
     return modshop.shops;
   }
+  // 07_ai's door markers open the shops that have a World.doors 'modshop' door (with the mission / wanted gating); this
+  // bay only serves a shop without one. Either way the shop closes once the car leaves (12 m) and the wrench sounds once.
+  function worldDoorShop(lm) {
+    if (!(GTP.AI && GTP.AI.doors)) return false;
+    var ds = W().doors || [];
+    for (var i = 0; i < ds.length; i++) if (ds[i].kind === 'modshop' && ds[i].landmark === lm.id) return true;
+    return false;
+  }
+  function onModshopOpen(e) {
+    var v = e && e.vehicle; if (!v) return;
+    modshop.open = (e.landmark || e.shop || 'shop'); modshop.at = { x: v.x, z: v.z };
+    sfx('modWrench', v.x, v.z, 0.7);
+  }
   function modshopTick() {
     var p = player(), v = p && p.inVehicle; if (!p) return;
-    var shops = shopList(); if (!shops.length) return;
     if (modshop.open) {
-      var lm0 = W().landmark(modshop.open), b0 = lm0 && ((lm0.points && lm0.points.bay) || lm0.door);
-      if (!b0 || !v || U.dist2d(v.x, v.z, b0.x, b0.z) > 12) { var was = modshop.open; modshop.open = null; emit('modshop:close', { shop: was }); }
+      var at = modshop.at;
+      if (!at || !v || U.dist2d(v.x, v.z, at.x, at.z) > 12) { var was = modshop.open; modshop.open = null; modshop.at = null; emit('modshop:close', { shop: was }); }
       return;
     }
+    var shops = shopList(); if (!shops.length) return;
     if (!v || v.driver !== p || isAir(v) || isSea(v) || fam(v) === 'chute') return;
     for (var i = 0; i < shops.length; i++) {
-      var lm = shops[i], b = (lm.points && lm.points.bay) || lm.door; if (!b) continue;
+      var lm = shops[i], b = (lm.points && lm.points.bay) || lm.door; if (!b || worldDoorShop(lm)) continue;
       if (U.dist2d(v.x, v.z, b.x, b.z) > 6 || v.speed2d() > 2.5) continue;
       if (p.wanted > 0) { if (GTP.game.time.t - modshop._deny > 6) { modshop._deny = GTP.game.time.t; toast('Spin Doctor will not touch a car with heat on it. Lose the stars first.'); } return; }
-      modshop.open = lm.id;
-      sfx('modWrench', v.x, v.z, 0.7);
-      emit('modshop:open', { vehicle: v, shop: lm.id, catalog: modCatalog(v) });
+      emit('modshop:open', { vehicle: v, shop: lm.id, landmark: lm.id, catalog: modCatalog(v) });
       return;
     }
   }
@@ -1628,7 +1747,7 @@
   var baseEUpdate = E().update, baseEAdd = E().add;
   E().update = function (dt) {
     if (!installed) install();
-    try { fleetTick(dt); modshopTick(); ambientTick(dt); } catch (e) { report(e, 'vehicles.tick'); }
+    try { fleetTick(dt); modshopTick(); garageTick(dt); ambientTick(dt); } catch (e) { report(e, 'vehicles.tick'); }
     return baseEUpdate.call(this, dt);
   };
   E().add = function (e) {
@@ -1637,10 +1756,34 @@
   };
 
   // ================================================== deferred installs (Render, saves, missions) ==
-  var installed = false, renderHooked = false, saveHooked = false, objHooked = false;
+  var installed = false, renderHooked = false, saveHooked = false, objHooked = false, eventsHooked = false, routeHooked = false;
   function install() {
-    hookRender(); hookSaves(); hookObjectives(); hookAnim();
+    hookRender(); hookSaves(); hookObjectives(); hookAnim(); hookEvents(); hookRoute();
     installed = renderHooked && saveHooked;
+  }
+  function hookEvents() {
+    if (eventsHooked || !GTP.Events) return;
+    eventsHooked = true;
+    GTP.Events.on('modshop:open', onModshopOpen);
+    // the GPS line for this track's objectives: 09_missions only draws it for its own types (and clears it for the rest),
+    // then emits 'mission:objective', so this lands after its clear
+    GTP.Events.on('mission:objective', function (e) {
+      var d = e && e.objective; if (!d || !OBJ_GPS[d.type]) return;
+      var t = resolveTarget(d.target); if (!t) return;
+      objGps = d;
+      GTP.Events.emit('gps:set', { x: t.x, z: t.z, label: d.text || (e.mission && e.mission.title) || 'Objective', kind: 'objective', missionId: e.mission && e.mission.id });
+    });
+  }
+  // World.route (04_world) is a road route; a GPS line for a player who flies, sails or glides is a straight one
+  function hookRoute() {
+    var Wd = W(); if (routeHooked || !Wd || typeof Wd.route !== 'function') return;
+    routeHooked = true;
+    var baseRoute = Wd.route;
+    Wd.route = function (ax, az, bx, bz) {
+      var p = player(), v = p && p.inVehicle;
+      if (v && (isAir(v) || isSea(v) || fam(v) === 'chute') && U.dist2d(ax, az, p.x, p.z) < 3) return [{ x: ax, z: az }, { x: bx, z: bz }];
+      return baseRoute.apply(this, arguments);
+    };
   }
   // The models track's skinned peds (06c GTP.Anim replaces Ped.syncMesh and seats riders from the vehicle record's seats,
   // which the custom meshes do not have): for a rider of these families the anim runs with `ride` on, so the rig takes
@@ -1697,6 +1840,16 @@
     if (!R.rebuildEntityMesh) {
       R.rebuildEntityMesh = function (e) { if (!e) return; R.detach(e); e.mesh = null; R.attach(e); };
       R.rebuildEntityMesh._vehiclesFallback = true;
+    }
+    // Render disposes userData.paint only: the custom meshes also own paint2 and (tinted) a glass clone
+    function disposeOwn(ud) { if (!ud || !ud.gtpVehicle) return; if (ud.paint2) ud.paint2.dispose(); if (ud.glass) ud.glass.dispose(); ud.paint2 = ud.glass = null; }
+    if (R.detach) {
+      var baseDetach = R.detach;
+      R.detach = function (e) { var ud = e && e.mesh && e.mesh.userData; var r = baseDetach.apply(this, arguments); disposeOwn(ud); return r; };
+    }
+    if (!R.rebuildEntityMesh._vehiclesFallback) {
+      var baseRebuild = R.rebuildEntityMesh;
+      R.rebuildEntityMesh = function (e) { var old = e && e.mesh, r = baseRebuild.apply(this, arguments); if (old && e.mesh !== old) disposeOwn(old.userData); return r; };
     }
     if (R.rig && R.rig.update) {
       var baseRig = R.rig.update;
@@ -1785,7 +1938,8 @@
         data.vehicles = saveState();
         // a vehicle in the air (or the parachute) cannot be restored mid-flight: the player loads on foot below it
         var p = player(), v = p && p.inVehicle;
-        if (v && data.vehicle && (fam(v) === 'chute' || (isAir(v) && !v.onGround))) data.vehicle = null;
+        // (and one landed on a roof: a load puts the vehicle at street height, inside the building)
+        if (v && data.vehicle && (fam(v) === 'chute' || (isAir(v) && (!v.onGround || surfaceAt(v.x, v.z, v.y + 0.5) > W().heightAt(v.x, v.z, v.y) + 1.5)))) data.vehicle = null;
       }, load: function (data) { loadState((data && data.vehicles) || {}); } });
       // NEW GAME empties the garages (a load restores them through the hook above)
       // a new world (New Game, a load, the boot) rebuilds the fleet slots
@@ -1798,13 +1952,27 @@
     }
   }
   // ---- objective types for the story / content tracks: fly_to, land, skydive ----
-  function resolveTarget(t) {
-    if (!t) return null;
-    var Wd = W();
-    if (t.landmark) { var lm = Wd.landmark(t.landmark); if (!lm) return null; var d = (t.point && lm.points && lm.points[t.point]) || lm.door || lm; return { x: d.x + (t.dx || 0), z: d.z + (t.dz || 0), y: d.y || 0 }; }
-    if (t.x != null) return { x: t.x, z: t.z != null ? t.z : 0, y: t.y || 0 };
+  // a world spot by id: a helipad (heli_airport...), a boat slip or an apron stand (World.helipads / boatSlips / aircraft)
+  function worldSpot(id) {
+    var Wd = W(), L = [Wd.helipads, Wd.boatSlips, Wd.aircraft];
+    for (var i = 0; i < L.length; i++) { var a = L[i] || []; for (var j = 0; j < a.length; j++) if (a[j] && a[j].id === id) return a[j]; }
     return null;
   }
+  function resolveTarget(t) {
+    if (!t) return null;
+    var Wd = W(), id = t.helipad || t.slip || t.spot, sp;
+    if (id) { sp = worldSpot(id); if (sp) return { x: sp.x + (t.dx || 0), z: sp.z + (t.dz || 0), y: sp.y || 0 }; }
+    if (t.landmark) {
+      var lm = Wd.landmark(t.landmark);
+      if (!lm) { sp = worldSpot(t.landmark); if (sp) return { x: sp.x + (t.dx || 0), z: sp.z + (t.dz || 0), y: sp.y || 0 }; report(new Error('unknown target ' + t.landmark), 'vehicles.objective'); return null; }
+      var d = (t.point && lm.points && lm.points[t.point]) || lm.door || lm; return { x: d.x + (t.dx || 0), z: d.z + (t.dz || 0), y: d.y || 0 };
+    }
+    if (t.x != null) return { x: t.x, z: t.z != null ? t.z : 0, y: t.y || 0 };
+    if (id) report(new Error('unknown target ' + id), 'vehicles.objective');
+    return null;
+  }
+  var OBJ_GPS = { fly_to: 1, land: 1, skydive: 1 }, objGps = null;
+  function clearObjGps() { if (!objGps) return; objGps = null; emit('gps:clear', { kind: 'objective' }); }
   function hookObjectives() {
     var Ms = GTP.Missions; if (objHooked || !Ms || !Ms.registerObjectiveType) return;
     objHooked = true;
@@ -1814,13 +1982,13 @@
         start: function (o, c) { c.target = resolveTarget(o.target); c.radius = o.radius || 25; },
         check: function (o, c, p) { var v = p.inVehicle; if (!c.target) return 'done'; if (!inFam(v, o)) return null; var agl = v.y - surfaceAt(v.x, v.z, v.y); return U.dist2d(v.x, v.z, c.target.x, c.target.z) <= c.radius && (o.maxAlt == null || agl <= o.maxAlt) && (o.minAlt == null || agl >= o.minAlt) ? 'done' : null; },
         hint: function (o, c, p) { return p.inVehicle && inFam(p.inVehicle, o) ? null : 'Get in an aircraft'; },
-        target: function (o, c) { return c.target; }, cleanup: function () { }
+        target: function (o, c) { return c.target; }, cleanup: clearObjGps
       });
       Ms.registerObjectiveType('land', {
         start: function (o, c) { c.target = resolveTarget(o.target); c.radius = o.radius || 20; },
         check: function (o, c, p) { var v = p.inVehicle; if (!c.target) return 'done'; if (!inFam(v, o)) return null; return v.onGround && v.speed2d() < 3 && U.dist2d(v.x, v.z, c.target.x, c.target.z) <= c.radius ? 'done' : null; },
         hint: function (o, c, p) { var v = p.inVehicle; return v && inFam(v, o) && !v.onGround ? 'Set it down in the marker' : null; },
-        target: function (o, c) { return c.target; }, cleanup: function () { }
+        target: function (o, c) { return c.target; }, cleanup: clearObjGps
       });
       Ms.registerObjectiveType('skydive', {
         start: function (o, c) {
@@ -1830,7 +1998,7 @@
         },
         check: function (o, c) { return c.landed || !c.target ? 'done' : null; },
         target: function (o, c) { return c.target; },
-        cleanup: function (o, c) { if (c.fn && GTP.Events.off) GTP.Events.off('parachute:land', c.fn); }
+        cleanup: function (o, c) { if (c.fn && GTP.Events.off) GTP.Events.off('parachute:land', c.fn); clearObjGps(); }
       });
     } catch (e) { report(e, 'vehicles.objectives'); }
   }
@@ -1847,9 +2015,9 @@
     hud: function (v) { return v ? vehicleHud(v) : null; },
     riderPose: riderPose,
     mod: mod, modCatalog: modCatalog, buyMod: buyMod, repair: repair, repairPrice: repairPrice, priceOf: priceOf, parts: PARTS, defaultMods: DEFAULT_MODS,
-    store: store, retrieve: retrieve, garage: function (id) { return (garages[id] || []).slice(); }, capacity: capacity, _garages: garages,
+    store: store, canStore: canStore, retrieve: retrieve, garage: function (id) { return (garages[id] || []).slice(); }, capacity: capacity, _garages: garages,
     deploy: function (v) { if (v && fam(v) === 'chute') deploy(v); },
-    fleet: { enabled: true, slots: function () { return fleet.slots; }, refresh: function () { fleet.lmRef = null; } },
+    fleet: { enabled: true, slots: function () { return fleet.slots; }, plan: function () { return buildSlots(); }, refresh: function () { fleet.lmRef = null; } },
     modshop: modshop,
     controls: { invertPitch: false },
     virt: {},            // tests / touch: virtual raw keys by code (KeyQ, KeyE, ControlLeft, ShiftLeft)

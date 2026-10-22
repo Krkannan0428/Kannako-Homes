@@ -458,7 +458,7 @@ H.run('vehicles', async (t) => {
     // garages
     const sv = V.store('safe_penthouse', car);
     out.store = { ok: sv.ok, slot: sv.slot, inV: !!p.inVehicle, removed: car.removed, list: V.garage('safe_penthouse').map((r) => r.type + ':' + r.mods.engine) };
-    out.full = (() => { const extra = []; for (let i = 0; i < 4; i++) { const c = g.debug.spawnVehicle(p.x + 8 + i * 5, p.z + 8, 'sedan'); extra.push(V.store('safe_penthouse', c)); } return extra.map((r) => r.ok ? 'ok' : r.reason); })();
+    out.full = (() => { const extra = []; for (let i = 0; i < 4; i++) { const c = g.debug.spawnVehicle(p.x + 8 + i * 5, p.z + 8, 'sedan'); extra.push(V.store('safe_penthouse', c)); } return extra.map((r) => r.ok ? 'ok' : r.code); })();
     const back = V.retrieve('safe_penthouse', 0);
     out.retrieve = back ? { type: back.type, engine: back.mods && back.mods.engine, color: back.color, left: V.garage('safe_penthouse').length } : null;
     // the registry round trip and a slot save / load
@@ -487,6 +487,95 @@ H.run('vehicles', async (t) => {
   t.assert(shop.retrieve && shop.retrieve.type === 'sedan' && shop.retrieve.engine === 2 && shop.retrieve.color === '#d22f2f' && shop.retrieve.left === 3, 'retrieve() brings it back modded: ' + JSON.stringify(shop.retrieve));
   t.assert(shop.registry.count === 3 && shop.cleared === 0 && shop.restored === 3, 'the SaveRegistry entry round-trips the garages');
   t.assert(shop.saved && shop.loaded && shop.afterLoad === 3, 'a slot save and load keeps the garage: ' + JSON.stringify([shop.saved, shop.loaded, shop.afterLoad]));
+
+  // ---- 6c. the world's doors and spots (04_world / 07_ai): the fleet on the pads, apron and slips; a real garage door stores
+  // the car, E at the door rolls it out clear of the door (no re-store); the real Spin Doctor door opens the shop once;
+  // aircraft are refused; a hit on the canopy hits the rider; car parts are not sold to a heli; an unchanged preview is a
+  // no-op; fly_to gets a straight GPS line to a world helipad
+  const wd = await page.evaluate(() => {
+    const V = GTP.Vehicles, W = GTP.World, g = GTP.game, p = g.player, U = GTP.util, Ev = GTP.Events, out = {};
+    if (p.inVehicle) { const v0 = p.inVehicle; v0.vx = v0.vz = 0; v0.speed = 0; v0.exit(p); g.advance(0.3); }
+    if (GTP.AI && GTP.AI.wanted && GTP.AI.wanted.clear) GTP.AI.wanted.clear(); p.wanted = 0;
+    const slots = V.fleet.plan(), on = (list, s) => list.some((a) => U.dist2d(a.x, a.z, s.x, s.z) < 1);
+    const of = (re) => slots.filter((s) => re.test(s.type));
+    out.spots = { pads: W.helipads.length, apron: W.aircraft.length, slips: W.boatSlips.length, nHeli: of(/^heli$/).length, nAir: of(/^(plane|jet)$/).length, nBoat: of(/speedboat|jetski/).length,
+      heli: of(/^heli$/).every((s) => on(W.helipads, s)), air: of(/^(plane|jet)$/).every((s) => on(W.aircraft, s)), boats: of(/speedboat|jetski/).every((s) => on(W.boatSlips, s)) };
+    // ownership: a test stub (the systems track decides who owns what)
+    const S = GTP.Systems || (GTP.Systems = {}), owns0 = S.owns; S.owns = () => true;
+    const evs = []; const log = (n) => (e) => evs.push(n + ':' + (e && (e.propertyId || e.shop || e.landmark) || '')); const fns = {};
+    ['garage:store', 'garage:retrieve', 'modshop:open', 'modshop:close'].forEach((n) => { fns[n] = log(n); Ev.on(n, fns[n]); });
+    let back = null; const fb = (e) => { back = e.vehicle; }; Ev.on('garage:retrieve', fb);
+    // drive a sedan into a real garage door
+    const gd = W.doors.find((d) => d.kind === 'garage'), dir = U.yawToDir(gd.yaw || 0);
+    const n0 = V.garage(gd.property).length, cap = V.capacity(gd.property);
+    const car = g.debug.spawnVehicle(gd.x + dir.x * 14, gd.z + dir.z * 14, 'sedan');
+    out.boarded = T_.board(car);
+    car.x = gd.x; car.z = gd.z; car.vx = car.vz = 0; car.speed = 0; car.snap(); g.advance(1.2);
+    out.garage = { id: gd.id, property: gd.property, cap, n0, n1: V.garage(gd.property).length, removed: car.removed, onFoot: !p.inVehicle, last: GTP.AI && GTP.AI.doors && GTP.AI.doors.last ? GTP.AI.doors.last() : null };
+    // on foot at the door: E takes it out, outside the drive-in ring; getting in does not store it again
+    g.debug.teleport(gd.x, gd.z); g.advance(0.3);
+    T_.press('action'); g.advance(0.3);
+    out.back = back ? { type: back.type, d: +U.dist2d(back.x, back.z, gd.x, gd.z).toFixed(1), r: gd.r, n2: V.garage(gd.property).length } : null;
+    if (back) { out.reboard = T_.board(back); g.advance(1.5); out.kept = !back.removed && p.inVehicle === back && V.garage(gd.property).length === out.back.n2; }
+    if (p.inVehicle) { p.inVehicle.vx = p.inVehicle.vz = 0; p.inVehicle.speed = 0; p.inVehicle.exit(p); g.advance(0.3); }
+    // refusals: a helicopter (and its readable reason), a full garage's code
+    const hx = gd.x + dir.x * 40, hz = gd.z + dir.z * 40, hh = V.spawn('heli', hx, hz, {});
+    out.refuse = { heli: V.canStore(gd.property, hh), store: V.store(gd.property, hh) };
+    out.wheels = V.buyMod(hh, 'wheels', 1, 0).reason;
+    hh.destroy();
+    // the real Spin Doctor door: one modshop:open (07_ai's), closed once the car drives off
+    const md = W.doors.find((d) => d.kind === 'modshop'), mdir = U.yawToDir(md.yaw || 0);
+    // (walk over first: the AI spawner culls a parked car far from the player)
+    g.debug.teleport(md.x + mdir.x * 20, md.z + mdir.z * 20); g.advance(1.0);
+    const car2 = g.debug.spawnVehicle(md.x + mdir.x * 14, md.z + mdir.z * 14, 'sedan');
+    const b2 = T_.board(car2); evs.length = 0;
+    car2.x = md.x; car2.z = md.z; car2.vx = car2.vz = 0; car2.speed = 0; car2.snap(); g.advance(1.2);
+    out.shop = { opens: evs.filter((e) => /^modshop:open/.test(e)).length, open: V.modshop.open, last: GTP.AI && GTP.AI.doors ? GTP.AI.doors.last() : null, mission: !!(GTP.Missions.state && GTP.Missions.state.active), b2, inV: p.inVehicle === car2, py: +p.y.toFixed(2), dy: md.y, d: +U.dist2d(p.x, p.z, md.x, md.z).toFixed(1), sp: +car2.speed2d().toFixed(2), state: g.state, interior: !!(GTP.Interiors && GTP.Interiors.active), wanted: GTP.AI && GTP.AI.wanted ? GTP.AI.wanted.level : null };
+    T_.press('cancel'); T_.press('cancel'); g.advance(0.3); out.ctl = { shop: p.controlEnabled };
+    car2.x = md.x + mdir.x * 40; car2.z = md.z + mdir.z * 40; car2.snap(); g.advance(0.8);
+    out.shop.closed = V.modshop.open === null && evs.some((e) => /^modshop:close/.test(e)); out.ctl.drive = p.controlEnabled;
+    // an unchanged preview is a no-op; a change rebuilds once
+    let nm = 0; const fm = () => nm++; Ev.on('vehicle:mod', fm);
+    V.mod(car2, { engine: 1 }); const n1 = nm;
+    V.mod(car2, JSON.parse(JSON.stringify(car2.mods))); out.modSame = nm - n1;
+    V.mod(car2, { engine: 2 }); out.modChanged = nm - n1;
+    Ev.off && Ev.off('vehicle:mod', fm);
+    if (p.inVehicle) { p.inVehicle.vx = p.inVehicle.vz = 0; p.inVehicle.speed = 0; p.inVehicle.exit(p); g.advance(0.3); }
+    // the canopy: a hit on a parachute is a hit on its rider
+    p.hp = p.maxHp; const ch = V.spawn('parachute', p.x + 30, p.z, { y: 120 }); ch.enter(p, 0); ch.chute = 'open';
+    const hp0 = p.hp, chHp0 = ch.hp; ch.applyDamage(12, null, 'smg');
+    out.chute = { rider: +(hp0 - p.hp).toFixed(1), canopy: +(chHp0 - ch.hp).toFixed(1) };
+    ch.exit(p); ch.destroy(); p._fall = null; p.vy = 0; g.debug.teleport(gd.x + dir.x * 20, gd.z + dir.z * 20); p.hp = p.maxHp; g.advance(0.5); out.ctl.chute = p.controlEnabled;
+    // fly_to a world helipad: the objective's GPS line, straight while flying
+    const pad = W.helipads[0], gps = []; const fg = (e) => gps.push(e); Ev.on('gps:set', fg);
+    const M = GTP.Missions;
+    M.registerTest({ id: 't_flyto', title: 'Test: fly', giver: 'gus', marker: 'campus_quad', requires: [], reward: 0, intro: [], outro: [], failOn: [], objectives: [{ type: 'fly_to', target: { helipad: pad.id }, text: 'Fly to the pad' }] });
+    M.start('t_flyto', { skipIntro: true }); g.advance(0.2); out.ctl.start = p.controlEnabled;
+    const og = gps.filter((e) => e.kind === 'objective').pop();
+    out.gps = og ? { label: og.label, d: +U.dist2d(og.x, og.z, pad.x, pad.z).toFixed(1) } : null;
+    const h2 = V.spawn('heli', p.x + 6, p.z, {}); h2.enter(p, 0); g.advance(0.1);
+    out.route = W.route(p.x, p.z, pad.x, pad.z).length;
+    M.abort(); g.advance(0.2); out.ctl.abort = p.controlEnabled;
+    h2.vx = h2.vz = 0; h2.exit(p); h2.destroy(); g.advance(0.2);
+    Ev.off && Ev.off('gps:set', fg); Ev.off && Ev.off('garage:retrieve', fb);
+    Object.keys(fns).forEach((n) => Ev.off && Ev.off(n, fns[n]));
+    if (owns0) S.owns = owns0; else delete S.owns;
+    // leave nothing open for section 7 (the UI's modal, the camera, the controls)
+    const U3 = GTP.UI && GTP.UI.state; for (let i = 0; i < 4 && U3 && U3.modal; i++) T_.press('cancel');
+    g.advance(0.3);
+    out.end = { modal: !!(U3 && U3.modal), ctl: p.controlEnabled, free: !!GTP.Render.free, inV: !!p.inVehicle, mission: !!(GTP.Missions.state && GTP.Missions.state.active) };
+    out.errors = GTP.errors ? GTP.errors.slice(-5).map((e) => String(e.where || '') + ': ' + String(e.msg || e.message || e).slice(0, 80)) : [];
+    return out;
+  });
+  console.log('  world doors: ' + JSON.stringify(wd));
+  t.assert(wd.spots.nHeli >= wd.spots.pads && wd.spots.heli && wd.spots.nAir >= 1 && wd.spots.air && wd.spots.nBoat >= wd.spots.slips && wd.spots.boats, 'the fleet parks on the world helipads, apron and boat slips: ' + JSON.stringify(wd.spots));
+  t.assert(wd.boarded && wd.garage.n1 === wd.garage.n0 + 1 && wd.garage.removed && wd.garage.onFoot, 'driving into a real garage door stores the car: ' + JSON.stringify(wd.garage));
+  t.assert(wd.back && wd.back.type === 'sedan' && wd.back.d > wd.back.r + 2 && wd.back.n2 === wd.garage.n0 && wd.kept, 'E at the garage door rolls it out clear of the door, and getting in keeps it out: ' + JSON.stringify([wd.back, wd.reboard, wd.kept]));
+  t.assert(!wd.refuse.heli.ok && wd.refuse.heli.code === 'too big' && /cars and bikes/.test(wd.refuse.store.reason) && wd.wheels === 'unknown part', 'aircraft are refused with a readable reason, and get no car parts: ' + JSON.stringify([wd.refuse, wd.wheels]));
+  t.assert(wd.shop.opens === 1 && wd.shop.open && wd.shop.closed, 'the real Spin Doctor door opens the shop once and driving off closes it: ' + JSON.stringify(wd.shop));
+  t.assert(wd.modSame === 0 && wd.modChanged === 1, 'an unchanged mod preview is a no-op: ' + JSON.stringify([wd.modSame, wd.modChanged]));
+  t.assert(wd.chute.rider > 5 && wd.chute.canopy === 0, 'a hit on the canopy hits the rider: ' + JSON.stringify(wd.chute));
+  t.assert(wd.gps && wd.gps.d < 1 && wd.route === 2, 'fly_to a world helipad draws the GPS to the pad, straight while flying: ' + JSON.stringify([wd.gps, wd.route]));
 
   // ---- 7. edge rules: inverted pitch, the cut-away, a burning heli, a wrecked boat, sand, an AI helmsman, save / load in a heli, New Game ----
   const edges = await page.evaluate(() => {
