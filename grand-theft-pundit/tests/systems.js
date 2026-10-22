@@ -363,11 +363,23 @@ H.run('systems', async (t) => {
     GTP.game.debug.setWanted(5); GTP.game.advance(0.3);
     GTP.AI.wanted && GTP.AI.wanted.clear ? GTP.AI.wanted.clear() : GTP.game.debug.setWanted(0); GTP.game.advance(0.3);
     const wc = T_.last('wanted:cleared');
+    // a mission retry clears the stars without an escape: no event
+    const nW = T_.count('wanted:cleared');
+    GTP.game.debug.setWanted(4); GTP.game.advance(0.3); GTP.Events.emit('mission:retry', { id: 'x' }); GTP.game.debug.setWanted(0); GTP.game.advance(0.3);
+    const retryQuiet = T_.count('wanted:cleared') === nW;
+    // the spawn cheat with no road in reach (far out at sea): a toast, no error
+    const p = GTP.game.player, px = p.x, pz = p.z; p.x = -3000; p.z = -3000;
+    const spawnOk = GTP.Systems.cheats.enter('CODETAKESTWENTY'); p.x = px; p.z = pz; GTP.game.advance(0.1);
+    // a job makes no progress in a vehicle that is not the job's own
+    const car = T_.car(); T_.enter(car); GTP.Systems.jobs.start('damage_control'); T_.until(() => GTP.Systems.jobs.state().phase === 'run', 5, 0.1);
+    const c0 = GTP.Systems.jobs.state().calls[0]; T_.tp(c0.x + 3, c0.z); T_.stop(car); GTP.game.advance(2);
+    const foreign = GTP.Systems.jobs.state().aboard; GTP.Systems.jobs.stop('test'); T_.leave();
     const pg = GTP.Systems.stats().sections;
-    return { wc, dept: GTP.Systems.unlocked('whole_department'), sections: pg.map((s) => s.id), rows: pg.reduce((a, s) => a + s.rows.length, 0), allStrings: pg.every((s) => s.rows.every((x) => typeof x.value === 'string' && x.label)), missions: pg[0].rows[0].value };
+    return { wc, retryQuiet, spawnOk, foreign, dept: GTP.Systems.unlocked('whole_department'), sections: pg.map((s) => s.id), rows: pg.reduce((a, s) => a + s.rows.length, 0), allStrings: pg.every((s) => s.rows.every((x) => typeof x.value === 'string' && x.label)), missions: pg[0].rows[0].value };
   });
   console.log('  wanted + stats: ' + JSON.stringify(r));
-  t.assert(r.wc && r.wc.stars === 5 && r.dept, 'escaping five stars emits wanted:cleared and unlocks the achievement');
+  t.assert(r.wc && r.wc.stars === 5 && r.dept && r.retryQuiet, 'escaping five stars emits wanted:cleared (a retry does not) and unlocks the achievement');
+  t.assert(r.spawnOk && r.foreign === 0, 'the spawn cheat survives no road; a foreign car does not carry patients');
   t.assert(r.sections.length === 6 && r.rows >= 30 && r.allStrings && / \/ \d+$/.test(r.missions), 'stats sections for the UI');
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'no errors: ' + errs.join('\n'));

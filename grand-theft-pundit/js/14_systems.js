@@ -146,6 +146,7 @@
   };
 
   // ============================================================ properties ==
+  var pointCache = {};   // property points per world (cleared on reset and world:generated)
   var props = {
     defs: function () {
       return asList(P().properties).map(function (d) {
@@ -159,7 +160,11 @@
       });
     },
     def: function (id) { var L = props.defs(); for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; },
-    get: function (id) { var L = props.list(); for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; },
+    get: function (id) {
+      var d = props.def(id); if (!d) return null;
+      var pt = pointCache[id] || (pointCache[id] = props.point(d)), lock = props.lockReason(d), own = props.owned(id), p = player();
+      return Object.assign({}, d, { x: pt ? pt.x : null, z: pt ? pt.z : null, owned: own, locked: !!lock, lockReason: lock, canBuy: !own && !lock && !!p && p.money >= (d.price | 0) });
+    },
     point: function (id) { var d = typeof id === 'string' ? props.def(id) : id; return d ? landmarkPoint(d) : null; },
     owned: function (id) { return !!S.properties.owned[id]; },
     owns: function (id) { return !!S.properties.owned[id]; },
@@ -735,7 +740,7 @@
       r.card.forEach(function (c) { if (c) total += c.strokes; });
       var toPin = dirYaw(h.pin.x - b.x, h.pin.z - b.z);
       return { hole: r.hole + 1, holes: r.holes.length, par: h.par, displayPar: h.displayPar, name: h.name, strokes: r.strokes, total: total,
-        wind: { speed: r.wind.speed, dir: r.wind.dir }, club: cl.name, dist: dist(b.x, b.z, h.pin.x, h.pin.z), lie: b.lie,
+        wind: { speed: r.wind.speed, dir: -wrapAngle(r.wind.dir - r.aim) }, club: cl.name, dist: dist(b.x, b.z, h.pin.x, h.pin.z), lie: b.lie,
         phase: r.phase === 'holed' ? 'aim' : r.phase, power: r.phase === 'swing' ? r.meter : r.phase === 'flight' ? r.power : 0, angle: -wrapAngle(r.aim - toPin), message: r.message };
     }
   };
@@ -955,7 +960,8 @@
     else if (eff === 'money') { if (p) p.money += d.amount != null ? (d.amount | 0) : 250; }
     else if (eff === 'spawn_vehicle') {
       if (p && g && g.debug && g.debug.spawnVehicle && W().nearestRoadPoint) {
-        var f = yawDir(p.yaw || 0), rp = W().nearestRoadPoint(p.x + f.x * 8, p.z + f.z * 8), v = null;
+        var f = yawDir(p.yaw || 0), rp = inInterior() ? null : W().nearestRoadPoint(p.x + f.x * 8, p.z + f.z * 8), v = null;
+        if (!rp) { toast('No road here. The truck is circling the block.'); return; }
         try { v = g.debug.spawnVehicle(rp.x, rp.z, d.vehicle || 'sedan', { wrap: d.wrap, color: d.color }); } catch (e) { v = g.debug.spawnVehicle(rp.x, rp.z, d.vehicle || 'sedan', { color: d.color }); }
         if (v) v.tag = v.tag || 'sys_cheat';
       }
@@ -1071,7 +1077,7 @@
       var why = opts && opts.force ? (jobs.def(id) ? null : 'unknown') : jobs.canStart(id);
       if (why) return no(why);
       var d = jobs.def(id);
-      job = { id: id, def: d, level: clamp((opts && opts.level) | 0 || 1, 1, d.levels), phase: 'between', t: 2, timer: 0, calls: [], aboard: 0, earned: 0, offT: 0, holdT: 0, message: d.rules || d.name };
+      job = { id: id, def: d, anyVehicle: !!(opts && opts.anyVehicle), level: clamp((opts && opts.level) | 0 || 1, 1, d.levels), phase: 'between', t: 2, timer: 0, calls: [], aboard: 0, earned: 0, offT: 0, holdT: 0, message: d.rules || d.name };
       S.jobs.runs++;
       emit('job:start', { id: id, name: d.name, level: job.level, banner: d.banner || d.name });
       toast((d.banner || d.name) + ': level ' + job.level);
@@ -1109,8 +1115,10 @@
         if (!cur.driver && dist(p.x, p.z, cur.x, cur.z) > CAR_FAR && (!job || job.id !== d.id)) { try { GTP.Entities.remove(cur); } catch (e) { report(e, 'job.vehicleRemove'); } jobCars[d.id] = null; }
         return;
       }
+      if (cur && !cur._sysReleased) { cur.persistent = false; cur.sysJob = null; cur._sysReleased = true; }   // a wreck: the normal wreck timer clears it
+      if (cur && GTP.Entities.list.indexOf(cur) >= 0) return;   // the replacement waits until the wreck is gone
       if (dd > CAR_NEAR) return;
-      if (cur && dd < 120) return;   // a wrecked one comes back out of sight
+      if (cur && dd < 120) return;   // and comes back out of sight
       var v = null, o = { color: d.vehicle.color, tag: 'sys_job:' + d.id };
       try { v = g.debug.spawnVehicle(spot.x, spot.z, d.vehicle.type || 'van', Object.assign({ wrap: d.vehicle.wrap }, o)); }
       catch (e) { try { v = g.debug.spawnVehicle(spot.x, spot.z, d.vehicle.type || 'van', o); } catch (e2) { report(e2, 'job.vehicle'); } }
@@ -1119,6 +1127,15 @@
       if (flags().damage_controlled && d.kind === 'rescue') { v.maxHp = (v.maxHp || v.hp) * 2; v.hp = v.maxHp; }   // the reward: the van has armor
       jobCars[d.id] = v;
     });
+  }
+  // a loaded save brings back the vehicle the player sat in with its tag only: make a job van a job van again
+  function adoptJobCars() {
+    var E = GTP.Entities; if (!E || !E.list) return;
+    for (var i = 0; i < E.list.length; i++) {
+      var v = E.list[i], m = v && v.kind === 'vehicle' && typeof v.tag === 'string' ? /^sys_job:(.+)$/.exec(v.tag) : null;
+      if (!m || !jobs.def(m[1]) || v.wreck) continue;
+      v.sysJob = m[1]; v.persistent = true; v.label = v.label || jobs.def(m[1]).name; jobCars[m[1]] = v;
+    }
   }
   function jobPoint(minR, maxR, kind) {
     var p = player(), Wd = W(); if (!p || !Wd) return null;
@@ -1234,6 +1251,7 @@
     if (!p || !p.alive) return endJob('dead');
     if (inMission()) return endJob('mission');
     var v = vehicleOf(p);
+    if (v && v.sysJob !== job.id && !job.anyVehicle) v = null;   // the run counts only in the job's own van or truck
     if (!v) { job.offT += dt; if (job.offT > JOB_TUNING.offFoot) return endJob('vehicle'); } else job.offT = 0;
     if (job.phase === 'between') { job.t -= dt; if (job.t <= 0) spawnCalls(); return; }
     if (job.phase !== 'run') return;
@@ -1243,6 +1261,7 @@
       for (i = 0; i < job.calls.length; i++) {
         c = job.calls[i];
         if (c.state !== 'waiting') continue;
+        if (c.ped && c.ped.removed) { c.ped = null; }   // removed by someone else (a cleanup): the call stays, as a marker
         if (c.ped) { if (!c.ped.alive) return endJob('lost'); c.x = c.ped.x; c.z = c.ped.z; if (c.mesh) c.mesh.position.set(c.x, c.ped.y || 0, c.z); }
         if (v && job.aboard < JOB_TUNING.capacity && spd < 3 && dist(v.x, v.z, c.x, c.z) < JOB_TUNING.pickupRadius) {
           c.holdT += dt;
@@ -1357,6 +1376,7 @@
       var o = null, p = player(); wardrobe.outfits().forEach(function (x) { if (x.id === id) o = x; });
       if (!o) return no('unknown');
       if (!p) return no('noplayer');
+      if (wardrobe.lockReason(o)) return no('locked');
       var pieces = o.items || {}, need = false, slot;
       for (slot in pieces) if (pieces[slot] && !wardrobe.owns(pieces[slot])) need = true;
       var price = need ? (o.price | 0) : 0;
@@ -1527,6 +1547,7 @@
   }
   // wanted:cleared {stars}: the stars shed by escaping (nobody else emits it; a bust or a death is not an escape)
   var lastWanted = 0;
+  function forgetWanted() { S.stats.peakStars = 0; lastWanted = 0; }
   function tickWanted() {
     var p = player(), w = wanted();
     if (w > 0) S.stats.peakStars = Math.max(S.stats.peakStars || 0, w);
@@ -1549,6 +1570,7 @@
         tickWanted();
         if (golfRun) golf.update(dt);
         tickJobStart();
+        var pv = vehicleOf(player()); if (pv && pv.sysJob) player()._cookLock = true;   // E and the spray never throw the equipped mic out of the window
         tickJob(dt);
         tickMarkers(dt);
         ensureJobCars(dt);
@@ -1561,10 +1583,10 @@
 
   // a new game (Missions.init runs inside Game.newGame, after the world and the player exist)
   Systems.reset = function () {
-    if (golfRun) { golfRun = null; golf._dropMeshes(); }
+    if (golfRun) golf.end('reset');   // golf:end closes the UI's panel too
     if (job) { var j = job; job = null; j.calls.forEach(dropCall); }
     marks.forEach(function (m) { unmarker(m.mesh); }); marks = [];
-    jobCars = {}; carSpots = {}; carT = 0;   // newGame emptied the entity list; the cars respawn near their spots
+    jobCars = {}; carSpots = {}; carT = 0; pointCache = {}; lastRefusal = -10;   // newGame emptied the entity list; the cars respawn near their spots
     S = blank();
     R = GTP.rng && GTP.rng.fork ? GTP.rng.fork(0x5157) : GTP.rng;
     cheatBuf = ''; jumpWas = false; bigWas = false; achT = 0; lastWanted = 0; cheatDefsCache = null;
@@ -1581,6 +1603,8 @@
 
   // ================================================================ saves ==
   function afterLoad() {
+    S.stats.peakStars = 0; lastWanted = wanted();   // a save never carries a chase
+    adoptJobCars();
     stocks.ensure();
     S.stocks.lastHour = absHour();
     var g = game(); if (g && g.time) S.properties.lastDay = g.time.day;
@@ -1589,14 +1613,14 @@
     if (wardrobeSet()) applyLook();
     markersDirty = true;
   }
-  Systems.serialize = function () { var out = copy(S); if (R && R.state) out.rng = R.state(); return out; };
+  Systems.serialize = function () { var out = copy(S); out.stats.peakStars = 0; if (R && R.state) out.rng = R.state(); return out; };
   Systems.deserialize = function (data) {
     if (!data || typeof data !== 'object') return false;
     var base = blank();
     for (var k in base) if (data[k] && typeof data[k] === 'object') base[k] = Object.assign(base[k], copy(data[k]));
     S = base;
     if (data.rng != null && R && R.setState) R.setState(data.rng);
-    if (golfRun) { golfRun = null; golf._dropMeshes(); }
+    if (golfRun) golf.end('reset');   // golf:end closes the UI's panel too
     if (job) { var j = job; job = null; j.calls.forEach(dropCall); }
     cheatDefsCache = null;
     afterLoad();
@@ -1608,7 +1632,7 @@
   GTP.SaveRegistry = GTP.SaveRegistry || {};
   REG_KEYS.forEach(function (k) {
     GTP.SaveRegistry['sys_' + k] = {
-      get: function () { var o = copy(S[k]); if (k === 'stats' && R && R.state) o.rng = R.state(); return o; },
+      get: function () { var o = copy(S[k]); if (k === 'stats') { o.peakStars = 0; if (R && R.state) o.rng = R.state(); } return o; },
       set: function (json) {
         if (!json || typeof json !== 'object') return;
         S[k] = Object.assign(blank()[k], copy(json));
@@ -1631,9 +1655,10 @@
     var p = player(), pk = e && e.pickup; if (!p || !pk || (e.player && e.player !== p)) return;
     if (pk.pickupType === 'health' && flags().damage_controlled) p.hp = Math.min(p.maxHp, p.hp + (pk.value || 50));
   }
+  var BLAST_TYPES = { explosion: 1, explode: 1, blast: 1, fire: 1, hottake: 1, hotmic: 1, ratio: 1, rocket: 1, stickynote: 1, confetti: 1, firework: 1 };
   function onDamage(e) {
     var p = player(); if (!p || !e || e.target !== p || !flags().fireproof || !p.alive) return;
-    if (e.type === 'explosion' || e.type === 'blast' || e.type === 'hottake' || e.type === 'fire' || e.type === 'ratio') p.hp = Math.min(p.maxHp, p.hp + (e.amount || 0) * 0.4);
+    if (BLAST_TYPES[e.type]) p.hp = Math.min(p.maxHp, p.hp + (e.amount || 0) * 0.4);
   }
 
   // =============================================================== events ==
@@ -1641,19 +1666,23 @@
     GTP.Events.on('mission:complete', function (e) {
       try { markersDirty = true; if (e && !e.replay) stocks.react(e.id || (e.mission && e.mission.id)); checkAchievements(); } catch (err) { report(err, 'systems.missionComplete'); }
     });
-    GTP.Events.on('mission:start', function () { if (job) endJob('mission'); if (golfRun) golf.end('interrupted'); });
+    GTP.Events.on('mission:start', function () { forgetWanted(); if (job) endJob('mission'); if (golfRun) golf.end('interrupted'); });
+    // a retry or an abort clears the stars without an escape
+    GTP.Events.on('mission:retry', forgetWanted);
+    GTP.Events.on('mission:abort', forgetWanted);
+    GTP.Events.on('mission:fail', forgetWanted);
     GTP.Events.on('strand:start', function () { if (job) endJob('busy'); if (golfRun) golf.end('interrupted'); });
     GTP.Events.on('player:respawn', function () { if (wardrobeSet()) applyLook(); });
     GTP.Events.on('player:wasted', function () { S.stats.peakStars = 0; lastWanted = 0; if (job) endJob('dead'); if (golfRun) golf.end('interrupted'); });
     GTP.Events.on('busted', function () { S.stats.peakStars = 0; lastWanted = 0; if (job) endJob('busted'); if (golfRun) golf.end('interrupted'); });
-    GTP.Events.on('world:generated', function () { markersDirty = true; });
+    GTP.Events.on('world:generated', function () { markersDirty = true; pointCache = {}; carSpots = {}; });
     GTP.Events.on('pickup', onPickup);
     GTP.Events.on('damage', onDamage);
     // stats for the parity achievements: gun shops visited, cars fully modded
     GTP.Events.on('interior:enter', function (e) { if (e && e.kind === 'armory') S.stats.shops[e.store || e.id || 'armory'] = true; });
     GTP.Events.on('vehicle:mod', function (e) {
       var m = e && e.mods, v = e && e.vehicle; if (!m || !v) return;
-      if ((m.engine | 0) >= 4 && (m.brakes | 0) >= 3 && (m.armor | 0) >= 5 && m.turbo) S.stats.maxed[v.id != null ? v.id : (v.type + ':' + Object.keys(S.stats.maxed).length)] = true;
+      if ((m.engine | 0) >= 4 && (m.brakes | 0) >= 3 && (m.armor | 0) >= 5) S.stats.maxed[v.id != null ? v.id : (v.type + ':' + Object.keys(S.stats.maxed).length)] = true;
     });
     GTP.Events.on('vehicle:enter', function (e) {
       var v = e && e.vehicle, p = player(); if (!v || !v.sysJob || !p || (e.ped && e.ped !== p) || job) return;
@@ -1696,7 +1725,7 @@
         var d = kindSafe && key ? props.byLandmark(key) : null;
         if (d && d.kind === 'safehouse' && !props.owned(d.id) && !o.force) {
           var g = game(), t = g && g.time ? g.time.t : 0;
-          if (t - lastRefusal > 2) { lastRefusal = t; openProperty(d.id); }
+          if (t < lastRefusal || t - lastRefusal > 2) { lastRefusal = t; openProperty(d.id); }
           return false;
         }
       } catch (e) { report(e, 'systems.interiorGate'); }
