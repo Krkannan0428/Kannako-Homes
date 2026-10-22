@@ -89,7 +89,10 @@
         road('h', 94, 8, 42, 'Printworks Parade'),
         road('h', 106, 8, 117, 'Sponsor Boulevard'),
         road('h', 114, 8, 117, 'Fresh Takes Drive'),
-        road('h', 122, 8, 117, 'Coupon Code Circle'),
+        // the Print Works (memo_press, x 35..44) stands across this row: the circle stops at Trustless Terrace and picks
+        // up again at Lot C Lane, so no lane runs into its walls (QA-A-GEO-01)
+        road('h', 122, 8, 34, 'Coupon Code Circle'),
+        road('h', 122, 45, 117, 'Coupon Code Circle'),
         road('h', 122, 118, 127, 'Coupon Code Circle', 'street', { bridge: true }),
         road('h', 122, 128, 152, 'Coupon Code Circle'),
         // the island

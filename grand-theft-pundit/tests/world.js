@@ -446,6 +446,33 @@ H.run('world', async (t) => {
     await t.shot(page, 'world_' + v.name);
   }
   console.log('  screenshots: ' + views.map((v) => 'tests/out/world_' + v.name + '.png').join(' '));
+
+  // ---- envw2 layout: generation regressions (QA-A-GEO-01, GEO-02, TRF-08, TRF-09, GEO-06, VIS-04, QAC-45) ----
+  const lay = await page.evaluate(() => {
+    const W = GTP.World, T = W.T, M = W.M, N = W.w * W.h, out = {};
+    // GEO-01: no building stands on a tile of the lane field (a road stamped first, a footprint over it later)
+    out.buildingOnLane = [];
+    for (let i = 0; i < N; i++) if (W.tiles[i] === T.BUILDING && (W.laneH[i] || W.laneV[i] || W.roadId[i])) out.buildingOnLane.push((i % W.w) + ',' + ((i / W.w) | 0));
+    // GEO-01: a ground lane never ends against a building or a ramp's deck end: the tile past the last lane tile of each
+    // axis run is road, ramp foot, sidewalk or open ground (never BUILDING, never a RAMP tile above kerb height)
+    out.laneIntoWall = [];
+    for (let z = 0; z < W.h; z++) for (let x = 0; x < W.w; x++) {
+      const i = z * W.w + x; if (W.tiles[i] !== T.ROAD) continue;
+      [['h', 1, 0], ['h', -1, 0], ['v', 0, 1], ['v', 0, -1]].forEach(([ax, dx, dz]) => {
+        if (!(ax === 'h' ? W.laneH[i] : W.laneV[i])) return;
+        const nx = x + dx, nz = z + dz; if (!W.inBounds(nx, nz)) return;
+        const j = nz * W.w + nx, tj = W.tiles[j];
+        if (tj === T.BUILDING || (tj === T.RAMP && W.rampY[j] > 0.6)) out.laneIntoWall.push(x + ',' + z + '>' + nx + ',' + nz + ' ' + (tj === T.RAMP ? 'ramp ' + W.rampY[j].toFixed(1) : 'building'));
+      });
+    }
+    const ccc = W.landmark('memo_press');
+    out.memo = ccc && ccc.building ? [ccc.building.tx, ccc.building.tz, ccc.building.tw, ccc.building.td] : null;
+    out.coupon = W.streetAt ? [W.streetAt(30 * 4, 122 * 4), W.streetAt(60 * 4, 122 * 4)] : null;
+    return out;
+  });
+  console.log('  envw2 layout: ' + JSON.stringify(lay).slice(0, 600));
+  t.assert(lay.buildingOnLane.length === 0, 'no building tile carries lane bytes or a road id (QA-A-GEO-01): ' + lay.buildingOnLane.slice(0, 10).join(' '));
+  t.assert(lay.laneIntoWall.length === 0, 'no ground lane runs into a building wall or a ramp deck end (QA-A-GEO-01/02, TRF-08): ' + lay.laneIntoWall.slice(0, 10).join(' '));
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
 });
