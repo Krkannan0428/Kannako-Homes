@@ -163,6 +163,8 @@ H.run('story', async (t) => {
     let s = 0; while (M.state.active && s < 10) { g.advance(0.2); s += 0.2; }
     out.seen = seen; out.done = M.state.completed.has('t_types'); out.plan = GTP.Heist.plan(); out.paid = p.money - money0; out.cleanups = hit;
     out.expected = GTP.Heist.payout({ id: 't_types', heist: true }, 1000);
+    // the content's own tables: the quiet approach's payout factor, less Gus's cut
+    { const ap = GTP.Heist.approaches().find((a) => a.id === 'quiet'), gus = GTP.Heist.crewList().find((c) => c.id === 'gus'); out.formula = Math.round(1000 * (ap ? ap.payout : 1) * (1 - (gus ? gus.cut : 0.1))); out.cut = gus && gus.cut; }
     // side missions (the strangers module's list, an expansion mission outside the chain) never join the story, and finishing
     // one puts the GPS back on the story
     GTP.Content.strangers = GTP.Content.strangers || {}; GTP.Content.strangers.missions = GTP.Content.strangers.missions || [];
@@ -181,7 +183,7 @@ H.run('story', async (t) => {
   t.assert(types.seen.join(',') === 't_ping,interior,buy,range,heist_board', 'each type completes on its event in turn: ' + types.seen.join(','));
   t.assert(types.wrongInterior === 'interior' && types.wrongBuy === 'buy' && types.bronze === 'range', 'the wrong interior, item or medal does not count');
   t.assert(types.done && types.plan && types.plan.approach === 'quiet' && types.cleanups === 1, 'the heist plan is set and the loud-only objective skipped: ' + JSON.stringify(types.plan));
-  t.assert(types.paid === types.expected && types.expected === 900, 'the payout follows the plan (quiet x1.0, Gus takes 10%): paid ' + types.paid + ', expected ' + types.expected);
+  t.assert(types.paid === types.expected && types.expected === types.formula, 'the payout follows the plan (the quiet approach, less Gus\'s ' + types.cut + ' cut): paid ' + types.paid + ', expected ' + types.expected + ', from the tables ' + types.formula);
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

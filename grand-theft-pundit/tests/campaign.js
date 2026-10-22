@@ -836,6 +836,10 @@ H.run('campaign', async (t) => {
 
   const results = {};
   let expectedMoney = 250, lastCash = 0, lastSpent = 0, expectedSubs = 0, lastTier = 0;
+  // v0.3 retunes m05's unlock (25_content_parity.js retune.m05_peer: the pocket pistol, then the Op-Ed Compact): the table takes
+  // the content's retune value, the GDD's pistol otherwise
+  const retuned = await page.evaluate(() => { const R = GTP.Content.parity && GTP.Content.parity.retune, m5 = R && R.m05_peer; const u = (m5 || []).find((x) => x.path === 'onComplete.unlockWeapon'); return u ? u.value : null; });
+  if (retuned) UNLOCKS.m05_peer = retuned;
   const missionDefs = await page.evaluate(() => { const o = {}; GTP.Missions.allMissions().forEach((m) => { o[m.id] = { reward: m.reward, onComplete: m.onComplete || {}, title: m.title, giver: m.giver, intro: m.intro.length, objectives: m.objectives.length, act: m.act || null }; }); return o; });
   const tiers = await page.evaluate(() => (GTP.Content.expansion.subscriberTiers || []).map((x) => ({ subs: x.subs | 0, name: x.name })));
   const tierFor = (n) => { let k = 0; tiers.forEach((x, i) => { if (n >= x.subs) k = i; }); return k; };

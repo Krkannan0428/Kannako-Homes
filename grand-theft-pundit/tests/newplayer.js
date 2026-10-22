@@ -290,6 +290,9 @@ function installPlayer(budget) {
         const txt = text0.toLowerCase();
         // the shooting range (m01c: "bronze at the range"): shoot the targets that pop up until range:end
         if (NP.rangeActive() || (NP.inArmory() && /range|target|medal|bronze|silver|gold/.test(txt) && NP.rangeTargets().length)) { const r = NP.shootRange(90); NP.say('range: ' + JSON.stringify(r)); continue; }
+        // a round ended short of the medal: the range says STEP OFF AND back on for another go
+        { const RG = GTP.Interiors && GTP.Interiors.range; if (RG && RG.needLeave && !RG.running && NP.inArmory() && /range|medal|bronze/.test(txt)) {
+          const bt = RG.booth || NP.arrow(); if (bt) { const away = { x: bt.x + 3, z: bt.z + 2.5 }; NP.walk(() => ({ pts: [away] }), () => !RG.needLeave || U.dist2d(p.x, p.z, away.x, away.z) < 0.8, 6); NP.notes.rangeRetries = (NP.notes.rangeRetries || 0) + 1; continue; } } }
         // a shop counter open (the armory UI): buy what the objective names
         NP.wantShop = /\bbuy\b|purchase|ammo box|shop/.test(txt);
         if (NP.shopUiOpen() || (NP.inArmory() && /\bbuy\b|purchase|pick up a|ammo box/.test(txt) && NP.tryOpenCounter())) { const r = NP.buyFromUi(txt); NP.say('buy: ' + JSON.stringify(r)); NP.adv(0.5); continue; }
@@ -415,10 +418,13 @@ function installPlayer(budget) {
       });
       return out;
     },
+    // the crosshair is the camera's own forward line (the shoulder camera need not look exactly along rig.yaw / rig.pitch): turn
+    // the view by how far that line is off the target
     aimAt(x, y, z) {
-      const cam = GTP.Render.camera, rig = GTP.Render.rig, sens = (GTP.C.CAMERA && GTP.C.CAMERA.lookSens) || 0.0032;
-      const dx = x - cam.position.x, dz = z - cam.position.z, dist = Math.hypot(dx, dz) || 1;
-      const yawErr = U.wrapAngle(U.dirToYaw(dx, dz) - rig.yaw), pitchErr = Math.atan2(cam.position.y - y, dist) - rig.pitch;
+      const cam = GTP.Render.camera, sens = (GTP.C.CAMERA && GTP.C.CAMERA.lookSens) || 0.0032;
+      const o = new THREE.Vector3(), f = new THREE.Vector3(); cam.getWorldPosition(o); cam.getWorldDirection(f);
+      const dx = x - o.x, dz = z - o.z, dist = Math.hypot(dx, dz) || 1;
+      const yawErr = U.wrapAngle(U.dirToYaw(dx, dz) - U.dirToYaw(f.x, f.z)), pitchErr = Math.atan2(o.y - y, dist) - Math.atan2(-f.y, Math.hypot(f.x, f.z));
       In.setLook(-Math.max(-0.3, Math.min(0.3, yawErr)) / sens, Math.max(-0.3, Math.min(0.3, pitchErr)) / sens);
       return Math.abs(yawErr) + Math.abs(pitchErr);
     },

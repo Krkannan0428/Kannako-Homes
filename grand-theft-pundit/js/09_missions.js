@@ -2805,6 +2805,12 @@
     take: function (v, mode, opts) {
       opts = opts || {};
       if (!v || v.kind !== 'vehicle' || v.removed) return null;
+      // a race leg through a building gets car A* corners in between (GTP.AI.routeVias; folded from 07's hookStrands wrapper,
+      // which stands down on the _worldRoute flag set below)
+      var AIx = GTP.AI;
+      if (mode === 'route' && Array.isArray(opts.route) && opts.route.length > 1 && AIx && typeof AIx.routeVias === 'function') {
+        try { opts = Object.assign({}, opts, AIx.routeVias(opts.route, !!opts.loop, opts.onCheckpoint)); } catch (e) { U.reportError(e, 'strands.raceRoute'); }
+      }
       if (v._chauf) drivers.release(v);
       if (v.ai && GTP.AI && GTP.AI.release) GTP.AI.release(v);
       var drvWas = v.driver && v.driver.alive ? !!v.driver.persistent : !!(run && opts.track !== false);   // what release gives back (QAC-34)
@@ -2904,6 +2910,7 @@
       v.setControls(throttle, steer, false, throttle < 0 ? 0.5 : 0);
     }
   };
+  drivers.take._worldRoute = true;   // 07_ai's hookStrands checks this and leaves take alone (the A* corners are added above)
 
   // ------------------------------------------------------------------------------- stunts --
   // The ten striped wedges (World.stuntRamps). A jump counts when the player's car leaves one and lands on its wheels inside
