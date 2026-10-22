@@ -1318,6 +1318,8 @@
       this.bounces = 0; this.maxBounces = w.bounces != null ? w.bounces : 2; this.rest = false; this.spin = R().range(6, 11); this.lobbed = true;
       this.restitution = w.restitution != null ? w.restitution : 0.4; this.stuck = null; this.splashed = false;
     }
+    // the ON AIR cap's own material (weaponMesh clones it per mic) goes with the mic (QA QAC-07)
+    destroy() { super.destroy(); if (this._cap && this._cap.material && !this._capFreed) { this._capFreed = true; this._cap.material.dispose(); } }
     syncMesh(alpha) {
       var m = this.mesh; if (!m) return;
       var a = alpha == null ? 1 : alpha;
@@ -2444,9 +2446,13 @@
     labelTex[label] = tex;
     return tex;
   }
+  // one material per label and one plane per size, shared by every pickup (Render.detach frees nothing: QA QAC-09)
+  var labelMat = {}, labelGeo = {};
   function labelMesh(label, w, h) {
-    var mat = new THREE.MeshBasicMaterial({ map: labelTexture(label), transparent: false });
-    var m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.name = 'label';
+    var mat = labelMat[label] || (labelMat[label] = new THREE.MeshBasicMaterial({ map: labelTexture(label), transparent: false }));
+    var gk = w + 'x' + h, pg = labelGeo[gk];
+    if (!pg) { pg = labelGeo[gk] = new THREE.PlaneGeometry(w, h); pg.userData.shared = true; }
+    var m = new THREE.Mesh(pg, mat); m.name = 'label';
     return m;
   }
   function geo(key, build) {
@@ -2471,13 +2477,15 @@
     var b = labelMesh(label, 0.22, 0.17); b.position.set(0, 0.19, -0.133); b.rotation.y = Math.PI; grp.add(b);
     return grp;
   }
+  var glowMat = {};
   function glowSprite(color, scale) {
     var A = GTP.Assets;
-    var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: A.glow, color: color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }));
+    var sp = new THREE.Sprite(glowMat[color] || (glowMat[color] = new THREE.SpriteMaterial({ map: A.glow, color: color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 })));
     sp.scale.set(scale, scale, 1); sp.position.y = 0.15; sp.name = 'glow';
     return sp;
   }
   function sponsorFor(id) { return SPONSOR[id] || 'BOTH SIDES ARMS'; }
+  var crateCapMat = null;
   function pickupMesh(pk) {
     var type = pk.pickupType, grp = new THREE.Group(), mat = GTP.Assets.propMaterial();
     var label = pk.label || (type === 'weapon' ? sponsorFor(pk.weaponId) : SPONSOR[type]) || null;
@@ -2506,6 +2514,9 @@
       var lb = labelMesh(label || 'MERCH', 0.4, 0.22); lb.position.set(0, 0.17, -0.285); lb.rotation.y = Math.PI; grp.add(lb);
       if (type === 'weapon' && pk.weaponId && GTP.Assets.weaponMesh) {
         var wm = GTP.Assets.weaponMesh(pk.weaponId);
+        // a crate's hot mic does not blink: every crate shares one cap material instead of keeping its clone (QA QAC-07)
+        var cap = wm && wm.getObjectByName('cap');
+        if (cap) { if (!crateCapMat) crateCapMat = cap.material; else { cap.material.dispose(); cap.material = crateCapMat; } }
         if (wm) {
           var fit = fitOf(pk.weaponId) || {};
           if (fit.upright) { wm.position.set(-0.08, 0.35, 0.02); wm.rotation.set(0, 0.5, 0); }
@@ -2700,7 +2711,7 @@
   function skinProjectile(e) {
     if (e._skinned || !e.mesh) return;
     e._skinned = true;
-    var A = GTP.Assets;
+    var A = GTP.Assets, sphere = e.mesh.geometry;
     var w = WEAPONS[e.weaponId] || {};
     if ((e instanceof HotMic || w.fuse || w.smoke || w.splash || w.stick) && A.weaponGeometry && A.weaponGeometry(e.weaponId)) {
       var wm = A.weaponMesh(e.weaponId); if (!wm) return;
@@ -2710,6 +2721,8 @@
       if (!ROCKET_GEO) { var g = new GTP.GeoBuilder({ color: true }); g.cylinder(0, -0.3, 0, 0.09, 0.09, 0.5, 7, [0.35, 0.37, 0.4]); g.cylinder(0, 0.2, 0, 0.09, 0.02, 0.2, 7, [1, 0.25, 0.64]); g.box(-0.16, -0.3, -0.01, 0.32, 0.12, 0.02, GTP.GeoBuilder.UV0, [0.9, 0.9, 0.95]); g.box(-0.01, -0.3, -0.16, 0.02, 0.12, 0.32, GTP.GeoBuilder.UV0, [0.9, 0.9, 0.95]); ROCKET_GEO = g.build(); }
       e.mesh.geometry = ROCKET_GEO; e.mesh.material = A.propMaterial ? A.propMaterial() : e.mesh.material;
     }
+    // the per-projectile sphere Render.buildEntityMesh made is orphaned once replaced: free it (QA QAC-08)
+    if (sphere && sphere !== e.mesh.geometry && !(sphere.userData && sphere.userData.shared)) sphere.dispose();
   }
   function syncProjectile(e, dt) {
     if (!e.mesh) return;

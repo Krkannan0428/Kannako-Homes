@@ -445,7 +445,7 @@
   var MUZZLE_LEN = { suppressor: 0.16, compensator: 0.05 };
 
   // ---------------------------------------------------------------- cache --
-  var geoCache = {}, fitCache = {}, stencilTex = null, capMatProto = null, lensMat = null, attachGeo = {}, capGeo = null, stencilGeo = null, stencilMat = null;
+  var geoCache = {}, fitCache = {}, stencilTex = null, capMatProto = null, lensMat = null, attachGeo = {}, capGeo = null, stencilGeo = null, stencilMat = null, lensGeo = null;
   function hashId(id) { var h = 2166136261; for (var i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   // the builder for an id: its own, else a built weapon of its class (picked by a hash of the id, so it is stable)
   function builderFor(id, cls) {
@@ -586,8 +586,8 @@
         var v = mods[slots[s]]; if (!v || f.slots.indexOf(slots[s]) < 0) continue;
         var am = new THREE.Mesh(attachmentGeometry(slots[s], v, f), mat); am.name = 'held'; am.castShadow = true; am.userData.attachment = slots[s] + ':' + v; m.add(am);
         if (slots[s] === 'light') {
-          if (!lensMat) lensMat = new THREE.MeshBasicMaterial({ color: 0xfff4c8 });
-          var lens = new THREE.Mesh(new THREE.CircleGeometry(0.014, 8), lensMat); lens.rotation.y = Math.PI / 2; lens.position.set(f.under[0] + 0.051, f.under[1] - 0.012, 0.03); lens.name = 'lens'; m.add(lens);
+          if (!lensMat) { lensMat = new THREE.MeshBasicMaterial({ color: 0xfff4c8 }); lensGeo = new THREE.CircleGeometry(0.014, 8); }
+          var lens = new THREE.Mesh(lensGeo, lensMat); lens.rotation.y = Math.PI / 2; lens.position.set(f.under[0] + 0.051, f.under[1] - 0.012, 0.03); lens.name = 'lens'; m.add(lens);
         }
       }
     }

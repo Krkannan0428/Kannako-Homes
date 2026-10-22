@@ -796,6 +796,13 @@
       }
       return origA.apply(this, arguments);
     };
+    // Render.rebuildEntityMesh (the wardrobe, the barber, a try-on) drops the old mesh without a detach: release its look too
+    var origRB = R.rebuildEntityMesh;
+    if (origRB) R.rebuildEntityMesh = function (e) {
+      var old = e && e.mesh, r = origRB.apply(this, arguments), ud = old && old !== e.mesh && old.userData;
+      if (ud && ud.models && ud.entry && !ud.released) { ud.released = true; release(ud.entry); if (ud.skin && ud.skin.skeleton) ud.skin.skeleton.dispose(); }
+      return r;
+    };
   }
   function inverses(rig) {
     var key = rig.map(function (p) { return p[0].toFixed(4); }).join(',') + rig[11][0].toFixed(4);
@@ -1282,8 +1289,9 @@
         if (q === 0) blob(vb, 'detail', s0.x, s0.y + 0.56, s0.z + 0.23, 0.11, 0.07, 0.05, 8, 3, SEAT, 4);
       });
       if (cls !== 'bus') {
-        var dz = hz - 0.82, dy = pw(sp.yt, c.tA + 0.03) - 0.05;
-        blob(vb, 'detail', 0, dy, dz, hw * 0.86, 0.09, 0.16, small, 3, DASH, 5);
+        // the dash: from just behind the windshield base to in front of the steering wheel, its top at the beltline
+        var dz0 = c.zA + 0.04, dz1 = Math.min(wheelPoint.z - 0.04, dz0 + 0.32), dy = pw(sp.yt, c.tA) - 0.1;
+        blob(vb, 'detail', 0, dy, (dz0 + dz1) / 2, hw * 0.86, 0.09, (dz1 - dz0) / 2, small, 3, DASH, 5);
         torus(vb, 'detail', 'z', wheelPoint.x, wheelPoint.y, wheelPoint.z, 0.17, 0.015, q ? 10 : 16, 5, [0.05, 0.05, 0.06]);
         cyl(vb, 'detail', 'z', wheelPoint.x, wheelPoint.y - 0.05, wheelPoint.z - 0.18, 0.025, 0.025, 0.3, 6, DASH);
       }
