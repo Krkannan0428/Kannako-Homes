@@ -283,7 +283,8 @@ H.run('ui_v03', async (t) => {
     CB.cover = Object.assign(CB.cover || {}, { available: () => ({ low: true }) });
     T_.adv(0.2); g.render();
     const a = { foot: T_.ui.prompts.slice() };
-    const cv0 = CB.cover; CB.cover = Object.assign({}, cv0, { available: () => null }); T_.adv(0.1); g.render(); a.open = T_.ui.prompts.slice(); CB.cover = cv0; T_.adv(0.1); g.render();
+    const cv0 = CB.cover, hud0 = CB.hud; CB.cover = Object.assign({}, cv0, { available: () => null }); CB.hud = function () { return Object.assign({}, hud0.apply(CB, arguments), { cover: { active: false, near: false } }); };
+    T_.adv(0.1); g.render(); a.open = T_.ui.prompts.slice(); CB.cover = cv0; CB.hud = hud0; T_.adv(0.1); g.render();
     GTP.Events.emit('cover:enter', { low: true }); T_.adv(0.1); g.render(); a.cover = T_.ui.prompts.slice();
     return a;
   });
