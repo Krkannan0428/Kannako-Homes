@@ -169,6 +169,26 @@ H.run('saves', async (t) => {
   t.assert(blocked.toasts.some((s) => /storage/i.test(s)) && blocked.toasts.filter((s) => /Autosave is off/.test(s)).length === 1 && blocked.errors === 0, 'one toast per session, no errors: ' + blocked.toasts.join(' | '));
   t.assert(blocked.slots[2] === true, 'slot 3 stayed empty');
 
+  // ---- 5b. the wanted level and cutscenes (QA-B-FE-08, QA-B-FE-07) ----
+  const extra = await c2.page.evaluate(() => {
+    const g = GTP.game, p = g.player, AIw = GTP.AI.wanted;
+    AIw.set(3); g.advance(0.2);
+    const ok = g.saveSlot(2), meta = g.slots()[1].meta;
+    AIw.clear(); g.advance(0.2);
+    const loaded = g.loadSlot(2); g.advance(0.5);
+    const out = { ok, cardWanted: meta && meta.wanted, loaded, wanted: g.player.wanted | 0, level: AIw.level | 0, newPlayer: g.player !== p };   // a load builds a new player
+    AIw.clear(); g.advance(0.2);
+    // a save in the middle of a cutscene is refused: its flag is set but its hand-off (the opening's story) has not run
+    GTP.Cutscenes.play({ id: 't_save_cs', letterbox: true, shots: [{ cam: { from: { entity: 'player', offset: { x: 0, y: 3, z: 6 } }, to: { entity: 'player' }, seconds: 3 } }] });
+    g.advance(0.2);
+    out.cs = { active: !!GTP.Cutscenes.active, saved: g.saveSlot(3), slot3Empty: g.slots()[2].empty };
+    GTP.Cutscenes.skip(); g.advance(0.3);
+    return out;
+  });
+  console.log('  wanted / cutscene: ' + JSON.stringify(extra));
+  t.assert(extra.ok && extra.cardWanted === 3 && extra.loaded && extra.wanted === 3 && extra.level === 3, 'QA-B-FE-08: the stars on the slot card come back with the load: ' + JSON.stringify(extra));
+  t.assert(extra.cs.active && extra.cs.saved === false && extra.cs.slot3Empty, 'QA-B-FE-07: no save in the middle of a cutscene: ' + JSON.stringify(extra.cs));
+
   // ---- 6. loading surface ----
   const ld = await c2.page.evaluate(() => ({ loading: GTP.game.loading, headless: GTP.game.headless }));
   t.assert(ld.loading.active === false && ld.headless, 'headless boot never leaves the loading screen up: ' + JSON.stringify(ld.loading));
