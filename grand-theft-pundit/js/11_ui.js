@@ -4158,6 +4158,18 @@
     if (typeof cv.candidate === 'function') return call(cv.candidate, cv, [p], null);
     return null;
   }
+  function nearDoor(p) {
+    var Ms = GTP.Missions, o = Ms && Ms.current ? call(Ms.current, Ms, [], null) : null, want = o && o.def && o.def.type === 'enter_vehicle';
+    if (!want && (ui.carsEntered | 0) >= 3) return null;
+    var E = GTP.Entities; if (!E || !E.near) return null;
+    var list = call(E.near, E, [p.x, p.z, 5, 'vehicle'], []) || [];
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i]; if (!v || v.wreck || v.sinking || v.removed || (v.driver && v.driver !== p)) continue;
+      var d = typeof v.doorWorld === 'function' ? call(v.doorWorld, v, [0], null) : null, dd = d ? U.dist2d(p.x, p.z, d.x, d.z) : U.dist2d(p.x, p.z, v.x, v.z) - 1.5;
+      if (dd < 2.6) return v;
+    }
+    return null;
+  }
   function inCover(p) { var ch = coverHud(); if (ch && ch.active) return true; return !!((p && (p.cover || (p.pose && p.pose.cover))) || ui.cover.on); }
   function promptList() {
     var p = player(), g = game(), out = []; if (!p || !g || g.state !== 'playing' || ui.modal || ui.shopOpen || ui.dialogue) return out;
@@ -4180,6 +4192,10 @@
       out.push({ keys: [glyph('cover')], label: 'LEAVE COVER' });
       return out;
     }
+    // GET IN at a car door while an objective asks for it, and for the first few cars (QA-B-NP-04: h_enter fires once,
+    // often next to a random parked car, and the pod van then had nothing on screen)
+    var nearCar = nearDoor(p);
+    if (nearCar) out.push({ keys: [glyph('enter')], label: 'GET IN', color: COL.lime });
     var ca = coverAvailable(p);
     if (ca) out.push({ keys: [glyph('cover')], label: 'TAKE COVER', color: COL.cyan });
     var ranged = w && !w.infinite && w.id !== 'fist' && w.cls !== 'melee';
@@ -5898,7 +5914,7 @@
     Ev.on('golf:start', golfStart);
     Ev.on('golf:end', golfEnd);
     Ev.on('golf:hole', golfHole);
-    Ev.on('vehicle:enter', function (e) { var p = player(), v = e && (e.vehicle || e); if (!v || (e && e.ped && e.ped !== p) || (e && e.driver && e.driver !== p)) return; ui.vehName = { name: vehicleName(v), sub: v.mods && v.mods.engine ? 'TUNED' : '', t: 0 }; });
+    Ev.on('vehicle:enter', function (e) { var p = player(), v = e && (e.vehicle || e); if (!v || (e && e.ped && e.ped !== p) || (e && e.driver && e.driver !== p)) return; ui.carsEntered = (ui.carsEntered | 0) + 1; ui.vehName = { name: vehicleName(v), sub: v.mods && v.mods.engine ? 'TUNED' : '', t: 0 }; });
     Ev.on('vehicle:exit', function () { ui.vehName = null; });
     Ev.on('cover:enter', function (e) { ui.cover.on = true; ui.cover.low = !!(e && (e.low || e.high === false)); });
     Ev.on('cover:exit', function () { ui.cover.on = false; });
