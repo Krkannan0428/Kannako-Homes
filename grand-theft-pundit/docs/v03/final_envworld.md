@@ -50,9 +50,9 @@ the per-preset numbers are in `environment.md` → Performance.
 | tests/perf.js | PASS (742 steps/s alone; medium draw calls 511, ultra 440) |
 | tests/render.js | PASS |
 | tests/tune.js | PASS |
-| tests/world.js | PASS on the merged build before the last two merges; final re-run pending |
-| tests/ai.js | PASS on the merged build before the last two merges; final re-run pending |
-| tests/events.js | PASS on the merged build before the last two merges; final re-run pending |
+| tests/world.js | PASS |
+| tests/ai.js | PASS |
+| tests/events.js | PASS |
 | tests/content_audit.js | PASS (256 files, 0 hits) |
 | tests/vehicles.js (not ours) | PASS on this branch, including "the real Spin Doctor door opens the shop once" |
 
