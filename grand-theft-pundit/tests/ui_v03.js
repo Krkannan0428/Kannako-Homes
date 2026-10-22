@@ -399,7 +399,7 @@ H.run('ui_v03', async (t) => {
   t.assert(radio.some((l) => /^ON AIR: Call Me Maybe Wrong/.test(l)) && radio.some((l) => /^NEWS 14:00/.test(l)) && radio.some((l) => /^CALLER: Deb/.test(l)), 'the ticker shows the show on air, the hourly bulletin and a caller: ' + JSON.stringify(radio));
   const strangers = await page.evaluate(() => {
     // the real GTP.Strangers: open the first strand by completing its gate for the duration of the check
-    const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = Sg.list()[0].id, first = Sg.missions(sid)[0], added = [];
+    const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = (Sg.strands ? Sg.strands() : Sg.list())[0].id, first = Sg.missions(sid)[0], added = [];
     (first.requires || []).forEach((id) => { if (!Ms.state.completed.has(id)) { Ms.state.completed.add(id); added.push(id); } });
     window.__strAdded = added; if (Ms.refreshMarkers) Ms.refreshMarkers();   // Missions caches the available list
     const mk = GTP.UI.allMarkers().find((m) => m.missionId === first.id) || {};
