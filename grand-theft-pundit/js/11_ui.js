@@ -4208,7 +4208,9 @@
     if (ca) out.push({ keys: [glyph('cover')], label: 'TAKE COVER', color: COL.cyan });
     var ranged = w && !w.infinite && w.id !== 'fist' && w.cls !== 'melee';
     var hintUp = GTP.Hints && GTP.Hints.current ? GTP.Hints.current() : null;
-    if (ranged && !aiming && ui.aimTutor.n < 1 && ui.aimTutor.shown < 15 && !(hintUp && hintUp.id === 'h_aim')) {   // the h_aim card already says it
+    // the AIM / FIRE tutor: until the first aim or shot (or 8 s on screen), never under the h_aim card and never in the same
+    // row as GET IN / TAKE COVER
+    if (ranged && !aiming && ui.aimTutor.n < 1 && ui.aimTutor.shown < 8 && !(hintUp && hintUp.id === 'h_aim') && !nearCar && !ca) {
       out.push({ keys: [glyph('aim')], label: 'AIM' });
       out.push({ keys: [glyph('shoot')], label: 'FIRE' });
     }
@@ -5937,6 +5939,8 @@
     // the aim tutor: counts aims, retires after the first aim or 15 s on screen
     var CB = GTP.Combat, aiming = !!(CB && CB.aim && CB.aim.active);
     if (aiming && !ui.aimTutor.was) ui.aimTutor.n++;
+    var pl = player(), sh = pl && pl.stats ? pl.stats.shots | 0 : 0;   // a shot from the hip retires the tutor too
+    if (ui.aimTutor.shots0 == null) ui.aimTutor.shots0 = sh; else if (sh > ui.aimTutor.shots0) ui.aimTutor.n = Math.max(ui.aimTutor.n, 1);
     ui.aimTutor.was = aiming;
     if (ui.prompts && ui.prompts.indexOf('AIM') >= 0) ui.aimTutor.shown += dt;
     hintActed(dt, aiming);
@@ -5946,9 +5950,12 @@
   function hintActed(dt, aiming) {
     var Hs = GTP.Hints, h = Hs && Hs.current ? Hs.current() : null, In = GTP.Input, p = player(), g = game();
     if (!h || !Hs.dismiss || !p || !g) { ui.hintDone = null; return; }
-    if (!ui.hintDone || ui.hintDone.id !== h.id) ui.hintDone = { id: h.id, acted: false };
+    var shots = (p.stats && p.stats.shots) | 0;
+    if (!ui.hintDone || ui.hintDone.id !== h.id) ui.hintDone = { id: h.id, acted: false, shots: shots };
+    // an on-foot hint means nothing in a car, and no hint outstays 4.5 s (the coordinator's 18:35 run: h_aim still up while driving)
+    if ((p.inVehicle && /^h_(aim|reload|wheel|move|look)$/.test(h.id)) || (h.t || 0) > 4.5) { Hs.dismiss(); ui.hintDone = null; return; }
     var mv = In && In.move, w = GTP.Combat && GTP.Combat.hud ? (call(GTP.Combat.hud, GTP.Combat, [], null) || {}).weapon : null;
-    var acted = (h.id === 'h_aim' && aiming) || (h.id === 'h_move' && mv && Math.abs(mv.x) + Math.abs(mv.z) > 0.3) ||
+    var acted = (h.id === 'h_aim' && (aiming || shots > ui.hintDone.shots || (In && In.down && In.down('shoot')))) || (h.id === 'h_move' && mv && Math.abs(mv.x) + Math.abs(mv.z) > 0.3) ||
       (h.id === 'h_look' && In && In.lastLookTime > g.time.t - (h.t || 0) + 0.05) || (h.id === 'h_reload' && w && w.reloading) ||
       (h.id === 'h_wheel' && GTP.Combat && GTP.Combat.wheel && GTP.Combat.wheel.open) || (h.id === 'h_map' && g.state === 'paused' && ui.pause.page === 'phone');
     if (acted) ui.hintDone.acted = true;

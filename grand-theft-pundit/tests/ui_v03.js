@@ -279,10 +279,11 @@ H.run('ui_v03', async (t) => {
   const prompts = await page.evaluate(() => {
     const g = GTP.game, p = g.player, CB = GTP.Combat;
     g.debug.giveWeapon('pistol', 24); p.weapon = 'pistol';
-    T_.ui.aimTutor.n = 0; T_.ui.aimTutor.shown = 0; if (GTP.Hints && GTP.Hints.dismiss) GTP.Hints.dismiss();   // the tutor retires after the first aim
+    T_.ui.aimTutor.n = 0; T_.ui.aimTutor.shown = 0; T_.ui.aimTutor.shots0 = null; if (GTP.Hints && GTP.Hints.dismiss) GTP.Hints.dismiss();   // the tutor retires after the first aim or shot
     CB.cover = Object.assign(CB.cover || {}, { available: () => ({ low: true }) });
     T_.adv(0.2); g.render();
     const a = { foot: T_.ui.prompts.slice() };
+    const cv0 = CB.cover; CB.cover = Object.assign({}, cv0, { available: () => null }); T_.adv(0.1); g.render(); a.open = T_.ui.prompts.slice(); CB.cover = cv0; T_.adv(0.1); g.render();
     GTP.Events.emit('cover:enter', { low: true }); T_.adv(0.1); g.render(); a.cover = T_.ui.prompts.slice();
     return a;
   });
@@ -313,7 +314,7 @@ H.run('ui_v03', async (t) => {
   });
   await page.screenshot({ path: t.OUT + '/v3_cross_gallery.png' });
   console.log('  prompts / cross: ' + JSON.stringify([prompts, cross]));
-  t.assert(prompts.foot.indexOf('TAKE COVER') >= 0 && prompts.foot.indexOf('AIM') >= 0, 'near cover with a gun out: TAKE COVER and AIM / FIRE prompts: ' + prompts.foot.join(','));
+  t.assert(prompts.foot.indexOf('TAKE COVER') >= 0 && prompts.foot.indexOf('AIM') < 0 && prompts.open.indexOf('AIM') >= 0, 'near cover with a gun out: TAKE COVER alone (the AIM / FIRE tutor never shares the row), away from cover AIM / FIRE: ' + prompts.foot.join(',') + ' / ' + prompts.open.join(','));
   t.assert(prompts.cover.indexOf('BLIND FIRE') >= 0 && prompts.cover.indexOf('VAULT') >= 0 && prompts.cover.indexOf('LEAVE COVER') >= 0, 'in low cover: PEEK, BLIND FIRE, VAULT, LEAVE COVER: ' + prompts.cover.join(','));
   t.assert(cross.state && cross.hostile === 'hostile' && cross.friendly === 'friendly' && cross.head === 'headshot' && cross.kill === 'kill' && cross.range === 'range' && cross.blind === 'blind' && cross.throw === 'throw', 'crosshair states: ' + JSON.stringify(cross));
   const fuse = await page.evaluate(() => { const CB = GTP.Combat, h0 = CB.hud; CB.hud = function () { const h = h0.call(CB); h.cook = { t: 1.2, total: 2.5, k: 0.48 }; return h; }; GTP.game.render(); const a = T_.ui.cookShown; CB.hud = h0; return a; });
