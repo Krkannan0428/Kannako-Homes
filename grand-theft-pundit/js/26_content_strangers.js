@@ -18,9 +18,14 @@
  * tests/strangers.js asserts the two agree.
  *
  * GTP.Strangers (runtime):
- *   list()                 -> one phone row per strand (11_ui.js): [{id, title, giver, status, line, x, z, strand, missionId}]
- *   markers()              -> the purple map blips (11_ui.js): [{id, x, z, y, title, giver, strand, missionId}] for each strand whose
- *                             next mission is available (the home door; nothing while a mission runs)
+ *   list(), markers()      -> [] on purpose. 11_ui.js draws an extra purple '?' blip from markers() and an extra phone row
+ *                             from list(), but the strand missions already appear as ordinary missions (blue light, MISSIONS
+ *                             rows, GPS), so feeding those paths drew every stranger light twice and listed it two or three
+ *                             times (docs/v03/ui.md: "if the strangers register as Missions ..., the existing mission paths show
+ *                             them"). The data stays available for a future strand overview:
+ *   strandRows()           -> one row per strand: [{id, title, name, giver, status, line, x, z, strand, missionId, done, total}]
+ *   blips()                -> one per strand whose next mission is available: [{id, x, z, y, title, giver, strand, missionId}]
+ *                             at the live mission light (the runtime nudges a light that shares a door), [] while a mission runs
  *   strands()              -> the strand records
  *   strand(id)             -> one record
  *   missions(id)           -> its mission objects in order
@@ -66,7 +71,7 @@
     gasp: member('gasp', 'Gasp Haverly', 'Professional thumbnail reaction face', 'hype',
       'Reacts before anything has happened ("NO WAY. ...What happened?").',
       portrait(5, 'long', '#e84393', 'none', 'none', 'phone', 'none'), '#ff2d95',
-      'The open mouth on every thumbnail in Grievance City. Her eyebrows are insured for more than the Listening Room, where she poses for thumbnails of nothing playing. Has not been genuinely surprised since the age of nine.',
+      'The open mouth on every thumbnail in Grievance City. Her eyebrows are insured for more than the Nap Dynasty showroom, where she poses for mattress thumbnails between takes. Has not been genuinely surprised since the age of nine.',
       '#ff7ac2', '#2a2a3a'),
     thaddeus: member('thaddeus', 'Thaddeus Wainscot', 'Fulcrum Foundation intern (Winter Cohort, all of them)', 'earnest',
       'Measures time in fluorescent hours; flinches at windows.',
@@ -91,7 +96,7 @@
     brine: member('brine', 'Captain Mortimer Brine', 'Fishmonger, Fresh Takes Fish Shack', 'gruff',
       'Grades every take by its temperature ("Lukewarm, son.").',
       portrait(3, 'bald', '#d8d8d8', 'none', 'beanie', 'cigar', 'none'), '#1abc9c',
-      'Catches takes daily and reheats them hourly; every one he catches is already yesterday\'s. Once caught a fresh one off the Listening Pier, panicked and threw it back. Calls himself Captain; owns a cooler.',
+      'Catches takes daily and reheats them hourly; every one he catches is already yesterday\'s. Once caught a fresh one off the Listening Pier, panicked and threw it back. Calls himself Captain; owns a cooler; fishes off the stern of the Baron\'s yacht, which the Baron has not noticed.',
       '#2a4a6a', '#3a3a3a'),
     rutherford: member('rutherford', 'Rutherford Standby', 'On standby for Flight 10 (six years running)', 'hopeful',
       'Everything is "now boarding."',
@@ -158,7 +163,7 @@
       { card: 'FEELING', text: 'I feel thirty seconds of interruption is plenty. Twenty-nine, ideally.' },
       { card: 'GOTCHA', text: 'Your own show has a heckle track. I wrote its contract.' },
       { card: 'ANECDOTE', text: 'Brock interrupted his own contract signing. We counted it as a signature.' }
-    ], winLine: 'Fine. Thirty seconds of protected interruption. Sign at the bottom. Don\'t finish.', loseLine: 'The heckle track thanks you for your time. Laughter.' },
+    ], winLine: 'The heckle track thanks you for your time. Laughter.', loseLine: 'Fine. Thirty seconds of protected interruption. Sign at the bottom. Don\'t finish.' },
     hoa_board: { name: 'The Culdesac Board', castId: 'hoa_board', cards: [
       { card: 'FACT', text: 'Section 4(b): a mailbox may not be adjacent. Yours is adjacent to the street.' },
       { card: 'FEELING', text: 'The board feels your livestream lowers property values. And raises our blood pressure.' },
@@ -184,7 +189,7 @@
     scab_heckler: { name: 'Scab Heckler', castId: 'scab_heckler',
       post: 'first. also wrong. also first. no union no dues lol #FreeHeckling',
       replies: ['first', 'ratio (free)', 'heckling this for zero dollars', 'who asked. i asked. for free', 'L + dues', 'didn\'t read the contract', 'point of no order', 'scab and proud', 'first again', 'imagine paying to interrupt'],
-      winLine: 'first. ...oh. last, actually.', loseLine: 'first. and also, ratio. for free.' },
+      winLine: 'first. and also, ratio. for free.', loseLine: 'first. ...oh. last, actually.' },
     smirk: { name: 'Rex Smirkwell', castId: 'smirk',
       post: 'You WON\'T BELIEVE what this pundit\'s face did next (it was mine, I licensed it)',
       replies: ['one eyebrow, one million views', 'your mouth is too open', 'thumbnail pending', 'smirk & sons owns this reaction', 'you call that a gasp?', 'the eyebrow is trademarked', 'arrow pointing at nothing', 'clickbait is a craft'],
@@ -206,7 +211,7 @@
       blurb: 'Forty podcasts, zero episodes, three renewals. Someone has to write them.',
       unlock: { mission: 'm04_hit', flag: 'a_voice' },
       epilogue: 'GHOSTWRITER\'S FORTY UNRELEASED PODCASTS SWEEP AWARDS; ACCEPTANCE SPEECH ALSO UNRELEASED' },
-    { id: 'reaction_face', name: 'Mouth Open', giver: 'gasp', home: 'listening_room', district: 'strip',
+    { id: 'reaction_face', name: 'Mouth Open', giver: 'gasp', home: 'nap_depot', district: 'strip',
       blurb: 'The face on every thumbnail has not been surprised since the age of nine. She would like to be.',
       unlock: { mission: 'm03b_range', flag: 'range_trained' },
       epilogue: 'THUMBNAIL FACE GENUINELY SURPRISED FOR FIRST TIME IN DECADES; SURPRISE WAS "WINNING"; EYEBROWS RE-INSURED' },
@@ -226,7 +231,7 @@
       blurb: 'The only proofreader at the Print Works noticed the typo in week one. She was told it was house style.',
       unlock: { mission: 'm12_memo', flag: 'knows_memo' },
       epilogue: 'MONDAY MEMO PRINTS ERRATUM WITH TWO L\'S; NOBODY READS IT; PROOFREADER RATES IT "CORRECT"' },
-    { id: 'fresh_takes', name: 'Catch of the Day', giver: 'brine', home: 'velvetine_pier', district: 'marina',
+    { id: 'fresh_takes', name: 'Catch of the Day', giver: 'brine', home: 'afterparty_yacht', district: 'marina',
       blurb: 'The Fresh Takes Fish Shack has never sold a fresh take. The Captain would like to try, once.',
       unlock: { mission: 'm07b_ferry', flag: 'ferry_friend' },
       epilogue: 'FRESH TAKES FISH SHACK SERVES FIRST FRESH TAKE; CUSTOMERS SEND IT BACK TO BE REHEATED' },
@@ -334,7 +339,7 @@
       intro: [
         L('marisol', 'Someone downloaded one of my shows. The one that doesn\'t exist. Forty-one minutes, listened to the end.'),
         L('player', 'How do you listen to nothing for forty-one minutes?'),
-        L('marisol', 'That\'s what I need to know. He\'s leaving the bank. Follow him. Don\'t let him see you, he might ask for season two.')
+        L('marisol', 'That\'s what I need to know. He just walked past my bench. Follow him. Don\'t let him see you, he might ask for season two.')
       ],
       objectives: [
         { type: 'follow', spawn: { ped: 'listener', at: { landmark: 'vault_bank' }, path: [{ landmark: 'green_room' }, { landmark: 'tyn_tower' }, { landmark: 'impression_alley' }] }, maxDist: 320, text: 'Tail the only listener. Not too close; he has earbuds, not eyes in the back' },
@@ -372,7 +377,7 @@
       failOn: ['player_dead'], onComplete: { setFlags: ['st_ghost_3', 'stranger_ghostwriter'], subs: 2500 } },
 
     // ====================================================== Mouth Open (strip) ==
-    { id: 'st_gasp_1', title: 'Thumbnail', strand: 'reaction_face', giver: 'gasp', marker: 'listening_room', requires: ['m03b_range'], reward: 500, act: 1,
+    { id: 'st_gasp_1', title: 'Thumbnail', strand: 'reaction_face', giver: 'gasp', marker: 'nap_depot', requires: ['m03b_range'], reward: 500, act: 1,
       unlock: { mission: 'm03b_range', flag: 'range_trained' },
       intro: [
         L('gasp', 'NO WAY. ...What happened?'),
@@ -381,11 +386,11 @@
         L('gasp', 'Drive me past the three most shocking things in town. Fast. Shock is a speed.')
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'gaspcar', at: { landmark: 'listening_room' }, color: '#ff2d95' }, text: 'Get in the thumbnail car' },
+        { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'gaspcar', at: { landmark: 'nap_depot' }, color: '#ff2d95' }, text: 'Get in the thumbnail car' },
         { type: 'timer_wrap', seconds: 150, objectives: [
           { type: 'drive_to', target: { landmark: 'goldplate_tower' }, vehicle: 'spawned:gaspcar', text: 'Shock one: the name on Goldplate Tower wraps around twice' },
           { type: 'drive_to', target: { landmark: 'impression_alley' }, vehicle: 'spawned:gaspcar', text: 'Shock two: the billboards at Impression Alley are fighting' },
-          { type: 'drive_to', target: { landmark: 'nap_depot' }, vehicle: 'spawned:gaspcar', text: 'Shock three: the Nap Dynasty podium is a mattress' }
+          { type: 'drive_to', target: { landmark: 'nap_depot' }, vehicle: 'spawned:gaspcar', text: 'Shock three, back at the showroom: the Nap Dynasty podium is a mattress' }
         ] },
         { type: 'dialogue', lines: [
           L('gasp', 'NO WAY. ...Sorry. That was the face, not the feeling. I knew about the mattress.'),
@@ -399,14 +404,14 @@
       ],
       failOn: ['player_dead', 'vehicle_lost:gaspcar'], onComplete: { setFlag: 'st_gasp_1' } },
 
-    { id: 'st_gasp_2', title: 'Jump Scare', strand: 'reaction_face', giver: 'gasp', marker: 'listening_room', requires: ['st_gasp_1'], reward: 1000, act: 1,
+    { id: 'st_gasp_2', title: 'Jump Scare', strand: 'reaction_face', giver: 'gasp', marker: 'nap_depot', requires: ['st_gasp_1'], reward: 1000, act: 1,
       intro: [
         L('gasp', 'Air! Something with air under it. The downtown promenade has a ramp. They call it the Lower Third Leap.'),
         L('player', 'You want me to jump a car over a news ticker.'),
         L('gasp', 'I want to watch the footage and feel something. Flat out from the end of the block. NO WAY. ...Not yet. Go.')
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'jumpcar', at: { landmark: 'listening_room' }, color: '#ff7ac2' }, text: 'Get in the stunt car' },
+        { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'jumpcar', at: { landmark: 'nap_depot' }, color: '#ff7ac2' }, text: 'Get in the stunt car' },
         { type: 'stunt', ramp: 'sj_02', vehicle: 'spawned:jumpcar', minAir: 0.8, text: 'Take the Lower Third Leap on the downtown promenade. Flat out from the end of the block' },
         { type: 'escape_wanted', setWanted: 2, text: 'The promenade rated your landing a two. Lose the cops' }
       ],
@@ -415,9 +420,9 @@
         L('player', 'Is that surprise?'),
         L('gasp', 'It\'s a twitch. Smirk & Sons say it\'s theirs. They own the eyebrow. They want a meeting.')
       ],
-      failOn: ['player_dead'], onComplete: { setFlag: 'st_gasp_2' } },
+      failOn: ['player_dead', 'vehicle_lost:jumpcar'], onComplete: { setFlag: 'st_gasp_2' } },
 
-    { id: 'st_gasp_3', title: 'You Won\'t Believe', strand: 'reaction_face', giver: 'gasp', marker: 'listening_room', requires: ['st_gasp_2'], reward: 1400, act: 1,
+    { id: 'st_gasp_3', title: 'You Won\'t Believe', strand: 'reaction_face', giver: 'gasp', marker: 'nap_depot', requires: ['st_gasp_2'], reward: 1400, act: 1,
       intro: [
         L('gasp', 'Smirk & Sons. Rex Smirkwell. One eyebrow, licensed. He says my twitch infringes.'),
         L('player', 'You can\'t own an eyebrow.'),
@@ -596,8 +601,8 @@
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'sedan', tag: 'deweycar', at: { landmark: 'hoa_hall' }, color: '#e1b12c' }, text: 'Get in Dewey\'s sedan. It has a ring light' },
-        { type: 'stop_vehicle', spawn: { vehicle: 'suv', tag: 'hoasuv', at: { landmark: 'hoa_hall' }, color: '#f4ead8', driven: 'traffic', flee: true }, stopSpeed: 1, hold: 3, maxDist: 2400, text: 'Stop the HOA patrol SUV: block it, box it in, or bump it to a halt' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { tag: 'hoasuv' }, radius: 40, label: 'APPEAL (LAMINATED)' }, text: 'Take back the laminated appeal' },
+        { type: 'stop_vehicle', spawn: { vehicle: 'suv', tag: 'appealsuv', at: { landmark: 'hoa_hall' }, color: '#f4ead8', driven: 'traffic', flee: true }, stopSpeed: 1, hold: 3, maxDist: 2400, text: 'Stop the HOA patrol SUV: block it, box it in, or bump it to a halt' },
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { tag: 'appealsuv' }, radius: 40, label: 'APPEAL (LAMINATED)' }, text: 'Take back the laminated appeal' },
         { type: 'deliver_passenger', spawn: { ped: 'dewey', at: { landmark: 'hoa_hall' }, line: 'Chat, we\'re in a car. Note the time. Note the car.' }, to: { landmark: 'capitol_dome' }, vehicle: 'spawned:deweycar', text: 'Drive Dewey to the higher court at the Capitol' }
       ],
       outro: [
@@ -670,7 +675,7 @@
       failOn: ['player_dead'], onComplete: { setFlags: ['st_proof_2', 'stranger_proofreader'], subs: 4000 } },
 
     // ====================================================== Catch of the Day (marina) ==
-    { id: 'st_brine_1', title: 'Catch of the Day', strand: 'fresh_takes', giver: 'brine', marker: 'velvetine_pier', requires: ['m07b_ferry'], reward: 1000, act: 2,
+    { id: 'st_brine_1', title: 'Catch of the Day', strand: 'fresh_takes', giver: 'brine', marker: 'afterparty_yacht', requires: ['m07b_ferry'], reward: 1000, act: 2,
       unlock: { mission: 'm07b_ferry', flag: 'ferry_friend' },
       intro: [
         L('brine', 'Captain Mortimer Brine. Fresh Takes Fish Shack. Forty years. Takes caught daily, reheated hourly. Never sold a fresh one, son.'),
@@ -679,7 +684,7 @@
         L('brine', 'Take the van. Bring them back before they cool. A cold take is just an opinion.')
       ],
       objectives: [
-        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'fishvan', at: { landmark: 'velvetine_pier' }, color: '#1abc9c' }, text: 'Get in the fish van' },
+        { type: 'enter_vehicle', spawn: { type: 'van', tag: 'fishvan', at: { landmark: 'afterparty_yacht' }, color: '#1abc9c' }, text: 'Get in the fish van' },
         { type: 'timer_wrap', seconds: 240, objectives: [
           { type: 'pickup', spawn: { pickupType: 'mission', count: 5, around: { landmark: 'manifest_quay' }, radius: 300, label: 'FRESH TAKE' }, text: 'Net five fresh takes on Manifest Quay' },
           { type: 'drive_to', target: { landmark: 'fish_shack' }, vehicle: 'spawned:fishvan', text: 'Get them back to the shack while they\'re hot' }
@@ -692,19 +697,19 @@
       ],
       failOn: ['player_dead', 'vehicle_lost:fishvan'], onComplete: { setFlag: 'st_brine_1' } },
 
-    { id: 'st_brine_2', title: 'Stale Competition', strand: 'fresh_takes', giver: 'brine', marker: 'velvetine_pier', requires: ['st_brine_1'], reward: 1600, act: 2,
+    { id: 'st_brine_2', title: 'Stale Competition', strand: 'fresh_takes', giver: 'brine', marker: 'afterparty_yacht', requires: ['st_brine_1'], reward: 1600, act: 2,
       intro: [
-        L('brine', 'Day-Old Dan\'s parked three trucks by the Afterparty. Reheating takes from last year. Selling them as vintage.'),
+        L('brine', 'Day-Old Dan\'s parked three trucks on the Listening Pier. Reheating takes from last year. Selling them as vintage.'),
         L('player', 'That\'s your business model.'),
         L('brine', 'Mine are from yesterday. That\'s fresh by comparison. Take the Rebuttal. Retire his trucks, son. Retire them warm.')
       ],
       objectives: [
         { type: 'equip', weaponId: 'revolver', ammo: 24, text: 'Take the Captain\'s Rebuttal' },
-        { type: 'destroy', spawn: { vehicle: 'truck', count: 3, tag: 'dandrucks', around: { landmark: 'afterparty_yacht' }, radius: 200, color: '#8b5a3c' }, text: 'Wreck Day-Old Dan\'s three reheating trucks by the Afterparty' },
+        { type: 'destroy', spawn: { vehicle: 'truck', count: 3, tag: 'dandrucks', around: { landmark: 'velvetine_pier' }, radius: 200, color: '#8b5a3c' }, text: 'Wreck Day-Old Dan\'s three reheating trucks on the Listening Pier' },
         { type: 'escape_wanted', setWanted: 2, text: 'Dan called it in. Lose the cops' }
       ],
       outro: [
-        L('brine', 'Three trucks. The yacht smells like toast. Day-Old Dan is retired. He says it\'s a pivot.'),
+        L('brine', 'Three trucks. The pier smells like toast. Day-Old Dan is retired. He says it\'s a pivot.'),
         L('player', 'Is the shack going fresh now?'),
         L('brine', 'One fresh take a day. The customers sent it back to be reheated. Tradition, son. It\'s a warm thing.'),
         L('kip', 'I had the fresh one. It was too hot to have an opinion. Is this paid?')
@@ -859,7 +864,7 @@
   function dedupeGiver(e) {
     var m = e && e.mission, def = e && e.objective;
     if (!m || m.kind !== 'stranger' || !def || !def.spawn || (def.type !== 'deliver_passenger' && def.type !== 'follow')) return;
-    var who = def.spawn.ped; if (!who || who !== m.giver) return;
+    var who = def.spawn.ped; if (!who || (who !== m.giver && who !== 'kip')) return;
     var En = GTP.Entities; if (!En || !En.list) return;
     for (var j = En.list.length - 1; j >= 0; j--) {
       var p = En.list[j];
@@ -886,8 +891,12 @@
     GTP.Events.on('mission:complete', function (e) { try { onComplete(e); } catch (err) { if (GTP.util && GTP.util.reportError) GTP.util.reportError(err, 'strangers.complete'); } });
   }
 
-  // a strand's home door (the marker point the blue light uses, so the purple blip sits on it)
+  // where a strand's light stands: the live mission marker of its next mission (the runtime nudges a light that shares a door
+  // with another), else the home door
   function homePoint(st) {
+    var Ms = M(), ss = status(st.id), mk = null;
+    try { if (ss && ss.next && Ms && Ms.markers) { var all = Ms.markers(); for (var j = 0; j < all.length; j++) if (all[j].kind === 'mission' && all[j].id === ss.next.id) { mk = all[j]; break; } } } catch (e) { mk = null; }
+    if (mk) return { x: mk.x, z: mk.z, y: mk.y || 0 };
     var Wd = GTP.World, lm = Wd && Wd.landmark ? Wd.landmark(st.home) : null; if (!lm) return null;
     var d = lm.door || lm;
     return { x: d.x, z: d.z, y: d.y != null ? d.y : 0 };
@@ -898,13 +907,17 @@
     var ss = status(st.id), pt = homePoint(st), cast = GTP.Content.cast && GTP.Content.cast[st.giver], lmk = GTP.World && GTP.World.landmark ? GTP.World.landmark(st.home) : null;
     var where = lmk ? (lmk.label || lmk.name || st.home) : st.home;
     var line = ss.state === 'done' ? st.epilogue : ss.state === 'active' ? 'In progress: ' + (ss.next ? ss.next.title : '') : ss.state === 'available' ? (ss.done ? 'Next: ' : '') + (ss.next ? ss.next.title : '') + '  ·  ' + where + '  ·  ' + ss.done + '/' + ss.total : st.blurb;
-    return { id: st.id, strand: st.id, title: st.name + (cast ? ' (' + cast.name + ')' : ''), name: st.name, giver: st.giver, status: ss.state, line: line,
-      x: pt ? pt.x : null, z: pt ? pt.z : null, missionId: ss.next ? ss.next.id : null, done: ss.done, total: ss.total };
+    var live = ss.state === 'available';   // no GPS target for a strand that is running, finished or locked
+    return { id: st.id, strand: st.id, title: st.name, name: st.name, giver: st.giver, castName: cast ? cast.name : null, status: ss.state, line: line,
+      x: live && pt ? pt.x : null, z: live && pt ? pt.z : null, missionId: ss.next ? ss.next.id : null, done: ss.done, total: ss.total };
   }
 
   GTP.Strangers = {
-    list: function () { return STRANDS.map(row); },
-    markers: function () {
+    // the UI's alternative stranger paths stay empty: the missions runtime already shows these lights and rows
+    list: function () { return []; },
+    markers: function () { return []; },
+    strandRows: function () { return STRANDS.map(row); },
+    blips: function () {
       if (busy()) return [];
       var out = [];
       for (var j = 0; j < STRANDS.length; j++) {

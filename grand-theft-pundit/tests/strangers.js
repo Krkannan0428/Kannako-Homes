@@ -601,6 +601,16 @@ H.run('strangers', async (t) => {
     try { (GTP.Systems && GTP.Systems.markers ? GTP.Systems.markers() : []).forEach((m) => others.push({ id: 'systems:' + (m.id || m.kind), x: m.x, z: m.z })); } catch (e) { errs.push('Systems.markers threw ' + e.message); }
     try { (GTP.Combat && GTP.Combat.shop && GTP.Combat.shop.stores ? GTP.Combat.shop.stores() : []).forEach((m) => others.push({ id: 'shop:' + m.id, x: m.x, z: m.z })); } catch (e) { /* optional */ }
     try { (W.doors || []).forEach((d) => others.push({ id: 'door:' + (d.id || d.landmark) + ':' + (d.mode || ''), x: d.x, z: d.z })); } catch (e) { /* optional */ }
+    // no other mission's light on a home door while both can be lit: a story mission that is not already a prerequisite of the
+    // strand's unlock. One reviewed exception: Moira's Quad and boss b05_dunk (Act III) overlap only if Local 404 is left
+    // untouched from Act I to Act III; every campus door hosts a story light or a shop / safehouse trigger
+    const SHARED_OK = { heckle_union: ['b05_dunk'] };
+    const ancestors = (id, acc) => { (byId[id] && byId[id].requires || []).forEach((r) => { if (!acc.has(r)) { acc.add(r); ancestors(r, acc); } }); return acc; };
+    S.strands.forEach((st) => {
+      const before = ancestors(st.unlock.mission, new Set([st.unlock.mission])), ok = SHARED_OK[st.id] || [];
+      all.filter((m) => m.kind !== 'stranger' && m.marker === st.home && !before.has(m.id) && ok.indexOf(m.id) < 0)
+        .forEach((m) => errs.push('strand ' + st.id + ': home ' + st.home + ' is also the light of ' + m.id + ', which can be lit at the same time'));
+    });
     S.strands.forEach((st) => { const l = W.landmark(st.home); if (!l || !l.door) return; others.forEach((o) => { if (typeof o.x === 'number' && Math.hypot(o.x - l.door.x, o.z - l.door.z) < 4) errs.push('strand ' + st.id + ': home light at ' + st.home + ' shares the spot with ' + o.id); }); });
     return {
       errs, strands: S.strands.length, missions: ids.size, homes: Array.from(new Set(homes)), districts: Array.from(districts).sort(), allDistricts: allDistricts.sort(),
@@ -652,12 +662,15 @@ H.run('strangers', async (t) => {
       if (p.inVehicle) p.exitVehicle();
       GTP.AI.wanted.clear(); M.refreshMarkers(); GTP.game.advance(1.2);
       const first = s.missions[0], mk = M.markers().find((x) => x.id === first), lm = GTP.World.landmark(s.home);
-      const blip = (GTP.Strangers.markers() || []).find((b) => b.id === s.id), row = (GTP.Strangers.list() || []).find((r) => r.id === s.id);
+      const blip = (GTP.Strangers.blips() || []).find((b) => b.id === s.id), row = (GTP.Strangers.strandRows() || []).find((r) => r.id === s.id);
+      const uiPaths = { markers: GTP.Strangers.markers(), list: GTP.Strangers.list() };
       return { status: GTP.Strangers.status(s.id).state, marker: !!mk, atHome: mk ? +Math.hypot(mk.x - lm.door.x, mk.z - lm.door.z).toFixed(1) : null, flag: M.state.flags[GTP.Strangers.strand(s.id).unlock.flag] === true,
-        blip: blip ? { d: +Math.hypot(blip.x - lm.door.x, blip.z - lm.door.z).toFixed(1), missionId: blip.missionId, title: blip.title, giver: blip.giver } : null,
+        uiEmpty: Array.isArray(uiPaths.markers) && !uiPaths.markers.length && Array.isArray(uiPaths.list) && !uiPaths.list.length,
+        blip: blip ? { d: mk ? +Math.hypot(blip.x - mk.x, blip.z - mk.z).toFixed(1) : null, missionId: blip.missionId, title: blip.title, giver: blip.giver } : null,
         row: row ? { status: row.status, missionId: row.missionId, title: row.title, hasXZ: typeof row.x === 'number' && typeof row.z === 'number', line: row.line } : null };
     }, st);
-    if (!unlocked.blip || unlocked.blip.d > 1 || unlocked.blip.missionId !== st.missions[0] || unlocked.blip.giver !== st.giver) problems.push(st.id + ': Strangers.markers() blip ' + JSON.stringify(unlocked.blip));
+    if (!unlocked.uiEmpty) problems.push(st.id + ': Strangers.markers() / list() must stay [] (the mission paths already draw these lights and rows)');
+    if (!unlocked.blip || unlocked.blip.d == null || unlocked.blip.d > 0.5 || unlocked.blip.missionId !== st.missions[0] || unlocked.blip.giver !== st.giver) problems.push(st.id + ': Strangers.markers() blip ' + JSON.stringify(unlocked.blip));
     if (!unlocked.row || unlocked.row.status !== 'available' || unlocked.row.missionId !== st.missions[0] || !unlocked.row.hasXZ || !unlocked.row.title || !unlocked.row.line) problems.push(st.id + ': Strangers.list() row ' + JSON.stringify(unlocked.row));
     if (!unlocked.marker || unlocked.atHome > 6 || unlocked.status !== 'available' || !unlocked.flag) problems.push(st.id + ': unlock ' + JSON.stringify(unlocked));
     const hs = await page.evaluate((id) => ST.homeShot(id), st.missions[0]);
