@@ -2654,6 +2654,8 @@
       lines.push({ t: c.name.toUpperCase() + ' as ' + c.role, who: ids[i] });
       if (ads.length) lines.push({ t: ads[(i * 5) % ads.length], tag: 'AD' });
     }
+    // everyone else the content casts with a role (Merle Firmness, the v0.3 strangers and bosses: QA-B-TXT-08)
+    Object.keys(Cc.cast || {}).forEach(function (k) { var c2 = Cc.cast[k]; if (ids.indexOf(k) < 0 && k !== 'panel' && k !== 'freshman' && c2 && c2.name && c2.role) lines.push({ t: String(c2.name).toUpperCase() + ' as ' + c2.role, who: k }); });
     lines.push({ t: '' }, { t: 'THE PANEL: FIVE GUESTS, ONE MEMO', who: 'panel' }, { t: 'WENDELL SYLLABUS, who did the reading', who: 'freshman' }, { t: '' });
     lines.push({ t: 'Minds changed: zero.', sub: true }, { t: 'No real pundits were harmed. All characters are fictional.', sub: true }, { t: 'Every script in this city ends "Respectfuly." One L.', sub: true }, { t: '' });
     lines.push({ t: 'KIP GRATIS asks: Is this paid?', who: 'kip' }, { t: '' }, { t: id === 'm15b_liveread' ? 'Reward: $11. One per listener.' : id ? 'Rated a ten by the man who rates it.' : 'Thanks for listening to listening.', sub: true });
