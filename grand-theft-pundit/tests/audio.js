@@ -11,6 +11,9 @@
  *    gun in the shooter's hands (smg, shotgun, sniper, a suppressed pistol); each new vehicle's engine voice and each
  *    weapon class's report renders continuous / audible and distinct from the others (envelope, length, brightness);
  *    flying a heli live runs the rotor voice
+ *  4a2 the audio review fixes: melee swing / impact, systems purchases, reloads by class, race results, the golf cup, one
+ *    range-end sound, quiet interior exits, heist:plan, the first-star whoop, the call card's blips, garage / street event /
+ *    cower cues; live: a released roadblock's siren, the heli door gunner's report, a leaving / shot-down heli's rotor
  * Screenshot in tests/out: audio_radio_car (look at it). */
 'use strict';
 const H = require('./_harness');
@@ -96,8 +99,9 @@ H.run('audio', async (t) => {
     E.emit('boss:phase', { id: 'b01', phase: 1, hp: 100, maxHp: 100, name: 'x' }); E.emit('boss:phase', { id: 'b01', phase: 2, hp: 50, maxHp: 100, name: 'x' }); E.emit('boss:defeated', { id: 'b01' });
     E.emit('special:state', { id: 'focus', meter: 1, active: false }); E.emit('special:state', { id: 'focus', meter: 0.9, active: true }); E.emit('special:state', { id: 'focus', meter: 0.2, active: false });
     E.emit('special:state', { id: 'shout', meter: 0.5, active: true }); E.emit('special:state', { id: 'chatmob', meter: 0.5, active: true }); E.emit('special:state', { id: 'boost', meter: 0.5, active: true });
+    E.emit('special:state', { id: 'shout', meter: 1, active: false });   // the meter fills: specialReady
     E.emit('shop:buy', { item: 'ammo_pistol', price: 50 }); E.emit('shop:buy', { item: 'mod:engine:2', price: 900 }); E.emit('armory:inspect', { weaponId: 'pistol' });
-    E.emit('golf:shot', { power: 0.9, angle: 0.1 }); E.emit('golf:shot', { power: 0.1, angle: 0, club: 'putter' }); E.emit('golf:end', { strokes: 3, par: 3 });
+    E.emit('golf:shot', { power: 0.9, angle: 0.1 }); E.emit('golf:shot', { power: 0.1, angle: 0, club: 'putter' }); E.emit('golf:hole', { hole: 0, strokes: 3, par: 3, name: 'Par' }); E.emit('golf:end', { strokes: 3, par: 3 });
     E.emit('achievement', { id: 'a1', name: 'First' }); E.emit('range:start', {}); E.emit('range:hit', { points: 100 }); E.emit('range:end', { score: 900, medal: 'gold' });
     E.emit('interior:enter', { id: 'armory', kind: 'armory' }); E.emit('cover:enter', {}); E.emit('melee', { type: 'heavy' }); E.emit('melee', { type: 'counter' }); E.emit('gps:set', { x: 0, z: 0, label: 'x', kind: 'story' }); E.emit('heist:plan', { approach: 'loud', crew: [] });
     GTP.game.advance(2);   // the UI's phone card rings after its slide-in
@@ -120,6 +124,84 @@ H.run('audio', async (t) => {
   t.assert(wiring.cues.bossStinger === 1 && wiring.cues.bossPhase === 1 && wiring.cues.shopBuy === 1, 'the first boss phase stings, later ones hit; a mod purchase leaves the register to the mod shop');
   t.assert(wiring.reports.smg === 1 && wiring.reports.shotgun === 1 && wiring.reports.sniper === 1 && wiring.reports.suppressed === 1 && wiring.reports.launcher === 1 && wiring.reports.shot === 5, 'shots route to the gun class in hand: ' + JSON.stringify(wiring.reports));
   t.assert(wiring.classOf.revolver === 'revolver' && wiring.classOf.rifle === 'rifle' && wiring.classOf.lmg === 'lmg' && wiring.classOf.minigun === 'heavy', 'class names map: ' + JSON.stringify(wiring.classOf));
+  // ---- 4a2. the audio review fixes (headless counts): one cue per beat, routed reloads, the call card, the first star ----
+  const fixes = await hctx.page.evaluate(() => {
+    const A = GTP.Audio, E = GTP.Events, p = GTP.game.player, out = {}, ui = !!(GTP.UI && typeof GTP.UI.openModShop === 'function');
+    let b = Object.assign({}, A.counts); const d = (n) => (A.counts[n] | 0) - (b[n] | 0), mark = () => { b = Object.assign({}, A.counts); };
+    out.ui = ui; out.missionActive = !!(GTP.Missions && GTP.Missions.state && GTP.Missions.state.active);
+    if (GTP.UI && GTP.UI.closeModal) GTP.UI.closeModal();
+    // melee: the whoosh on start, the hit alone on impact; a heavy start only whooshes
+    mark();
+    E.emit('melee', { type: 'light', ped: p, target: null, hit: false, phase: 'start' }); E.emit('melee', { type: 'light', ped: p, target: p, hit: true, phase: 'impact' });
+    E.emit('melee', { type: 'heavy', ped: p, target: null, hit: false, phase: 'start' });
+    out.melee = { whoosh: d('whoosh'), light: d('melee_light'), heavy: d('melee_heavy') };
+    // shop:buy: the systems track's property / barber / clothing purchases ring their own 'cash'
+    mark();
+    E.emit('shop:buy', { item: 'safehouse_x', price: 900, kind: 'property' }); E.emit('shop:buy', { item: 'hair:buzz', price: 40, kind: 'barber' }); E.emit('shop:buy', { item: 'tie_red', price: 60, kind: 'clothing' });
+    out.shopSystems = d('shopBuy'); E.emit('shop:buy', { item: 'ammo_smg', price: 80 }); out.shopPlain = d('shopBuy');
+    // reloads route by class: a sniper's bolt home, a shotgun's shells; a quiet gun's shot ('reloadDone' with no reload open) stays plain
+    const reloadRun = (id) => {
+      GTP.game.debug.giveWeapon(id, 20); GTP.game.advance(0.3);   // Combat takes the switch first (a switch cancels a reload)
+      const a = GTP.Combat.ammo(p, id); a.mag = 1; a.reserve = 19; a.total = 20; p.weapons[id] = 20;
+      mark(); const ok = GTP.Combat.reload(p); GTP.game.advance(4); return { ok, reload: d('reload'), done: d('reloadDone'), shell: d('reloadShell'), bolt: d('reloadBolt') };
+    };
+    out.sniper = reloadRun('sniper'); out.shotgun = reloadRun('shotgun'); out.pistol = reloadRun('pistol');
+    mark(); A.play('reloadDone', { x: p.x, z: p.z, gain: 0.5 }); out.quietShot = { done: d('reloadDone'), bolt: d('reloadBolt') };
+    // race:finish: a win's fanfare, a loss's or a DNF's soft fail
+    mark(); E.emit('race:finish', { id: 'lr_test', dnf: false, place: 1, time: 60 }); out.raceWin = { mission: d('mission'), fail: d('fail') };
+    mark(); E.emit('race:finish', { id: 'lr_test', dnf: false, place: 3, time: 70 }); E.emit('race:finish', { id: 'lr_test', dnf: true, reason: 'wreck', place: 4, time: 20 }); out.raceLose = { mission: d('mission'), fail: d('fail') };
+    // golf: the cup when a ball drops, not for a pick-up or the end of the round
+    mark(); E.emit('golf:hole', { hole: 1, strokes: 2, par: 3, name: 'Birdie' }); E.emit('golf:hole', { hole: 2, strokes: 9, par: 3, name: 'Picked Up' }); E.emit('golf:end', { strokes: 11, par: 6, reason: 'quit' });
+    out.golfCup = d('golfCup');
+    // range:end: exactly one sound: the medal notes (the UI's chime dropped) or a soft fail; nothing for walking out
+    mark(); E.emit('range:start', { seconds: 60 }); E.emit('range:end', { score: 900, medal: 'gold' }); out.rangeGold = { medal: d('rangeMedal'), ach: d('achievement'), fail: d('fail') };
+    mark(); E.emit('range:end', { score: 10, medal: null }); out.rangeNone = { medal: d('rangeMedal'), ach: d('achievement'), fail: d('fail') };
+    mark(); E.emit('range:end', { score: 0, medal: null, aborted: true }); out.rangeAbort = { medal: d('rangeMedal'), ach: d('achievement'), fail: d('fail') };
+    GTP.game.advance(0.1); mark(); A.play('achievement', { gain: 0.5 }); out.achAfter = d('achievement');   // the drop lasts one dispatch
+    // interior:exit quiet (a New Game / load) rings no door bell; heist:plan leaves its sound to the UI
+    mark(); E.emit('interior:exit', { id: 'armory', quiet: true }); out.doorQuiet = d('door'); E.emit('interior:exit', { id: 'armory' }); out.doorLoud = d('door');
+    mark(); E.emit('heist:plan', { approach: 'loud', crew: [] }); out.heist = d('specialReady');
+    // the first star whoops on 0 -> >0 even from a scripted set ({level: n, prev: n}); a rise from 2 to 3 does not
+    const W = GTP.AI.wanted; W.clear(); GTP.game.advance(0.1);
+    mark(); W.set(2); out.whoop2 = d('siren'); W.set(3); out.whoop3 = d('siren'); W.clear(); W.set(1); out.whoopAgain = d('siren'); W.clear(); GTP.game.advance(0.2);
+    // the call card: the answer blip and the hang-up from its phases; none twice when phone:answer / phone:end said so
+    const S = GTP.UI && GTP.UI.state;
+    if (S && S.callQueue) {
+      if (GTP.UI.closeModal) GTP.UI.closeModal(); S.call = null; S.callQueue.length = 0; GTP.game.advance(0.1);
+      mark(); E.emit('phone:call', { from: 'merle', lines: ['Hi.'] }); GTP.game.advance(0.5); out.callRing = S.call && S.call.phase;
+      GTP.game.advance(1.3); out.callTalk = { phase: S.call && S.call.phase, blip: d('phoneBlip'), hang: d('phoneHang') };
+      GTP.game.advance(3.2); out.callEnd = { blip: d('phoneBlip'), hang: d('phoneHang') };
+      S.call = null; S.callQueue.length = 0; GTP.game.advance(0.1);
+      mark(); E.emit('phone:call', { from: 'merle', lines: ['Hi.'] }); GTP.game.advance(0.5); E.emit('phone:answer', {}); GTP.game.advance(1.3); E.emit('phone:end', {}); GTP.game.advance(3.2);
+      out.callEvents = { blip: d('phoneBlip'), hang: d('phoneHang') };
+    }
+    // the small cues: the garage door, a street event's sting, a cowering ped's gasp (once per 0.8 s)
+    mark(); E.emit('garage:store', { propertyId: 'x', slot: 0 }); E.emit('garage:retrieve', { propertyId: 'x', slot: 0, vehicle: { x: p.x + 3, z: p.z } }); out.garage = d('garageDoor');
+    mark(); E.emit('event:start', { id: 'x', name: 'X', x: p.x + 40, z: p.z }); out.sting = d('eventSting');
+    A._clearGaps(); mark(); const cw = { x: p.x + 4, z: p.z };
+    E.emit('ped:cower', { ped: cw }); E.emit('ped:cower', { ped: cw }); out.gasp1 = d('gasp'); GTP.game.advance(1); E.emit('ped:cower', { ped: cw }); out.gasp2 = d('gasp');
+    E.emit('ped:cower', { ped: { x: p.x + 400, z: p.z } }); GTP.game.advance(1); E.emit('ped:cower', { ped: { x: p.x + 400, z: p.z } }); out.gaspFar = d('gasp') - out.gasp2;
+    return out;
+  });
+  console.log('  review fixes: ' + JSON.stringify(fixes));
+  t.assert(fixes.melee.whoosh === 2 && fixes.melee.light === 1 && fixes.melee.heavy === 0, 'melee: a whoosh per swing start, the hit once on impact: ' + JSON.stringify(fixes.melee));
+  t.assert(fixes.shopSystems === 0 && fixes.shopPlain === 1, 'systems purchases leave the register to their own cash: ' + JSON.stringify([fixes.shopSystems, fixes.shopPlain]));
+  t.assert(fixes.sniper.ok && fixes.sniper.reload === 1 && fixes.sniper.done === 1 && fixes.sniper.bolt === 1 && fixes.sniper.shell === 0, 'a sniper reload ends on its bolt: ' + JSON.stringify(fixes.sniper));
+  t.assert(fixes.shotgun.ok && fixes.shotgun.reload >= 2 && fixes.shotgun.shell === fixes.shotgun.reload && fixes.shotgun.bolt === 0, 'a shotgun reload pushes shells: ' + JSON.stringify(fixes.shotgun));
+  t.assert(fixes.pistol.ok && fixes.pistol.reload === 1 && fixes.pistol.shell === 0 && fixes.pistol.bolt === 0, 'a pistol reload keeps the magazine voice: ' + JSON.stringify(fixes.pistol));
+  t.assert(fixes.quietShot.done === 1 && fixes.quietShot.bolt === 0, 'a reloadDone with no reload open stays plain: ' + JSON.stringify(fixes.quietShot));
+  t.assert(!fixes.missionActive && fixes.raceWin.mission === 1 && fixes.raceWin.fail === 0 && fixes.raceLose.fail === 2 && fixes.raceLose.mission === 0, 'race:finish: fanfare for a win, a soft fail for a loss / DNF: ' + JSON.stringify([fixes.raceWin, fixes.raceLose]));
+  t.assert(fixes.golfCup === 1, 'the cup plays when a ball drops, not on a pick-up or the round end: ' + fixes.golfCup);
+  t.assert(fixes.rangeGold.medal === 1 && fixes.rangeGold.ach === 0 && fixes.rangeGold.fail === 0, 'a range medal plays its notes once (no UI chime on top): ' + JSON.stringify(fixes.rangeGold));
+  t.assert(fixes.rangeNone.fail === 1 && fixes.rangeNone.medal === 0 && fixes.rangeNone.ach === 0 && fixes.rangeAbort.fail + fixes.rangeAbort.medal + fixes.rangeAbort.ach === 0 && fixes.achAfter === 1, 'no medal: one soft fail; walking out: nothing; later chimes play: ' + JSON.stringify([fixes.rangeNone, fixes.rangeAbort, fixes.achAfter]));
+  t.assert(fixes.doorQuiet === 0 && fixes.doorLoud === 1, 'a quiet interior exit rings no bell: ' + JSON.stringify([fixes.doorQuiet, fixes.doorLoud]));
+  t.assert(fixes.heist === (fixes.ui ? 0 : 1), 'heist:plan leaves its sound to the UI: ' + fixes.heist);
+  t.assert(fixes.whoop2 === 1 && fixes.whoop3 === 1 && fixes.whoopAgain === 2, 'the first star whoops once per 0 -> >0, scripted sets included: ' + JSON.stringify([fixes.whoop2, fixes.whoop3, fixes.whoopAgain]));
+  if (fixes.callTalk) {
+    t.assert(fixes.callRing === 'ring' && fixes.callTalk.phase === 'talk' && fixes.callTalk.blip === 1 && fixes.callTalk.hang === 0 && fixes.callEnd.blip === 1 && fixes.callEnd.hang === 1, 'the call card blips on answer and hangs up at the end: ' + JSON.stringify([fixes.callRing, fixes.callTalk, fixes.callEnd]));
+    t.assert(fixes.callEvents.blip === 1 && fixes.callEvents.hang === 1, 'phone:answer / phone:end voice the call once: ' + JSON.stringify(fixes.callEvents));
+  }
+  t.assert(fixes.garage === 2 && fixes.sting === 1 && fixes.gasp1 === 1 && fixes.gasp2 === 2 && fixes.gaspFar === 0, 'garage doors, a street event sting, a rate-limited ranged gasp: ' + JSON.stringify([fixes.garage, fixes.sting, fixes.gasp1, fixes.gasp2, fixes.gaspFar]));
   const herrs = await t.errors(hctx);
   t.assert(herrs.length === 0, 'headless errors:\n' + herrs.join('\n'));
   await hctx.page.close();
@@ -224,6 +306,18 @@ H.run('audio', async (t) => {
     // the helicopter hook
     A.heli(true, p.x + 40, p.z - 30); GTP.game.advance(0.3); out.h1 = A.state().heli;
     A.heli(false); GTP.game.advance(3.2); out.h2 = A.state().heli;
+    // QA-D-03: a released roadblock cruiser (parked, no driver, v.siren left on) is silent at zero stars, wails with stars
+    const rb = GTP.AI.spawner.spawnVehicle(p.x + 14, p.z, 'cop', { kind: 'roadblock' }); rb.ai.kind = 'cop'; rb.ai.mode = 'parked'; rb.siren = true; rb.lights = true;
+    GTP.game.advance(0.6); out.rbCalm = A.state().siren;
+    GTP.AI.wanted.set(1); GTP.game.advance(0.4); out.rbHot = A.state().siren; out.rbHotLevel = GTP.AI.wanted.level;
+    GTP.AI.wanted.clear(); rb.destroy(); GTP.game.advance(1.6);
+    // the police heli: its door gunner's 'shot' (at the heli) is an SMG; leaving keeps the rotor (QA-D-09); a shoot-down silences it
+    const H = new GTP.AI.Heli(); GTP.Entities.add(H); GTP.AI.police.heli = H;
+    out.gunner = A.shotClass({ x: H.x, z: H.z }); out.notGunner = A.shotClass({ x: H.x + 30, z: H.z });
+    GTP.game.advance(0.6); out.h3 = A.state().heli;
+    H.leave(); GTP.game.advance(1.4); out.h4 = A.state().heli; out.leaving = H.leaving && !H.removed;
+    H.applyDamage(1e4); GTP.game.advance(3.2); out.h5 = A.state().heli;
+    if (!H.removed) H.destroy(); GTP.AI.police.heli = null;
     return out;
   });
   console.log('  sirens: ' + JSON.stringify(sirens));
@@ -232,6 +326,10 @@ H.run('audio', async (t) => {
   t.assert(sirens.wanted === 2, 'two stars held through the chase: ' + sirens.wanted);
   t.assert(sirens.h1.on && sirens.h1.active && sirens.h1.gain > 0.05, 'the helicopter rotor loop: ' + JSON.stringify(sirens.h1));
   t.assert(!sirens.h2.on && !sirens.h2.active, 'the rotor stops after the helicopter leaves');
+  t.assert(sirens.rbCalm.count === 0 && sirens.rbHot.count >= 1 && sirens.rbHotLevel === 1, 'a released roadblock cruiser is silent at zero stars, wails with stars (QA-D-03): ' + JSON.stringify([sirens.rbCalm, sirens.rbHot]));
+  t.assert(sirens.gunner === 'smg' && sirens.notGunner === 'pistol', 'the heli door gunner fires an SMG report: ' + JSON.stringify([sirens.gunner, sirens.notGunner]));
+  t.assert(sirens.h3.on && sirens.leaving && sirens.h4.on && sirens.h4.active && sirens.h4.gain > 0, 'a leaving police heli keeps its rotor (QA-D-09): ' + JSON.stringify([sirens.h3, sirens.h4]));
+  t.assert(!sirens.h5.on && !sirens.h5.active, 'a shot-down heli silences the rotor: ' + JSON.stringify(sirens.h5));
 
   const mute = await page.evaluate(() => {
     const A = GTP.Audio, p = GTP.game.player, out = {};
@@ -292,6 +390,8 @@ H.run('audio', async (t) => {
     const A = GTP.Audio, out = { engine: {}, shots: {} };
     for (const c of ['moto', 'heli', 'plane', 'jet', 'speedboat', 'jetski', 'parachute', 'sedan']) out.engine[c] = await A.render('engine', { cls: c, level: 0.7, seconds: 2 });
     for (const c of A.shotClasses) out.shots[c] = await A.render('shot_' + c, { seconds: 2, gain: 0.8 });
+    // the melee impact without its swing (the whoosh played on the start): shorter, the hit in the first 100 ms
+    out.heavyFull = await A.render('melee_heavy', { seconds: 1, gain: 0.8 }); out.heavyHit = await A.render('melee_heavy', { seconds: 1, gain: 0.8, noSwing: true });
     // fly a heli: the rotor voice runs
     const p = GTP.game.player; if (p.inVehicle) { p.inVehicle.vx = p.inVehicle.vz = 0; p.inVehicle.speed = 0; p.inVehicle.exit(p); }
     const h = GTP.Vehicles.spawn('heli', p.x + 14, p.z + 14, {}); h.enter(p, 0); GTP.game.advance(2.6);
@@ -312,6 +412,7 @@ H.run('audio', async (t) => {
   const badS = sk.filter((k) => { const r = v03.shots[k]; return !r || !(r.peak > 0.05) || r.peak > 0.995; });
   t.assert(badS.length === 0, 'every report is audible and unclipped: ' + badS.join(','));
   t.assert(v03.shots.sniper.loudUntil > v03.shots.pistol.loudUntil && v03.shots.suppressed.rms < v03.shots.pistol.rms && v03.shots.smg.loudUntil <= v03.shots.rifle.loudUntil, 'the sniper rolls longer than a pistol, the suppressor is quieter, the SMG is short');
+  t.assert(v03.heavyHit.env[0] > v03.heavyFull.env[0] * 1.5 && v03.heavyHit.rms > 0.001, 'melee_heavy with noSwing lands at once: ' + JSON.stringify([v03.heavyHit.env.slice(0, 4), v03.heavyFull.env.slice(0, 4)]));
   t.assert(v03.heli.on && v03.heli.cls === 'heli' && v03.heli.kind === 'rotor' && v03.heli.rpm > 0.5, 'the heli plays its rotor voice: ' + JSON.stringify(v03.heli));
   const final = await page.evaluate(() => GTP.Audio.state());
   t.assert(final.errors === 0 && !final.disabled && (final.ctx === 'running' || final.ctx === 'suspended'), 'audio healthy at the end: ' + JSON.stringify({ errors: final.errors, ctx: final.ctx }));
