@@ -1,0 +1,284 @@
+
+=== actors.js ===
+  move: {"dx1":4.93560706477561,"dz1":0.29800177338830736,"yaw1":-1.5707963267938103,"camYaw":-3.141592653589793,"dx2":0.0016948829988763237,"dz2":5.1983051170013255,"yaw2":-3.141592653588707,"isPlayer":true,"name":"Bryce Takesworth","look":{"skin":2,"hair":"short","hairColor":"#3a2a1a","shirt":"#f4f4f4","pants":"#2a2f4a","hat":"none","glasses":"none","extra":"mic","tie":"red"}}
+  wall: {"inside":0,"minGap":0.40100000000001046,"gap":0.40100000000001046,"speed":0.46310582492141295,"dist":28.0713376952364,"solid":false}
+  jump: {"rise":1.0421032557111314,"landed":0.55,"y":0,"onGround":true,"state":"idle"}
+  drive: {"doorDist":0.8099999999999966,"enteringState":"walk","inCar":true,"hidden":true,"vehVisible":true,"disp":66.07704456681347,"peak":28.545826389975723,"speedAfter4":28.545826389975723,"wheelSpin":-200.23346838428336,"stopT":1.25,"stopped":0,"rev":{"speed":-9.99134349030471,"dx":-11.620252328134285,"reversing":true,"reverseTime":1.866666666666665},"fov":63.76084588405669,"entities":247,"snapshot":{"x":173.6,"y":0,"z":278,"yaw":-1.571,"hp":100,"armor":0,"money":250,"subs":0,"wanted":0,"weapon":"fist","vehicle":"sedan","speed":-8.35,"state":"seated","onGround":true,"swimming":false,"cameraMode":"chase"}}
+  crash: {"building":299,"hp0":100,"hp":71.21437798668352,"damage":28.785622013316484,"peak":17.965805956979743,"shake":0.9176301391971408,"inside":0,"minSpeedAfterPeak":4.650117907419928,"hitAt":123,"imp":{"impact":18.1,"kind":"wall"},"sparks":7,"gap":0.5622425385469683,"corners":6}
+  loop: {"maxY":7,"onDeckAt":{"x":182.44033334599186,"y":7,"speed":27.745008206964474,"deck":7},"deckPos":{"x":186.42040040773367,"y":7,"z":195.4891772135155,"pitch":1.8844530609197517e-22,"street":"The Loop"},"fell":true,"airborne":15,"landedAt":0.75,"yEnd":0,"onGround":true,"hp":66,"burning":false,"exploded":false,"inCar":true,"samples":[[122.2,0],[122.8,0],[123.8,0],[125.2,0],[126.9,0],[129,0],[131.5,0],[134.2,0],[137.3,0],[140.7,0.2],[144.4,0.79],[148.3,1.55],[152.5,2.36],[157,3.23],[161.7,4.13],[166.6,5.08],[171.7,6.07],[177,6.88],[182.4,7],[187.4,7]]}
+  boom: {"burning":true,"smoke":9,"fxTypes":{"skid":24,"fire":6,"smoke":3},"explodedAt":3,"exploded":true,"wreck":true,"inList":true,"ejected":true,"hp":53.010285536407096,"hp0":88.0102855364071,"knocked":true,"fx2":{"skid":8,"smoke":27,"fire":23,"explosion":4,"ring":1,"spark":12,"decal":1},"meshVisible":true,"wreckMat":true}
+  exit: {"entered":true,"out":true,"dist":1.6841633679664005,"doorDist":0,"solid":false,"inBox":false,"tile":1,"visible":true,"y":0,"onGround":true}
+  swim: {"entered":true,"sinkAt":2.75,"lostAt":5.800000000000001,"swimAt":2.75,"maxZ":569.813094202685,"swimState":{"swimming":true,"y":-0.91,"state":"swim","tile":5,"z":563.272330450904,"x":297.65},"outAt":5.800000000000001,"shore":{"swimming":false,"tile":8,"y":0.12,"z":555.1,"onGround":true},"entities":241}
+  camera: {"entered":true,"insideCam":0,"pulled":0,"maxSpeed":23.911392184551122,"minDist":6.3707673723753,"maxDist":9.055101785290088,"impacts":2,"fov":64.99461684470403,"pos":{"x":339,"z":226.4},"district":"downtown"}
+  knock: {"hitAt":2.1,"knocked":true,"tilt":-1.57,"maxTilt":1.5669027119807544,"hp":46.84106899266718,"hp0":100,"pedInCar":true,"solid":false}
+  night: {"inVan":true,"wrap":"pod","headlight":true,"owner":true,"headMat":true}
+  beam: {"on":73.1,"off":44.5}
+PASS actors (54224 ms)
+
+=== ai.js ===
+  population: {"peds":81,"vehicles":59,"drivers":40,"inside":0,"nan":0,"counts":{"peds":76,"cars":39,"parked":20,"foot":0,"cruisers":1,"vans":0,"heli":false,"roadblocks":0,"wanted":0,"heat":0,"sinceSeen":1000000010},"ms":0.19999999925494194,"errors":0}
+  traffic: {"n":20,"live":18,"moved":17,"offRoad":[],"offLong":[],"offEnd":0,"dists":[117,115,96,83,103,100,94,100,108,86,51,97,26,98,39,92,101,52],"stops":[0,0,0,0,0,0,0,0,0,0,5,0,8,0,2,0,1,4],"vehicles":[]}
+  crosswalks: {"worst":0,"worstPed":null,"crossings":106}
+  wanted 2: {"samples":[63.1,58.5,53,47.5,42,36.5,31,25.5],"counts":{"peds":76,"cars":39,"parked":20,"foot":3,"cruisers":2,"vans":0,"heli":false,"roadblocks":0,"wanted":2,"heat":10.5,"sinceSeen":0.12},"busted":false,"state":"playing","wanted":2,"after":"playing"}
+  decay: {"d0":373,"wanted":0,"heat":0,"trace":[[1,4.5,5],[0,1.3,10],[0,0,15],[0,0,20],[0,0,25],[0,0,30]],"district":"marina","states":["playing"],"money":250,"money0":250}
+  busted: {"state":"busted","ev":{"level":1,"cop":true},"bustedAt":2.25,"copLine":"Busted! Rate your arrest, one to ten!","control":false,"after":{"state":"playing","wanted":0,"money":213,"money0":250,"dHQ":1.8,"control":true}}
+  avenue: {"counts":{"peds":76,"cars":40,"parked":25,"foot":0,"cruisers":2,"vans":0,"heli":false,"roadblocks":0,"wanted":0,"heat":0,"sinceSeen":13.4},"nearPeds":15,"nearCars":2}
+  chase 3: {"inCar":true,"counts":{"peds":76,"cars":40,"parked":25,"foot":16,"cruisers":3,"vans":0,"heli":false,"roadblocks":1,"wanted":3,"heat":19,"sinceSeen":0.02},"roadblock":{"x":354,"z":280,"axis":"h"},"speed":-1.4,"x":322,"z":283,"cops":[{"id":537,"x":242,"z":237.4,"mode":"chase","inVehicle":false,"d":92.1},{"id":538,"x":241.8,"z":238.2,"mode":"chase","inVehicle":false,"d":91.9},{"id":541,"x":105.8,"z":270.1,"mode":"wander","inVehicle":false,"d":216.5},{"id":542,"x":126.5,"z":248.4,"mode":"wander","inVehicle":false,"d":198.4},{"id":628,"x":225.6,"z":148,"mode":"wander","inVehicle":false,"d":166.1},{"id":629,"x":394.6,"z":271.4,"mode":"alert","inVehicle":false,"d":73.7}],"cars":[{"id":758,"type":"cop","kind":"cop","mode":"pursuit","x":243.2,"z":238.1,"y":0.09,"speed":-0.8,"plan":"straight","stop":true,"cap":0,"driver":true,"stuck":0},{"id":764,"type":"cop","kind":"cop","mode":"pursuit","x":230.1,"z":237.4,"y":0,"speed":10.2,"plan":"straight","stop":false,"cap":9.7,"driver":true,"stuck":0},{"id":768,"type":"cop","kind":"cop","mode":"pursuit","x":133.4,"z":358.6,"y":0,"speed":0.5,"plan":null,"stop":false,"cap":0,"driver":true,"stuck":0},{"id":771,"type":"cop","kind":"roadblock","mode":"roadblock","x":354,"z":276,"y":0,"speed":0,"plan":null,"stop":false,"cap":99,"driver":false,"stuck":0},{"id":774,"type":"cop","kind":"roadblock","mode":"roadblock","x":354,"z":284,"y":0,"speed":0,"plan":null,"stop":false,"cap":99,"driver":false,"stuck":0}]}
+  heli: {"heli":true,"y":56.8,"d":27.2,"sees":false,"counts":{"peds":76,"cars":40,"parked":25,"foot":15,"cruisers":4,"vans":1,"heli":true,"roadblocks":1,"wanted":5,"heat":41,"sinceSeen":0.02}}
+  sprint: {"whileRunning":false,"ran":6.5,"state":"playing"}
+  residents: {"slots":["both_sides_strip:clerk","both_sides_port:clerk","heirloom_club:doorman","both_sides_uptown:clerk"],"spawned":true,"atPost":0,"brain":"resident","role":"doorman","look":"bowtie","outward":0.97,"facing":0,"bark":"Members only. Who was your grandfather listening with?","removed":true,"back":true,"fled":true,"emptyPost":true,"merle":{"name":"Merle Firmness","cast":"merle","toLight":11.7,"toPost":0,"toShop":11.4},"cutscene":{"ok":true,"before":1,"during":1,"same":true,"home":1}}
+PASS ai (40669 ms)
+
+=== artifact.js ===
+wrote dist/artifact.html (3533.3 KB), inlined 30 scripts:
+  vendor/three.min.js
+  js/00_util.js
+  js/01_config.js
+  js/02_input.js
+  js/03_audio.js
+  js/04_world.js
+  js/05_assets.js
+  js/05b_assets_weapons.js
+  js/05d_models.js
+  js/06_entities.js
+  js/06b_vehicles_air_sea.js
+  js/06c_animation.js
+  js/07_ai.js
+  js/08_combat.js
+  js/08b_bosses.js
+  js/09_missions.js
+  js/10_render.js
+  js/10b_postfx.js
+  js/11_ui.js
+  js/12_cutscenes.js
+  js/13_interiors.js
+  js/14_systems.js
+  js/20_content_world.js
+  js/21_content_cast.js
+  js/22_content_missions.js
+  js/23_content_radio.js
+  js/24_content_expansion.js
+  js/25_content_parity.js
+  js/26_content_strangers.js
+  js/30_game.js
+  artifact boot: {"errors":0,"t":1.9999999999999978,"title":"Grand Theft Pundit","chunks":54,"x":110,"z":264.9525685054481}
+  artifact shot: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/artifact.png {"w":1248,"h":720,"colors":1463,"mean":[142,156,177],"blue":0.434,"green":0.246,"warm":0.006,"dark":0,"bright":0.118}
+PASS artifact (17640 ms)
+
+=== audio.js ===
+  headless: {"ctx":null,"inCar":true,"radioOn":true,"station":["wail_101","pennant_fm"],"now":"Pennant FM \"Ten out of Ten\" - The President's station. Also the President's.","engine":{"on":false,"cls":"sedan","kind":null,"level":0.46,"rpm":0.12,"throttle":0},"counts":{"swap":2,"horn":2,"crash":2,"enter":1,"exit":1,"shot":2,"shot_pistol":2}}
+  v0.3 wiring: {"cues":{"phoneRing":1,"chapter":3,"bossStinger":1,"bossPhase":1,"bossDefeat":1,"specialReady":1,"special_focus":1,"special_focusEnd":1,"special_shout":1,"special_chatmob":1,"special_boost":1,"shopBuy":1,"shopBrowse":1,"golfSwing":1,"golfPutt":1,"golfCup":1,"achievement":3,"rangeStart":1,"rangeHit":1,"rangeMedal":1,"door":1,"cover":1,"melee_heavy":1,"melee_counter":1,"gps":1},"reports":{"smg":1,"shotgun":1,"sniper":1,"suppressed":1,"launcher":1,"shot":5},"classOf":{"revolver":"revolver","rifle":"rifle","lmg":"lmg","minigun":"heavy"}}
+  unlock: {"has":true,"state":"running","unlocked":true,"game":"playing"}
+  car: {"inCar":true,"radio0":{"index":0,"id":"wail_101","playing":true,"level":0.999,"live":true,"step":9,"scheduled":3,"bpm":100,"kit":"march","talkBar":-1},"station0":"wail_101","station1":"pennant_fm","station2":"velvetine_888","index":2,"radio1":{"index":2,"id":"velvetine_888","playing":true,"level":1,"live":true,"step":11,"scheduled":7,"bpm":122,"kit":"house","talkBar":-1},"static":2,"engine":{"on":true,"cls":"sedan","kind":"piston","level":0.627,"rpm":0.557,"throttle":1},"speed":23.925237258248924,"voices":1}
+  sfx: {"onFoot":true,"radioOff":false,"level":0,"engineOff":true,"shots":2}
+  all names: {"played":{"shot":true,"punch":true,"hit":true,"explode":true,"pickup":true,"horn":true,"siren":true,"enter":true,"exit":true,"mission":true,"fail":true,"ui":true,"cash":true,"debate":true,"dunk":true,"jump":true,"land":true,"skid":true,"crash":true,"swap":true,"static":true,"reload":true,"reloadDone":true,"hitmark":true,"confirm":true,"shot_pistol":true,"shot_revolver":true,"shot_smg":true,"shot_rifle":true,"shot_lmg":true,"shot_shotgun":true,"shot_sniper":true,"shot_launcher":true,"shot_heavy":true,"shot_thrown":true,"shot_special":true,"shot_suppressed":true,"dryFire":true,"reloadShell":true,"reloadBolt":true,"cover":true,"coverSlide":true,"melee_light":true,"melee_heavy":true,"melee_counter":true,"whoosh":true,"rotorStart":true,"chuteOpen":true,"bail":true,"stall":true,"gearUp":true,"splash":true,"phoneRing":false,"phoneBlip":true,"phoneHang":true,"chapter":true,"bossStinger":true,"bossPhase":true,"bossDefeat":true,"special_focus":true,"special_focusEnd":true,"special_shout":true,"special_chatmob":true,"special_boost":true,"specialReady":true,"shopBuy":true,"shopBrowse":true,"shopDeny":true,"modApply":true,"modWrench":true,"modSpray":true,"golfSwing":true,"golfPutt":true,"golfCup":true,"achievement":true,"rangeStart":true,"rangeHit":true,"rangeMedal":true,"door":true,"gps":true},"voices":28,"max":28,"far":false}
+FAIL audio: Error: ASSERT: every SFX name makes a voice; failed: phoneRing
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/audio.js:184:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== bosses.js ===
+  surface: {"bosses":["b01_goldplate","b02_velvetine","b03_warbanner","b04_redacted","b05_dunk","b06_panel"],"specials":["focus","shout","chatmob","boost"],"mode":"registered","register":"function"}
+  b01_goldplate: {"completed":false,"phases":[1],"defeated":false,"errors":[],"bot":{"steps":5460,"jumps":0,"dodges":33,"deaths":0,"retries":3,"debates":0,"hpLost":431.80000000000035},"dmg":{"pistol:goldplate":436},"hits":0,"barks":96,"name":"President Lionel Goldplate","simSeconds":364,"ms":40380}
+FAIL bosses: Error: ASSERT: b01_goldplate: the mission completed (the boss beaten) within 360 s of play: {"completed":false,"phases":[1],"defeated":false,"errors":[],"bot":{"steps":5460,"jumps":0,"dodges":33,"deaths":0,"retries":3,"debates":0,"hpLost":431.80000000000035},"dmg":{"pistol:goldplate":436},"hits":0,"barks":96,"name":"President Lionel Goldplate","simSeconds":364,"ms":40380}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/bosses.js:186:7
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== campaign.js ===
+  new game: {"state":"cutscene","money":250,"missions":61,"story":["m00_intro","m01_van","m01b_airport","m02_read","m03_ratio","m03b_range","m04_hit","m05_peer","m05b_provenance","m06_rally","m07_listen","m07b_ferry","m08_scooters","m08b_jets","m09_balloon","m09b_hotmic","m10_pellets","m11_trustless","m12_memo","m12b_scope","m13_thursday","m13b_ratio","m14_grift","m15a_primetime","m15b_liveread"],"next":{"missionId":"m00_intro","title":"Table Stakes","giver":"gus","giverName":"Gus Pemberton","landmark":"campus_quad","landmarkName":"Founders' Quad","x":110,"z":270,"y":0.12,"act":1,"chapter":"Act I: Folding Table"},"loading":false}
+  opening: {"scripted":true,"state":"cutscene","active":true,"title":"Table Stakes","shots":2,"letterbox":true,"control":false,"actors":["player","gus","kip"],"storyPending":true} skip: {"s":-1,"state":"cutscene","flag":true,"control":false,"active":"m00_intro","cutscene":true,"markers":[],"hint":null}
+  v0.3 story missions present: none (the content track has not landed)
+  m00_intro start: {"ok":true,"how":"auto","state":"cutscene","line":"player","money":250,"cutscene":{"id":"Table Stakes","shots":2,"letterbox":true}}
+    goto dorm_studio: {"ok":true,"note":"goto dorm_studio 0.1s","secs":0.1,"state":"playing","objective":"Grab the table legs, top and sign (0/3)","errors":0,"fails":[]}
+    pickups: {"ok":true,"note":"3 crates, on foot","secs":1,"state":"playing","objective":"Set up on the Quad","errors":0,"fails":[]}
+    shot mid: {"state":"playing","objective":"Set up on the Quad"}
+    goto campus_quad: {"ok":true,"note":"goto campus_quad 0.1s","secs":0,"state":"minigame","objective":"Win your first debate","errors":0,"fails":[]}
+    debate: {"ok":true,"note":"vs Wendell Syllabus: ROUNDS 1-0 · PERFECT HITS 2 · SHOUTS 0 · MINDS CHANGED 0 (2 answers)","secs":0.2,"state":"cutscene","objective":"","errors":0,"fails":[]}
+  m00_intro done (7 s wall): {"s":0.44999999999999996,"state":"playing","active":null,"completed":true,"flags":{"cs_cs_opening":true,"story_act":1,"hint_h_move":true,"has_table":true},"failed":0,"money":350,"weapons":["fist"],"weapon":"fist","ammo":{"fist":"inf"},"credits":false,"endings":[],"errors":0,"cash":0,"spent":0,"markers":["mission:m01_van"],"cutscene":null,"subs":{"count":300,"tier":0,"name":"Pre-Viral"},"busy":false,"paid":100}
+  m01_van start: {"ok":true,"how":"walk@7","state":"cutscene","camTarget":"sloane","line":"sloane","money":350,"cutscene":{"id":"Loud & Correct","shots":2,"letterbox":true}}
+    enter: {"ok":true,"note":"in the van (podvan)","secs":0.3,"state":"playing","objective":"Collect 5 subscribers before the battery dies (0/5)","errors":0,"fails":[]}
+    pickups 3: {"ok":true,"paused":true,"note":"3/5","secs":1.2,"state":"playing","objective":"Collect 5 subscribers before the battery dies (3/5)","errors":0,"fails":[]}
+    shot mid: {"state":"playing","objective":"Collect 5 subscribers before the battery dies (3/5)"}
+    pickups: {"ok":true,"note":"5 crates, from the van","secs":0.9,"state":"playing","objective":"Bring the van back to Gus","errors":0,"fails":[]}
+    drive pod_garage: {"ok":true,"note":"drove the van to pod_garage","secs":0.1,"state":"cutscene","objective":"","errors":0,"fails":[]}
+  m01_van done (6 s wall): {"s":0.6,"state":"playing","active":null,"completed":true,"flags":{"cs_cs_opening":true,"story_act":1,"hint_h_move":true,"has_table":true,"hint_h_look":true,"hint_h_enter":true,"has_van":true,"hint_h_drive":true},"failed":0,"money":550,"weapons":["fist"],"weapon":"fist","ammo":{"fist":"inf"},"credits":false,"endings":[],"errors":0,"cash":0,"spent":0,"markers":["mission:m01c_both_sides"],"cutscene":null,"subs":{"count":900,"tier":0,"name":"Pre-Viral"},"busy":false,"paid":200}
+  m01b_airport start: {"ok":false,"note":"no marker for m01b_airport: m01c_both_sides"}
+FAIL campaign: Error: ASSERT: m01b_airport started by walking into its light (or by the story): {"ok":false,"note":"no marker for m01b_airport: m01c_both_sides"}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/campaign.js:855:7
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== characters.js ===
+  rig: {"bones":17,"skeleton":17,"skinned":true,"names":[true,true,true,true,true,true],"extra":[true,true,true,true,true,true,true,true,true,true,true],"meshes":1,"tris":[3942,1772,737],"top":1.8,"chin":1.567,"headFrac":0.129,"hair":{"short":"6993:9896.09","long":"7176:10252.90","bob":"7221:10236.99","bun":"7305:10674.93","afro":"7095:10208.16","mohawk":"7176:10525.54","pompadour":"7095:10165.12","slick":"7068:9989.18","bald":"6369:8650.23"},"hats":{"none":"6369:8650.23","cap":"7311:10665.44","beanie":"7353:10586.70","cowboy":"7056:9958.42","fedora":"6900:9724.46","beret":"6876:9694.31","crown":"7017:9872.76","helmet":"7392:10761.91"},"atlas":true,"aliasSame":true}
+  outfits: {"suit":"suit","dress":"dress","cop":"uniform","swat":"swat","top":"hoodie","bottom":"shorts","shoes":"boots","topColor":[0.07,0.53,0.2],"geoDiffers":true}
+  anim: {"walk":{"legs":[0,0.34,0.43,0.19,-0.19,-0.43],"knee":-0.09},"run":{"lean":-0.13,"elbow":1.46},"rifle":{"parent":"handR","dot":1,"y":0.01,"gripY":2.75,"leftToBarrel":1.411,"leftAhead":-0.1},"pitchUp":0.45,"reloadMove":0.64,"pistol":{"fwdR":0.5,"hands":0.11,"y":1.49},"jab":0.45,"crouch":-0.38,"tilt":-1.57,"swim":-1.25,"fpHidden":true,"fpBack":true,"lodMid":1,"lodFar":2,"culled":true,"lodNear":0,"wave":2.75,"parts":true,"dead":true}
+FAIL characters: Error: ASSERT: aimed rifle: in the right hand, barrel along the facing at chest height: {"parent":"handR","dot":1,"y":0.01,"gripY":2.75,"leftToBarrel":1.411,"leftAhead":-0.1}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/characters.js:121:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== combat.js ===
+  arena: {"x":578,"z":214}
+  pistol: {"hp0":60,"hp":0,"alive":false,"ammo0":20,"ammo":16,"tracerFrames":20,"maxTracers":1,"flashFrames":12,"shotEvents":4,"weapon":"pistol","held0":true,"heldName":"held","yawErr":0.0015432384543889732,"shots":4,"hits":4,"heat":5}
+  aim: {"aimActive":true,"first":"a","second":"b","third":"a","fov":52.018965179946555,"camDist":1.7459358463953534,"right":0.7603642352771474,"screen":{"sx":624.0000000000042,"sy":360.00000000000045,"visible":true,"depth":0.9415499166714674},"ts":{"sx":631.8953555165214,"sy":355.4900454729343,"visible":true,"depth":0.9441930692886117},"hit":{"a":36,"b":0},"released":true,"pose":false}
+  occlusion: {"pick":{"id":18,"px":567,"pz":230,"ex":603,"ez":230,"d":17.88854381999832,"w":28},"hp0":60,"hp":60,"pedDamage":0,"ammoUsed":4,"lock":null,"blocked":true,"wallPuffs":2}
+  vehicle: {"hp0":100,"firstDamageAt":0.25,"burningAt":6.5,"explodedAt":9.433333333333323,"exploded":true,"wreck":true,"inList":true,"heat0":0,"heat":3,"wanted":1,"sparks":12,"playerHp":100,"damage":104}
+  megaphone: {"hp0":60,"hp":60,"moved":3.6078125496903795,"rings":3,"texts":1,"knocked":true,"up":true,"ammoUsed":1,"heat":1,"alive":true}
+  hottake: {"proj":1,"landedAt":0.4,"maxY":1.7085795761827534,"explosions":1,"knockedA":true,"knockedB":true,"dmgA":11.247533590866695,"dmgB":7.531128478312851,"ammo":4,"playerDown":false,"dist":3.6491987241620225}
+  wasted: {"state1":"wasted","control":false,"alive1":false,"death":"wasted","text":"RATIO'D","tilt":-1.57,"stateMid":"wasted","after":{"state":"playing","hp":100,"alive":true,"weapons":["fist"],"weapon":"fist","money":225,"money0":250,"dHospital":1.6,"control":true,"wanted":0,"knocked":false,"solid":false,"respawnEvent":null}}
+  busted: {"bustedAt":2.25,"state":"busted","ev":{"level":1,"fine":180},"control":false,"death":"busted","text":"DEPLATFORMED","copLine":"Busted! Rate your arrest, one to ten!","after":{"state":"playing","money":1020,"weapons":["fist"],"wanted":0,"dHQ":1.8,"control":true,"hp":100,"solid":false}}
+  pickups: {"hasMesh":true,"cash":{"money0":1020,"money":1095,"removed":true},"health":{"hp":70,"removed":true,"labels":2,"bottle":true},"crate":{"weapon":"shotgun","ammo":8,"removed":true,"crateBottle":true,"labels":4,"sponsor":"DEFENSE SCOOTERS"},"world":11,"gatedBefore":0,"gatedAfter":["pistol"],"pickupsInList":60}
+  aim shot: {"target":true,"screen":{"sx":624,"sy":360,"visible":true,"depth":0.9266903012000672},"ts":{"sx":626.4449319824213,"sy":351.7907070474424,"visible":true,"depth":0.930881044255343},"armR":1.39}
+  firefight: {"copShots":0,"frames":25,"tracersNow":1,"copsAlive":3,"copsAiming":3,"playerHp":59.50000000000002,"wanted":3,"fired":[true,true,true]}
+  arsenal: {"fist":{"dmg":25.2,"moved":0.85,"down":true,"ammoUsed":null,"held":false,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"knuckles":{"dmg":37.8,"moved":0.62,"down":false,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"selfie_stick":{"dmg":29.4,"moved":0.58,"down":false,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"clipboard":{"dmg":33.6,"moved":0.58,"down":false,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"selfie":{"dmg":33.6,"moved":0.47,"down":false,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"tableleg":{"dmg":96,"moved":1.09,"down":true,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"gavel":{"dmg":34,"moved":0.39,"down":false,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"bat":{"dmg":40,"moved":0.48,"down":false,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"mic_stand":{"dmg":34,"moved":0.86,"down":true,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"golf_club":{"dmg":32,"moved":0.86,"down":true,"ammoUsed":null,"held":true,"mag":null,"errors":0,"smoke":false,"melee":true,"smokes":0},"megaphone":{"dmg":0,"moved":3.39,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"flare_gun":{"dmg":23.6,"moved":1.7,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"mute_button":{"dmg":4,"moved":0.11,"down":false,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"merch_cannon":{"dmg":11.3,"moved":1.7,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"minigun":{"dmg":98,"moved":0.55,"down":false,"ammoUsed":10,"held":true,"mag":[40,30],"errors":0,"smoke":false,"melee":false,"smokes":0},"oped":{"dmg":42,"moved":0.33,"down":false,"ammoUsed":3,"held":true,"mag":[15,12],"errors":0,"smoke":false,"melee":false,"smokes":0},"pocket":{"dmg":44,"moved":0.22,"down":false,"ammoUsed":2,"held":true,"mag":[2,0],"errors":0,"smoke":false,"melee":false,"smokes":0},"pistol":{"dmg":36,"moved":0.29,"down":false,"ammoUsed":2,"held":true,"mag":[12,10],"errors":0,"smoke":false,"melee":false,"smokes":0},"machine_pistol":{"dmg":37.6,"moved":0.44,"down":false,"ammoUsed":6,"held":true,"mag":[20,14],"errors":0,"smoke":false,"melee":false,"smokes":0},"revolver":{"dmg":40,"moved":0.7,"down":true,"ammoUsed":1,"held":true,"mag":[6,5],"errors":0,"smoke":false,"melee":false,"smokes":0},"heavy_pistol":{"dmg":64,"moved":0.22,"down":false,"ammoUsed":2,"held":true,"mag":[9,7],"errors":0,"smoke":false,"melee":false,"smokes":0},"filibuster":{"dmg":64,"moved":0.44,"down":false,"ammoUsed":2,"held":true,"mag":[9,7],"errors":0,"smoke":false,"melee":false,"smokes":0},"pocketsmg":{"dmg":18.9,"moved":0.19,"down":false,"ammoUsed":6,"held":true,"mag":[24,18],"errors":0,"smoke":false,"melee":false,"smokes":0},"threadpistol":{"dmg":29.6,"moved":0.22,"down":false,"ammoUsed":6,"held":true,"mag":[20,14],"errors":0,"smoke":false,"melee":false,"smokes":0},"micro_smg":{"dmg":23.8,"moved":0.44,"down":false,"ammoUsed":8,"held":true,"mag":[32,24],"errors":0,"smoke":false,"melee":false,"smokes":0},"smg":{"dmg":39.6,"moved":0.41,"down":false,"ammoUsed":5,"held":true,"mag":[30,25],"errors":0,"smoke":false,"melee":false,"smokes":0},"pdw":{"dmg":29.7,"moved":0.33,"down":false,"ammoUsed":5,"held":true,"mag":[35,30],"errors":0,"smoke":false,"melee":false,"smokes":0},"liveblog":{"dmg":30,"moved":0.28,"down":false,"ammoUsed":6,"held":true,"mag":[32,26],"errors":0,"smoke":false,"melee":false,"smokes":0},"combatmg":{"dmg":88,"moved":0.51,"down":false,"ammoUsed":4,"held":true,"mag":[40,36],"errors":0,"smoke":false,"melee":false,"smokes":0},"carbine":{"dmg":63,"moved":0.33,"down":false,"ammoUsed":3,"held":true,"mag":[30,27],"errors":0,"smoke":false,"melee":false,"smokes":0},"rifle":{"dmg":72,"moved":0.33,"down":false,"ammoUsed":3,"held":true,"mag":[30,27],"errors":0,"smoke":false,"melee":false,"smokes":0},"bullpup":{"dmg":69,"moved":0.3,"down":false,"ammoUsed":3,"held":true,"mag":[30,27],"errors":0,"smoke":false,"melee":false,"smokes":0},"battle_rifle":{"dmg":72,"moved":0.22,"down":false,"ammoUsed":2,"held":true,"mag":[20,18],"errors":0,"smoke":false,"melee":false,"smokes":0},"battlerifle":{"dmg":76,"moved":0.33,"down":false,"ammoUsed":2,"held":true,"mag":[20,18],"errors":0,"smoke":false,"melee":false,"smokes":0},"lmg":{"dmg":44.2,"moved":0.24,"down":false,"ammoUsed":4,"held":true,"mag":[40,36],"errors":0,"smoke":false,"melee":false,"smokes":0},"sawnoff":{"dmg":91.4,"moved":1.05,"down":true,"ammoUsed":2,"held":true,"mag":[2,0],"errors":0,"smoke":false,"melee":false,"smokes":0},"doublebarrel":{"dmg":105,"moved":1.05,"down":true,"ammoUsed":2,"held":true,"mag":[2,0],"errors":0,"smoke":false,"melee":false,"smokes":0},"shotgun":{"dmg":55,"moved":1.05,"down":true,"ammoUsed":1,"held":true,"mag":[6,5],"errors":0,"smoke":false,"melee":false,"smokes":0},"both_barrels":{"dmg":45,"moved":1.05,"down":true,"ammoUsed":1,"held":true,"mag":[2,1],"errors":0,"smoke":false,"melee":false,"smokes":0},"autoshotgun":{"dmg":47.5,"moved":1.05,"down":true,"ammoUsed":2,"held":true,"mag":[12,10],"errors":0,"smoke":false,"melee":false,"smokes":0},"auto_shotgun":{"dmg":53.3,"moved":1.05,"down":true,"ammoUsed":2,"held":true,"mag":[8,6],"errors":0,"smoke":false,"melee":false,"smokes":0},"marksman":{"dmg":275,"moved":0.22,"down":false,"ammoUsed":2,"held":true,"mag":[10,8],"errors":0,"smoke":false,"melee":false,"smokes":0},"sniper":{"dmg":360,"moved":0.11,"down":false,"ammoUsed":1,"held":true,"mag":[5,4],"errors":0,"smoke":false,"melee":false,"smokes":0},"heavy_sniper":{"dmg":440,"moved":0.11,"down":false,"ammoUsed":1,"held":true,"mag":[4,3],"errors":0,"smoke":false,"melee":false,"smokes":0},"heavysniper":{"dmg":660,"moved":0.09,"down":false,"ammoUsed":1,"held":true,"mag":[6,5],"errors":0,"smoke":false,"melee":false,"smokes":0},"coffee":{"dmg":40,"moved":0,"down":false,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"hottake":{"dmg":11.4,"moved":1.37,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"smoke":{"dmg":6,"moved":0,"down":false,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":true,"melee":false,"smokes":1},"hotmic":{"dmg":59.9,"moved":1.73,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":1},"spin_smoke":{"dmg":6,"moved":1.7,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":1},"flashbang":{"dmg":6,"moved":1.7,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"sticky":{"dmg":129.3,"moved":1.7,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"stickynote":{"dmg":83.1,"moved":1.71,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"firework":{"dmg":131.4,"moved":1.81,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"grenade_launcher":{"dmg":113.9,"moved":1.83,"down":true,"ammoUsed":1,"held":true,"mag":[6,5],"errors":0,"smoke":false,"melee":false,"smokes":0},"confetti":{"dmg":84.9,"moved":1.82,"down":true,"ammoUsed":1,"held":true,"mag":[6,5],"errors":0,"smoke":false,"melee":false,"smokes":0},"ratio":{"dmg":192.9,"moved":1.86,"down":true,"ammoUsed":1,"held":true,"mag":null,"errors":0,"smoke":false,"melee":false,"smokes":0},"spin":{"dmg":168,"moved":0.91,"down":false,"ammoUsed":12,"held":true,"mag":[40,28],"errors":0,"smoke":false,"melee":false,"smokes":0}}
+  reload: {"start":{"mag":12,"reserve":8,"total":20},"empty":{"mag":0,"reserve":8,"reloading":true,"hud":{"t":0.9000000000000004,"total":1.2,"k":0.24999999999999967},"shots":191},"refilled":{"total":8,"mag":8,"reserve":0},"topped":{"mag":12,"reserve":20,"total":32},"afterThree":{"mag":9,"reserve":20,"total":29},"manual":{"reloading":true,"t":1.2,"armR":0.16},"manualDone":{"reloading":false,"mag":12,"reserve":17,"total":29},"before":{"reloading":true,"mag":9,"reserve":17,"total":26},"cancelled":{"reloading":false,"weapon":"smg","pistolMag":9},"sg":{"sg0":{"mag":4,"reserve":4,"total":8},"sg1":5,"sg2":6,"sg3":{"reloading":false,"mag":6,"reserve":2,"total":8}},"ev":["start","done","start","done","start","cancel","start","done"],"sfx":{"reload":5,"done":3}}
+  bloom: {"pre":{"weapon":"smg","ammo":{"mag":10,"reserve":270,"total":280},"reloadT":0,"knocked":false,"control":true,"cook":false,"wheel":false,"state":"playing","alive":true,"swimming":false,"entering":false,"fireT":156.58333333335008,"now":158.60000000001835},"shots":220,"k0":0,"pitch0":0.2,"maxK":0.89,"minPitch":0.194,"atFire":{"k":0.89,"cone":0.08,"hudBloom":0.8888888888888894},"rested":{"k":0,"cone":0,"pitch":0.2,"kickP":0},"kick":{"before":0.2,"kicked":0.164,"after":0.2,"casings":1}}
+  zones: {"raw":{"head":"head","torso":"torso","legs":"legs","hitPed":true},"head":{"zone":"head","pitch":0.004,"dmg":36,"texts":["WRITE THAT DOWN"]},"torso":{"zone":"torso","pitch":0.124,"dmg":18,"texts":[]},"legs":{"zone":"legs","pitch":0.264,"dmg":12.6,"texts":[]},"rev":{"zone":"head","pitch":0,"dmg":120,"texts":["WRITE THAT DOWN"]},"kill":{"zone":"torso","pitch":0.112,"dmg":30,"texts":["RATIO'D"],"alive":false,"hud":{"age":0.3166666666669187,"kill":true,"zone":"torso","weapon":"revolver"},"marks":[{"zone":"head","kill":false},{"zone":"torso","kill":false},{"zone":"legs","kill":false},{"zone":"head","kill":false},{"zone":"torso","kill":true}]},"hudBefore":{"age":0.3166666666669187,"kill":false,"zone":"head","weapon":"revolver"},"headshots":2}
+  hot mic: {"hover":false,"cook":0.4,"isMic":true,"fuse0":2.08,"bounces":2,"rest":true,"capBlinks":23,"blastAt":2.1,"maxY":2.2318303956101797,"ammo":3,"ammo0":4,"ped":{"dmg":54.8,"down":true},"van":{"dmg":140.1,"burning":false,"wreck":false},"texts":["HOT MIC"],"explosions":2}
+  rocket: {"lock":{"target":true,"weapon":"ratio","mag":1,"reserve":2},"isRocket":true,"speed":40,"trail":35,"hitAt":0.37,"airborne":true,"maxRoll":0.8818505694287166,"maxY":1.2574059436621265,"explodedAt":0.37,"backblast":1.38,"texts":["RATIO'D","+25 subs","+40 subs"],"ammo":{"total":2,"reloading":true,"mag":0,"reserve":2}}
+  rocket flip: {"maxRoll":6.172953986001006,"maxY":2.8837501314560847,"airborne":true}
+  scope: {"fov0":60,"cam0":"chase","on":{"active":true,"zoom":2,"fov":30.1,"cameraMode":"first","bodyHidden":true,"hud":true,"lock":null,"range":39,"eyeHeight":1.6},"zoomed":{"zoom":4,"fov":15,"weapon":"sniper"},"shot":{"hovered":1,"range":40,"dmg":360,"casingsSoon":0,"casingsLater":1},"ev":[[true,2],[true,4]]}
+  unscoped: {"active":false,"cameraMode":"chase","fov":58.2,"weapon":"sniper"}
+  drive-by: {"pistol":{"inCar":true,"shots":5,"pedDmg":54,"carDmg":0,"moved":13.7,"maxSpeed":15.7,"aimActive":true},"rifle":{"shots":0,"aimActive":false,"toast":"Not from the driver's seat. Respectfully."},"take":{"thrown":1,"ammo":2,"inCar":true}}
+  wheel: {"tap":{"open":false,"weapon":"fist","events":0},"held":{"open":true,"index":0,"id":"fist","segments":12,"owned":["fist","pistol","smg"]},"slow":0.2,"picked":{"index":3,"id":"pistol","weaponStill":"fist"},"released":{"open":false,"weapon":"pistol"},"normal":0.5,"unowned":{"index":6,"id":"carbine"},"stepped":{"index":5,"id":"smg"},"kept":{"open":false,"weapon":"smg"},"ev":[[true,"fist",null],[false,"pistol","pistol"],[true,"pistol",null],[false,"smg","smg"]],"t0":197.06666666671563}
+FAIL combat: Error: ASSERT: an unowned segment can be stepped off with [ and equips what is owned: [{"index":6,"id":"carbine"},{"index":5,"id":"smg"},{"open":false,"weapon":"smg"}]
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/combat.js:738:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== content_audit.js ===
+content audit OK: 200 files scanned, 0 hits
+
+=== content_parity.js ===
+content parity (node): 2954 checks, 0 failed
+  live: {"parity":true,"weapons":37,"calls":35,"inGame":["m01c_both_sides","b01_goldplate","b02_velvetine","b03_warbanner","b04_redacted","b05_dunk","b06_panel","h01_casing","h02_prep","h03_job"],"total":61,"intros":10}
+PASS content_parity (7328 ms)
+
+=== cover.js ===
+  open: {"x":90,"z":806}
+  snap: {"near":{"active":false,"near":true,"nearHigh":false},"prompt":"cover","ev":[{"high":false,"kind":"vehicle"}],"cover":{"kind":"vehicle","high":false,"nx":-1,"nz":0},"x":91,"carSide":91.45,"alerts":1,"pose":{"side":"left","high":false,"peek":false,"blind":false,"edge":null},"crouch":true,"yaw":0}
+  block: {"front":{"shots":20,"hpLost":0,"carHit":198,"inCover":true},"flank":{"shots":20,"hpLost":81}}
+  move: {"mid":{"dz":1.28,"dx":0,"cover":true},"end":{"z":808.05,"carEnd":808.25,"edge":"right","cover":true},"peek":{"peek":true,"pose":true,"crouch":false,"aim":true}}
+  blind: {"exposed":24.3,"shots":3,"during":{"blind":true,"crouch":true},"stayed":true}
+  vault: {"x0":91,"x":94.03,"far":93.35,"maxY":1.26,"sawVault":true,"sawPose":true,"cover":false,"onGround":true,"solid":false,"inCar":null}
+  wall spot: {"x":54.8,"z":208,"bx":56,"bz":204,"bd":8,"h":4,"d":8}
+  wall: [{"on":{"kind":"wall","high":true,"nx":-1,"x":55.56,"face":56},"mid":{"peek":false,"edge":null},"corner":{"edge":"left","z":204.19,"wallStart":204},"lean":{"peek":true,"dz":0.55,"aim":true},"exits":[]},{"cover":false,"ex":["key"]}]
+  run: {"running":true,"took":0.85,"kind":"vehicle","nearCar":true,"px":49.7,"face":49.25,"ref":true}
+  none: {"open":false,"openTake":false,"lamp":true,"lampTake":null}
+  teleport: {"inCover":true,"after":{"cover":false,"dx":0},"vaulting":true,"cancelled":true,"frame":true}
+PASS cover (23655 ms)
+
+=== cutscenes.js ===
+  play: {"ok":true,"state":"cutscene","active":true,"letterbox":true,"free":true,"hud":{"active":true,"letterbox":true,"skip":0,"shot":0,"shots":2,"title":"Table Stakes","t":0.09999999999999999,"seconds":7,"skippable":true},"actors":["gus","kip"],"actorIds":["player","gus","kip"],"line0":"player","cam0":{"x":96,"y":9.12,"z":288},"events":["start:cs_opening","shot:cs_opening#0"],"gusAt":{"dx":2.2,"dz":-5,"frozen":true,"pose":"idle","brain":"cutscene"},"kipPose":"wave","playerAt":{"dx":-0.8,"dz":-6,"pose":"table","control":false},"cam3":{"x":98.93,"y":6.93,"z":284.71},"lookDot":1,"line3":"player","lineAfterConfirm":"gus","shotAt3":0,"shot2After":7.75,"cam2":{"x":114.1,"y":1.82,"z":266.26},"shot2Line":"gus","stateMid":"cutscene"}
+  shot: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/cutscene_opening.png {"w":1248,"h":720,"colors":2099,"mean":[118,111,110],"blue":0.022,"green":0.058,"warm":0.099,"dark":0.008,"bright":0.002}
+  letterbox: {"top":1,"bottom":1,"mid":0,"state":"cutscene"}
+  skip: {"half":{"skip":0,"active":true},"mid":{"skip":0.5,"active":true},"active":false,"state":"playing","done":1,"actors":[],"free":false,"control":true,"pose":null,"frozen":false,"camDist":4.1,"events":["end:cs_opening","start:cs_opening","shot:cs_opening#0","end:cs_opening"],"peds":0}
+  once: {"a":true,"b":false,"flag":true,"shot0":0,"shotAfterBack":1,"active":false}
+  determinism: {"a":{"x":97.41,"y":8.07,"z":286.42},"b":{"x":97.41,"y":8.07,"z":286.42},"same":true}
+  intro: {"scripted":true,"s":2.600000000000001,"state":"cutscene","active":true,"giverReused":true,"line":"gus","phase":"intro","peds":1,"after":{"phase":"play","objective":"Get to Dorm 4B","state":"playing","cutscene":false,"giverGone":true,"control":true}}
+  objective: {"state":"cutscene","active":true,"roofY":60.9,"top":60.8,"extra":"npc","extraLook":true,"s":2,"after":{"state":"playing","def":"goto"}}
+  hints: {"a":true,"b":false,"c":true,"first":{"cur":"h_move","queued":["h_move"],"flag":true},"during":{"cur":"h_move","fired":["h_move"]},"later":{"cur":"h_wanted","fired":["h_move","h_wanted"]},"again":false,"near":["h_move","h_wanted","h_look","h_enter"],"hud":{"id":"h_enter","text":"F or Enter gets in. The same key gets out.","keys":["F"],"t":0.03333333333333333,"total":6,"k":0.005555555555555556},"errors":0}
+  ots/clock/roof: {"shot":1,"camToGiver":3.86,"playerToGiver":2,"giverFaces":0,"clockDuring":6.4,"yDuring":60.9,"clockAfter":18.11,"clock0":18.1,"back":0,"yAfter":0,"scripted":true}
+PASS cutscenes (24728 ms)
+
+=== feel.js ===
+  loop start: {"inCar":true,"x":430,"z":338,"y":7,"deck":true,"dir":[0,-1]}
+  loop 5s: {"x":430,"z":204,"y":7,"speed":43.9,"street":"The Loop","hp":80,"braked":0}
+  loop 10s: {"x":429,"z":136,"y":7,"speed":-0.8,"street":"The Loop","hp":80,"braked":17}
+  loop 15s: {"x":427,"z":132,"y":7,"speed":-7.2,"street":"The Loop","hp":79,"braked":18}
+  loop 20s: {"x":422,"z":243,"y":7,"speed":41.5,"street":"The Loop","hp":74,"braked":19}
+  loop: {"onDeck":1,"maxSpeed":44.5,"samples":[{"x":430,"z":204,"y":7,"speed":43.9,"street":"The Loop","hp":80,"braked":0},{"x":429,"z":136,"y":7,"speed":-0.8,"street":"The Loop","hp":80,"braked":17},{"x":427,"z":132,"y":7,"speed":-7.2,"street":"The Loop","hp":79,"braked":18},{"x":422,"z":243,"y":7,"speed":41.5,"street":"The Loop","hp":74,"braked":19}],"hp":74,"inCar":true,"dist":40,"errors":0}
+  three stars: {"wanted":3,"counts":{"peds":74,"cars":38,"parked":21,"foot":4,"cruisers":7,"vans":0,"heli":false,"roadblocks":0,"wanted":3,"heat":19,"sinceSeen":0.92},"state":"playing","money":1000,"inCar":true}
+  respray: {"ev":{"landmark":"strip_garage","cost":300},"wanted":0,"heat":0,"spent":300,"s":0.25,"hp":80,"recolored":true,"state":"playing"}
+  dead: {"state":"wasted","card":"RATIO'D","money0":700}
+  hospital: {"state":"playing","hp":100,"weapons":["fist"],"money":630,"expected":630,"dHosp":1.6,"alive":true,"control":true}
+  busted: {"state":"busted","s":2.25,"card":"DEPLATFORMED","copLine":"Busted! Rate your arrest, one to ten!"}
+  precinct: {"state":"playing","money":1700,"wanted":0,"dHQ":1.8,"control":true}
+  saved: {"ok":true,"x":258,"z":418,"money":4321,"weapons":{"fist":"inf","pistol":17,"smg":33},"weapon":"smg","completed":["m00_intro","m01_van","m01b_airport","m02_read"],"markers":["m03_ratio","m01c_both_sides","st_heckle_1"],"clock":9.25,"hasSave":true}
+FAIL feel: Error: ASSERT: saved with m00..m02 done (m03 lit): {"ok":true,"x":258,"z":418,"money":4321,"weapons":{"fist":"inf","pistol":17,"smg":33},"weapon":"smg","completed":["m00_intro","m01_van","m01b_airport","m02_read"],"markers":["m03_ratio","m01c_both_sides","st_heckle_1"],"clock":9.25,"hasSave":true}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/feel.js:194:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== feel2.js ===
+  opening: {"ok":true,"state":"cutscene","title":"Table Stakes","actors":["player","gus","kip"],"flag":true,"money":250}
+  feel2_opening: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_opening.png {"w":1248,"h":720,"colors":2140,"mean":[119,114,113],"blue":0.025,"green":0.065,"warm":0.051,"dark":0.007,"bright":0.001}
+  runway: {"inCar":true,"speed":35,"x":342,"z":826,"runway":true,"loop":null,"street":null}
+  feel2_runway: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_runway.png {"w":1248,"h":720,"colors":1044,"mean":[92,87,92],"blue":0.014,"green":0.004,"warm":0.006,"dark":0.043,"bright":0.081}
+  port: {"spot":{"x":508,"z":658},"containers":9,"crane":true,"maze":true,"district":"port"}
+  feel2_port: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_port.png {"w":1248,"h":720,"colors":822,"mean":[152,120,116],"blue":0.003,"green":0.045,"warm":0.221,"dark":0.002,"bright":0.001}
+  uptown: {"district":"uptown","night":1,"awning":false,"stanchions":2,"doorman":true}
+  feel2_uptown_night: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_uptown_night.png {"w":1248,"h":720,"colors":1061,"mean":[23,25,37],"blue":0.241,"green":0,"warm":0.022,"dark":0.692,"bright":0}
+  race: {"inCar":true,"s1":0.9999999999999999,"racers":3,"countdown":0,"hud":{"active":true,"id":"lr_01","name":"The Upper Loop","countdown":0,"position":4,"racers":4,"lap":1,"laps":1,"checkpoint":0,"total":8,"time":2.5666666666666624}}
+  feel2_race: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_race.png {"w":1248,"h":720,"colors":1790,"mean":[83,91,106],"blue":0.199,"green":0.037,"warm":0.019,"dark":0.021,"bright":0.005}
+  rampage: {"s1":0.6,"s2":3,"weapon":"tableleg","hecklers":4,"nearest":40.1}
+  feel2_rampage: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_rampage.png {"w":1248,"h":720,"colors":1085,"mean":[151,155,159],"blue":0.266,"green":0.004,"warm":0.006,"dark":0.103,"bright":0.004}
+  sniper: {"scope":true,"zoom":2,"fov":30,"cam":"first","dist":70,"range":69}
+  feel2_sniper: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_sniper.png {"w":1248,"h":720,"colors":1116,"mean":[156,171,173],"blue":0.396,"green":0.11,"warm":0.025,"dark":0.002,"bright":0.017}
+  sniped: {"hp0":60,"hp":0,"alive":false,"ammo":9,"mag":4,"hitmark":{"kill":true,"zone":"torso"}}
+  feel2_sniper_shot: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_sniper_shot.png {"w":1248,"h":720,"colors":1233,"mean":[156,171,173],"blue":0.394,"green":0.11,"warm":0.028,"dark":0.001,"bright":0.018}
+  rocket: {"s":0.6,"hp0":100,"hp":0,"wreck":true,"ammo":5,"rockets":1,"mag":0,"reload":2.25,"aiming":true,"aimActive":true,"weapon":"ratio","state":"playing","control":true,"alive":true,"kd":false,"explosion":33,"dist":30}
+  feel2_rocket: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_rocket.png {"w":1248,"h":720,"colors":1427,"mean":[137,148,154],"blue":0.292,"green":0.084,"warm":0.006,"dark":0.125,"bright":0.046}
+  map: {"state":"paused","page":"phone","tab":0,"waypoint":{"x":318,"z":694},"saved":{"x":318,"z":694},"route":12,"dist":611}
+  feel2_map: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/feel2_map.png {"w":1248,"h":720,"colors":1657,"mean":[126,137,146],"blue":0.296,"green":0.062,"warm":0.007,"dark":0.136,"bright":0.02}
+PASS feel2 (44770 ms)
+
+=== interiors.js ===
+  api: {"fns":[],"active":false,"current":null,"wrapped":true,"cityHeight":0.12,"citySolidOk":true,"medals":[null,"bronze","silver","gold"]}
+  enter: {"ok":true,"mid":{"active":false,"control":false},"active":true,"cur":{"id":"armory","kind":"armory","store":"both_sides_strip","branch":"strip"},"ev":["interior:fade","interior:enter","interior:fade"],"enterEv":{"id":"armory","kind":"armory","store":"both_sides_strip","branch":"strip","landmark":"both_sides_strip"},"items":52,"distinct":45,"ids":["coffee","smoke","spin_smoke","flashbang","oped","sticky","stickynote","pocket","pistol","sawnoff","pocketsmg","revolver","machine_pistol","threadpistol","heavy_pistol","filibuster","micro_smg","smg","pdw","hottake","hotmic","selfie_stick","clipboard","selfie","tableleg","knuckles","gavel","bat","mic_stand","doublebarrel","golf_club","shotgun","both_barrels","battlerifle","auto_shotgun","sniper","firework","combatmg","lmg","grenade_launcher","confetti","ratio","heavy_sniper","heavysniper","spin"],"order":["megaphone","flare_gun","mute_button","merch_cannon","minigun","liveblog","carbine","rifle","bullpup","battle_rifle","autoshotgun","marksman"],"meshes":51,"wall":true,"floor":0,"inside":false,"counter":true,"stopped":{"z":-1.7489999999999999,"x":0},"merle":1,"merleName":"Merle Firmness","pos":{"x":0,"z":-1.7489999999999999,"y":0},"outside":{"x":110,"z":270},"ctlAfter":true,"district":"strip"}
+FAIL interiors: Error: ASSERT: racks stocked with every weapon as a real mesh: 52 items, 45 weapons, missing megaphone,flare_gun,mute_button,merch_cannon,minigun,liveblog,carbine,rifle,bullpup,battle_rifle,autoshotgun,marksman
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/interiors.js:68:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== missions.js ===
+  data: {"count":61,"errs":[],"chainLen":60,"base":17}
+FAIL missions: Error: ASSERT: 17 base missions (25 with the expansion), got 17 / 61
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/missions.js:73:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== newplayer.js ===
+  PASS title: menu ["NEW GAME","LOAD GAME","SETTINGS","CONTROLS","CREDITS"], after Enter: {"state":"playing","loading":false,"slot":1} (0.5 s real to playable)
+  PASS story_1min: m00_intro started at 0.9 s, objective "Get to Dorm 4B"
+  FAIL gps_first: "Get to Dorm 4B" reached in 6.7 s only with the test's own path search: the game drew no GPS route (GTP.World.route missing, gps:set {"label":"Get to Dorm 4B","kind":"objective"})
+  PASS m00: completed in 59 s (at 67 s)
+    after m00: gps [{"t":47.11666666666667,"x":110,"z":270,"label":"Set up on the Quad","kind":"objective","route":null,"missionId":"m00_intro"},{"t":67.11666666666666,"x":62,"z":322,"label":"Loud & Correct: Gus's Garage","kind":"story","route":null,"missionId":"m01_van","giver":"sloane","landmark":"pod_garage"}] phone [] Story.next {"missionId":"m01_van","title":"Loud & Correct","giver":"sloane","giverName":"Sloane Vexley","landmark":"pod_garage","landmarkName":"Gus's Garage","x":62,"z":322,"y":0.12,"act":1,"chapter":"Act I: Folding Table"}
+    to m01_van: {"target":{"id":"m01_van","src":"Story.next","x":62,"z":322},"ok":true,"id":"m01_van","t":17.599999999999994}
+  PASS m01_van: completed in 241 s (at 339 s)
+    to m01c_both_sides: {"target":{"id":"m01c_both_sides","src":"nearest blue light (no story GPS)","x":306,"z":418},"ok":true,"id":"m01c_both_sides","t":115.96666666666664}
+  (screenshot m01c_both_sides_end failed: page.evaluate: Target page, context or browser has been closed)
+  FAIL m01c: page error: page.evaluate: Target page, context or browser has been closed
+  (screenshot armory failed: page.evaluate: Target page, context or browser has been closed)
+  FAIL armory: GTP.Interiors is missing (interiors track); walking into the Both Sides Arms door did not open anything {"ok":false,"why":"page error: page.evaluate: Target page, context or browser has been closed"}
+  (screenshot pistol failed: page.evaluate: Target page, context or browser has been closed)
+  the run stopped early: TypeError: Cannot read properties of undefined (reading 'length')
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/newplayer.js:637:67
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+  NEW-PLAYER STEP REPORT (seed 7, budget 600 s simulated)
+   1 PASS title       Title menu shows NEW GAME; Enter starts a new game
+   2 PASS story_1min  In the story within 60 s (a mission starts by itself)
+   3 FAIL gps_first   First objective reached by following the on-screen GPS route
+                    -> "Get to Dorm 4B" reached in 6.7 s only with the test's own path search: the game drew no GPS route (GTP.World.route missing, gps:set {"label":"Get to Dorm 4B","kind":"objective"})
+   4 PASS m00         m00_intro completed
+   5 PASS m01_van     m01_van completed
+   6 FAIL m01c        m01c_both_sides completed
+                    -> page error: page.evaluate: Target page, context or browser has been closed
+   7 FAIL armory      Inside the armory interior
+                    -> GTP.Interiors is missing (interiors track); walking into the Both Sides Arms door did not open anything {"ok":false,"why":"page error: page.evaluate: Target page, context or browser has been closed"}
+   8 SKIP pistol      Holding a visible pistol inside the armory
+                    -> not reached
+   9 SKIP aim         Aimed the pistol once
+                    -> not reached
+  10 SKIP cover       Took cover once
+                    -> not reached
+  11 SKIP save        Saved the game by hand
+                    -> not reached
+  12 SKIP ten_min     All of it within ten minutes of simulated time
+                    -> not reached
+FAIL newplayer: Error: ASSERT: the new-player bar is not met; missing steps: gps_first, m01c, armory, pistol, aim, cover, save, ten_min
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/newplayer.js:719:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)

@@ -15,6 +15,10 @@
  * every brain runs inside a try/catch that reports to GTP.errors.
  *
  * Knobs live in GTP.C.AI (defaults below, overridable from 01_config.js).
+ *
+ * v0.3 (PLAN_V03 "world"): motorcycles in traffic, civilians that cower when a gun is aimed at them, cops that flank a
+ * player in cover (AI.coverAlert), the helicopter's door gunner, the door markers of shops and safehouses (AI.doors),
+ * eight random street events (AI.events), and everything ambient pauses while GTP.Interiors.active.
  */
 (function () {
   'use strict';
@@ -47,7 +51,13 @@
     },
     roadblock: { minStar: 3, every: 12, max: 2, ahead: [84, 136], life: 30 },
     heli: { altitude: 30, radius: 24, speed: 26, orbit: 0.3, respawn: 45 },   // respawn: seconds before another helicopter comes after one is shot down
-    hoaPatrols: 2
+    hoaPatrols: 2,
+    cruiseMoto: 15,
+    cower: { range: 28, width: 1.6, hold: 1.4, fleeAfter: 5 },          // a gun aimed within `width` m of a civilian's line
+    flank: { dist: [8, 13], angle: 1.25, life: 9, every: 2.5 },        // cops swing ~70 deg round a covered player
+    heliGun: { range: 60, burst: 5, gap: 0.11, rest: 2.6, dmg: 9, hit: 0.32 },   // GDD §2.3: the door gunner's SMG (AI damage scale)
+    doorTick: 0.1, doorShow: 120,
+    events: { first: [40, 70], every: [70, 130], minDist: 35, maxDist: 75, leave: 260 }
   }, C.AI || {});
 
   // ------------------------------------------------------------- helpers --
@@ -61,6 +71,8 @@
   function sfx(name, x, z, gain) { if (GTP.Audio && GTP.Audio.play) { try { GTP.Audio.play(name, { x: x, z: z, gain: gain }); } catch (e) { /* audio optional */ } } }
   function toast(t) { if (GTP.UI && GTP.UI.toast) { try { GTP.UI.toast(t); } catch (e) { /* ui optional */ } } }
   function flags() { return (GTP.Missions && GTP.Missions.state && GTP.Missions.state.flags) || {}; }
+  // inside a walk-in interior (13_interiors) the city holds still: no spawns, no responders, no events, no doors
+  function inInterior() { var I = GTP.Interiors; return !!(I && I.active); }
   function ensureT() { if (!T) { T = W().T; M = W().M; } }
   function tileI(tx, tz) { return tz * W().w + tx; }
   function isRoadTile(t) { return t === T.ROAD || t === T.BRIDGE || t === T.RAMP; }
@@ -310,6 +322,10 @@
     Ev.on('ped:dead', function (e) { var p = player(); if (!p || !e.ped || e.ped === p) return; var s = e.src; if (!e.ped.hostile && (s === p || (s && s.driver === p) || (s && s.owner === p))) wanted.crime(isCop(e.ped) ? 'attackCop' : 'killPed', 'kill'); AI.alarm(e.ped.x, e.ped.z, 22, s); });
     Ev.on('vehicle:exploded', function (e) { var p = player(); var v = e.vehicle; if (!v) return; AI.alarm(v.x, v.z, 40, e.src); if (p && (e.src === p || (e.src && e.src.driver === p) || v.lastDamageSrc === p)) wanted.crime('destroyVehicle', 'explode'); if (v.isPolice && p) wanted.addHeat(2, 'copCarLost'); });
     Ev.on('vehicle:impact', function (e) { if (e.impact > 9) AI.alarm(e.x, e.z, 14, e.vehicle); });
+    // v0.3: the shooting track's cover events, and the interior's door latch (step out of a shop without walking back in)
+    Ev.on('cover:enter', function (e) { var p = player(); if (!p || wanted.level === 0) return; AI.coverAlert(e && e.x != null ? e.x : p.x, e && e.z != null ? e.z : p.z); });
+    Ev.on('cover:exit', function () { cover.active = false; });
+    Ev.on('interior:exit', function () { doors.wasInside = true; });
     Ev.on('honk', function (e) { var v = e.vehicle; if (v && v.hasPlayer && v.hasPlayer()) AI.alarm(v.x, v.z, 7, v, true); });
     Ev.on('vehicle:enter', function (e) {
       var p = player(); if (!p || e.ped !== p || !e.vehicle) return;
@@ -344,7 +360,7 @@
       var N = Wd.w * Wd.h, i;
       for (i = 0; i < N; i++) {
         var tz = (i / Wd.w) | 0;
-        if (Wd.tiles[i] === T.PARKING && !(Wd.meta[i] & M.YARD) && (tz & 1)) spawner.parkTiles.push(i);
+        if (Wd.tiles[i] === T.PARKING && !(Wd.meta[i] & M.YARD) && (tz & 1) && !(Wd._noPark && Wd._noPark[i])) spawner.parkTiles.push(i);   // never on a helipad, the apron, the links or a stunt line
         if (Wd.deck[i] && !((Wd.dmeta[i] & M.H) && (Wd.dmeta[i] & M.V))) spawner.deckTiles.push(i);
       }
       // landmark lots with a fixed parked fleet (the balloon depot's beige vans, the podcast van)
@@ -355,7 +371,7 @@
         for (var zz = lm.lot.z; zz < lm.lot.z + lm.lot.d && n < cap; zz++) for (var xx = lm.lot.x; xx < lm.lot.x + lm.lot.w && n < cap; xx++) {
           if (!Wd.inBounds(xx, zz)) continue;
           var ti = tileI(xx, zz);
-          if (Wd.tiles[ti] !== T.PARKING) continue;
+          if (Wd.tiles[ti] !== T.PARKING || (Wd._noPark && Wd._noPark[ti])) continue;
           // keep clear of the door approach and the building's own skirt
           if (lm.building && U.pointInRect((xx + 0.5) * TILE, (zz + 0.5) * TILE, lm.building.x - 2.5, lm.building.z - 2.5, lm.building.w + 5, lm.building.d + 5)) continue;
           spawner.lotOf.set(ti, { type: tbl[id].type || 'sedan', color: tbl[id].color || null, wrap: tbl[id].wrap || null, landmark: id });
@@ -374,6 +390,7 @@
       } finally { spawner.warm = false; }
     },
     update: function (dt) {
+      if (inInterior()) return;
       spawner.t += dt;
       if (spawner.t < K.spawnEvery) return;
       spawner.t = 0;
@@ -498,20 +515,25 @@
       for (var i = 0; i < n && cnt.cars + made < C.CARS_TARGET; i++) {
         var s = spawner.carSpot(min, max); if (!s) continue;
         var type = R().pick(tbl[s.district] || ['sedan', 'taxi', 'van']);
-        if (s.deck && (type === 'bus' || type === 'bike')) type = 'sedan';
+        if (s.deck && (type === 'bus' || type === 'bike' || type === 'moto')) type = 'sedan';   // no scooters or motorbikes on the Loop
         if (type === 'bus' && !(W().metaAt(s.tx, s.tz) & M.AVENUE)) type = R().pick(['sedan', 'van', 'taxi']);   // buses keep to the avenues
         if (type === 'cop' && wanted.level > 0) type = 'sedan';   // responders come from the precinct while the player is hot
-        var v = spawner.placeTraffic(s, type, null);
+        var ms = CW.spawn.vehicles.motoShare && CW.spawn.vehicles.motoShare[s.district];
+        if (ms && !s.deck && (type === 'sedan' || type === 'sports' || type === 'suv' || type === 'van') && U.hash2(s.tx * 31 + s.tz, Math.floor(simT() * 4), 913) < ms) type = 'moto';   // no draw on the stream
+        type = spawner.vehicleType(type);
+        var v = spawner.placeTraffic(s, type, type === 'taxi' && flags().cab_livery ? { wrap: 'pod' } : null);
         if (v) made++;
       }
       return made > 0;
     },
+    // the type the spawner can actually build: 'moto' (the vehicles track's motorcycle) rides as a 'bike' until C.VEHICLES has it
+    vehicleType: function (type) { if (type === 'moto' && !(C.VEHICLES && C.VEHICLES.moto)) return 'bike'; return C.VEHICLES && C.VEHICLES[type] ? type : 'sedan'; },
     // a driven car on a lane at a spot from carSpot
     placeTraffic: function (s, type, opts) {
       opts = opts || {};
       var dx = s.axis === 'h' ? s.dir : 0, dz = s.axis === 'v' ? s.dir : 0;
       var kind = type === 'cop' ? 'cop' : (opts.kind || 'traffic');
-      var v = spawner.spawnVehicle(s.x, s.z, type, { yaw: U.dirToYaw(dx, dz), y: s.y, deck: s.deck, kind: kind, color: opts.color, tag: opts.tag });
+      var v = spawner.spawnVehicle(s.x, s.z, type, { yaw: U.dirToYaw(dx, dz), y: s.y, deck: s.deck, kind: kind, color: opts.color, tag: opts.tag, wrap: opts.wrap });
       var ai = v.ai; ai.axis = s.axis; ai.dir = s.dir; ai.laneC = s.laneC; ai.deck = !!s.deck; ai.hoa = !!opts.hoa;
       var cr = cruiseFor(v, ai); v.vx = dx * cr * 0.5; v.vz = dz * cr * 0.5; v.speed = cr * 0.5;
       var did = s.district || districtIdAt(s.x, s.z);
@@ -545,7 +567,8 @@
         var did = districtIdAt(x, z), type = lot ? lot.type : R().pick(tbl[did] || ['sedan']);
         if (Wd.tile(tx, tz - 1) === T.BUILDING || Wd.tile(tx, tz + 1) === T.BUILDING) { if (Wd.tile(tx - 1, tz) === T.BUILDING || Wd.tile(tx + 1, tz) === T.BUILDING) continue; }
         var yaw = U.hash2(tx, tz, seed + 5) < 0.5 ? 0 : Math.PI;
-        var v = spawner.spawnVehicle(x, z, type, { yaw: yaw, kind: 'parked', color: lot ? lot.color : null, wrap: lot ? lot.wrap : null });
+        type = spawner.vehicleType(type);
+        var v = spawner.spawnVehicle(x, z, type, { yaw: yaw, kind: 'parked', color: lot ? lot.color : null, wrap: lot ? lot.wrap : (type === 'taxi' && flags().cab_livery ? 'pod' : null) });
         v.vx = v.vz = 0; v.speed = 0;
         spawner.parked.set(ti, v);
         made++;
@@ -583,7 +606,8 @@
         for (i = 0; i < list.length; i++) if (list[i].kind === 'vehicle' && list[i].ai && list[i].ai.hoa && !list[i].removed && !list[i].wreck) hoaN++;
         if (hoaN < K.hoaPatrols) {
           var s = spawner.carSpot(spawner.warm ? 20 : 50, 170);
-          if (s && s.district === 'suburbs' && !s.deck) spawner.placeTraffic(s, 'suv', { hoa: true, color: '#f4ead8', tag: 'hoa', kind: 'hoa' });
+          // tagged 'hoapatrol', not 'hoa': the HOA Patrol strand's parked SUV owns that tag (QA-STR-11)
+          if (s && s.district === 'suburbs' && !s.deck) { var hv = spawner.placeTraffic(s, 'suv', { hoa: true, color: '#f4ead8', tag: 'hoapatrol', kind: 'hoa' }); hv.hoaPatrol = true; }
         }
       }
       // Perpetual Assembly Plaza: marchers mill about the kiosk (they come back after a despawn)
@@ -801,15 +825,83 @@
     var pool = ai.role === 'cop' || ai.role === 'swat' ? (wanted.level > 0 ? barkPool('cop') : (GTP.Content.radio && GTP.Content.radio.barks.copIdle)) : barkPool(ai.role, districtIdAt(p.x, p.z));
     if (pool && pool.length) say(p, R().pick(pool), ai.role === 'cop' || ai.role === 'swat' ? '#8fb6ff' : ai.role === 'protester' ? '#ff7a00' : null);
   }
+  // ---- v0.3: a gun aimed at a civilian makes them cower (hands up, crouched: ped.cowering for the animation), and run
+  // once the aim leaves them. The player's aim is read once per step (AI.update -> readAim).
+  var aimInfo = { on: false, x: 0, z: 0, fx: 0, fz: 1 };
+  function armed(pl) {
+    var w = pl.weapon; if (!w || w === 'fist') return false;
+    var CB = GTP.Combat, d = CB && CB.WEAPONS && CB.WEAPONS[w];
+    return !(d && (d.melee || d.cls === 'melee'));
+  }
+  function readAim() {
+    var pl = player(); aimInfo.on = false;
+    if (!pl || !pl.alive || pl.inVehicle || inInterior()) return;
+    var pose = pl.pose, aiming = !!(pl.aiming || (pose && pose.aim));
+    if (!aiming || !armed(pl)) return;
+    var yaw = pl.aimYaw != null ? pl.aimYaw : (pose && pose.aimYaw) || pl.yaw, f = U.yawToDir(yaw);
+    aimInfo.on = true; aimInfo.x = pl.x; aimInfo.z = pl.z; aimInfo.fx = f.x; aimInfo.fz = f.z;
+  }
+  function aimedAt(p) {
+    if (!aimInfo.on) return false;
+    var dx = p.x - aimInfo.x, dz = p.z - aimInfo.z, along = dx * aimInfo.fx + dz * aimInfo.fz;
+    if (along < 0.8 || along > K.cower.range) return false;
+    var lat = Math.abs(-dx * aimInfo.fz + dz * aimInfo.fx);
+    return lat < K.cower.width + along * 0.04;
+  }
+  var COWER_LINES = ['Don\'t shoot! I\'m just here for the discourse!', 'I yield my time!', 'Okay, okay, you win the debate!', 'I\'m unsubscribing, I\'m unsubscribing!', 'Please, I have a podcast!'];
+  // shots fired (or a blast) near the ped in the last moment: a cowering ped runs instead of freezing in the line of fire
+  function gunfireNear(p) {
+    for (var i = 0; i < alarms.length; i++) { var a = alarms[i]; if (!a.mild && a.src !== p && U.dist2d(a.x, a.z, p.x, p.z) < a.r) return a; }
+    return null;
+  }
+  function cowerCheck(p, ai) {
+    if (ai.mode === 'cower') return;
+    if (ai.mode === 'flee' && ai.fleeT > 3) return;
+    if (!aimedAt(p) || gunfireNear(p)) return;
+    var pl = player(); if (!losClear(pl.x, pl.y + 1.4, pl.z, p.x, p.y + 1.2, p.z)) return;
+    ai.mode = 'cower'; ai.cowerT = K.cower.hold; ai.chat = null; ai.tgt = null; ai.escape = null;
+    p.stop(); p.cowering = true;
+    if (!ai.mute && !p.line) say(p, R().pick(COWER_LINES), '#ffd45a');
+    GTP.Events.emit('ped:cower', { ped: p });
+  }
+  function cowerTick(p, ai, dt) {
+    var pl = player();
+    p.stop(); p.cowering = true;
+    if (pl) p.yaw = U.angleDamp(p.yaw, U.dirToYaw(pl.x - p.x, pl.z - p.z), 6, dt);
+    if (aimedAt(p)) ai.cowerT = K.cower.hold; else ai.cowerT -= dt;
+    var shot = gunfireNear(p);
+    if (shot || ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, shot || pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
+  }
+
+  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load
+  // (06c_animation loads before this file); once the animation track's GTP.Anim is in, it poses ped.cowering itself and
+  // this wrapper stands aside.
+  (function () {
+    var P = GTP.Ped && GTP.Ped.prototype; if (!P || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
+    var base = P.syncMesh;
+    P.syncMesh = function (alpha) {
+      base.call(this, alpha);
+      if (!this.cowering || !this.alive || this.inVehicle || this.knockedDown || GTP.Anim) return;
+      var parts = this._parts, m = this.mesh; if (!parts || !parts.armL || !parts.armR || !m || !m.visible) return;
+      parts.armL.rotation.x = Math.PI - 0.3; parts.armR.rotation.x = Math.PI - 0.3; parts.armL.rotation.z = 0.4; parts.armR.rotation.z = -0.4;
+      if (parts.head) parts.head.rotation.x = 0.3;
+      if (parts.legL && parts.legR) { parts.legL.rotation.x = 0.25; parts.legR.rotation.x = -0.1; }
+      m.position.y -= 0.1;
+    };
+    P.syncMesh._cower = true;
+  })();
+
   function pedTick(p, dt) {
     var ai = p.ai;
-    if (!p.alive || p.inVehicle) { if (p._bark) p._bark.visible = false; return; }
-    if (p.knockedDown) { ai.wasDown = true; p.stop(); syncBark(p); return; }
+    if (!p.alive || p.inVehicle) { p.cowering = false; if (p._bark) p._bark.visible = false; return; }
+    if (p.knockedDown) { ai.wasDown = true; p.cowering = false; if (ai.mode === 'cower') ai.mode = 'wander'; p.stop(); syncBark(p); return; }
     if (ai.wasDown) { ai.wasDown = false; var h = p.lastHitBy; if (h && h.kind === 'vehicle' && h.driver) h = h.driver; if (ai.mode !== 'chase') { startFlee(p, ai, h ? { x: h.x, z: h.z } : null, R().range(4, 6)); ai.fleeT0 = ai.fleeT; } }
     if (p.fleeFrom) { var ff = p.fleeFrom; p.fleeFrom = null; startFlee(p, ai, { x: ff.x, z: ff.z }, p.fleeTimer || 5); ai.fleeT0 = ai.fleeT; p.fleeTimer = 0; }
     if (p.entering) { syncBark(p); return; }
     if (ai.role === 'cop' || ai.role === 'swat' || (ai.role === 'hoa' && hoaHostile())) { copTick(p, ai, dt); }
     else {
+      cowerCheck(p, ai);
+      if (ai.mode === 'cower') { cowerTick(p, ai, dt); syncBark(p); return; }
       scanThreats(p, ai, dt);
       switch (ai.mode) {
         case 'flee': fleeTick(p, ai, dt); break;
@@ -842,6 +934,7 @@
       base = t === T.RAMP ? cr.ramp : (Wd.metaAt(tx, tz) & M.AVENUE) ? cr.avenue : cr.street;
     }
     if (v.type === 'bus') base = Math.min(base, cr.bus); else if (v.type === 'truck') base = Math.min(base, cr.truck); else if (v.type === 'bike') base = Math.min(base + 2, cr.bike);
+    else if (v.type === 'moto') base = Math.max(base, K.cruiseMoto) + 1;   // motorcycles ride a little quicker than the cars
     return Math.min(base * ai.speedMul, v.cls.maxSpeed * 0.9);
   }
   function outerLane(w2, lowHalf) { return lowHalf ? 0 : w2 - 1; }
@@ -1082,6 +1175,28 @@
       } else if (ai.turnT > 7) { if (!adoptLane(v, ai)) ai.plan = null; }
     }
     aheadCaps(v, ai, dt);
+    breakGridlock(v, ai, dt);
+  }
+  // v0.3: a gridlock cycle (each car's speed cap is the car ahead of it, round a junction or nose to nose after a swerve
+  // into the oncoming lane) never clears by itself: seen in the campaign, five cars and a courier stood 300 s at Ratio Row.
+  // A car held more than 6 s by another car follows the chain of who holds whom; when it comes back to itself, the car
+  // with the lowest id in the loop backs up for a moment (wheels toward its own lane) and the knot unwinds.
+  function breakGridlock(v, ai, dt) {
+    ai.gridT = Math.max(0, (ai.gridT || 0) - dt);
+    var cr = ai.capReason;
+    if (ai.gridT > 0 || !cr || cr.kind !== 'vehicle' || ai.cap > 0.5 || ai.blockedT < 6 || Math.abs(v.speed) > 0.6) return false;
+    var minId = v.id, c = cr, n = 0;
+    while (c && c !== v && n < 10) {
+      if (c.kind !== 'vehicle' || !c.ai || c.ai.cap > 0.5 || !c.ai.capReason) return false;
+      if (c.id < minId) minId = c.id;
+      c = c.ai.capReason; n++;
+    }
+    if (c !== v || minId !== v.id) return false;
+    var lat = (ai.axis === 'h' ? v.z : v.x) - ai.laneC, side = Math.abs(lat) > 0.6 ? U.sign(lat) : ((v.id & 1) ? 1 : -1);   // no draw on the stream
+    ai.reverseT = 1.8; ai.revSteer = U.clamp(side * (ai.axis === 'h' ? ai.dir : -ai.dir), -1, 1) * 0.7;
+    ai.swerve = 0; ai.swerveT = 0; ai.blockedT = 0; ai.gridT = 8; ai.plan = null;
+    GTP.Events.emit('ai:gridlock', { vehicle: v, cycle: n + 1 });
+    return true;
   }
   // every step: steering + throttle from the cached plan (cheap, no queries)
   function carStep(v, ai, dt) {
@@ -1211,6 +1326,11 @@
     if (ai.mode === 'chase') {
       if (!ai.seen) { ai.lostT += dt; if (ai.lostT > 12) { ai.mode = 'alert'; ai.lostT = 0; } }
       var goal = ai.seen ? pl : wanted.lastKnown;
+      // v0.3: told to flank a player in cover: swing wide to the flank point, shooting when there is a line
+      if (ai.flank) {
+        if (!cover.active || simT() > ai.flank.until || U.dist2d(p.x, p.z, ai.flank.x, ai.flank.z) < 1.4) { ai.flank.done = true; ai.flankDone = ai.flank; ai.flank = null; ai.path = null; }
+        else { walkPath(p, ai, ai.flank.x, ai.flank.z, true, dt); copShoot(p, ai, d, dt); copBark(p, ai, d, dt); return; }
+      }
       var car = ai.car && !ai.car.removed && !ai.car.wreck && !ai.car.sinking && !ai.car.driver ? ai.car : null;
       if (plVeh && plSpeed > 5 && d > 16 && car && U.dist2d(p.x, p.z, car.x, car.z) < 32) {
         // the chase is on wheels now: back to the cruiser
@@ -1238,7 +1358,62 @@
     if (ai.shotT > 0) return;
     ai.shotT = ai.role === 'swat' ? 1.2 : 0.95;
     var CB = GTP.Combat;
-    if (CB && CB.fire && CB.WEAPONS && CB.WEAPONS[p.weapon]) { var pl = player(); p.aiming = true; p.aimYaw = U.dirToYaw(pl.x - p.x, pl.z - p.z); try { CB.fire(p, p.weapon); } catch (e) { U.reportError(e, 'cop.fire'); } }
+    if (CB && CB.fire && CB.WEAPONS && CB.WEAPONS[p.weapon]) {
+      var pl = player(); p.aiming = true; p.aimYaw = U.dirToYaw(pl.x - p.x, pl.z - p.z);
+      var mb = copMissBonus();
+      if (mb > 0 && R().random() < mb) p.aimYaw += R().sign() * R().range(0.16, 0.3);   // subscriber tier 4: cops miss 15% more (QA-STR-15); no draw below it
+      try { CB.fire(p, p.weapon); } catch (e) { U.reportError(e, 'cop.fire'); }
+    }
+  }
+  // the share of police shots that go wide on purpose: the subscriber tiers' copAccuracyDelta (tier 4 'Pundit-Industrial': -0.15)
+  var missCache = { t: -1, v: 0 };
+  function copMissBonus() {
+    var now = simT(); if (now - missCache.t < 2) return missCache.v;
+    missCache.t = now; missCache.v = 0;
+    try {
+      var Ms = GTP.Missions, sub = Ms && Ms.subscribers ? Ms.subscribers() : null, tier = sub ? sub.tier | 0 : 0;
+      var X = GTP.Content.expansion, tiers = X && Array.isArray(X.subscriberTiers) ? X.subscriberTiers : null, d = 0;
+      if (tiers) { for (var i = 0; i < tiers.length; i++) { var tt = tiers[i], n = tt.tier != null ? tt.tier : i; if (n <= tier && tt.effects && tt.effects.copAccuracyDelta) d -= tt.effects.copAccuracyDelta; } }
+      else if (sub && sub.perks && sub.perks.indexOf('plot_armor') >= 0) d = 0.15;
+      missCache.v = U.clamp(d, 0, 0.6);
+    } catch (e) { missCache.v = 0; }
+    return missCache.v;
+  }
+  // ---- v0.3: cops flank a player in cover (GTP.AI.coverAlert, the shooting track's cover:enter). The nearest chasing cop
+  // keeps the player pinned; the others alternate left and right to a point ~70 degrees round the cover, 8-13 m out, on
+  // walkable ground with a clear line to the player.
+  var cover = { active: false, x: 0, z: 0, t: -1e9, assignT: -1e9 };
+  function flankPoint(cop, side) {
+    var Wd = W(), F = K.flank, vx = cop.x - cover.x, vz = cop.z - cover.z, a0 = Math.atan2(vz, vx);
+    for (var k = 0; k < 6; k++) {
+      var ang = a0 + side * F.angle * (1 - 0.12 * (k % 3)), dist = k < 3 ? F.dist[1] : F.dist[0];
+      var px = cover.x + Math.cos(ang) * dist, pz = cover.z + Math.sin(ang) * dist, t = Wd.tileAt(px, pz);
+      if (!(pedWalkable(t) || t === T.ROAD) || Wd.solidAt(px, pz, 0.5)) continue;
+      if (!losClear(px, 1.5, pz, cover.x, 1.2, cover.z)) continue;
+      return { x: px, z: pz, side: side, t: simT(), until: simT() + F.life };
+    }
+    return null;
+  }
+  function assignFlank() {
+    cover.assignT = simT();
+    var list = E().hash.query(cover.x, cover.z, 70, scratch3).filter(function (e) { return e.kind === 'ped' && e.alive && !e.inVehicle && isCop(e) && e.ai && (e.ai.mode === 'chase' || e.ai.mode === 'alert'); });
+    list.sort(function (a, b) { return U.dist2d(a.x, a.z, cover.x, cover.z) - U.dist2d(b.x, b.z, cover.x, cover.z) || a.id - b.id; });
+    var side = 1, n = 0;
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (i === 0) { c.ai.flank = null; c.ai.mode = 'chase'; continue; }   // the pinning cop
+      if (c.ai.flank && simT() < c.ai.flank.until) { side = -c.ai.flank.side; continue; }
+      var fp = flankPoint(c, side) || flankPoint(c, -side);
+      if (fp) { c.ai.flank = fp; c.ai.mode = 'chase'; c.ai.path = null; c.ai.lostT = 0; side = -fp.side; n++; }
+    }
+    if (n) GTP.Events.emit('ai:flank', { x: cover.x, z: cover.z, n: n });
+    return n;
+  }
+  function coverTick() {
+    if (!cover.active) return;
+    var pl = player();
+    if (!pl || !pl.alive || pl.inVehicle || wanted.level === 0 || U.dist2d(pl.x, pl.z, cover.x, cover.z) > 4 || simT() - cover.t > 40) { cover.active = false; return; }
+    if (simT() - cover.assignT > K.flank.every) assignFlank();
   }
   function copBark(p, ai, d, dt) {
     ai.barkT -= dt;
@@ -1508,7 +1683,33 @@
       this.spotY = Wd.heightAt(this.spot.x, this.spot.z, pl.y);
       this.seeT -= dt;
       if (this.seeT <= 0) { this.seeT = 0.25; this.sees = !this.leaving && wanted.level > 0 && U.dist2d(this.x, this.z, pl.x, pl.z) < K.heliSight && losClear(this.x, this.y - 1, this.z, pl.x, pl.y + 1.2, pl.z); if (this.sees) wanted.see(this); }
+      if (this.sees && !this.leaving && wanted.level >= 4 && pl.alive) this.gunner(pl, dt);
       if (GTP.Audio && GTP.Audio.heli && this.age % 0.5 < dt) { try { GTP.Audio.heli(!this.leaving, this.x, this.z); } catch (e) { /* optional */ } }
+    }
+    // CMB-09 (GDD §2.3): the door gunner's SMG. Bursts of five at a player it can see within 60 m, AI damage scale, worse
+    // against a moving target or a car; the misses kick up the ground beside the player
+    gunner(pl, dt) {
+      var G = K.heliGun;
+      this.gunT = (this.gunT || 0) - dt; if (this.gunT > 0) return;
+      var tgt = pl.inVehicle || pl, mx = this.x, my = this.y - 1.3, mz = this.z;
+      var d3 = Math.sqrt((tgt.x - mx) * (tgt.x - mx) + (tgt.y + 1 - my) * (tgt.y + 1 - my) + (tgt.z - mz) * (tgt.z - mz));
+      if (d3 > G.range) { this.gunT = 0.5; return; }
+      if (!(this.burstN > 0)) this.burstN = G.burst;
+      var sp = Math.sqrt((tgt.vx || 0) * (tgt.vx || 0) + (tgt.vz || 0) * (tgt.vz || 0));
+      var chance = G.hit * (1 - 0.5 * d3 / G.range) * (pl.inVehicle ? 0.8 : 1) * (sp > 6 ? 0.6 : 1) * (1 - copMissBonus());
+      var hx, hy, hz;
+      if (R().random() < chance) {
+        hx = tgt.x; hy = tgt.y + 1; hz = tgt.z;
+        if (pl.inVehicle) pl.inVehicle.applyDamage(G.dmg * 1.5, this, 'smg'); else pl.applyDamage(G.dmg, this, 'smg');
+      } else {
+        var a = R().random() * U.TAU, r = R().range(1.2, 3.2);
+        hx = tgt.x + Math.cos(a) * r; hz = tgt.z + Math.sin(a) * r; hy = W().heightAt(hx, hz, tgt.y);
+        fx({ type: 'puff', x: hx, y: hy + 0.1, z: hz, size: 0.6, life: 0.3, color: 0xb8ad98 });
+      }
+      fx({ type: 'tracer', x: mx, y: my, z: mz, x2: hx, y2: hy, z2: hz, life: 0.06 });
+      sfx('shot', mx, mz, 0.5);
+      this.burstN--; this.gunT = this.burstN > 0 ? G.gap : G.rest;
+      GTP.Events.emit('heli:fire', { heli: this, hit: hx === tgt.x && hz === tgt.z });
     }
     syncMesh(alpha) {
       var m = this.mesh; if (!m) return;
@@ -1720,6 +1921,419 @@
     }
   }
 
+  // ---------------------------------------------------------------- doors --
+  // v0.3: the door markers of World.doors. A ring of light at each shop / safehouse door within 120 m (Render.markerMesh).
+  // Walking into a foot door calls GTP.Interiors.enter(door.interior, opts) (armory, clothing, barber, safehouse); without
+  // the interiors module the clothing and barber doors emit clothing:open / barber:open instead. A safehouse the player does
+  // not own (GTP.Systems.owns(id) === false) emits property:open {id}. Driving into a mod shop emits modshop:open {vehicle,
+  // shop}; into a safehouse garage, garage:enter {id, vehicle} and GTP.Vehicles.store(id, vehicle) when that exists.
+  // A door fires once, then waits until the player has stepped away (and after interior:exit the door they came out of).
+  var doors = { t: 0, meshes: {}, latched: {}, seed: null, last: null, log: [], wasInside: false };
+  function systemsOwns(id) {
+    var S = GTP.Systems; if (!S || !id) return null;
+    try {
+      if (typeof S.owns === 'function') return !!S.owns(id);
+      if (S.properties && typeof S.properties.owns === 'function') return !!S.properties.owns(id);
+      if (S.properties && typeof S.properties.owned === 'function') return !!S.properties.owned(id);
+    } catch (e) { U.reportError(e, 'ai.doors.owns'); }
+    return null;
+  }
+  function doorReady(d, pl) {
+    if (d.mode === 'drive') { var v = pl.inVehicle; return !!v && v.driver === pl && Math.abs(v.speed) < 7 && Math.abs(pl.y - d.y) < 3; }
+    return !pl.inVehicle && Math.abs(pl.y - d.y) < 2;
+  }
+  // a mission or a strand (a race, a rampage, a cab shift) runs: only the armory door stays open (m01c walks the player in)
+  // (a strand with a vehicle, a cab shift or an HOA patrol, only counts while the player sits in it: a shift left running
+  // by a parked cab must not shut every door in the city)
+  function storyBusy() {
+    var Ms = GTP.Missions, St = GTP.Strands, pl = player();
+    if (Ms && Ms.state && Ms.state.active) return true;
+    try {
+      if (St && St.races && St.races.cur) return true;
+      var cur = St && St.debug && St.debug.cur ? St.debug.cur() : null;
+      if (cur) return !(cur.v && pl && pl.inVehicle !== cur.v);
+    } catch (e) { /* optional */ }
+    return false;
+  }
+  function doorTrigger(d, pl) {
+    var Ev = GTP.Events, I = GTP.Interiors, v = pl.inVehicle, rec = { id: d.id, kind: d.kind, t: simT() };
+    doors.latched[d.id] = true; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
+    if (d.foot) doors.latched[d.foot] = true;   // a garage sharing the kerb with its front door: stepping out of the car does not walk in
+    if (d.kind !== 'armory' && storyBusy()) { toast('Finish what you started first.'); rec.result = 'busy'; return; }
+    if (wanted.level > 0 && d.kind !== 'armory') { toast('Lose the heat first.'); rec.result = 'wanted'; return; }
+    Ev.emit('door:enter', { door: d, landmark: d.landmark, kind: d.kind, vehicle: v || null });
+    var owned = d.property ? systemsOwns(d.property) : null;
+    if ((d.kind === 'safehouse' || d.kind === 'garage') && owned === false) { Ev.emit('property:open', { id: d.property, landmark: d.landmark }); rec.result = 'property'; return; }
+    if (d.kind === 'modshop') { v.setControls(0, 0, true, 1); Ev.emit('modshop:open', { vehicle: v, shop: d.store, landmark: d.landmark }); rec.result = 'modshop'; return; }
+    if (d.kind === 'garage') {
+      Ev.emit('garage:enter', { id: d.property, vehicle: v, landmark: d.landmark });
+      var Vh = GTP.Vehicles;
+      if (Vh && typeof Vh.store === 'function') {
+        v.setControls(0, 0, true, 1);
+        try { if (pl.exitVehicle) pl.exitVehicle(); var res = Vh.store(d.property, v); rec.result = 'stored'; if (res && res.ok === false) { rec.result = 'refused'; if (res.reason) toast(res.reason); } } catch (e) { U.reportError(e, 'ai.doors.store'); }
+      } else rec.result = 'garage';
+      return;
+    }
+    var opts = { store: d.store, landmark: d.landmark, kind: d.kind, door: { x: d.x, y: d.y, z: d.z, yaw: d.yaw || 0 }, property: d.property || null, branch: d.landmark };
+    if (I && typeof I.enter === 'function') {
+      try { I.enter(d.interior, opts); rec.result = 'interior'; } catch (e) { U.reportError(e, 'ai.doors.enter'); rec.result = 'error'; }
+      return;
+    }
+    if (d.kind === 'clothing') Ev.emit('clothing:open', { store: d.store, landmark: d.landmark });
+    else if (d.kind === 'barber') Ev.emit('barber:open', { store: d.store, landmark: d.landmark });
+    rec.result = 'event';
+  }
+  function doorsTick(dt) {
+    var Wd = W(), pl = player(), g = GTP.game, list = Wd.doors || [];
+    if (doors.seed !== Wd._seed) { doorsClear(); doors.seed = Wd._seed; doors.latched = {}; }
+    doors.t -= dt; if (doors.t > 0) return;
+    doors.t = K.doorTick;
+    var hide = !pl || inInterior() || (g && g.state === 'cutscene');
+    // back out of an interior: the door the player stands at stays quiet until they step away from it
+    if (inInterior()) doors.wasInside = true;
+    else if (doors.wasInside && pl) { doors.wasInside = false; for (var j = 0; j < list.length; j++) if (U.dist2d(pl.x, pl.z, list[j].x, list[j].z) < 6) doors.latched[list[j].id] = true; }
+    var Rd = GTP.Render, pulse = 0.5 + 0.5 * Math.sin(simT() * 3);
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i], dist = pl ? U.dist2d(pl.x, pl.z, d.x, d.z) : 1e9, m = doors.meshes[d.id];
+      if (!hide && dist < K.doorShow) {
+        if (!m && Rd && Rd.markerMesh && Rd.addMarker) {
+          try { m = Rd.markerMesh(new THREE.Color(d.color).getHex(), { radius: d.mode === 'drive' ? 2.4 : 0.9, height: d.mode === 'drive' ? 2.2 : 2.6 }); m.position.set(d.x, d.y + 0.02, d.z); m.name = 'door:' + d.id; Rd.addMarker(m); doors.meshes[d.id] = m; } catch (e) { m = null; }
+        }
+        if (m) { m.visible = !doors.latched[d.id]; if (m.userData.pulse) m.userData.pulse(pulse); }
+      } else if (m && (hide || dist > K.doorShow + 30)) { if (hide) m.visible = false; else { Rd.removeMarker(m); delete doors.meshes[d.id]; } }
+      if (hide || !pl.alive || !g || g.state !== 'playing') continue;
+      if (doors.latched[d.id]) { if (dist > d.r + 1.5) delete doors.latched[d.id]; continue; }
+      if (dist <= d.r && doorReady(d, pl)) doorTrigger(d, pl);
+    }
+  }
+  function doorsClear() { var Rd = GTP.Render; for (var k in doors.meshes) { if (Rd && Rd.removeMarker) Rd.removeMarker(doors.meshes[k]); } doors.meshes = {}; }
+
+  // --------------------------------------------------------- street events --
+  // v0.3: eight random street events (GTP.Content.world.streetEvents, with GTP.Content.parity.events winning field by field).
+  // One at a time, 35-75 m from the player, every 70-130 s while no mission or strand runs, no star is lit and the player is
+  // outside. Each has start / tick / a resolution; AI.events.start(id) forces one (tests, debug). Emits event:start {id,
+  // name, blurb, x, z} and event:end {id, ok, reward, reason}; AI.events.markers() feeds the minimap.
+  var EVK = K.events;
+  var events = { cur: null, t: 0, next: 0, lastId: null, count: 0, ended: [], disabled: false };
+  function eventDefs() {
+    var base = (GTP.Content.world && GTP.Content.world.streetEvents) || [], P = GTP.Content.parity && GTP.Content.parity.events, byId = {};
+    if (Array.isArray(P)) P.forEach(function (e) { if (e && e.id) byId[e.id] = e; }); else if (P && typeof P === 'object') for (var k in P) byId[k] = Object.assign({ id: k }, P[k]);
+    return base.map(function (d) { return byId[d.id] ? Object.assign({}, d, byId[d.id]) : d; });
+  }
+  function eventDef(id) { var l = eventDefs(); for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
+  function evBrain() { return { phase: 0.5, mode: 'mission', mission: 'event', ambient: false, barkT: 0 }; }   // phase 0.5: the ped tick never runs it
+  function evPed(ctx, x, z, role, opts) {
+    opts = opts || {};
+    var p = spawner.spawnPed(x, z, role || 'civ', { persistent: true, look: opts.look || null, mode: opts.mode, home: opts.home, radius: opts.radius });
+    p.persistent = true; p.eventId = ctx.id;
+    if (opts.brain === 'event') p.ai = evBrain(); else p.ai.ambient = false;
+    if (opts.yaw != null) p.yaw = opts.yaw;
+    ctx.ents.push(p);
+    return p;
+  }
+  function evLine(ctx, p, color) { var L = ctx.def.lines || []; if (p && p.alive && L.length) say(p, L[ctx.lineI++ % L.length], color || '#ffd45a'); }
+  function evRing(ctx, x, z, n, r, role, brain) {
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var a = i / n * U.TAU + R().range(-0.2, 0.2), rr = r * R().range(0.85, 1.15), px = x + Math.cos(a) * rr, pz = z + Math.sin(a) * rr;
+      if (W().solidAt(px, pz, 0.5) || !pedWalkable(W().tileAt(px, pz))) continue;
+      var p = evPed(ctx, px, pz, role || 'civ', { brain: brain || 'event', yaw: U.dirToYaw(x - px, z - pz) });
+      out.push(p);
+    }
+    return out;
+  }
+  function evCar(ctx, s, type, opts) {
+    var v = spawner.placeTraffic(s, spawner.vehicleType(type), opts || null);
+    v.persistent = true; v.eventId = ctx.id; ctx.ents.push(v);
+    if (v.driver) { v.driver.persistent = true; v.driver.eventId = ctx.id; ctx.ents.push(v.driver); }
+    var occ = v.occupants ? v.occupants() : []; for (var i = 0; i < occ.length; i++) if (ctx.ents.indexOf(occ[i]) < 0) { occ[i].persistent = true; ctx.ents.push(occ[i]); }
+    return v;
+  }
+  function near(pl, e, r) { return pl && e && U.dist2d(pl.x, pl.z, e.x, e.z) <= r; }
+  function down(p) { return !p || p.removed || !p.alive || p.knockedDown; }
+  // the runtimes: start(ctx) -> false when the spot does not suit; tick(ctx, dt) -> {ok, reason} to end, or nothing
+  var EV = {
+    ev_rival_table: {
+      start: function (c) {
+        var s = spawner.pedSpot(EVK.minDist, EVK.maxDist); if (!s) return false;
+        c.x = s.x; c.z = s.z; c.host = evPed(c, s.x, s.z, 'npc', { brain: 'event' }); c.host.name = 'Rival Pundit';
+        c.crowd = evRing(c, s.x, s.z, 4, 3.2, 'student'); c.hold = 0; return true;
+      },
+      tick: function (c, dt, pl) {
+        if (down(c.host) || c.host.hp < c.host.maxHp) return { ok: false, reason: 'violence' };
+        c.lineT -= dt; if (c.lineT <= 0 && near(pl, c.host, 40)) { c.lineT = R().range(4, 7); evLine(c, c.host); }
+        // the debate: stand at the table (on foot, within 3 m) for four seconds and the rival folds
+        if (!pl.inVehicle && near(pl, c.host, 3)) { c.hold += dt; c.progress = c.hold / 4; if (c.hold >= 4) { say(c.host, '...fine. Respectfully, you win.', '#ffd45a'); return { ok: true }; } }
+        else c.hold = Math.max(0, c.hold - dt);
+      }
+    },
+    ev_tote_snatch: {
+      start: function (c) {
+        var s = spawner.pedSpot(EVK.minDist * 0.7, EVK.maxDist * 0.8); if (!s) return false;
+        c.x = s.x; c.z = s.z; c.victim = evPed(c, s.x, s.z, 'donor', { brain: 'event' });
+        c.thief = evPed(c, s.x + 2, s.z + 1, 'thug', {}); c.thief.hostile = true; c.thief.name = 'Tote Snatcher';
+        startFlee(c.thief, c.thief.ai, c.victim, 60); c.thief.ai.fleeT0 = 60; evLine(c, c.victim, '#ff7a7a'); return true;
+      },
+      tick: function (c, dt, pl) {
+        var th = c.thief; c.x = th.x; c.z = th.z;
+        if (th.ai && th.ai.mode !== 'flee' && th.alive && !th.knockedDown) startFlee(th, th.ai, pl, 30);   // keep running
+        if (down(th)) { if (c.victim && c.victim.alive) say(c.victim, 'My tote! And my other tote!', '#ffd45a'); return { ok: true }; }
+        if (!near(pl, th, 170)) return { ok: false, reason: 'escaped' };
+        c.lineT -= dt; if (c.lineT <= 0 && near(pl, c.victim, 30)) { c.lineT = R().range(5, 8); evLine(c, c.victim, '#ff7a7a'); }
+      }
+    },
+    ev_getaway: {
+      start: function (c) {
+        var s = spawner.carSpot(60, 140); if (!s || s.deck) return false;
+        c.car = evCar(c, s, 'sedan', { color: '#2b2b2b' }); c.car.ai.speedMul = 1.45; c.car.tag = 'getaway';
+        if (c.car.driver) { c.car.driver.hostile = true; c.car.driver.name = 'Getaway Driver'; }
+        c.cops = [];
+        var f = U.yawToDir(c.car.yaw);
+        for (var k = 1; k <= 2; k++) {
+          var cs = { x: s.x - (s.axis === 'h' ? s.dir : 0) * 11 * k, z: s.z - (s.axis === 'v' ? s.dir : 0) * 11 * k, y: s.y, tx: s.tx, tz: s.tz, axis: s.axis, dir: s.dir, laneC: s.laneC, deck: false, district: s.district };
+          if (W().solidAt(cs.x, cs.z, 0.5) || !isRoadTile(W().tileAt(cs.x, cs.z))) continue;
+          var cv = evCar(c, cs, 'cop'); cv.ai.kind = 'event'; cv.ai.mode = 'evchase'; cv.siren = true; cv.lights = true; cv.ai.target = c.car; c.cops.push(cv);
+        }
+        void f; c.x = c.car.x; c.z = c.car.z; return true;
+      },
+      tick: function (c, dt, pl) {
+        var v = c.car; c.x = v.x; c.z = v.z;
+        if (v.removed || v.wreck || v.sinking || down(v.driver)) return { ok: true };
+        if (c.t > 75 || !near(pl, v, 240)) return { ok: false, reason: 'escaped' };
+        c.lineT -= dt; if (c.lineT <= 0 && near(pl, v, 35)) { c.lineT = R().range(6, 9); var cop = c.cops[0] && c.cops[0].driver; evLine(c, cop || v.driver, '#8fb6ff'); }
+      }
+    },
+    ev_fender_bender: {
+      start: function (c) {
+        var s = spawner.carSpot(EVK.minDist, EVK.maxDist); if (!s || s.deck) return false;
+        var a = evCar(c, s, 'sedan'), bs = { x: s.x + (s.axis === 'h' ? s.dir : 0) * 5.2, z: s.z + (s.axis === 'v' ? s.dir : 0) * 5.2, y: s.y, tx: s.tx, tz: s.tz, axis: s.axis, dir: s.dir, laneC: s.laneC, deck: false, district: s.district };
+        if (W().solidAt(bs.x, bs.z, 0.5) || !isRoadTile(W().tileAt(bs.x, bs.z))) return false;
+        var b = evCar(c, bs, R().pick(['suv', 'van', 'taxi']));
+        c.cars = [a, b]; c.drivers = [];
+        [a, b].forEach(function (v, k) {
+          v.ai.kind = 'parked'; v.setControls(0, 0, true, 1); v.vx = v.vz = 0; v.speed = 0; v.lights = true; v.damage = (v.damage || 0) + 0.2;
+          var d = v.driver; if (!d) return; d.exitVehicle(); d.ai = evBrain(); c.drivers.push(d);
+          var f = U.yawToDir(v.yaw), side = { x: -f.z, z: f.x }, px = v.x + side.x * 2.4 + f.x * (k ? -1.6 : 1.6), pz = v.z + side.z * 2.4 + f.z * (k ? -1.6 : 1.6);
+          if (!W().solidAt(px, pz, 0.5)) { d.x = px; d.z = pz; d.y = W().heightAt(px, pz, v.y); d.snap(); }
+        });
+        c.x = (a.x + b.x) / 2; c.z = (a.z + b.z) / 2; c.hold = 0; return c.drivers.length > 0;
+      },
+      tick: function (c, dt, pl) {
+        var ds = c.drivers.filter(function (d) { return !down(d); });
+        if (ds.length < c.drivers.length) return { ok: false, reason: 'violence' };
+        if (ds.length === 2) { ds[0].yaw = U.angleDamp(ds[0].yaw, U.dirToYaw(ds[1].x - ds[0].x, ds[1].z - ds[0].z), 6, dt); ds[1].yaw = U.angleDamp(ds[1].yaw, U.dirToYaw(ds[0].x - ds[1].x, ds[0].z - ds[1].z), 6, dt); }
+        c.lineT -= dt; if (c.lineT <= 0 && near(pl, c, 40)) { c.lineT = R().range(3.5, 6); evLine(c, ds[c.lineI % ds.length]); }
+        // mediate: stand between them for three seconds
+        if (!pl.inVehicle && near(pl, c, 5)) { c.hold += dt; c.progress = c.hold / 3; if (c.hold >= 3) { say(ds[0], 'Fine. Let\'s both blame the road.', '#ffd45a'); return { ok: true }; } } else c.hold = Math.max(0, c.hold - dt);
+        if (c.t > 70) return { ok: false, reason: 'timeout' };
+      }
+    },
+    ev_influencer: {
+      start: function (c) {
+        var s = spawner.pedSpot(EVK.minDist, EVK.maxDist); if (!s) return false;
+        c.x = s.x; c.z = s.z; c.host = evPed(c, s.x, s.z, 'civ', { brain: 'event' }); c.host.name = 'Influencer';
+        c.fans = evRing(c, s.x, s.z, 3, 4, 'student'); c.hold = 0; return true;
+      },
+      tick: function (c, dt, pl) {
+        var h = c.host; if (down(h) || h.hp < h.maxHp) return { ok: false, reason: 'violence' };
+        if (pl && near(pl, h, 25) && !pl.inVehicle) h.yaw = U.angleDamp(h.yaw, U.dirToYaw(pl.x - h.x, pl.z - h.z), 1.5, dt);
+        c.lineT -= dt; if (c.lineT <= 0 && near(pl, h, 35)) { c.lineT = R().range(4, 7); evLine(c, h, '#ff6fae'); }
+        // in frame: on foot, 1.5..7 m in front of the camera (within 30 degrees of where the influencer faces)
+        var f = U.yawToDir(h.yaw), dx = pl.x - h.x, dz = pl.z - h.z, along = dx * f.x + dz * f.z, lat = Math.abs(-dx * f.z + dz * f.x);
+        if (!pl.inVehicle && along > 1.5 && along < 7 && lat < along * 0.6) { c.hold += dt; c.progress = c.hold / 2; if (c.hold >= 2) { say(h, 'Who is this? Get out of my golden hour!', '#ff6fae'); return { ok: true }; } }
+        else c.hold = Math.max(0, c.hold - dt * 0.5);
+        if (c.t > 90) return { ok: false, reason: 'timeout' };
+      }
+    },
+    ev_flash_mob: {
+      start: function (c) {
+        var s = spawner.pedSpot(EVK.minDist, EVK.maxDist); if (!s) return false;
+        c.x = s.x; c.z = s.z; c.mob = [];
+        for (var i = 0; i < 8; i++) {
+          var a = i / 8 * U.TAU, px = s.x + Math.cos(a) * 3.5, pz = s.z + Math.sin(a) * 3.5;
+          if (W().solidAt(px, pz, 0.5) || !pedWalkable(W().tileAt(px, pz))) continue;
+          var m = evPed(c, px, pz, 'protester', { mode: 'protest', home: { x: s.x, z: s.z }, radius: 7 }); m.ai.mute = true; c.mob.push(m);
+        }
+        c.watch = 0; return c.mob.length >= 4;
+      },
+      tick: function (c, dt, pl) {
+        c.lineT -= dt; if (c.lineT <= 0) { c.lineT = R().range(2.5, 4); var who = c.mob[R().int(0, c.mob.length - 1)]; if (who && near(pl, who, 45)) evLine(c, who, '#ff7a00'); }
+        if (near(pl, c, 30)) c.watch += dt;
+        if (c.t > 40) return { ok: c.watch > 5, reason: c.watch > 5 ? null : 'missed' };
+      }
+    },
+    ev_hitchhiker: {
+      start: function (c) {
+        var s = spawner.pedSpot(EVK.minDist * 0.6, EVK.maxDist); if (!s) return false;
+        c.x = s.x; c.z = s.z; c.rider = evPed(c, s.x, s.z, 'civ', { brain: 'event' }); c.rider.name = 'Stranded Commentator';
+        // a destination 250-650 m away: a landmark door the route reaches
+        var Wd = W(), lms = Wd.landmarks.filter(function (l) { var d = l.door && U.dist2d(l.door.x, l.door.z, s.x, s.z); return d > 250 && d < 650 && l.kind !== 'bridge'; });
+        if (!lms.length) return false;
+        var lm = lms[R().int(0, lms.length - 1)]; c.dest = { x: lm.door.x, z: lm.door.z, label: lm.name, landmark: lm.id }; c.phase = 'wait'; c.outT = 0;
+        return true;
+      },
+      tick: function (c, dt, pl) {
+        var r = c.rider; if (!r || r.removed || !r.alive) return { ok: false, reason: 'violence' };
+        var v = pl.inVehicle;
+        if (c.phase === 'wait') {
+          c.x = r.x; c.z = r.z;
+          r.yaw = U.angleDamp(r.yaw, U.dirToYaw(pl.x - r.x, pl.z - r.z), 3, dt);
+          c.lineT -= dt; if (c.lineT <= 0 && near(pl, r, 30)) { c.lineT = R().range(6, 9); say(r, 'Hey! I need a ride to ' + c.dest.label + '!', '#ffd45a'); }
+          if (v && v.driver === pl && Math.abs(v.speed) < 2 && v.edgeDistance && v.edgeDistance(r.x, r.z) < 4 && !r.knockedDown) {
+            if (v.enter(r, 1)) { c.phase = 'ride'; c.car = v; evLine(c, r); GTP.Events.emit('gps:set', { x: c.dest.x, z: c.dest.z, label: c.dest.label, kind: 'event' }); c.gps = true; }
+          }
+          if (c.t > 120) return { ok: false, reason: 'timeout' };
+          return;
+        }
+        c.x = c.dest.x; c.z = c.dest.z;
+        if (!c.car || c.car.removed || c.car.wreck || r.inVehicle !== c.car) return { ok: false, reason: 'lost' };
+        if (!v || v !== c.car) { c.outT += dt; if (c.outT > 15) return { ok: false, reason: 'abandoned' }; } else c.outT = 0;
+        c.lineT -= dt; if (c.lineT <= 0) { c.lineT = R().range(12, 18); evLine(c, r); }
+        if (U.dist2d(c.car.x, c.car.z, c.dest.x, c.dest.z) < 14 && Math.abs(c.car.speed) < 3) {
+          if (r.exitVehicle) r.exitVehicle();
+          say(r, 'Thanks! I\'ll mention you, critically.', '#ffd45a');
+          return { ok: true };
+        }
+        if (c.t > 240) return { ok: false, reason: 'late' };
+      },
+      end: function (c) { if (c.gps) GTP.Events.emit('gps:clear', { kind: 'event' }); if (c.rider && c.rider.inVehicle && !c.rider.removed && c.rider.exitVehicle) c.rider.exitVehicle(); }
+    },
+    ev_donor_van: {
+      start: function (c) {
+        var s = spawner.carSpot(50, 130); if (!s || s.deck) return false;
+        c.van = evCar(c, s, 'van', { color: '#23402f' }); c.van.tag = 'donorvan'; c.van.maxHp *= 3; c.van.hp = c.van.maxHp; c.van.ai.speedMul = 0.85;
+        if (c.van.driver) { c.van.driver.name = 'Donor Courier'; c.van.driver.hostile = true; }
+        c.x = c.van.x; c.z = c.van.z; c.dropT = 3; return true;
+      },
+      tick: function (c, dt, pl) {
+        var v = c.van; c.x = v.x; c.z = v.z;
+        if (v.removed || v.wreck || down(v.driver) || v.hp < v.maxHp * 0.25) {
+          // the envelopes spill: cash pickups round the van, and the donors' friends call it in
+          var n = 4, each = Math.round((c.def.reward || 400) / n);
+          for (var i = 0; i < n && GTP.Pickup; i++) { var a = i / n * U.TAU, px = v.x + Math.cos(a) * 3, pz = v.z + Math.sin(a) * 3; if (W().solidAt(px, pz, 0.5)) { px = v.x; pz = v.z; } var pk = new GTP.Pickup({ x: px, z: pz, y: W().heightAt(px, pz, v.y), type: 'cash', value: each }); E().add(pk); }
+          if (c.def.heat && wanted.level < c.def.heat) wanted.set(c.def.heat);
+          return { ok: true, paid: true };
+        }
+        if (c.t > 80 || !near(pl, v, 230)) return { ok: false, reason: 'escaped' };
+        c.lineT -= dt; if (c.lineT <= 0 && near(pl, v, 30) && v.driver) { c.lineT = R().range(6, 9); evLine(c, v.driver, '#3fd27f'); }
+      }
+    }
+  };
+  function eventEligible() {
+    var pl = player(), g = GTP.game, Ms = GTP.Missions, St = GTP.Strands;
+    if (events.disabled) return 'disabled';
+    if (!pl || !pl.alive || !g || g.state !== 'playing') return 'state';
+    if (inInterior()) return 'interior';
+    if (Ms && Ms.state && Ms.state.active) return 'mission';
+    if (St && St.debug && St.debug.cur && St.debug.cur()) return 'strand';
+    if (wanted.level > 0) return 'wanted';
+    if (GTP.Cutscenes && GTP.Cutscenes.active) return 'cutscene';
+    return null;
+  }
+  function eventStart(id, opts) {
+    opts = opts || {};
+    if (events.cur) eventEnd(false, 'replaced');
+    var def = eventDef(id), rt = EV[id]; if (!def || !rt) return null;
+    var c = { id: id, def: def, t: 0, ents: [], lineT: 1, lineI: 0, x: 0, z: 0, progress: 0, forced: !!opts.force };
+    var ok = false;
+    try { ok = rt.start(c) !== false; } catch (e) { U.reportError(e, 'ai.event.' + id); ok = false; }
+    if (!ok) { eventCleanup(c, true); return null; }
+    events.cur = c; events.lastId = id; events.count++;
+    toast(def.name.toUpperCase() + ': ' + (def.blurb || ''));
+    GTP.Events.emit('event:start', { id: id, name: def.name, blurb: def.blurb || '', x: c.x, z: c.z });
+    return c;
+  }
+  function eventCleanup(c, all) {
+    for (var i = 0; i < c.ents.length; i++) {
+      var e = c.ents[i]; if (!e || e.removed) continue;
+      if (all || (!e.alive && e.kind === 'ped') || !visibleToCamera(e.x, e.y + 1, e.z)) { if (e.kind === 'vehicle' && e.hasPlayer && e.hasPlayer()) { e.persistent = false; continue; } if (e.kind === 'ped' && e.inVehicle && e.inVehicle.hasPlayer && e.inVehicle.hasPlayer()) { if (e.exitVehicle) e.exitVehicle(); } e.destroy(); continue; }
+      // on camera: hand them back to the city
+      e.persistent = false; e.eventId = null;
+      if (e.kind === 'ped') { e.hostile = false; e.cowering = false; e.ai = newPedAI(e, e.role, { mode: 'wander' }); e.ai.ambient = !e.inVehicle; if (e.inVehicle) e.ai.driver = true; }
+      else if (e.kind === 'vehicle') { e.siren = false; if (e.driver && e.driver.alive) AI.drive(e, e.type === 'cop' ? 'cop' : 'traffic'); else if (e.ai) e.ai.kind = 'parked'; }
+    }
+    c.ents.length = 0;
+  }
+  function eventEnd(ok, reason, extra) {
+    var c = events.cur; if (!c) return null;
+    events.cur = null;
+    var rt = EV[c.id], reward = ok ? (c.def.reward || 0) : 0, pl = player();
+    if (rt && rt.end) { try { rt.end(c, ok); } catch (e) { U.reportError(e, 'ai.event.end'); } }
+    if (ok && reward && !(extra && extra.paid) && pl) { pl.money += reward; sfx('cash', pl.x, pl.z, 0.8); }
+    var res = { id: c.id, ok: !!ok, reward: extra && extra.paid ? (c.def.reward || 0) : reward, reason: reason || null, t: +c.t.toFixed(1) };
+    if (ok) toast(c.def.name.toUpperCase() + ': DONE' + (reward && !(extra && extra.paid) ? '  ' + U.fmtMoney(reward) : ''));
+    events.ended.push(res); if (events.ended.length > 20) events.ended.shift();
+    eventCleanup(c, false);
+    GTP.Events.emit('event:end', res);
+    return res;
+  }
+  function eventsTick(dt) {
+    var c = events.cur, pl = player();
+    if (c) {
+      var gs = GTP.game && GTP.game.state;
+      if (inInterior() || gs !== 'playing' || (GTP.Cutscenes && GTP.Cutscenes.active)) return;   // the clock stops in a cutscene, a card, a menu
+      c.t += dt;
+      var res = null;
+      try { res = EV[c.id].tick(c, dt, pl); } catch (e) { U.reportError(e, 'ai.event.' + c.id); res = { ok: false, reason: 'error' }; }
+      for (var i = 0; i < c.ents.length; i++) { var e = c.ents[i]; if (e && e.kind === 'ped' && e.ai && e.ai.mission === 'event' && !e.removed) syncBark(e); }
+      if (!res && pl && !c.forced && U.dist2d(pl.x, pl.z, c.x, c.z) > EVK.leave) res = { ok: false, reason: 'left' };
+      if (!res && !c.forced && storyBusy()) res = { ok: false, reason: 'story' };   // a mission or a strand took over
+      if (res) eventEnd(res.ok, res.reason, res);
+      return;
+    }
+    if (!events.next) events.next = EVK.first[0] + (EVK.first[1] - EVK.first[0]) * U.hash2((GTP.game && GTP.game.seed) | 0, 3, 71);   // no draw on the city's stream
+    if (eventEligible()) return;
+    events.t += dt;
+    if (events.t < events.next) return;
+    events.t = 0; events.next = R().range(EVK.every[0], EVK.every[1]);
+    var defs = eventDefs().filter(function (d) { return d.id !== events.lastId && EV[d.id]; });
+    for (var k = 0; k < 3 && defs.length; k++) { var d = defs.splice(R().int(0, defs.length - 1), 1)[0]; if (eventStart(d.id)) return; }
+  }
+  // the event cruisers: chase the getaway car (pursuit driving with A* round corners, the same budget as the police)
+  function eventCarStep(v, ai, dt) {
+    var tgt = ai.target; if (!tgt || tgt.removed) { v.setControls(0, 0, false, 1); return; }
+    var gx = tgt.x, gz = tgt.z, d = U.dist2d(v.x, v.z, gx, gz);
+    if (d < 9) { driveToward(v, ai, gx, gz, Math.max(4, tgt.speed2d ? tgt.speed2d() : 8), dt); return; }
+    if (!(d < 28 && losClear(v.x, v.y + 1, v.z, gx, 1, gz))) {
+      ai.repathT = (ai.repathT || 0) - dt;
+      if ((!ai.path || ai.repathT <= 0) && police.pathBudget > 0) { police.pathBudget--; ai.path = W().findPath(v.x, v.z, gx, gz, { mode: 'car', fromY: v.y, maxExpansions: 5000 }); ai.pi = 0; ai.repathT = 1.5; }
+      if (ai.path && ai.path.length) { while (ai.pi < ai.path.length - 1 && U.dist2d(v.x, v.z, ai.path[ai.pi].x, ai.path[ai.pi].z) < 5.5) ai.pi++; gx = ai.path[ai.pi].x; gz = ai.path[ai.pi].z; }
+    }
+    driveToward(v, ai, gx, gz, v.cls.maxSpeed * 0.8, dt);
+  }
+
+  // ---------------------------------------------------- strands: race fix --
+  // QA-STR-04: a racer's route is a straight line between checkpoints (09_missions races.begin marks every one `direct`),
+  // so on The Figure Eight all three AI racers pin against the tower between cp5 and cp6. Wrapped from here (the strand
+  // runtime is the story track's file): a route leg whose straight segment hits a building gets the car A* corners in
+  // between as pass-through points (onCheckpoint only hears the real checkpoints, by their own index).
+  function hookStrands() {
+    var D = GTP.Strands && GTP.Strands.drivers; if (!D || !D.take || D.take._worldRoute) return;
+    var take = D.take;
+    D.take = function (v, mode, opts) {
+      if (mode === 'route' && opts && Array.isArray(opts.route) && opts.route.length > 1) {
+        try { opts = Object.assign({}, opts, routeVias(opts.route, !!opts.loop, opts.onCheckpoint)); } catch (e) { U.reportError(e, 'ai.raceRoute'); }
+      }
+      return take.call(this, v, mode, opts);
+    };
+    D.take._worldRoute = true;
+  }
+  function routeVias(route, loop, onCp) {
+    var Wd = W(), out = [], n = route.length, added = 0;
+    function vias(a, b) {
+      if (Wd.segmentClear(a.x, a.z, b.x, b.z, (a.y || 0) + 0.6)) return;
+      var path = Wd.findPath(a.x, a.z, b.x, b.z, { mode: 'car', fromY: a.y, toY: b.y, maxExpansions: 20000 });
+      if (path) for (var j = 1; j < path.length - 1; j++) { out.push({ x: path[j].x, z: path[j].z, y: path[j].y, r: 7, direct: true, via: true }); added++; }
+    }
+    for (var k = 0; k < n; k++) {
+      if (k > 0) vias(route[k - 1], route[k]);
+      out.push(Object.assign({}, route[k], { _ci: k }));
+    }
+    if (loop) vias(route[n - 1], route[0]);   // the lap's closing leg goes at the end, never ahead of the first checkpoint
+    if (!added) return {};
+    return { route: out, onCheckpoint: onCp ? function (ci, c) { var wp = out[ci]; if (!wp || wp.via) return; return onCp(wp._ci, c); } : null };
+  }
+
   // --------------------------------------------------------------- update --
   var stepN = 0;
   var AI = GTP.AI = {
@@ -1748,10 +2362,48 @@
     release: function (v) { if (v && v.ai) { v.ai = null; v.setControls(0, 0, false, 0); } },
     say: say,
     syncBark: syncBark,   // missions call it for peds with a mission brain (the AI never ticks those)
+    // v0.3: the shooting track calls this when the player takes cover at (x, z): chasing cops flank (also on 'cover:enter')
+    coverAlert: function (x, z) {
+      var pl = player(); if (x == null && pl) { x = pl.x; z = pl.z; }
+      cover.active = true; cover.x = x; cover.z = z; cover.t = simT();
+      return assignFlank();
+    },
+    cover: cover,
+    isAimedAt: function (p) { readAim(); return aimedAt(p); },
+    // v0.3 door markers: list() -> World.doors, markers() for the minimap [{id, kind:'door', icon, x, z, color, label}],
+    // last() the latest trigger {id, kind, t, result}, release() clears the latch (tests)
+    doors: {
+      list: function () { return (W().doors || []).slice(); },
+      markers: function () { return (W().doors || []).filter(function (d) { return d.kind !== 'garage'; }).map(function (d) { return { id: d.id, kind: 'door', icon: d.kind, x: d.x, z: d.z, y: d.y, color: d.color, label: d.label }; }); },
+      last: function () { return doors.last; }, log: doors.log,
+      release: function () { doors.latched = {}; },
+      tick: function () { doors.t = 0; doorsTick(0); }
+    },
+    // v0.3 street events: list() the eight defs, start(id) / stop() force one, current(), eligible() -> null or why not,
+    // markers() for the minimap, ended (the last results)
+    events: {
+      list: eventDefs, def: eventDef,
+      start: function (id, opts) { return eventStart(id, Object.assign({ force: true }, opts || {})); },
+      stop: function (ok, reason) { return eventEnd(!!ok, reason || 'stopped'); },
+      current: function () { return events.cur; },
+      eligible: eventEligible,
+      state: events, ended: events.ended,
+      markers: function () { var c = events.cur; return c ? [{ id: c.id, kind: 'event', x: c.x, z: c.z, color: '#ffd45a', label: c.def.name, progress: c.progress || 0 }] : []; },
+      setNext: function (sec) { events.t = 0; events.next = Math.max(0.01, sec); }
+    },
+    routeVias: routeVias,
+    // v0.3 map / minimap blips for the UI: the door markers (mod shops, clothing, barber, safehouses; the armory has its
+    // store icon already) and the running street event: [{id, kind:'place'|'event', icon, x, z, title, color}]
+    blips: function () {
+      var out = [], list = W().doors || [], i;
+      for (i = 0; i < list.length; i++) { var d = list[i]; if (d.kind === 'armory' || d.kind === 'garage') continue; out.push({ id: 'door:' + d.id, kind: 'place', icon: d.kind, x: d.x, z: d.z, title: d.label, color: d.color }); }
+      var c = events.cur; if (c) out.push({ id: 'event:' + c.id, kind: 'event', icon: 'event', x: c.x, z: c.z, title: c.def.name, color: '#ffd45a' });
+      return out;
+    },
     update: function (dt) {
       var t0 = U.now();
       stepN++;
-      try { ensureT(); pruneAlarms(); wanted.update(dt); police.pathBudget = 1; } catch (e) { U.reportError(e, 'ai.wanted'); }
+      try { ensureT(); pruneAlarms(); wanted.update(dt); police.pathBudget = 1; readAim(); hookStrands(); } catch (e) { U.reportError(e, 'ai.wanted'); }
       try { spawner.update(dt); } catch (e) { U.reportError(e, 'ai.spawner'); }
       var list = E().list, n = list.length, e, ai, i;
       for (i = 0; i < n; i++) {
@@ -1766,6 +2418,7 @@
           if (e.kind === 'ped') { if ((stepN + ai.phase) % K.pedTick === 0) pedTick(e, K.pedTick * dt); }
           else if (e.kind === 'vehicle') {
             if (ai.kind === 'parked' || ai.mode === 'parked' || ai.mode === 'roadblock' || e.wreck || e.sinking || e.hasPlayer() || !e.driver || !e.driver.alive) continue;
+            if (ai.kind === 'event' && ai.mode === 'evchase') { if ((stepN + ai.phase) % K.carTick === 0) { ai.deck = onDeck(e); aheadCaps(e, ai, K.carTick * dt); } eventCarStep(e, ai, dt); continue; }
             var cop = ai.kind === 'cop' || ai.kind === 'hoa';
             if (cop && (stepN + ai.phase) % K.carTick === 0) copCarTick(e, ai, K.carTick * dt);
             if (ai.mode === 'parked') continue;
@@ -1776,13 +2429,16 @@
       }
       try {
         police.tickT += dt;
-        if (police.tickT >= 1) { police.tickT -= 1; spawnResponders(1); }
+        if (police.tickT >= 1) { police.tickT -= 1; if (!inInterior()) spawnResponders(1); }
         updateRoadblocks(dt);
-        bustCheck(dt);
+        if (!inInterior()) bustCheck(dt);
         garageCheck(dt);
         residentsTick(dt);
+        coverTick();
         if (police.heli && police.heli.removed) police.heli = null;
       } catch (e) { U.reportError(e, 'ai.police'); }
+      try { doorsTick(dt); } catch (e) { U.reportError(e, 'ai.doors'); }
+      try { eventsTick(dt); } catch (e) { U.reportError(e, 'ai.events'); }
       AI.stats.ms = U.now() - t0;
     },
     updateRespawn: updateRespawn,
@@ -1790,6 +2446,10 @@
       stepN = 0; alarms.length = 0;
       wanted.clear(); wanted.lastSeen = -1e9;
       spawner.reset(); police.reset();
+      if (events.cur) eventCleanup(events.cur, true);
+      events.cur = null; events.t = 0; events.next = 0; events.lastId = null; events.ended.length = 0;
+      cover.active = false; cover.t = -1e9; cover.assignT = -1e9; missCache.t = -1e9; missCache.v = 0;
+      doors.latched = {}; doors.wasInside = false; doors.last = null; doorsClear(); doors.seed = null;
       residents.slots.forEach(function (s) { s.ped = null; s.away = true; }); residents.seed = null; residents.t = 0;
     },
     // the landmark residents (the doorman, Merle at each gunshop): list() for tests, near(castOrRole, x, z, r) -> the live
