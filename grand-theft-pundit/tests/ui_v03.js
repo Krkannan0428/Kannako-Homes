@@ -192,6 +192,7 @@ H.run('ui_v03', async (t) => {
     const v = g.debug.spawnVehicle(p.x + 6, p.z, 'sports', { color: '#2a64d8' });
     window.MODS = [];
     GTP.Vehicles = Object.assign(GTP.Vehicles || {}, { mod(veh, m) { MODS.push(JSON.parse(JSON.stringify(m))); veh.mods = m; if (m.paint && m.paint.primary) veh.color = m.paint.primary; } });
+    if (p.enterVehicle) { p.enterVehicle(v, 0); T_.adv(1.2); }   // the vehicles module closes the shop when the player is not in the car
     GTP.Events.emit('modshop:open', { vehicle: v });
     T_.adv(0.6); g.render();
     window.MODV = v;
@@ -209,7 +210,7 @@ H.run('ui_v03', async (t) => {
     return a;
   });
   await shot('modshop_engine');
-  const mod3 = await page.evaluate(() => { T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); const v = MODV; return { modal: !!T_.ui.modal, free: GTP.Render.free, engine: v.mods.engine, primary: v.mods.paint.primary, ctl: GTP.game.player.controlEnabled }; });
+  const mod3 = await page.evaluate(() => { T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); const v = MODV, pl = GTP.game.player, a = { modal: !!T_.ui.modal, free: GTP.Render.free, engine: v.mods.engine, primary: v.mods.paint.primary, ctl: pl.controlEnabled }; if (pl.inVehicle && pl.exitVehicle) { pl.exitVehicle(); T_.adv(1.5); } return a; });
   console.log('  modshop: ' + JSON.stringify([mod, mod2, mod3]));
   t.assert(mod.modal === 'modshop' && mod.free === true, 'modshop:open opens Spin Doctor Customs with the orbit camera');
   t.assert(mod2.previews >= 1 && mod2.preview && mod2.money1 === mod2.money0 - mod2.price && mod2.applied === mod2.preview && mod2.ev === 'mod' && mod2.engPreview >= 1, 'a paint previews through Vehicles.mod, BUY pays and emits shop:buy: ' + JSON.stringify(mod2));
@@ -386,19 +387,19 @@ H.run('ui_v03', async (t) => {
     const g = GTP.game, p = g.player, tk = T_.ui.ticker, st = GTP.UI.currentStation();
     st.callers = [{ caller: 'Deb from Cul-de-sac Heights', text: 'Long-time listener, first-time grievance.' }];
     st.bulletins = ['The Capitol dome was repainted gold overnight. Officials call it "a texture".'];
-    const R = GTP.Audio.radio = GTP.Audio.radio || {}, np0 = R.nowPlaying; R.nowPlaying = () => ({ kind: 'show', title: 'Call Me Maybe Wrong', text: 'Lines are open.' });
+    st.nowPlaying = { kind: 'show', title: 'Call Me Maybe Wrong', text: 'Lines are open.' };   // the station feeds are setters (null restores the live feed)
     p.inVehicle = VH; tk.cur = null; tk.n = 0; g.debug.setClock(14.02);
     const lines = [];
     for (let i = 0; i < 5; i++) { tk.cur = null; GTP.UI.update(1 / 60); if (tk.cur) lines.push(tk.cur.tag + ': ' + tk.cur.text); }
     g.render();
-    R.nowPlaying = np0; p.inVehicle = null; tk.cur = null; delete st.callers; delete st.bulletins;
+    p.inVehicle = null; tk.cur = null; st.nowPlaying = null; st.callers = null; st.bulletins = null;
     return lines;
   });
   console.log('  radio: ' + JSON.stringify(radio));
   t.assert(radio.some((l) => /^ON AIR: Call Me Maybe Wrong/.test(l)) && radio.some((l) => /^NEWS 14:00/.test(l)) && radio.some((l) => /^CALLER: Deb/.test(l)), 'the ticker shows the show on air, the hourly bulletin and a caller: ' + JSON.stringify(radio));
   const strangers = await page.evaluate(() => {
     // the real GTP.Strangers: open the first strand by completing its gate for the duration of the check
-    const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = Sg.list()[0].id, first = Sg.missions(sid)[0], added = [];
+    const p = GTP.game.player, Ms = GTP.Missions, Sg = GTP.Strangers, sid = (Sg.strands ? Sg.strands() : Sg.list())[0].id, first = Sg.missions(sid)[0], added = [];
     (first.requires || []).forEach((id) => { if (!Ms.state.completed.has(id)) { Ms.state.completed.add(id); added.push(id); } });
     window.__strAdded = added; if (Ms.refreshMarkers) Ms.refreshMarkers();   // Missions caches the available list
     const mk = GTP.UI.allMarkers().find((m) => m.missionId === first.id) || {};
