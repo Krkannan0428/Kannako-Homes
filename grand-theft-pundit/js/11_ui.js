@@ -1088,7 +1088,7 @@
     return null;
   }
   function drawObjectiveArrow(ctx) {
-    var Rd = GTP.Render, p = player(); if (!Rd || !p || indoors()) return;
+    var Rd = GTP.Render, p = player(); if (!Rd || !p || indoors() || (ui.golf && ui.golf.active)) return;
     var at = arrowTarget(); if (!at) return;
     var t = at.t, col = at.col;
     var s = Rd.worldToScreen(t.x, (t.y || 0) + 2.6, t.z);
@@ -1455,7 +1455,8 @@
   }
   function drawToasts(ctx) {
     if (!ui.toasts.length) return;
-    var y = ui.shopOpen || ui.modal ? safe.t + px(52) : ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0) - letterboxBar();
+    var gs = game() ? game().state : null;
+    var y = ui.shopOpen || ui.modal || (ui.golf && ui.golf.active) || gs === 'paused' ? safe.t + px(52) : ui.touch.visible ? H * 0.56 : H - safe.b - px(56) - (ui.dialogue ? px(120) : 0) - (ui.ticker.cur ? px(32) : 0) - letterboxBar();
     for (var i = ui.toasts.length - 1; i >= 0; i--) {
       var t = ui.toasts[i], k = t.t / t.dur, a = k < 0.1 ? k / 0.1 : k > 0.8 ? (1 - k) / 0.2 : 1;
       var font = F(13, 'bold'), tw = Math.min(measure(ctx, t.text, font), W - px(60)) + px(24);
@@ -3750,7 +3751,7 @@
   }
   // the route chip: the next turn and the distance, the destination and the total underneath
   function drawGpsChip(ctx) {
-    var G = ui.gps, g = game(); if (!G || !g || g.state !== 'playing' || !G.turn || indoors()) return;
+    var G = ui.gps, g = game(); if (!G || !g || g.state !== 'playing' || !G.turn || indoors() || (ui.golf && ui.golf.active)) return;
     var col = gpsColor(G.kind), m = minimapRect(), w = Math.min(px(250), m.left ? W - safe.l - safe.r : px(260)), h = px(46);
     var x, y;
     if (m.top) { x = m.left ? m.x : m.x + m.s - w; y = ui.chipBottom + px(6); }
@@ -5579,15 +5580,17 @@
     }
     // the crew: polaroids in one row, toggled; the focused one's pitch underneath
     var nc = Math.max(1, d.crew.length), cy = ay + ah + px(36), pitchH = px(34);
+    // where the strings end: the sticky note (right column on wide boards, bottom-left on narrow ones)
+    var noteAx = narrow ? x + px(24) + Math.min(pw - px(48), px(260)) / 2 : x + pw - sw / 2 - px(24), noteAy = narrow ? y + ph - px(64) - px(88) : y + px(116);
     var sumH = narrow ? px(96) : 0, availH = y + ph - px(64) - cy - pitchH - sumH;
-    var pwid = Math.max(px(40), Math.min(px(96), (leftW - (nc - 1) * px(14)) / nc, availH / 1.24 - px(4)));
+    var pwid = Math.max(px(40), Math.min(px(134), (leftW - (nc - 1) * px(14)) / nc, availH / 1.24 - px(4)));
     txt(ctx, 'CREW  ' + tk.n + '/' + HEIST_MAX_CREW, x + px(24), cy - px(10), { font: F(11, '900'), color: m.row === 1 ? '#fff' : '#fff3d6', outline: 'rgba(0,0,0,0.45)' });
     for (i = 0; i < d.crew.length; i++) {
       var c = d.crew[i], ox = x + px(24) + i * (pwid + px(14)), oy = cy, picked = !!m.picks[c.id], cf = m.row === 1 && m.cursor === i;
       ctx.save(); if (!picked) ctx.globalAlpha = 0.6;
       polaroid(ctx, c.id, ox, oy, pwid, cf, ((i % 3) - 1) * 0.04, String(c.name).split(' ')[0], Math.round((c.cut || 0) * 100) + '% CUT');
       ctx.restore();
-      if (picked) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), narrow ? x + pw - px(60) : x + pw - sw / 2 - px(24), narrow ? y + ph - px(150) : y + px(150)); ctx.stroke(); txt(ctx, '✔', ox + pwid - px(4), oy + px(12), { font: F(14, '900'), color: '#d7262e', align: 'center', outline: '#fff' }); }
+      if (picked) { ctx.strokeStyle = '#d7262e'; ctx.lineWidth = px(1.5); ctx.beginPath(); ctx.moveTo(ox + pwid / 2, oy + px(2)); ctx.quadraticCurveTo(ox + pwid, oy - px(30), noteAx, noteAy); ctx.stroke(); txt(ctx, '✔', ox + pwid - px(4), oy + px(12), { font: F(14, '900'), color: '#d7262e', align: 'center', outline: '#fff' }); }
       if (c.role) txt(ctx, c.role.toUpperCase(), ox + pwid / 2, oy + pwid * 1.24 + px(12), { font: F(8, '900'), color: '#fff3d6', align: 'center', outline: 'rgba(0,0,0,0.5)', maxW: pwid + px(10) });
       hit(ox, oy, pwid, pwid * 1.24, (function (kk) { return function () { m.row = 1; m.cursor = kk; heistToggle(m, kk); }; })(i), 'heist-crew-' + i);
     }
