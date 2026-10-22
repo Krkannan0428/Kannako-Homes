@@ -284,7 +284,8 @@ H.run('bosses', async (t) => {
       const S = GTP.Specials, In = GTP.Input, g = GTP.game, p = g.player, B = GTP.Bosses, out = {};
       B.endAll('test'); if (GTP.Missions.state.active) GTP.Missions.abort();
       const evs = []; const on = (e) => evs.push(e); GTP.Events.on('special:state', on);
-      for (const k of S.ids) delete GTP.Missions.state.flags['special_' + k];
+      // locked again: no flag, and the unlocking missions (an earlier section may have completed them) not done
+      for (const k of S.ids) { delete GTP.Missions.state.flags['special_' + k]; if (S.K[k] && S.K[k].unlock) GTP.Missions.state.completed.delete(S.K[k].unlock); }
       S.reset();
       const lm = GTP.World.landmark('campus_quad'); g.debug.teleport(lm.door.x, lm.door.z - 18); g.advance(0.5);
       out.locked = S.ids.map((id) => S.unlocked(id));
