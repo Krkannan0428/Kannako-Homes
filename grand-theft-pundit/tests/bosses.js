@@ -86,7 +86,6 @@ function installBot() {
     GTP.Render.rig.yaw = U.dirToYaw(dx, dz);
     const melee = enc.id === 'b05_dunk';
     let want = melee ? 1.1 : (enc.id === 'b01_goldplate' && tgE && tgE.kind === 'heli' ? 7 : 9);
-    if (nearAdd && !melee) want = dist;   // a goon in your face: stand and shoot (backing off drags the fight out of the arena)
     let attack = true;
     if (melee) {
       const card = enc.data.card, mode = enc.data.mode;
@@ -98,11 +97,17 @@ function installBot() {
       if (dist > want + 1.5) { mx = dx; mz = dz; }
       else if (dist < want - 2.5) { mx = -dx; mz = -dz; }
     }
+    // kite inside the arena: past 16 m from its centre the step outward turns along the edge (goons drag a backing-off
+    // player out of the fight otherwise)
+    const cx = p.x - enc.center.x, cz = p.z - enc.center.z, cr = Math.hypot(cx, cz), R = enc.id === 'b03_warbanner' ? 30 : 16;
+    if (cr > R && (mx || mz)) {
+      const out = (mx * cx + mz * cz) / cr;
+      if (out > 0) { mx -= cx / cr * out * 1.3; mz -= cz / cr * out * 1.3; }
+    }
     moveDir(mx, mz);
     // a player re-aims at a new target: looks at it and presses aim again (the lock-on takes what is in front on the press;
     // a held aim only re-acquires what passes under the crosshair, and the camera may still be tilted up at the helicopter)
-    // a dodge is a sprint: a player lets go of aim (an aiming player only walks)
-    let aimOn = attack && !(dodging && !melee);
+    let aimOn = attack;
     if (attack && !melee && tgE && tgE.kind && p.lockTarget !== tgE) {
       if (!(tgE.y > p.y + 4)) GTP.Render.rig.pitch = 0.15;
       if (p.aiming && bot.stats.steps - (bot.reaimAt || -99) > 6) {

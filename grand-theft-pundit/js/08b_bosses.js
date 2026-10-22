@@ -1374,7 +1374,7 @@
     id: 'b04_redacted', name: 'Agent Pat Redacted', cast: 'redacted', title: 'Weather Balloon',
     arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } },
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 1, shieldText: '[REDACTED]',
-    patches: [3, 4, 4], vans: [1, 2, 2], barEvery: [4.8, 4.0, 3.4], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
+    patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, barEvery: [4.8, 4.0, 3.4], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
     hints: ['Shoot the black [REDACTED] patch on the balloon. Grey means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
     ticker: 'BREAKING: OVA WEATHER BALLOON POPS OVER DEPOT; OVA CONFIRMS IT WAS NEVER THERE',
     lines: {
@@ -1510,12 +1510,18 @@
           vd.stopT -= dt; v.setControls(0, 0, false, 1);
           if (vd.stopT <= 0.6 && !vd.dropped) {
             vd.dropped = true;
-            if (enc.liveAdds() < 6) { var back = U.yawToDir(v.yaw + Math.PI); for (var q = 0; q < 2; q++) enc.spawnAdd('thug', v.x + back.x * 4 + (q - 0.5) * 1.6, v.z + back.z * 4, { weapon: n >= 3 && q === 0 ? 'pistol' : 'fist', look: { shirt: '#d9cfa6', pants: '#d9cfa6', hat: 'cap' }, name: 'OVA Agent' }); }
+            if (enc.liveAdds() < def.agentCap[n - 1]) {
+              // the last stage brings a sidearm, one at a time: the merged lock-on lets goons steal the lock from the patch, so
+              // two of the missions' gunmen on top of the bars was a wall (tests/bosses.js died four times in phase 3)
+              var gun = n >= 3; for (var g2 = 0; g2 < enc.adds.length && gun; g2++) if (!pedOut(enc.adds[g2]) && enc.adds[g2].weapon === 'pistol') gun = false;
+              var back = U.yawToDir(v.yaw + Math.PI);
+              for (var q = 0; q < 2; q++) enc.spawnAdd('thug', v.x + back.x * 4 + (q - 0.5) * 1.6, v.z + back.z * 4, { weapon: gun && q === 0 ? 'pistol' : 'fist', look: { shirt: '#d9cfa6', pants: '#d9cfa6', hat: 'cap' }, name: 'OVA Agent' });
+            }
             textFx('AGENTS DEPLOYED', v.x, v.y + 2.8, v.z, '#d9cfa6', 1.4);
           }
           continue;
         }
-        if (vd.dropT <= 0) { vd.dropT = 9; vd.stopT = 2.4; vd.dropped = false; continue; }
+        if (vd.dropT <= 0) { vd.dropT = def.dropEvery; vd.stopT = 2.4; vd.dropped = false; continue; }
         vd.ang += dt * 0.3;
         var lr = DEFS.b04_redacted._lap(enc, vd.ang + 0.35);
         steerTo(v, c.x + Math.cos(vd.ang + 0.35) * lr, c.z + Math.sin(vd.ang + 0.35) * lr, 11);
