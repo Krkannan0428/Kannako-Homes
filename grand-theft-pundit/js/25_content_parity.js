@@ -124,8 +124,8 @@
       pellets: 7, vehicleMul: 0.6, knock: 3, driveBy: true, flavor: 'Cut for time. Still loud.' },
     { id: 'doublebarrel', name: 'The Both-Sider', class: 'shotgun', dmg: 105, rate: 2.4, mag: 2, reserve: 40, reload: 1.8, spread: 0.1, bloom: null, recoil: 4.0, range: 9, projectile: 'hitscan', hold: 'two', price: 900, unlock: un('b01_goldplate'), attachments: ['light'],
       pellets: 8, vehicleMul: 0.65, knock: 3.5, flavor: "Fell out of a gold helicopter. One barrel for each side. Both rated a ten." },
-    { id: 'autoshotgun', name: 'Town Hall', class: 'shotgun', dmg: 50, rate: 3, mag: 12, reserve: 72, reload: 2.4, spread: 0.09, bloom: null, recoil: 2.0, range: 12, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('b05_dunk'), attachments: SHOTTY,
-      auto: true, pellets: 6, vehicleMul: 0.6, knock: 2.2, flavor: "Dunk's favorite. Everyone gets a question, very fast. Nobody read the questions." },
+    { id: 'autoshotgun', name: 'Reply All', class: 'shotgun', dmg: 50, rate: 3, mag: 12, reserve: 72, reload: 2.4, spread: 0.09, bloom: null, recoil: 2.0, range: 12, projectile: 'hitscan', hold: 'two', price: 3600, unlock: un('b05_dunk'), attachments: SHOTTY,
+      auto: true, pellets: 6, vehicleMul: 0.6, knock: 2.2, flavor: 'Goes to everyone at once. Nobody asked for it, and it keeps going.' },
     // ---- snipers
     { id: 'marksman', name: 'The Peer Reviewer', class: 'sniper', dmg: 70, rate: 2.0, mag: 10, reserve: 60, reload: 2.4, spread: 0.05, bloom: null, recoil: 2.4, range: 120, projectile: 'hitscan', hold: 'two', price: 5200, unlock: un('m13_thursday'), attachments: SCOPE,
       scope: true, scopedSpread: 0.004, headMul: 2.5, vehicleMul: 0.9, noAuto: true, flavor: 'Semi-automatic review. Accepted with revisions. Ten of them.' },
@@ -357,7 +357,7 @@
       reacts: { m11_trustless: -0.8, m13b_ratio: 4.0, m14_grift: -0.5 } },
     { ticker: 'TYNX', name: 'The Yell Network', price: 64, vol: 0.03, flavor: 'Twenty-four hours, zero days of reporting, steady margins.',
       reacts: { m04_hit: 0.03, b04_redacted: 0.1, b06_panel: 0.12, m14_grift: 0.2, m15b_liveread: -0.3 } },
-    { ticker: 'BSAR', name: 'Both Sides Arms', price: 75, vol: 0.02, flavor: 'Goes up whenever anything happens to anyone. Balanced.',
+    { ticker: 'BSAR', name: 'Both Sides Arms', price: 75, vol: 0.02, flavor: 'Goes up whenever anyone shouts. Balanced.',
       reacts: { m01c_both_sides: 0.02, b01_goldplate: 0.03, b03_warbanner: 0.05, b05_dunk: 0.03, h03_job: 0.06, m13_thursday: 0.08 } }
   ];
   P.stockApp = { name: 'Liquidity', by: 'Kyler Moonsworth', tagline: 'Trade trustlessly. That means trust us.', fee: 0.01 };
@@ -868,7 +868,7 @@
       outro: [
         { who: 'dunk', text: "Ratio'd. By a folding table. My chat is clipping it. My chat is clipping me losing. Engagement's up." },
         { who: 'player', text: "Respectfully, you were the content." },
-        { who: 'dunk', text: "Everyone's the content. Take the Town Hall. Everyone gets a question. Didn't read the questions." },
+        { who: 'dunk', text: "Fine. You out-talked me. Merle put something in the back with your name on it. Didn't read the receipt." },
         { who: 'kip', text: "I sold nine tickets. Standing room. Is this paid?" }
       ],
       failOn: ['player_dead'],

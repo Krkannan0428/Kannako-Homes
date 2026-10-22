@@ -957,7 +957,7 @@
         intro: 'Sponsor Confessional, where sponsors call in and we thank them. Mostly we thank them.',
         exchanges: [
           'CALLER, Dale Firmness at the Mattress Depot: "Just saying hi." THAD: "Dale! Sir! The whole show runs on you. Code TAKES20, folks."',
-          'CALLER, Dale Firmness, again: "I heard you mention a pillow, Thad." THAD: "Never happened, Dale. I said nap. Nap Dynasty."',
+          'CALLER, Dale Firmness, again: "I heard you mention a futon, Thad." THAD: "Never happened, Dale. I said nap. Nap Dynasty."',
           'CALLER, Marla at Octane Opinions: "Is premium worth it?" THAD: "Marla, you own the pump. You know it\'s regular with a stance."',
           'CALLER, Ray at Detail & Evidence: "We\'d like to sponsor this segment." THAD: "Sold. Your records are clean. Ours are cleaner."',
           'CALLER, Dale Firmness: "I\'ve never actually sat on a mattress." THAD: "And that, folks, is sponsored silence."'
@@ -1106,8 +1106,8 @@
         'LOCAL PUNDIT CHASES FOOTNOTE ACROSS HEIRLOOM HEIGHTS; FOOTNOTE STILL PENDING'
       ],
       survived_thursday: [
-        'ALL FACTIONS CONVERGE ON THE QUAD THURSDAY; TABLE HOLDS',
-        '"DUNK DESTROYS TAKESWORTH" WAS ON THE CALENDAR; CALENDAR WRONG FOR ONCE',
+        'ALL FACTIONS CONVERGE ON NAP DYNASTY DEPOT; MATTRESSES HOLD; SALE EXTENDED',
+        '"EVERYBODY RATIOS TAKESWORTH" WAS ON THE CALENDAR; CALENDAR WRONG FOR ONCE',
         'LOCAL PUNDIT OUTLASTS ENTIRE POLICE DEPARTMENT; DEPARTMENT RATES IT A SIX'
       ],
       launched: [
@@ -1290,7 +1290,7 @@
         'Memo says you\'re done, kid.',
         'Nothing personal. It\'s on the calendar.',
         'Same grift, different lanyard. Mine\'s nicer.',
-        'Thursday, pal. Read the memo.',
+        'Monday, pal. Read the memo.',
         'Respectfully? Nah.',
         'The boss subscribed. So I\'m here.'
       ],

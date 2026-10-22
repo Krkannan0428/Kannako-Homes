@@ -59,7 +59,7 @@ const SCRIPT = {
   m11_trustless: [['pickups', 4], ['shot'], ['pickups'], ['dialogue'], ['destroy']],
   m12_memo: [['car'], ['drive', 'ova_hq'], ['defeat', 3], ['shot'], ['defeat'], ['pickups'], ['escape'], ['goto', 'pod_garage']],
   m12b_scope: [['goto', 'causeway_east'], ['defeat', 2], ['shot'], ['defeat'], ['pickups'], ['escape'], ['goto', 'museum_of_takes']],
-  m13_thursday: [['goto', 'campus_quad'], ['survive', 35], ['shot'], ['survive'], ['escape'], ['goto', 'pod_garage']],
+  m13_thursday: [['goto', 'nap_depot'], ['survive', 35], ['shot'], ['survive'], ['escape'], ['goto', 'pod_garage']],
   m13b_ratio: [['destroy', 2], ['shot'], ['destroy'], ['escape'], ['goto', 'pod_garage']],
   m14_grift: [['debate', 4], ['shot'], ['debate'], ['dialogue'], ['escape']],
   m15a_primetime: [['car'], ['drive', 'nap_depot'], ['drive', 'clarity_barn'], ['shot'], ['drive', 'moon_mine'], ['drive', 'velvetine_pier'], ['drive', 'goldplate_tower'], ['goto', 'goldplate_tower'], ['ratio']],

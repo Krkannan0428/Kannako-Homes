@@ -346,7 +346,7 @@
           lines: [{ who: 'vaultwright', text: 'Gentlemen. I\'ve found a young face. He\'s loud, he\'s cheap, and he thinks he\'s the protagonist. I\'m whispering *lease*.' },
             { who: 'goldplate', text: 'I rate him a seven. I rate this roof a ten. Both words.' },
             { who: 'velvetine', text: 'To the lease! To whatever this is!' },
-            { who: 'warbanner', text: 'He\'ll do the reads. Bravadia will do the rest, and that\'s why we need the jets.' }] },
+            { who: 'warbanner', text: 'He\'ll do the reads. I\'ll do the jets, and that\'s why we need the jets.' }] },
         { cam: { from: lmk3('goldplate_tower', 8, 2.2, 12), to: { entity: 'player' }, seconds: 6, ease: 'inout' },
           actors: [{ castId: 'player', at: lmk('goldplate_tower', 3, 8), face: 0, anim: 'idle' }, { castId: 'sloane', at: lmk('goldplate_tower', 5, 9), face: 'player', anim: 'talk' }],
           lines: [{ who: 'sloane', text: 'Four clients. One contract. Yours. Everyone wants the podcast. Two minutes each. One.' },
@@ -501,7 +501,7 @@
       // §5.4 pink speech-bubble markers; the weapon is equipped with ammo for the job and restored afterwards
       rampages: [
         { id: 'rr_01', name: 'Alley Oop', at: lmk('impression_alley', 0, 12), weapon: 'tableleg', hecklers: 12, seconds: 90, reward: 400, waveSize: 4, waveRadius: 40 },
-        { id: 'rr_02', name: 'Assembly Required', at: lmk('protest_plaza', 8, 6), weapon: 'pistol', hecklers: 10, seconds: 90, reward: 500, waveSize: 4, waveRadius: 40 },
+        { id: 'rr_02', name: 'Lawn Order', at: lmk('old_money_common', 12, 8), weapon: 'pistol', hecklers: 10, seconds: 90, reward: 500, waveSize: 4, waveRadius: 40 },
         { id: 'rr_03', name: 'Lot Talk', at: lmk('stadium', -20, 0), weapon: 'shotgun', hecklers: 15, seconds: 120, reward: 700, waveSize: 4, waveRadius: 40, note: 'the parking lots' },
         { id: 'rr_04', name: 'Pier Pressure', at: lmk('velvetine_pier', 0, 14), weapon: 'smg', hecklers: 20, seconds: 120, reward: 800, waveSize: 4, waveRadius: 40 },
         { id: 'rr_05', name: 'Board Meeting', at: lmk('hoa_hall', 10, -8), weapon: 'revolver', hecklers: 12, seconds: 100, reward: 700, waveSize: 4, waveRadius: 40 },
@@ -797,7 +797,7 @@
         { station: 'pennant_fm', text: 'Goldplate International. One runway, two tens. Now boarding: a ten.' },
         { station: 'pennant_fm', text: 'The Goldplate Goldplate Causeway. Free. Uptown pays in NO.' },
         { station: 'velvetine_888', text: 'The Ferry to Elsewhere. Departs hourly. Arrives when the vibe is right.' },
-        { station: 'velvetine_888', text: 'Manifest Quay listening sessions. The ship is the venue. The cargo is you.' },
+        { station: 'velvetine_888', text: 'Manifest Quay listening sessions. The ship is the venue. The playlist is forty minutes of the intro.' },
         { station: 'quiet_signal', text: 'Customs & Disclosures. Everything has been declared. Nothing has been disclosed. A code has been issued.' },
         { station: 'quiet_signal', text: 'Both Sides Arms. A side has been armed. The other side has been armed. Balance has been achieved.' }
       ]

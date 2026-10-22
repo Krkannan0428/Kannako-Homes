@@ -81,7 +81,7 @@
     lyle: member('lyle', 'Lyle Bunkerton', 'Caddie, Goldplate Links', 'lazy',
       '"Put me down for a ten."',
       portrait(2, 'short', '#8a6a3a', 'shades', 'cap', 'none', 'none'), '#2e8b57',
-      'Has caddied for the President four hundred times and watched him play zero holes. Carries a bag of clubs, a bag of pencils and a bag of tens.',
+      'Has caddied on the President\'s course four hundred times; the President rates it from the cart. Carries a bag of clubs, a bag of pencils and a bag of tens.',
       '#f2f2f2', '#2e5a3a'),
     dewey: member('dewey', 'Dewey Varnum-Pleat', 'Live-streams his own HOA appeals', 'clipped',
       '"Chat, note the time."',
@@ -118,7 +118,7 @@
     scorer: member('scorer', 'Dot Tallymark', 'Rogue scorekeeper', 'mute',
       'Writes down what actually happened. Nobody can stop her. Many have tried at the clubhouse.',
       portrait(5, 'bun', '#1a1a1a', 'round', 'cap', 'none', 'none'), '#27ae60',
-      'Has kept the true score of every round the President never played, for a decade. One of the cards says a six.',
+      'Has kept the real rating of every hole on the President\'s course for a decade. The brochure says ten. One of her cards says a six.',
       '#f2f2f2', '#3a5a3a'),
     clause: member('clause', 'Prudence Clause', 'Head of Talent Relations, The Yell Network', 'retail',
       'Bills by the clause; reads the fine print as if it were large.',
@@ -220,9 +220,9 @@
       unlock: { mission: 'm05_peer', flag: 'contract_sold' },
       epilogue: 'FULCRUM INTERN SEES SUN, CITES IT; SUN DECLINES TO COMMENT; SUNBURN RATED "PRELIMINARY"' },
     { id: 'caddie', name: 'Put Me Down for a Ten', giver: 'lyle', home: 'goldplate_links', district: 'hills',
-      blurb: 'The President\'s caddie pre-fills every scorecard with tens. Someone has been writing down the truth.',
+      blurb: 'Every hole at Goldplate Links is a ten, says the brochure. Someone has been writing down the real ratings.',
       unlock: { mission: 'm06_rally', flag: 'show_renamed' },
-      epilogue: 'GOLDPLATE LINKS RECORDS HOLE-IN-ONE FROM PARKING LOT; SCORECARD READS TEN; CADDIE PUT DOWN FOR A TEN' },
+      epilogue: 'GOLDPLATE LINKS BROCHURE RATES ALL EIGHTEEN HOLES A TEN; HOLE FIVE DISAGREES; CADDIE PUT DOWN FOR A TEN' },
     { id: 'hoa_appeals', name: 'Appeal Pending', giver: 'dewey', home: 'hoa_hall', district: 'suburbs',
       blurb: 'A man live-streams his own HOA appeals. Chat has noted the time. Chat has noted every time.',
       unlock: { mission: 'm10_pellets', flag: 'hoa_enemy' },
@@ -515,17 +515,17 @@
     { id: 'st_caddie_1', title: 'Par Ten', strand: 'caddie', giver: 'lyle', marker: 'goldplate_links', requires: ['m06_rally'], reward: 800, act: 2,
       unlock: { mission: 'm06_rally', flag: 'show_renamed' },
       intro: [
-        L('lyle', 'Lyle Bunkerton, caddie. Four hundred rounds with the President. Zero holes played. Put me down for a ten.'),
-        L('player', 'How do you caddie zero holes?'),
-        L('lyle', 'You carry the tens. Somebody\'s been keeping the real score. Dot Tallymark. One of her cards says a six.'),
+        L('lyle', 'Lyle Bunkerton, caddie. Four hundred rounds on the President\'s course. The brochure rates every hole a ten. Put me down for a ten.'),
+        L('player', 'Who rates the holes?'),
+        L('lyle', 'The President, from the cart. Somebody\'s been keeping the real ratings. Dot Tallymark. One of her cards says hole five is a six.'),
         L('lyle', 'She\'s walking it past Vaultwright\'s manor to the dead drop under the bridge. Follow her. Get the card. Put it down for a ten.')
       ],
       objectives: [
         { type: 'follow', spawn: { ped: 'scorer', at: { landmark: 'goldplate_links' }, path: [{ landmark: 'vaultwright_manor' }, { landmark: 'bridge_main' }] }, maxDist: 320, text: 'Tail Dot Tallymark. She writes down everything, including you' },
-        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'bridge_main' }, radius: 60, label: 'THE SIX' }, text: 'Lift the real scorecard from the dead drop' }
+        { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'bridge_main' }, radius: 60, label: 'THE SIX' }, text: 'Lift the real rating card from the dead drop' }
       ],
       outro: [
-        L('lyle', 'A six. In pencil. On hole five. Do you know what this would do to the brand?'),
+        L('lyle', 'A six. In pencil. On hole five. Do you know what this would do to the brochure?'),
         L('player', 'Tell the truth?'),
         L('lyle', 'Worse. It\'d be a six. Rub it out. Put it down for a ten.')
       ],
@@ -550,22 +550,22 @@
 
     { id: 'st_caddie_3', title: 'The Gimme', strand: 'caddie', giver: 'lyle', marker: 'goldplate_links', requires: ['st_caddie_2'], reward: 1800, act: 2,
       intro: [
-        L('lyle', 'The President hit one ball, ever. It\'s in Vaultwright\'s hedge maze. The hedge is a hedge.'),
+        L('lyle', 'The President\'s ceremonial first ball. Gold-plated, mounted in the clubhouse. It\'s in Vaultwright\'s hedge maze now. The hedge is a hedge.'),
         L('player', 'And you want it back.'),
-        L('lyle', 'I want it found in the cup. Take the club. It\'s a table leg. The President\'s never noticed.'),
-        L('vaultwright', 'I\'m whispering *eighteen hundred*. For a hole-in-one. *Nine hundred* for a par ten.')
+        L('lyle', 'I want it back on its plaque. Take the club. It\'s a table leg. The President\'s never noticed.'),
+        L('vaultwright', 'I\'m whispering *eighteen hundred*. For the ball. *Nine hundred* for the plaque.')
       ],
       objectives: [
         { type: 'equip', weaponId: 'tableleg', text: 'Take the club. It\'s a table leg' },
         { type: 'goto', target: { landmark: 'vaultwright_manor' }, radius: 48, text: 'Get to the hedge maze at Vaultwright Manor' },
         { type: 'defeat', spawn: { ped: 'thug', count: 5, around: { landmark: 'vaultwright_manor' }, radius: 140 }, weapon: 'tableleg', text: 'Hedge security. Table leg only: it\'s a golf club now' },
         { type: 'pickup', spawn: { pickupType: 'mission', count: 1, around: { landmark: 'vaultwright_manor' }, radius: 90, label: 'THE BALL' }, text: 'Find the President\'s ball in the hedge' },
-        { type: 'drive_to', target: { landmark: 'goldplate_links' }, vehicle: 'any', text: 'Get the ball to the eighteenth cup' }
+        { type: 'drive_to', target: { landmark: 'goldplate_links' }, vehicle: 'any', text: 'Get the ball back to the clubhouse' }
       ],
       outro: [
-        L('lyle', 'In the cup. From the parking lot. Hole-in-one. Rated a ten.'),
-        L('player', 'I put it in the cup with my hand.'),
-        L('lyle', 'That\'s a gimme. Gimmes are tens. Put yourself down for a ten, kid. Just once.'),
+        L('lyle', 'Back on the plaque. Gold ball, gold plaque. The brochure rates it a ten.'),
+        L('player', 'It\'s a ball on a plaque.'),
+        L('lyle', 'It\'s a ten on a plaque. Put yourself down for a ten, kid. Just once.'),
         L('kip', 'I was the flag. I held still for an hour. Is this paid?')
       ],
       failOn: ['player_dead'], onComplete: { setFlags: ['st_caddie_3', 'stranger_caddie'], subs: 3000 } },

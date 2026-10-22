@@ -206,7 +206,7 @@
         { type: 'escape_wanted', setWanted: 2, text: 'Lose the cops' }
       ],
       outro: [
-        { who: 'goldplate', text: 'Ten out of ten. Big crowd, the biggest, I counted the vans. Show\'s renamed. The Goldplate Hour with Goldplate.' },
+        { who: 'goldplate', text: 'Ten out of ten. I counted the vans myself. Show\'s renamed. The Goldplate Hour with Goldplate.' },
         { who: 'player', text: 'Respectfully, it\'s called Loud & Correct.' },
         { who: 'goldplate', text: 'You\'re the guest. Guests are a seven.' }
       ],
@@ -382,13 +382,13 @@
       intro: [
         { who: 'kip', text: 'I wrote it. The scraper. During the unpaid week. Nobody else reads email, so I formatted the comments into a memo and everyone subscribed.' },
         { who: 'player', text: 'You\'ve been running the city.' },
-        { who: 'kip', text: 'Nobody runs it. I hit \'send.\' The calendar says Thursday: Dunk destroys Takesworth. It\'s Thursday.' },
-        { who: 'sloane', text: 'Everyone\'s coming. Goons, interns, scooters, the HOA. Ninety seconds on the Quad, then lose all of them. All five stars. Go.' },
+        { who: 'kip', text: 'Nobody runs it. I hit \'send.\' The calendar says Thursday: everybody ratios Takesworth, in person. It\'s Thursday.' },
+        { who: 'sloane', text: 'Everyone\'s coming. Goons, interns, scooters, the HOA. They think you\'re hiding at the Nap Dynasty depot. Ninety seconds in the mattresses, then lose all of them. All five stars. Go.' },
         { who: 'kip', text: 'Is this paid?' }
       ],
       objectives: [
-        { type: 'goto', target: { landmark: 'campus_quad' }, radius: 48, text: 'Get to the table' },
-        { type: 'survive', seconds: 90, waves: { thug: 12, protester: 4, cop: 4 }, text: 'Hold the table. Everybody is coming' },
+        { type: 'goto', target: { landmark: 'nap_depot' }, radius: 48, text: 'Get to the Nap Dynasty depot' },
+        { type: 'survive', seconds: 90, waves: { thug: 16, cop: 4 }, text: 'Hold the mattress depot. Everybody is coming' },
         { type: 'escape_wanted', setWanted: 5, text: 'Lose the entire police department' },
         { type: 'goto', target: { landmark: 'pod_garage' }, radius: 48, text: 'Get back to the garage' }
       ],

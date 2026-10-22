@@ -998,8 +998,9 @@
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.45, windowCap: 56, shieldText: 'IN THE HELICOPTER (TEN OUT OF TEN)',
     spools: [3, 4, 5], orbit: [0.22, 0.28, 0.34], attackEvery: [4.6, 3.8, 3.0], window: 14,
     hints: ['Aim (right mouse) at the gold ribbon spools under the helicopter and shoot them', 'Cut the spools again; his interns are on the field', 'Last ribbon. The helicopter is a ten. Make it a two'],
-    // the President is never the target: on the ground he reads his ratings off a gold teleprompter, and the prompter takes the
-    // hits (CONTENT_RULES 2 and 4: no shots at a head-of-state stand-in)
+    // the President is never the target and never steps out: on the ground he stays in the cockpit and reads his ratings over
+    // the helicopter's loudspeaker off a gold teleprompter outside the door, and the prompter takes the hits (CONTENT_RULES 2
+    // and 4: no shots at a head-of-state stand-in, no speech under fire)
     pedProof: 'NOT THE SUIT. THE TELEPROMPTER.', place: 'the park east of the stadium',
     ticker: 'BREAKING: PRESIDENT RATES OWN HELICOPTER LANDING A TEN; HELICOPTER DISAGREES',
     lines: {
@@ -1009,7 +1010,7 @@
         { who: 'player', text: 'He is trailing ribbon spools. If those go, the ribbon goes in the rotor.' }
       ],
       p2: [{ who: 'goldplate', text: 'That was a rehearsal landing. A ten. Interns! Film the empty seats!' }],
-      p3: [{ who: 'goldplate', text: 'Fresh ribbon. Five spools. The ribbon people called me personally. Crying.' }],
+      p3: [{ who: 'goldplate', text: 'Fresh ribbon. Five spools. The ribbon people rated me a ten. I rated them back.' }],
       defeat: [
         { who: 'goldplate', text: 'I rate this... a two. Nobody rates a two. I am the first.' },
         { who: 'player', text: 'Ratio, sir. The helicopter got more likes than the speech.' },
@@ -1050,7 +1051,7 @@
       DEFS.b01_goldplate._spools(enc, def.spools[n - 1]);
       enc.shield = true;
       if (n >= 2) enc.spawnAdds('thug', n === 2 ? 3 : 2, 12, 22, { look: { shirt: '#ffd45a', sign: 'TYN' }, name: 'Intern' });
-      if (n >= 3) enc.spawnAdds('cop', 1, 14, 24, { weapon: 'pistol', name: 'Gold Detail' });
+      if (n >= 3) enc.spawnAdds('cop', 1, 14, 24, { weapon: 'pistol', name: 'Gold Valet' });
     },
     _spools: function (enc, n) {
       var d = enc.data;
@@ -1084,7 +1085,7 @@
         onHit: function (self, n, src, type) {
           self.hp = 1e6;
           var dd = enc.damageBoss(n, src, type);
-          if (dd > 0 && simT() - (self.data.noteT || -9) > 1.3) { self.data.noteT = simT(); var w = ['LOST HIS PLACE', 'AD-LIB!', 'UHHH... TREMENDOUS', 'SKIPPED A PAGE'][Math.floor(simT() * 7) % 4]; textFx(w, self.x, self.y + 1.5, self.z, '#ffd45a', 1); }
+          if (dd > 0 && simT() - (self.data.noteT || -9) > 1.3) { self.data.noteT = simT(); var w = ['LOST HIS PLACE', 'AD-LIB!', 'UHHH... TEN?', 'SKIPPED A PAGE'][Math.floor(simT() * 7) % 4]; textFx(w, self.x, self.y + 1.5, self.z, '#ffd45a', 1); }
           if (dd <= 0 && enc.windowDmg >= (enc.def.windowCap || 1e9) - 1e-6 && simT() - (self.data.capT || -9) > 1.5) { self.data.capT = simT(); textFx('HE MEMORISED THE REST', self.x, self.y + 1.5, self.z, '#d0d0d0', 1); }
         } });
       pr.yaw = yaw; pr.data.x = at.x; pr.data.z = at.z; pr.data.yaw = yaw;
@@ -1137,21 +1138,16 @@
         if (enc.t % 0.2 < dt) fx({ type: 'smoke', x: h.x, y: h.y + 1.5, z: h.z, size: 1.8, life: 1.0, color: 0x3a3a3a, vy: 1.2 });
         if (Math.abs(h.y - ly) < 0.25) {
           d.mode = 'ground'; d.window = def.window; h.data.bank = 0; shake(0.5); sfx('crash', h.x, h.z, 0.7);
-          var door = { x: h.x + 2.6, z: h.z };
-          var gp = enc.addPed('goldplate', door.x, door.z, { boss: true });
-          enc.peds.splice(enc.peds.indexOf(gp), 1); enc.ped = gp;
           DEFS.b01_goldplate._prompter(enc);
           enc.shield = false; enc.windowDmg = 0; enc.emitPhase(true);
-          enc.hint = 'Goldplate is out of the helicopter reading his ratings: wreck the gold teleprompter before it takes off';
+          enc.hint = 'Goldplate is reading his ratings over the loudspeaker: wreck the gold teleprompter before the helicopter takes off';
           enc.randomBark('ground');
         }
       } else if (d.mode === 'ground') {
         d.window -= dt; h.data.rotor += dt * 4;
-        var gpd = enc.ped, pr = d.prompter;
-        if (gpd && !gpd.removed && pr && !pr.removed) {
-          // he walks to the stand and reads to the cameras; the gold keeps raining on whoever is near
-          var sx = pr.data.x - Math.sin(pr.data.yaw) * 1.3, sz = pr.data.z - Math.cos(pr.data.yaw) * 1.3;
-          if (!gpd.knockedDown) { if (U.dist2d(gpd.x, gpd.z, sx, sz) > 0.5) gpd.moveTo(sx, sz, false); else { gpd.stop(); gpd.yaw = pr.data.yaw; } }
+        var pr = d.prompter;
+        if (pr && !pr.removed) {
+          // he reads from the cockpit over the loudspeaker; the gold keeps raining on whoever is near
           enc.every('gbark', 6, dt, function () { enc.randomBark('ground'); });
           if (p) enc.every('grain', 3.2, dt, function () {
             enc.addTele({ shape: 'circle', x: p.x + (p.vx || 0) * 0.5, z: p.z + (p.vz || 0) * 0.5, r: 2.6, warn: 1.45, dmg: 12, knock: 4, color: 0xffd45a, label: 'GOLD RAIN',
@@ -1302,7 +1298,7 @@
     arena: { landmark: 'airport_runway', offset: { x: 0, z: 26 } }, place: 'the runway',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.42, windowCap: 50, capPhases: [2], shieldText: 'PRESS PASS (WRECK THE SCOOTERS)', leash: 170,
     scooters: [3, 2, 0], jetEvery: [9, 7.5, 5.5], window: 12,
-    hints: ['Wreck the Defense Scooters (shoot them, or lure them under the jets). Stay out of the flashing strips', 'He is on a scooter now: wreck his ride, then hit him while he is down', 'On foot at the podium. Dodge the crossing jets and hit him'],
+    hints: ['Wreck the Defense Scooters (shoot them, or lure them under the jets). Stay out of the flashing strips', 'He is on a scooter now: wreck his ride, then hit him while he is down', 'On foot on the runway. Dodge the crossing jets and hit him'],
     ticker: 'BREAKING: BRAVADIA\'S JETS ARRIVE, PAPER OWN PRIME MINISTER IN PRESS RELEASES; BRAVADIA CALLS IT A SUCCESS',
     lines: {
       intro: [
@@ -1679,12 +1675,12 @@
     deck: [['didntread', 'ratio', 'blocked'], ['didntread', 'ratio', 'blocked', 'quote'], ['didntread', 'ratio', 'blocked', 'quote']],
     // fists and counters only: a gun at a campus folding-table debate reads as a real event (CONTENT_RULES 2); guns stay
     // holstered from the intro to the walk-off and no weapon crate drops
-    tell: [1.45, 1.2, 1.0], stun: [3.2, 2.9, 2.6], chain: [1, 1, 2], noGuns: 'No guns at the debate tables. Fists and counters.',
+    tell: [1.45, 1.2, 1.0], stun: [3.2, 2.9, 2.6], chain: [1, 1, 2], noGuns: 'Fists only in this fight. Counter, then hit.',
     hints: ['Read the card over Dunk\'s head and counter it. Hit him while he is STUNNED', 'He quote-posts now. Clear the replies, then hit him', 'Two cards in a row. Read both'],
     ticker: 'BREAKING: DUNK DESTROYS TAKESWORTH, ACCORDING TO THE CALENDAR; FOOTAGE DISAGREES',
     lines: {
       intro: [
-        { who: 'dunk', text: 'Calendar says Thursday: Dunk destroys Takesworth. Didn\'t read the rest.' },
+        { who: 'dunk', text: 'Calendar says Thursday: Dunk out-talks Takesworth. Didn\'t read the rest.' },
         { who: 'dunk', text: 'Table to table, man. Every table\'s mine. I play cards. You read them. I don\'t.' },
         { who: 'player', text: 'He telegraphs every card over his head. He never reads them. I can.' }
       ],
