@@ -192,6 +192,7 @@ H.run('ui_v03', async (t) => {
     const v = g.debug.spawnVehicle(p.x + 6, p.z, 'sports', { color: '#2a64d8' });
     window.MODS = [];
     GTP.Vehicles = Object.assign(GTP.Vehicles || {}, { mod(veh, m) { MODS.push(JSON.parse(JSON.stringify(m))); veh.mods = m; if (m.paint && m.paint.primary) veh.color = m.paint.primary; } });
+    if (p.enterVehicle) { p.enterVehicle(v, 0); T_.adv(1.2); }   // the vehicles module closes the shop when the player is not in the car
     GTP.Events.emit('modshop:open', { vehicle: v });
     T_.adv(0.6); g.render();
     window.MODV = v;
@@ -209,7 +210,7 @@ H.run('ui_v03', async (t) => {
     return a;
   });
   await shot('modshop_engine');
-  const mod3 = await page.evaluate(() => { T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); const v = MODV; return { modal: !!T_.ui.modal, free: GTP.Render.free, engine: v.mods.engine, primary: v.mods.paint.primary, ctl: GTP.game.player.controlEnabled }; });
+  const mod3 = await page.evaluate(() => { T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); const v = MODV, pl = GTP.game.player, a = { modal: !!T_.ui.modal, free: GTP.Render.free, engine: v.mods.engine, primary: v.mods.paint.primary, ctl: pl.controlEnabled }; if (pl.inVehicle && pl.exitVehicle) { pl.exitVehicle(); T_.adv(1.5); } return a; });
   console.log('  modshop: ' + JSON.stringify([mod, mod2, mod3]));
   t.assert(mod.modal === 'modshop' && mod.free === true, 'modshop:open opens Spin Doctor Customs with the orbit camera');
   t.assert(mod2.previews >= 1 && mod2.preview && mod2.money1 === mod2.money0 - mod2.price && mod2.applied === mod2.preview && mod2.ev === 'mod' && mod2.engPreview >= 1, 'a paint previews through Vehicles.mod, BUY pays and emits shop:buy: ' + JSON.stringify(mod2));
