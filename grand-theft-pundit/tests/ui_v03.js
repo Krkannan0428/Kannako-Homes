@@ -386,12 +386,12 @@ H.run('ui_v03', async (t) => {
     const g = GTP.game, p = g.player, tk = T_.ui.ticker, st = GTP.UI.currentStation();
     st.callers = [{ caller: 'Deb from Cul-de-sac Heights', text: 'Long-time listener, first-time grievance.' }];
     st.bulletins = ['The Capitol dome was repainted gold overnight. Officials call it "a texture".'];
-    const R = GTP.Audio.radio = GTP.Audio.radio || {}, np0 = R.nowPlaying; R.nowPlaying = () => ({ kind: 'show', title: 'Call Me Maybe Wrong', text: 'Lines are open.' });
+    st.nowPlaying = { kind: 'show', title: 'Call Me Maybe Wrong', text: 'Lines are open.' };   // the station feeds are setters (null restores the live feed)
     p.inVehicle = VH; tk.cur = null; tk.n = 0; g.debug.setClock(14.02);
     const lines = [];
     for (let i = 0; i < 5; i++) { tk.cur = null; GTP.UI.update(1 / 60); if (tk.cur) lines.push(tk.cur.tag + ': ' + tk.cur.text); }
     g.render();
-    R.nowPlaying = np0; p.inVehicle = null; tk.cur = null; delete st.callers; delete st.bulletins;
+    p.inVehicle = null; tk.cur = null; st.nowPlaying = null; st.callers = null; st.bulletins = null;
     return lines;
   });
   console.log('  radio: ' + JSON.stringify(radio));
