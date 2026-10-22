@@ -2430,13 +2430,15 @@
       // a vehicle backed up to a wall: the shortened boom ends just over its own roof, which fills the screen. Swing the boom up
       // (same length, steeper) while that frees more of it, so the camera looks down over the body (QA-A-CAM-06)
       _climb: function (fx, fy, fz, dx, dz, dist, lift, full, desired) {
-        var r = Render.rig, alt = r._alt, ex = desired.x - fx, ey = desired.y - fy, ez = desired.z - fz;
+        var r = Render.rig, W = Render._World, alt = r._alt, ex = desired.x - fx, ey = desired.y - fy, ez = desired.z - fz;
         var best = Math.sqrt(ex * ex + ey * ey + ez * ez);
         if (best >= full * 0.8) return;
         for (var k = 1; k <= 4 && best < full * 0.8; k++) {
           var e = Math.min(1.25, r.pitch + k * 0.22), D = dist * Math.cos(e), H = dist * Math.sin(e) + lift;
           alt.x = fx - dx * D; alt.y = fy + H; alt.z = fz - dz * D;
           r._pullIn(fx, fy, fz, alt, 0.6);
+          // a boom that clears a low building's roof would look down past its parapet: stop below the roof line
+          if (W.tile(Math.floor(alt.x / TILE), Math.floor(alt.z / TILE)) === W.T.BUILDING) break;
           var ax = alt.x - fx, ay = alt.y - fy, az = alt.z - fz, l = Math.sqrt(ax * ax + ay * ay + az * az);
           if (l > best + 0.25) { best = l; desired.x = alt.x; desired.y = alt.y; desired.z = alt.z; }
         }
