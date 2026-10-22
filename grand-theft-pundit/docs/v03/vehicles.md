@@ -28,11 +28,13 @@ at 260 m a wall. World collision is skipped outside the map (`resolveCapsule` wo
 Boats stop 8 m inside the map.
 
 The fleet (parked vehicles; GTP.rng is untouched: a private `GTP.makeRng(0x7EB1C)` stream):
-- the plane and the jet on the west end of Runway 10/10, facing east (take off down the runway);
-- a helicopter on every landmark whose id / kind / name matches `helipad` or that has a point named `helipad*`
-  (the world track's helipads); until those exist, one on the airport apron by the tower and one on Perpetual Assembly Plaza;
-- a speedboat on every landmark matching `slip|boatyard|boat_dock` or with a point named `slip*` / `boat*` (`*ski*` = jet ski);
-  plus fallbacks by Velvetine Pier (speedboat), the Fish Shack (jet ski), the Ferry pier (speedboat) and Manifest Quay (jet ski);
+- the world track's spots (`World.vehicleSpots`, 04_world), placed exactly: a helicopter on each of the five
+  `World.helipads`, the plane and the jet on their `World.aircraft` stands (the apron north of the runway), and a boat
+  in each of the nine `World.boatSlips` (a jet ski at the Fish Shack and Manifest Quay slips, a speedboat elsewhere);
+- without those (an older world): the plane and the jet on the west end of Runway 10/10, a helicopter on any
+  `helipad` landmark or point (else the airport apron by the tower and Perpetual Assembly Plaza), and a speedboat or
+  jet ski on any `slip|boatyard|boat_dock` landmark plus the four waterfront fallbacks. These fallbacks are moved to a
+  clear spot that is off every `World._noPark` tile (pads, apron, links, stunt lines) and away from every drive-in door;
 - motorcycles by Detail & Evidence and the Monday Memo Print Works. Nothing parks within 170 m of the player's
   spawn: a vehicle created on the first step changes the boot's traffic for every other system and test (the
   actors crash test and the perf draw-call counts are identical to the base build).
@@ -85,11 +87,15 @@ GTP.Vehicles = {
       // part also takes the UI's paint categories primary / secondary / finish; shownPrice (the UI's price) is what is charged;
       // charges player.money, emits shop:buy {item: {id: 'mod:<part>:<value>', kind: 'mod', category, value, name}, price, vehicle, player}
   repair(v), repairPrice(v), priceOf(part, value), parts, defaultMods,
-  store(propertyId, v) -> {ok, slot, record, reason: 'full'|'wrecked'|'not storable'|...}   // the driver steps out, the vehicle leaves the world
-  retrieve(propertyId, slot) -> Vehicle | null   // spawns at landmark(propertyId).points.garage | bay | car | door, mods re-applied
+  store(propertyId, v) -> {ok, slot, record} | {ok: false, code, reason}   // the driver steps out, the vehicle leaves the world
+      // code: 'no property'|'no vehicle'|'wrecked'|'not storable'|'too big'|'not yours'|'full'; reason: a sentence to toast
+      // ('The garage takes cars and bikes.', 'Garage full (2 of 2).'): 07_ai's garage door toasts res.reason as is
+  canStore(propertyId, v) -> {ok} | {ok: false, code, reason}   // the same checks without storing
+  retrieve(propertyId, slot) -> Vehicle | null   // rolls out in front of the world's garage door (5 m past its ring, clear of
+      // every drive-in door, so getting in does not store it again), else landmark points.garage | bay | car | door
   garage(propertyId) -> [record], capacity(propertyId),   // 4, or Content.parity.properties[id].garage
   deploy(chute), autopilot: vehicle.autopilot = {x, z, alt?, speed?} (heli / boat / plane fly or sail themselves; null stops),
-  fleet: {enabled, slots(), refresh()}, modshop: {open: shopId|null}, controls: {invertPitch},
+  fleet: {enabled, slots(), plan(), refresh()}, modshop: {open: shopId|null}, controls: {invertPitch},
   virt, virtAxes, readAxes(), install(), save(), load(json), state()
 }
 GTP.SaveRegistry.vehicles = { get() -> {v: 1, garages, current: {type, mods}|null, controls}, set(json) }
@@ -105,15 +111,24 @@ Mod looks on cars: when the models track's `vehicleGeometry(cls, wrap, mods)` do
 paint material), tinted glass (a per-vehicle glass clone), rims (an instanced hubcap disc that copies the wheel
 matrices each frame) and a spoiler (lip / wing / GT wing). Set `rec.modsApplied` to take over.
 
-Spin Doctor Customs: any landmark with `kind: 'modshop'`, an id starting `spin_doctor`, or "Spin Doctor" in its name is
-a drive-in bay (its `points.bay`, else its door). Stopping a car or bike there (within 6 m, under 2.5 m/s) emits
-`modshop:open {vehicle, shop, catalog}`; driving 12 m away emits `modshop:close {shop}`. With stars on, a toast
-refuses. The UI draws the shop and calls `buyMod` (or `mod` for free changes).
+`mod(v, mods)` is the preview path (the UI calls it on every step): an unchanged set returns `{ok, mods, unchanged:
+true}` with no rebuild and no event, and it plays no sound; `buyMod` plays the install (`modApply`, or `modSpray` for
+paint). Aircraft, boats and the parachute take engine, armour, paint and repairs only: `mod` ignores the car parts and
+`buyMod` refuses them (`unknown part`). Maxing engine, brakes and armour on one car counts `stats.maxedCars` and calls
+`GTP.Systems.unlock('spin_doctored')` (the content achievement; 14_systems reads `stat` / `condition`, not `trigger`).
 
-Garages: the four safehouses (`safe_dorm`, `safe_brownstone`, `safe_marina_loft`, `safe_suburb`, `safe_penthouse`)
-are just property ids; the systems / UI tracks decide when to call `store` / `retrieve` (for example from a garage
-door marker). Records: `{type, color, color2, wrap, mods, hp, name}`. New Game (`load:begin` with reason `new`)
-empties them.
+Spin Doctor Customs: the world track's door markers (07_ai, `World.doors` kind `modshop`) open the two real shops,
+with their mission / wanted gating; 06b's own bay stands down for any shop with such a door and only serves a
+`modshop` landmark without one (its `points.bay`, else its door; stopping within 6 m under 2.5 m/s). Whoever emits
+`modshop:open {vehicle, shop, landmark?, catalog?}`, 06b plays the wrench and emits `modshop:close {shop}` once the car is
+12 m from where the shop opened. The UI draws the shop and calls `buyMod` (or `mod` for previews).
+
+Garages: driving into an owned safehouse's garage door (07_ai, `World.doors` kind `garage`) calls `store` (refusals
+are toasted from `reason`). Taking a car out: on foot within the door ring (plus 1.5 m) of an owned garage that holds
+something, a toast says "E: take out the <name>" and the action key (E) calls `retrieve(property, 0)`; the press is
+latched so it does not also throw a punch. Ownership is read like 07_ai does (`Systems.owns` / `properties.owns` /
+`properties.owned`; unknown = allowed). Records: `{type, color, color2, wrap, mods, hp, name}`. New Game
+(`load:begin` with reason `new`) empties them.
 
 ## Events
 
@@ -135,7 +150,12 @@ Player stats added: `wheelieBest`, `thrown`, `skydives`, `takeoffs`, `landings`,
   family / type) is within the radius horizontally, at any altitude unless bounded.
 - `land {target, radius = 20, family?, vehicle?}`: done when it is on the ground there, under 3 m/s.
 - `skydive {target, radius = 15}`: done when the player lands by parachute there (not a hard landing).
-`target` is `{x, z}` or `{landmark, point?, dx?, dz?}`.
+`target` is `{x, z}`, `{landmark, point?, dx?, dz?}` or a world spot `{helipad | slip | spot: id}` (a `landmark` that is
+not a landmark is also looked up in `World.helipads` / `boatSlips` / `aircraft`). An unresolved target reports an error
+and completes at once (rather than locking the mission). These three objectives draw their own GPS line: 09_missions
+only draws it for its own types, so 06b emits `gps:set {x, z, label, kind: 'objective'}` on `mission:objective` and
+`gps:clear` in the objective's cleanup. While the player flies, sails or glides, `World.route` from the player returns a
+straight line (`[a, b]`) instead of a road route.
 
 The existing `drive_to` already works with every new type: it needs the player in a vehicle within the radius and
 within 4 m of the target's height, so a boat at a waterline target, a moto, or a heli / plane set down at the
@@ -149,7 +169,8 @@ At load (06b runs after 06_entities):
   wheelie); cars untouched. Autopilot step for AI-flown vehicles.
 - `GTP.Vehicle.prototype.exit`: airborne exits from aircraft keep the ped's height (fall), the bail spawns the
   parachute; the parachute's exit is the cut-away. Cars and motos untouched.
-- `GTP.Vehicle.prototype.applyDamage`: the armour mod's damage reduction.
+- `GTP.Vehicle.prototype.applyDamage`: the armour mod's damage reduction; a hit on a parachute goes to its rider (the
+  police door gunner aims at the vehicle; the canopy took the hits).
 - `GTP.Vehicle.prototype.syncMesh`: after the shared placement, animates the custom meshes (rotors, props, wheels,
   forks, gear, afterburner, canopy, nav-light blink, wreck look) and the car mod extras (rims, spoiler).
 - `GTP.Vehicle.prototype.hud` (new method).
@@ -158,7 +179,7 @@ At load (06b runs after 06_entities):
 - `GTP.Ped.prototype._syncRider`: draws the rider on the moto (lean, wheelie), the jet ski and under the canopy;
   everything else falls through. **For the models track:** if the new `GTP.Anim` replaces `syncMesh` and does not
   call `_syncRider`, use `GTP.Vehicles.riderPose(ped, alpha)` for the position / rotation and draw the ride pose.
-- `GTP.Entities.update` (the fleet and mod-shop ticks run first) and `GTP.Entities.add` (installs the deferred hooks).
+- `GTP.Entities.update` (the fleet, mod-shop and garage ticks run first) and `GTP.Entities.add` (installs the deferred hooks).
 - `GTP.Assets.vehicleGeometry`: a stub record (eye point, light points, no body) for the new types so nothing
   builds a car body for a heli; car classes go through untouched (the models track's override included).
 
@@ -166,7 +187,16 @@ Deferred (DOMContentLoaded before the autoboot, or the first vehicle add / step)
 - `GTP.Render.buildEntityMesh`: the new types get `vehicleMeshes[type](v)`; a car with mods gets the mod looks.
   (When the environment track honours `vehicleMeshes` itself, this wrapper is harmless.)
 - `GTP.Render.syncVehicle`: skipped for the custom meshes (they have no `rec`).
-- `GTP.Render.rebuildEntityMesh`: defined **only if missing** (detach + attach), flagged `_vehiclesFallback`.
+- `GTP.Render.rebuildEntityMesh`: defined **only if missing** (detach + attach), flagged `_vehiclesFallback`; the
+  environment track's own is wrapped instead to dispose the custom meshes' `paint2` and tinted glass clone (Render
+  disposes `userData.paint` only). `GTP.Render.detach` is wrapped the same way.
+- `GTP.Render._postInputs`: an aircraft's motion blur fades with height above ground (full near the ground, a quarter
+  from about 50 m); the environment track's blur follows ground speed only.
+- `GTP.Ped.prototype.syncMesh` (once `GTP.Anim` exists): riders of these families get the anim with `pose.ride`, then the
+  body is placed from `riderPose()` (moto pillion, hanging legs under the canopy). It wraps whatever chain is current:
+  07_ai wraps `syncMesh` after 06c (the cower pose), so it no longer requires `syncMesh === GTP.Anim.syncMesh`.
+- `GTP.World.route`: straight `[a, b]` from the player while in an aircraft, boat or parachute.
+- Events: `modshop:open` (any source: the wrench, the 12 m close), `mission:objective` (the GPS line above).
 - `GTP.Render.rig.update`: the aircraft / boat / parachute chase camera; everything else goes to the original.
 - `GTP.SaveRegistry.vehicles` (created if missing; re-added at DOMContentLoaded in case a later file replaces the
   object) and a `GTP.SaveHooks` entry `vehicles` (writes `data.vehicles`; load is idempotent, so both paths can run).

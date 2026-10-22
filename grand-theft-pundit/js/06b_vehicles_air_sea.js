@@ -279,7 +279,7 @@
     if (v._puffT < rate) return;
     v._puffT = 0;
     var R = vrng, a = R.random() * TAU, r = R.range(1.5, 5), x = v.x + Math.cos(a) * r, z = v.z + Math.sin(a) * r;
-    var wet = waterAt(x, z), y = wet ? WATER_Y + 0.15 : W().heightAt(x, z, v.y - agl + 0.5) + 0.15;
+    var wet = waterAt(x, z), y = wet ? WATER_Y + 0.15 + 1.6 * 0.35 : W().heightAt(x, z, v.y - agl + 0.5) + 0.15;
     fx({ type: 'puff', x: x, y: y, z: z, vx: Math.cos(a) * 5, vz: Math.sin(a) * 5, vy: 0.4, size: wet ? 1.6 : 1.3, life: 0.7, color: wet ? 0xe8f4f8 : 0xcbbf9e });
   }
 
@@ -520,7 +520,9 @@
       if (v._wakeT > U.clamp(0.16 - spd * 0.004, 0.05, 0.16)) {
         v._wakeT = 0;
         var st = v.localToWorld(0, -v.hl), R = vrng;
-        fx({ type: 'puff', x: st.x, y: WATER_Y + 0.1, z: st.z, vx: -f.x * 1.5 + R.range(-0.6, 0.6), vz: -f.z * 1.5 + R.range(-0.6, 0.6), vy: 0.3, size: 0.9 + spd * 0.04, life: 1.4, color: 0xf2f8fa });
+        // a puff is a depth-tested sprite (0.6..1.4 x size tall): born with its lower edge on the ocean plane, not cut by it
+        var wsz = 0.9 + spd * 0.04;
+        fx({ type: 'puff', x: st.x, y: WATER_Y + 0.1 + wsz * 0.35, z: st.z, vx: -f.x * 1.5 + R.range(-0.6, 0.6), vz: -f.z * 1.5 + R.range(-0.6, 0.6), vy: 0.3, size: wsz, life: 1.4, color: 0xf2f8fa });
         if (spd > 10) { var side = R.chance(0.5) ? 1 : -1, bw = v.localToWorld(side * (v.hw + 0.1), v.hl * 0.2); fx({ type: 'puff', x: bw.x, y: WATER_Y + 0.4, z: bw.z, vx: rx * side * 3, vz: rz * side * 3, vy: 2.2, size: 0.6, life: 0.6, color: 0xffffff }); }
       }
     }
@@ -1840,6 +1842,16 @@
     if (!R.rebuildEntityMesh) {
       R.rebuildEntityMesh = function (e) { if (!e) return; R.detach(e); e.mesh = null; R.attach(e); };
       R.rebuildEntityMesh._vehiclesFallback = true;
+    }
+    // motion blur follows ground speed (10_render): high up, the ground hardly moves on screen, so an aircraft's blur
+    // fades with height (full near the ground, a quarter from about 50 m)
+    if (typeof R._postInputs === 'function') {
+      var basePost = R._postInputs;
+      R._postInputs = function () {
+        var r = basePost.apply(this, arguments), p = player(), v = p && p.inVehicle;
+        if (v && isAir(v) && R.motionBlur > 0) R.motionBlur *= U.clamp(1.25 - (v.y - surfaceAt(v.x, v.z, v.y)) / 40, 0.25, 1);
+        return r;
+      };
     }
     // Render disposes userData.paint only: the custom meshes also own paint2 and (tinted) a glass clone
     function disposeOwn(ud) { if (!ud || !ud.gtpVehicle) return; if (ud.paint2) ud.paint2.dispose(); if (ud.glass) ud.glass.dispose(); ud.paint2 = ud.glass = null; }
