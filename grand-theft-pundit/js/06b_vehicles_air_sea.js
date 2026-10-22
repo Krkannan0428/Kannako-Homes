@@ -1699,14 +1699,9 @@
     modshop.shops = (Wd.landmarks || []).filter(function (lm) { return lm.kind === 'modshop' || /^spin_doctor/.test(lm.id || '') || /spin doctor/i.test(lm.name || ''); });
     return modshop.shops;
   }
-  // 07_ai's door markers open the shops that have a World.doors 'modshop' door (with the mission / wanted gating); this
-  // bay only serves a shop without one. Either way the shop closes once the car leaves (12 m) and the wrench sounds once.
-  function worldDoorShop(lm) {
-    if (!(GTP.AI && GTP.AI.doors)) return false;
-    var ds = W().doors || [];
-    for (var i = 0; i < ds.length; i++) if (ds[i].kind === 'modshop' && ds[i].landmark === lm.id) return true;
-    return false;
-  }
+  // Spin Doctor's drive-in: this bay opens every shop. 07_ai's modshop door marker stands down whenever GTP.Vehicles.modshop
+  // exists (07_ai doorTrigger), so one modshop:open per drive-in; if any other module opens the shop first, the bay
+  // does not open it again. Either way the shop closes once the car leaves (12 m) and the wrench sounds once.
   function onModshopOpen(e) {
     var v = e && e.vehicle; if (!v) return;
     modshop.open = (e.landmark || e.shop || 'shop'); modshop.at = { x: v.x, z: v.z };
@@ -1722,7 +1717,7 @@
     var shops = shopList(); if (!shops.length) return;
     if (!v || v.driver !== p || isAir(v) || isSea(v) || fam(v) === 'chute') return;
     for (var i = 0; i < shops.length; i++) {
-      var lm = shops[i], b = (lm.points && lm.points.bay) || lm.door; if (!b || worldDoorShop(lm)) continue;
+      var lm = shops[i], b = (lm.points && lm.points.bay) || lm.door; if (!b) continue;
       if (U.dist2d(v.x, v.z, b.x, b.z) > 6 || v.speed2d() > 2.5) continue;
       if (p.wanted > 0) { if (GTP.game.time.t - modshop._deny > 6) { modshop._deny = GTP.game.time.t; toast('Spin Doctor will not touch a car with heat on it. Lose the stars first.'); } return; }
       emit('modshop:open', { vehicle: v, shop: lm.id, landmark: lm.id, catalog: modCatalog(v) });
