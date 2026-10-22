@@ -432,4 +432,87 @@ H.run('ai', async (t) => {
   t.assert(v3.errors.length === 0, 'no game errors: ' + v3.errors.join('; '));
   const errs3 = await t.errors(ctx3);
   t.assert(errs3.length === 0, 'errors:\n' + errs3.join('\n'));
+  await p3.close();
+
+  // ---- 9. v0.3 integration (envw2/ai-traffic), a fresh page: parked cars fit their bays (QA-A-TRF-07, QA-A-GEO-05), no
+  //         swerve into the oncoming lane behind a car at a red light (QA-A-TRF-02), a car on the oncoming side keeps to a
+  //         lane of its own direction (QA-A-TRF-03), a bus at the west sea wall stays on the road (QA-A-TRF-04), a bus sees
+  //         a pedestrian at its nose ----
+  const ctx4 = await t.boot({ seed: 7 });
+  const p4 = ctx4.page;
+  const v4 = await p4.evaluate(() => {
+    const W = GTP.World, T = W.T, S = GTP.AI.spawner, U = GTP.util, E = GTP.Entities, g = GTP.game, out = {};
+    // parked cars: no bay holds a solid prop, and every parked body (yaw 0 / PI) is clear of walls and props
+    out.bayProps = 0;
+    S.parkTiles.forEach((ti) => {
+      const cx = (ti % W.w + 0.5) * 4, cz = (((ti / W.w) | 0) + 0.5) * 4;
+      for (const p of W.props) if (p.solid && !p.fallen && p.r > 0 && (p.y || 0) <= 1.5 && Math.abs(p.x - cx) < 1.1 + p.r && Math.abs(p.z - cz) < 2.7 + p.r) out.bayProps++;
+    });
+    const seen = new Set(), clip = [];
+    for (const [x, z] of [[590, 160], [640, 700], [100, 680]]) {
+      g.debug.teleport(x, z); g.advance(6);
+      for (const v of E.list) {
+        if (v.removed || v.kind !== 'vehicle' || !v.ai || v.ai.kind !== 'parked' || seen.has(v.id)) continue; seen.add(v.id);
+        const f = U.yawToDir(v.yaw); let wall = false, prop = null;
+        for (const sf of [-1, -0.5, 0, 0.5, 1]) for (const sr of [-1, 1]) if (W.solidAt(v.x + f.x * v.hl * sf - f.z * v.hw * sr, v.z + f.z * v.hl * sf + f.x * v.hw * sr, 0.8)) wall = true;
+        for (const p of W.props) { if (!p.solid || p.fallen || Math.abs(p.x - v.x) > 12 || Math.abs(p.z - v.z) > 12 || (p.y || 0) > 2) continue; const l = v.worldToLocal(p.x, p.z); if (p.r - Math.hypot(Math.max(0, Math.abs(l.r) - v.hw), Math.max(0, Math.abs(l.f) - v.hl)) > 0.2) { prop = p.kind; break; } }
+        if (wall || prop) clip.push({ type: v.type, at: [Math.round(v.x), Math.round(v.z)], wall, prop });
+      }
+    }
+    out.parked = { n: seen.size, clip };
+    // the rest on empty streets
+    GTP.C.CARS_TARGET = 0; GTP.C.PEDS_TARGET = 0; GTP.C.AI.parkedTarget = 0;
+    const clear = () => E.list.forEach((e) => { if (!e.removed && (e.kind === 'vehicle' || (e.kind === 'ped' && e.ai && !e.persistent))) e.destroy(); });
+    clear();
+    // TRF-02: two sedans northbound in lane x 234; the lead waits at the red light of (57..58, 45..46), the follower waits behind it
+    g.debug.teleport(246, 214); g.advance(0.1);
+    let guard = 0; while (!(W.signalPhase(58, 45, g.time.t) === 'ew' && W.signalPhase(58, 45, g.time.t - 0.1) === 'ns') && guard++ < 2000) g.advance(1 / 60);
+    const mk = (x, z, type, axis, dir, laneC) => S.placeTraffic({ x, z, y: 0, tx: Math.floor(x / 4), tz: Math.floor(z / 4), axis, dir, laneC, deck: false }, type);
+    const a = mk(234, 199, 'sedan', 'v', -1, 234), b = mk(234, 208, 'sedan', 'v', -1, 234);
+    let leadWaits = false, swerved = false, maxOff = 0;
+    for (let k = 0; k < 160; k++) { g.advance(0.1); if (k < 80 && a.ai.stopAlong != null) leadWaits = true; if (b.ai.swerve) swerved = true; if (b.z > 188) maxOff = Math.max(maxOff, Math.abs(b.x - 234)); }
+    out.red = { leadWaits, swerved, maxOff: +maxOff.toFixed(2) };
+    clear();
+    // TRF-03: a northbound sedan standing in the southbound lane (x 230) steers back to x 234 and never follows a southbound lane
+    g.debug.teleport(246, 270); g.advance(0.1);
+    const c = mk(230, 262, 'sedan', 'v', -1, 234);
+    let wrongLane = 0;
+    for (let k = 0; k < 30; k++) {
+      g.advance(0.1);
+      const lb = W.laneV[Math.floor(c.z / 4) * W.w + Math.floor(c.ai.laneC / 4)];
+      if (lb && ((lb >> 4) < (lb & 15) / 2 ? 1 : -1) !== c.ai.dir && c.ai.plan && (c.ai.plan.kind === 'straight' || c.ai.plan.kind === 'cruise')) wrongLane++;
+    }
+    out.lane = { wrongLane, x: +c.x.toFixed(2) };
+    clear();
+    // TRF-04: a bus westbound on the campus avenue (lane z 278) toward the one-tile stub at the sea wall
+    g.debug.teleport(100, 290); g.advance(0.1);
+    const bus = mk(140, 278, 'bus', 'h', -1, 278);
+    let water = false, off = 0, maxOffRoad = 0;
+    for (let k = 0; k < 160 && !bus.removed; k++) {
+      g.advance(0.25);
+      const tt = W.tileAt(bus.x, bus.z);
+      if (tt === T.WATER) water = true;
+      if (tt !== T.ROAD && tt !== T.BRIDGE) { off += 0.25; maxOffRoad = Math.max(maxOffRoad, off); } else off = 0;
+    }
+    out.stub = { water, maxOffRoad, removed: !!bus.removed, end: [Math.round(bus.x), Math.round(bus.z)] };
+    clear();
+    // a bus's ped look-ahead reaches past its 5 m half-length: a pedestrian 0.6 m off its nose holds it
+    const sw = W.nearestSidewalkPoint(244, 270); g.debug.teleport(sw.x, sw.z); g.advance(0.1);
+    const bus2 = mk(240, 282, 'bus', 'h', 1, 282); bus2.vx = bus2.vz = 0; bus2.speed = 0;
+    const ped = S.spawnPed(240 + bus2.hl + 0.6, 282, 'civ'); ped.ai.mode = 'idle'; ped.ai.idleT = 99; ped.ai.mute = true;
+    for (let k = 0; k < 12; k++) { g.advance(0.1); ped.x = bus2.x + bus2.hl + 0.6; ped.z = 282; ped.ai.idleT = 99; if (ped._sh) E.hash.update(ped); }
+    out.nose = { by: bus2.ai.capReason === ped, pedBlock: !!bus2.ai.pedBlock, moved: +(bus2.x - 240).toFixed(2), tile: W.tileAt(bus2.x, bus2.z) };
+    out.errors = GTP.errors.map((e) => e.where + ': ' + e.message);
+    return out;
+  });
+  console.log('  v0.3 traffic: ' + JSON.stringify(v4));
+  t.assert(v4.bayProps === 0, 'no parking bay holds a solid prop (QA-A-GEO-05): ' + v4.bayProps);
+  t.assert(v4.parked.n >= 15 && v4.parked.clip.length === 0, 'parked cars sit clear of walls and props (QA-A-TRF-07): ' + JSON.stringify(v4.parked));
+  t.assert(v4.red.leadWaits && !v4.red.swerved && v4.red.maxOff < 1, 'a car queued behind one at a red light waits in its lane (QA-A-TRF-02): ' + JSON.stringify(v4.red));
+  t.assert(v4.lane.wrongLane === 0 && Math.abs(v4.lane.x - 234) < 1, 'a car on the oncoming side goes back to its own lane (QA-A-TRF-03): ' + JSON.stringify(v4.lane));
+  t.assert(!v4.stub.water && v4.stub.maxOffRoad <= 1 && !v4.stub.removed, 'a bus at the sea-wall stub stays on the road (QA-A-TRF-04): ' + JSON.stringify(v4.stub));
+  t.assert(v4.nose.by && v4.nose.pedBlock && v4.nose.moved < 0.5, 'a bus holds for a pedestrian at its nose: ' + JSON.stringify(v4.nose));
+  t.assert(v4.errors.length === 0, 'no game errors: ' + v4.errors.join('; '));
+  const errs4 = await t.errors(ctx4);
+  t.assert(errs4.length === 0, 'errors:\n' + errs4.join('\n'));
 });
