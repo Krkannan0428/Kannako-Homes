@@ -191,9 +191,11 @@ jobs:
           done
 
       - name: Launch the Apple Silicon app (title screen, mods, window state)
+        # the runner VM has no GPU and may have no WebGL at all; --webgl-optional then skips only the
+        # picture checks and the errors caused by the missing context (Linux and Windows keep them)
         run: >-
           node test/smoke.js "dist/mac-arm64/Grand Theft Pundit.app/Contents/MacOS/Grand Theft Pundit"
-          --no-new-game --out smoke-out --timeout 240
+          --no-new-game --webgl-optional --out smoke-out --timeout 240
 
       - name: Upload the macOS smoke screenshot and logs
         if: always()

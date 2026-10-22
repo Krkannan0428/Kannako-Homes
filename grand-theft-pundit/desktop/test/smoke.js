@@ -45,6 +45,15 @@ const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 && args
 const OUT = path.resolve(opt('--out', path.join(__dirname, 'out')));
 const TIMEOUT_S = parseInt(opt('--timeout', '180'), 10);
 const NEW_GAME = !args.includes('--no-new-game');
+// --webgl-optional: for CI machines with no GPU and no working software GL (the macOS runner VM).
+// If the page reports that no WebGL context could be created, the picture checks and the errors that
+// follow from the missing context are skipped (with a note); every other check stays strict. Without
+// the flag a missing WebGL context fails the test, as it should on Linux and Windows.
+const WEBGL_OPTIONAL = args.includes('--webgl-optional');
+const NO_WEBGL = /WebGL context could not be created|Error creating WebGL context/;
+// the game's frame loop after a failed renderer init, and the crash log's repeat counter for it
+const NO_WEBGL_FALLOUT = /WebGL|\[GTP\] (boot|step) |^(boot|step): |the previous message repeated/;
+let noWebGL = false;
 const NEW_GAME_TIMEOUT_S = 300;
 const CDP_TIMEOUT_MS = 60 * 1000;
 
@@ -125,6 +134,8 @@ function launch(userData, port) {
   // the setuid chrome-sandbox inside an extracted AppImage is not root-owned, and CI runners restrict
   // unprivileged user namespaces; the smoke test is about the game, not the sandbox
   if (process.platform === 'linux') appArgs.push('--no-sandbox');
+  // macOS runner VMs have no GPU; outside the GPU sandbox the software GL fallback has a chance
+  if (process.platform === 'darwin') appArgs.push('--disable-gpu-sandbox');
   const child = spawn(exe, appArgs, {
     env: Object.assign({}, process.env, { GTP_USER_DATA_DIR: userData, GTP_UPDATES: 'off', ELECTRON_ENABLE_LOGGING: '1' }),
     stdio: ['ignore', 'pipe', 'pipe']
@@ -416,8 +427,13 @@ async function main() {
       return { gl: stats(document.getElementById('gl'), true), hud: stats(document.getElementById('hud'), false) };
     })()`);
     console.log('  canvas stats: ' + JSON.stringify(pix));
-    check(pix.gl && pix.gl.colors >= 40, 'the 3D view renders a picture (' + (pix.gl && pix.gl.colors) + ' colours)');
-    check(!pix.hud || pix.hud.colors >= 8, 'the title menu is drawn on the HUD (' + (pix.hud && pix.hud.colors) + ' colours)');
+    noWebGL = pageErrors.some((e) => NO_WEBGL.test(e));
+    if (noWebGL && WEBGL_OPTIONAL) {
+      console.log('  skip the picture checks: this machine could not create a WebGL context (--webgl-optional)');
+    } else {
+      check(pix.gl && pix.gl.colors >= 40, 'the 3D view renders a picture (' + (pix.gl && pix.gl.colors) + ' colours)');
+      check(!pix.hud || pix.hud.colors >= 8, 'the title menu is drawn on the HUD (' + (pix.hud && pix.hud.colors) + ' colours)');
+    }
 
     await screenshot(client, 'smoke-title.png');
 
@@ -432,9 +448,16 @@ async function main() {
     await checkNavigationLock(client, port, userData);
 
     // 5. no errors anywhere (title, new game, navigation attempts)
-    const gtpErrors = await evaluate('(window.GTP && GTP.errors || []).map((e) => (e.where || "") + ": " + (e.message || e))');
-    check(gtpErrors.length === 0, 'GTP.errors is empty' + (gtpErrors.length ? ': ' + gtpErrors.join(' | ') : ''));
-    check(pageErrors.length === 0, 'no page exceptions or console errors' + (pageErrors.length ? ': ' + pageErrors.join(' | ') : ''));
+    let gtpErrors = await evaluate('(window.GTP && GTP.errors || []).map((e) => (e.where || "") + ": " + (e.message || e))');
+    let pageErrs = pageErrors.slice();
+    if (noWebGL && WEBGL_OPTIONAL) {
+      const before = gtpErrors.length + pageErrs.length;
+      gtpErrors = gtpErrors.filter((e) => !NO_WEBGL_FALLOUT.test(e));
+      pageErrs = pageErrs.filter((e) => !NO_WEBGL_FALLOUT.test(e));
+      console.log('  skip ' + (before - gtpErrors.length - pageErrs.length) + ' errors caused by the missing WebGL context (--webgl-optional)');
+    }
+    check(gtpErrors.length === 0, 'GTP.errors is empty' + (gtpErrors.length ? ': ' + gtpErrors.slice(0, 10).join(' | ') : ''));
+    check(pageErrs.length === 0, 'no page exceptions or console errors' + (pageErrs.length ? ': ' + pageErrs.slice(0, 10).join(' | ') : ''));
   } catch (err) {
     failures.push(String(err && err.message || err));
     console.log('  FAIL ' + (err && err.stack || err));
@@ -446,7 +469,8 @@ async function main() {
   const logPath = path.join(userData, 'logs', 'crash.log');
   const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
   fs.writeFileSync(path.join(OUT, 'smoke-crash.log'), log);
-  const problems = log.split('\n').filter((l) => /^\S+ \[/.test(l) && !/ \[start\] /.test(l));
+  const problems = log.split('\n').filter((l) => /^\S+ \[/.test(l) && !/ \[start\] /.test(l) &&
+    !(noWebGL && WEBGL_OPTIONAL && / \[page\] /.test(l) && NO_WEBGL_FALLOUT.test(l)));
   check(/ \[start\] /.test(log), 'the crash log was created with a start line');
   check(problems.length === 0, 'the crash log has no errors' + (problems.length ? ':\n    ' + problems.join('\n    ') : ''));
 
