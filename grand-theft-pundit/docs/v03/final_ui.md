@@ -29,6 +29,24 @@ QA findings that point at this track).
   route back-off (QAC-25), unreadable slots on pause SAVE (SAVE-05), slot decoding (SAVE-18), the pending-cutscene save
   gap (SAVE-06), minigame pause (SAVE-14), credits (TXT-08), and a GET IN prompt for NP-04.
 
+## Round 2 on game/grand-theft-pundit a94bf77 (the coordinator's merge of every track)
+
+- **artifact.js** ("no alert/confirm/prompt"): not the UI. The only match in `dist/artifact.html` is a comment in
+  `js/30_game.js` (line 329 at a94bf77): `// a key the UI took as its confirm (Enter, Space) ...`. The test's regex reads
+  `confirm (` as a call. The line came in with the story track's commits 5af7a1d / 03642c9 (it is not at 69478b9, where
+  artifact.js passed). The pause-SAVE "overwrite an unreadable slot" question is the in-game `askConfirm` modal (no native
+  dialog anywhere in `11_ui.js` / `02_input.js`). Fix: reword that comment (e.g. "its confirm key (Enter, Space)" ->
+  "the key it confirmed with"); 30_game.js is not this track's file.
+- **radio.js** ("the ticker names the song and artist on music stations"): the ticker now asks the station's
+  `nowPlaying` feed first (23_content_radio getters), then an object from `GTP.Audio.radio.nowPlaying()` (its string is
+  skipped), and a song line reads `NOW PLAYING: Title  ·  Artist  ·  Station`. `stationColor` already used `station.color`
+  (the two new stations get their own colours). `tests/ui.js` already counts the stations (`nap.length === stations`).
+  `tests/ui_v03.js` sets the feeds through their setters and restores them with `null`.
+- **Bosses**: weak points were already labelled from `entity.label` (`targetLabel`) and skipped by the minimap's
+  helicopter blips; `boss:end` clears the bar; the bar greys and shows the shield text. Now also: `shieldText` from the
+  `boss:phase` payload, PHASE n / N announced again (08b skips its banner under the UI's bar), and `GTP.UI.drawsBossShield`
+  / `handlesBossEnd` set so 08b's caption and bar clearing stand down.
+
 ## Test results (current head)
 
 All runs on the merged build (v03/ui with game/grand-theft-pundit 10ba585), Chromium via Playwright, `NODE_PATH=/opt/node-tools/node_modules`.
