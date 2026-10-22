@@ -1109,7 +1109,6 @@
     ai.lane = li.l; ai.w = li.w; ai.lo = li.lo; ai.laneC = li.center;
     var lowHalfMine = li.l < li.w / 2, rankMine = Math.abs(li.l - innerLane(li.w, lowHalfMine));
     var ctx = tx, ctz = tz, cdeck = deck, k;
-    var alongOf = function (ax, az) { return axis === 'h' ? ax : az; };
     for (k = 1; k <= 18; k++) {
       var nl = stepLayer(ctx, ctz, cdeck, ctx + dx, ctz + dz);
       if (!nl) { ai.plan = deadPlan(v, ai, ctx, ctz); return true; }
@@ -1139,7 +1138,6 @@
           } else if (sb) ai.sideSkip = (ai.sideSkip || 0) - 1;
         }
       }
-      void alongOf;
     }
     // a long straight: cruise and look again later
     ai.plan = { kind: 'cruise', until: (axis === 'h' ? v.x : v.z) + dir * 10 * TILE, t: 0 };
@@ -1218,7 +1216,8 @@
   function aheadCaps(v, ai, dt) {
     var vhl = v.hl, vhw = v.hw, rgap = 99;
     // (a bus or a truck looks the extra body length ahead: from its centre 7 m reached barely past its own bumper)
-    var sp = Math.max(0, v.speed), yaw = v.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), L = Math.min(44, 7 + sp * 1.3) + (v.cls.length > 6 ? vhl - 2.25 : 0);
+    var ext0 = v.cls.length > 6 ? vhl - 2.25 : 0;
+    var sp = Math.max(0, v.speed), yaw = v.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), L = Math.min(44, 7 + sp * 1.3) + ext0;
     var list = E().hash.query(v.x + fx * L * 0.5, v.z + fz * L * 0.5, L * 0.5 + 5, scratch), cap = 99, reason = null, pedBlock = false;
     for (var i = 0; i < list.length; i++) {
       var o = list[i];
@@ -1236,7 +1235,8 @@
       } else if (o.kind === 'ped' || o.kind === 'player') {
         if (o.inVehicle || !o.alive || o.knockedDown) continue;
         dx = o.x - v.x; dz = o.z - v.z; lr = dx * (-fz) + dz * fx; lf = dx * fx + dz * fz;
-        var Lp = 5 + sp * 0.9;
+        // (from a bus's centre 5 m ended 0.2 m past its nose: one standing there was pushed along at a crawl for minutes)
+        var Lp = 5 + sp * 0.9 + ext0;
         // a ped stepping toward our line (a runner off the kerb) is seen from a wider corridor
         var latV = (o.vx || 0) * (-fz) + (o.vz || 0) * fx, stepping = (lr > 0 && latV < -1) || (lr < 0 && latV > 1);
         if (lf <= 0 || lf > Lp || Math.abs(lr) > vhw + (stepping ? 2.6 : 0.7)) continue;
@@ -1321,8 +1321,10 @@
       var dEnd = (plan.endAlong - along) * dir - v.hl;
       // QA-A-TRF-01: a queue at a dead end (the street north of Ratio Row that ends at the lot under the Loop) waited for
       // its head car's three-point turn, which the queue itself blocked: a car held there by the car ahead turns round
-      // where it stands, so the queue unwinds from the back
-      var queued = ai.capReason && ai.capReason.kind === 'vehicle' && ai.blockedT > K.stuckTime;
+      // where it stands, so the queue unwinds from the back. Only a queue of that dead end: the car ahead waits on it too
+      // (a car whose lane ends 60 m on, held in ordinary traffic, turned round in a junction's mouth and knotted it)
+      var cra = ai.capReason && ai.capReason.kind === 'vehicle' && ai.capReason.ai, crp = cra && cra.plan;
+      var queued = !!crp && (crp.kind === 'dead' || crp.kind === 'uturn') && ai.blockedT > K.stuckTime;
       if ((dEnd < 2.5 || queued) && Math.abs(v.speed) < 0.6) {
         if ((!plan.atBox && !visibleToCamera(v.x, v.y + 1, v.z)) || ai.kind === 'traffic' && plan.t > 20) { recycle(v); return; }
         // three-point turn: back up with the wheels turned, then swing round into the opposite lane
@@ -1679,8 +1681,10 @@
     if (ai.mode === 'patrol' && (ai.seen || wanted.level >= 2)) { ai.mode = 'pursuit'; v.siren = true; ai.path = null; ai.pursuitT = 0; }
     if (ai.mode === 'pursuit' || ai.mode === 'ram') {
       ai.pursuitT += dt;
-      if (ai.seen) { ai.lostT = 0; ai.goal = { x: pl.x + (pl.vx || 0) * 0.4, z: pl.z + (pl.vz || 0) * 0.4 }; }
-      else { ai.lostT += dt; ai.goal = { x: wanted.lastKnown.x, z: wanted.lastKnown.z }; }
+      // (QAC-46: the goal object is the car's own and is reused, not a new one per brain tick)
+      var gq = ai.goal || (ai.goal = { x: 0, z: 0 });
+      if (ai.seen) { ai.lostT = 0; gq.x = pl.x + (pl.vx || 0) * 0.4; gq.z = pl.z + (pl.vz || 0) * 0.4; }
+      else { ai.lostT += dt; gq.x = wanted.lastKnown.x; gq.z = wanted.lastKnown.z; }
       if (ai.seen && plVeh && d < K.ramRange) ai.mode = 'ram'; else if (ai.mode === 'ram' && (ai.lostT > 4 || !plVeh)) ai.mode = 'pursuit';
       // unload: the player is on foot nearby, or his car is boxed in
       var unload = ai.seen && ((!plVeh && d < K.exitRange) || (plVeh && plSpeed < 3 && d < 8));
@@ -1704,7 +1708,7 @@
     var pl = player();
     if (!pl) return;
     var goal = ai.goal || wanted.lastKnown, d = U.dist2d(v.x, v.z, pl.x, pl.z), speed = v.cls.maxSpeed * K.pursuitSpeed;
-    if (ai.mode === 'tail') { goal = { x: pl.x, z: pl.z }; speed = Math.min(13, speed); if (d < 13) speed = 0; ai.honkT = (ai.honkT || 0) - dt; if (ai.honkT <= 0 && d < 30) { v.honk(); ai.honkT = R().range(4, 9); } }
+    if (ai.mode === 'tail') { goal = pl; speed = Math.min(13, speed); if (d < 13) speed = 0; ai.honkT = (ai.honkT || 0) - dt; if (ai.honkT <= 0 && d < 30) { v.honk(); ai.honkT = R().range(4, 9); } }
     var direct = ai.mode === 'ram' || (ai.seen && d < 28 && losClear(v.x, v.y + 1, v.z, goal.x, 1, goal.z));
     if (ai.mode === 'ram') { if (ai.cap < 99 && ai.capReason && ai.capReason.hasPlayer && ai.capReason.hasPlayer()) ai.cap = 99; speed = v.cls.maxSpeed; }
     var gx = goal.x, gz = goal.z;
