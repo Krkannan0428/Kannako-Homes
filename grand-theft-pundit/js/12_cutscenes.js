@@ -461,7 +461,7 @@
       // skip: back once = this shot, confirm held = the script
       if (In && c.script.skippable !== false) {
         if (c.skipRequested) { Cutscenes.skip(); return; }
-        if (In.pressed('back')) { Cutscenes.skipShot(); }
+        if (In.pressed('back') || In.pressed('cancel')) { Cutscenes.skipShot(); }   // cancel: pad B in the menu map (QA-B-FE-05)
         if (In.down('confirm')) { c.skipHoldT += dt; if (skipHeld(c) >= K.skipHold) { Cutscenes.skip(); return; } }
         else { c.skipHoldT = 0; c.skipWall0 = null; }
       }
@@ -500,20 +500,21 @@
 
   // ====================================================================== GTP.Hints ==
   var HINT_DEFS = [
-    { id: 'h_move', text: 'WASD or the left stick moves. Shift runs. Space jumps.', keys: ['W', 'A', 'S', 'D'] },
-    { id: 'h_look', text: 'Move the mouse or the right stick to look. Click the game to lock the pointer.', keys: ['MOUSE'] },
-    { id: 'h_enter', text: 'F or Enter gets in. The same key gets out.', keys: ['F'] },
-    { id: 'h_drive', text: 'W goes, S brakes and reverses, Space is the handbrake. Hold it for a slide.', keys: ['W', 'S', 'SPACE'] },
-    { id: 'h_arrow', text: 'The arrow on the minimap and the top of the screen points at the objective. The Loop is the fast way across town.', keys: [] },
-    { id: 'h_aim', text: 'Hold the right mouse button (or Q) to aim. Tab switches targets. Head shots count double.', keys: ['RMB', 'Q', 'TAB'] },
-    { id: 'h_reload', text: 'R reloads. An empty magazine reloads itself.', keys: ['R'] },
-    { id: 'h_wheel', text: 'Hold Tab (no gun raised) for the weapon wheel. The wheel or [ ] cycles.', keys: ['TAB'] },
+    // pad / touch: the sentence for that device (Hints.hud picks it by GTP.UI.device(); QA-B-HUD-02)
+    { id: 'h_move', text: 'WASD or the left stick moves. Shift runs. Space jumps.', pad: 'The left stick moves. Hold B to run. A jumps.', touch: 'The stick moves; push it all the way to run. JUMP jumps.', keys: ['W', 'A', 'S', 'D'] },
+    { id: 'h_look', text: 'Move the mouse or the right stick to look. Click the game to lock the pointer.', pad: 'The right stick looks around.', touch: 'Drag on the screen to look around.', keys: ['MOUSE'] },
+    { id: 'h_enter', text: 'F or Enter gets in. The same key gets out.', pad: 'Y gets in. The same button gets out.', touch: 'ENTER gets in. In a car the same button is EXIT.', keys: ['F'] },
+    { id: 'h_drive', text: 'W goes, S brakes and reverses, Space is the handbrake. Hold it for a slide.', pad: 'RT goes, LT brakes and reverses, A is the handbrake. Hold it for a slide.', touch: 'The stick drives and steers. BRAKE is the handbrake. Hold it for a slide.', keys: ['W', 'S', 'SPACE'] },
+    { id: 'h_arrow', text: 'The yellow arrow on screen points at the objective. On the minimap it is the yellow dot, or a triangle on the rim when far.', keys: [] },
+    { id: 'h_aim', text: 'Hold the right mouse button (or Q) to aim. Tab switches targets. Head shots count double.', pad: 'Hold LT to aim. R3 switches targets. Head shots count double.', touch: 'Hold AIM to aim. Head shots count double.', keys: ['RMB', 'Q', 'TAB'] },
+    { id: 'h_reload', text: 'R reloads. An empty magazine reloads itself.', pad: 'X reloads. An empty magazine reloads itself.', touch: 'RLD reloads. An empty magazine reloads itself.', keys: ['R'] },
+    { id: 'h_wheel', text: 'Hold Tab (no gun raised) for the weapon wheel. The wheel or [ ] cycles.', pad: 'Hold R3 for the weapon wheel. LB and RB cycle.', touch: 'Hold WPN for the weapon wheel.', keys: ['TAB'] },
     { id: 'h_wanted', text: 'You\'re wanted. Break line of sight and the star fades. Gus\'s Garage resprays it for $100.', keys: [] },
     { id: 'h_bust', text: 'Cops on foot can bust you in a few seconds. Get in a car or run.', keys: ['SHIFT'] },
     { id: 'h_shop', text: 'Green light: a shop. Stand in it to buy weapons, ammo, Clarity Pellets and the Firmness Vest.', keys: [] },
-    { id: 'h_taxi', text: 'Press E while stopped to start taking fares.', keys: ['E'] },
-    { id: 'h_patrol', text: 'Press E while stopped to start an HOA patrol.', keys: ['E'] },
-    { id: 'h_map', text: 'M opens the map. Click anywhere to set a waypoint.', keys: ['M'] },
+    { id: 'h_taxi', text: 'Press E while stopped to start taking fares.', pad: 'Hold B (the horn) while stopped to start taking fares.', touch: 'Hold HORN while stopped to start taking fares.', keys: ['E'] },
+    { id: 'h_patrol', text: 'Press E while stopped to start an HOA patrol.', pad: 'Hold B (the horn) while stopped to start an HOA patrol.', touch: 'Hold HORN while stopped to start an HOA patrol.', keys: ['E'] },
+    { id: 'h_map', text: 'M opens the map. Click anywhere to set a waypoint. The Loop is the fast way across town.', pad: 'BACK opens the map. The Loop is the fast way across town.', touch: 'MAP opens the map. Tap anywhere to set a waypoint.', keys: ['M'] },
     { id: 'h_save', text: 'The pod van is home. Sitting in it here saves the game.', keys: [] }
   ];
   function hintDef(id) {
@@ -523,6 +524,11 @@
     return null;
   }
   function flags() { var Ms = GTP.Missions; return Ms && Ms.state ? Ms.state.flags : null; }
+  // the sentence for the active device: the def's pad / touch line, else the keyboard text (QA-B-HUD-02)
+  function hintText(h) {
+    var d = GTP.UI && GTP.UI.device ? GTP.UI.device() : 'keyboard';
+    return (d === 'gamepad' ? h.pad : d === 'touch' ? h.touch : null) || h.text;
+  }
   var hq = [], hcur = null, hgap = 0, hcheck = 0, hMoveAt = -1;
   var Hints = GTP.Hints = {
     enabled: true,
@@ -540,7 +546,7 @@
       return true;
     },
     current: function () { return hcur; },
-    hud: function () { return hcur ? { id: hcur.id, text: hcur.text, keys: hcur.keys || [], t: hcur.t, total: K.hintSeconds, k: U.clamp(hcur.t / K.hintSeconds, 0, 1) } : null; },
+    hud: function () { return hcur ? { id: hcur.id, text: hintText(hcur), keys: hcur.keys || [], t: hcur.t, total: K.hintSeconds, k: U.clamp(hcur.t / K.hintSeconds, 0, 1) } : null; },
     dismiss: function () { if (hcur) { hcur = null; hgap = K.hintGap; } },
     update: function (dt) {
       var g = game(), p = player(); if (!g || !p || !Hints.enabled) return;
@@ -561,7 +567,7 @@
         if ((id === 'h_enter' && p.inVehicle) || (id === 'h_drive' && !p.inVehicle)) return;
         if (d && f && !f['hint_' + id]) {
           f['hint_' + id] = true;
-          hcur = { id: id, text: d.text, keys: d.keys || [], t: 0 };
+          hcur = { id: id, text: d.text, pad: d.pad || null, touch: d.touch || null, keys: d.keys || [], t: 0 };
           if (id === 'h_move') hMoveAt = simT();
           GTP.Events.emit('hint', { id: id, text: d.text, keys: d.keys || [] });
         }

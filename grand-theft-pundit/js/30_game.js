@@ -293,7 +293,9 @@
     if (s === this.state) return;
     this.prevState = this.state;
     this.state = s;
-    if (s === 'playing') this._fireLatch = true;   // the click / E that closed a line, a card or a menu is not a shot
+    // the click / E that closed a line, a card or a menu is not a shot (QA-CMB-06): the Input module's latch keeps shoot and
+    // action dead until released, for player.control and Combat alike; the old swap below is only a fallback without it
+    if (s === 'playing') { var In0 = GTP.Input; if (In0 && In0.latch) In0.latch(['shoot', 'action']); else this._fireLatch = true; }
     if (GTP.UI && GTP.UI.onState) { try { GTP.UI.onState(s, this.prevState); } catch (e) { U.reportError(e, 'ui.onState'); } }
     GTP.Events.emit('state', { state: s, prev: this.prevState });
   };
@@ -301,7 +303,9 @@
   Game.prototype._handleGlobalInput = function () {
     var In = GTP.Input;
     // the UI gets the frame first: title / pause / phone / dialogue menus consume their keys and return true
-    if (GTP.UI && GTP.UI.handleInput) { try { if (GTP.UI.handleInput(this.state)) return; } catch (e) { U.reportError(e, 'ui.handleInput'); } }
+    // a key the UI took as its confirm (Enter, Space) is not also the player's 'enter' / 'jump' in this step, and stays dead until
+    // released: RESUME or a dialogue line no longer throws the player out of the car or makes them jump (QA-B-FE-03)
+    if (GTP.UI && GTP.UI.handleInput) { try { if (GTP.UI.handleInput(this.state)) { if (In.latch && In.pressed('confirm')) In.latch(['enter', 'jump']); return; } } catch (e) { U.reportError(e, 'ui.handleInput'); } }
     if (this.state === 'title') {
       if (In.pressed('confirm') || In.pressed('enter')) this.setState('playing');
     } else if (this.state === 'playing') {
@@ -345,6 +349,13 @@
     try { return St.begin(); } catch (e) { U.reportError(e, 'story.begin'); return false; }
   };
 
+  // the modules that tick from a wrapper on Combat.update today (08b: Bosses and Specials, 13: Interiors) move here when their owner
+  // drops the wrapper and sets stepFromGame in the same change; until then this does nothing, so nothing ticks twice
+  Game.prototype._stepModules = function (dt) {
+    var B = GTP.Bosses, Sp = GTP.Specials, I = GTP.Interiors;
+    if (B && B.stepFromGame && B.update) { try { B.update(dt); if (Sp && Sp.update) Sp.update(dt); } catch (e) { U.reportError(e, 'bosses.update'); } }
+    if (I && I.stepFromGame && I.update) { try { I.update(dt); } catch (e) { U.reportError(e, 'interiors.update'); } }
+  };
   // one fixed step: Input -> player -> Missions -> AI -> entities -> Combat -> fx -> clock -> UI -> camera
   Game.prototype.step = function () {
     var dt = C.STEP;
@@ -363,6 +374,7 @@
         GTP.AI.update(dt);
         GTP.Entities.update(dt);
         GTP.Combat.update(dt);
+        this._stepModules(dt);
         GTP.Render.fx.update(dt);
         this.time.t += dt;
         this.playTime += dt;
@@ -376,6 +388,7 @@
         this.playTime += dt;
       } else if (RESPAWN_STATES[this.state]) {
         GTP.Combat.update(dt);
+        this._stepModules(dt);
         if (GTP.AI.updateRespawn) GTP.AI.updateRespawn(dt);   // the AI's fallback DEPLATFORMED flow until Combat owns it
         GTP.Render.fx.update(dt);
       }
@@ -392,8 +405,8 @@
     }
   };
 
-  // player.control with the fire latch: after a state change into play, shoot and action read as up until both are released
-  // (the press that dismissed the last dialogue line fired the gun on the same step; QA-CMB-06)
+  // player.control with the fallback fire latch (an Input module without latch()): after a state change into play, shoot and
+  // action read as up until both are released (QA-CMB-06)
   var LATCHED = { shoot: 1, action: 1 };
   Game.prototype._controlPlayer = function (dt) {
     var In = GTP.Input, p = this.player;
@@ -461,7 +474,7 @@
     var v = p.inVehicle;
     var data = {
       version: SAVE_VERSION, slot: slot | 0, seed: this.seed, savedAt: Date.now(), playTime: Math.round(this.playTime),
-      money: p.money | 0, subs: p.subs | 0, x: p.x, z: p.z, y: p.y, yaw: p.yaw, hp: p.hp, armor: p.armor || 0,
+      money: p.money | 0, subs: p.subs | 0, x: p.x, z: p.z, y: p.y, yaw: p.yaw, hp: p.hp, armor: p.armor || 0, wanted: p.wanted | 0,
       weapon: p.weapon || 'fist', weapons: copyWeapons(p.weapons), ammo: p.ammo ? JSON.parse(encode(p.ammo), function (k, vv) { return vv === 'inf' ? Infinity : vv; }) : {},
       completed: Array.from(st.completed || []), flags: Object.assign({}, st.flags || {}), stats: Object.assign({}, p.stats || {}), failed: Object.assign({}, st.failed || {}),
       bestTimes: Object.assign({}, st.bestTimes || {}),
@@ -495,16 +508,22 @@
     }
   };
   Game.prototype._summary = function (data) {
-    var Ms = GTP.Missions, W = GTP.World, p = this.player;
+    var Ms = GTP.Missions, W = GTP.World;
     var all = Ms && Ms.allMissions ? Ms.allMissions() : ((GTP.Content && GTP.Content.missions) || []);
     var ids = {}, n = 0, last = null;
     for (var i = 0; i < all.length; i++) ids[all[i].id] = all[i];
     (data.completed || []).forEach(function (id) { if (ids[id]) { n++; last = ids[id]; } });
     var d = W && W.districtAt && data.x != null ? W.districtAt(data.x, data.z) : null;
-    var lm = null, bd = 1e9;
-    if (W && W.landmarks) for (i = 0; i < W.landmarks.length; i++) { var l = W.landmarks[i], dd = U.dist2d(data.x, data.z, l.x, l.z); if (dd < bd) { bd = dd; lm = l; } }
-    var lmLabel = lm ? ((GTP.UI && GTP.UI.landmarkLabel) ? GTP.UI.landmarkLabel(lm) : (lm.label || lm.name)) : null;
-    return { missions: n, missionsTotal: all.length, lastMission: last ? last.title : null, district: d ? (d.name || d.id) : null, landmark: lmLabel, wanted: p ? (p.wanted | 0) : 0, money: data.money, playTime: data.playTime, savedAt: data.savedAt, seed: data.seed, clock: data.clock, day: data.day };
+    // the HUD chip's rule (QA-B-FE-16): a landmark whose building (or door) is within 26 m, else the street the save was made on
+    var lm = null, bd = 26;
+    if (W && W.landmarks && data.x != null) for (i = 0; i < W.landmarks.length; i++) {
+      var l = W.landmarks[i], b = l.building, dd;
+      if (b) dd = U.dist2d(data.x, data.z, U.clamp(data.x, b.x, b.x + b.w), U.clamp(data.z, b.z, b.z + b.d));
+      else if (l.door) dd = U.dist2d(data.x, data.z, l.door.x, l.door.z); else continue;
+      if (dd < bd) { bd = dd; lm = l; }
+    }
+    var lmLabel = lm ? ((GTP.UI && GTP.UI.landmarkLabel) ? GTP.UI.landmarkLabel(lm) : (lm.label || lm.name)) : (W && W.streetAt && data.x != null ? W.streetAt(data.x, data.z, data.y) : null);
+    return { missions: n, missionsTotal: all.length, lastMission: last ? last.title : null, district: d ? (d.name || d.id) : null, landmark: lmLabel, wanted: data.wanted | 0, money: data.money, playTime: data.playTime, savedAt: data.savedAt, seed: data.seed, clock: data.clock, day: data.day };
   };
 
   // restore everything but the world (newGame(seed) already ran)
@@ -525,8 +544,17 @@
     this.playTime = data.playTime || 0;
     this.waypoint = data.waypoint || null;
     if (GTP.Audio.radio && GTP.Audio.radio.setStation) GTP.Audio.radio.setStation(data.radioStation | 0);
-    for (var i = 0; i < GTP.SaveHooks.length; i++) { var h = GTP.SaveHooks[i]; if (h && typeof h.load === 'function') { try { h.load(data); } catch (e) { U.reportError(e, 'load.hook ' + (h.name || i)); } } }
+    // a module that keeps the same state in both (a v3 hook and a v4 registry entry) can name its entry in `h.registry`: a v4 save
+    // then loads it once, through the registry; without the field both run, as their owners made them idempotent
+    for (var i = 0; i < GTP.SaveHooks.length; i++) {
+      var h = GTP.SaveHooks[i]; if (!h || typeof h.load !== 'function') continue;
+      if (h.registry && data.registry && data.registry[h.registry] !== undefined) continue;
+      try { h.load(data); } catch (e) { U.reportError(e, 'load.hook ' + (h.name || i)); }
+    }
     this._registrySet(data.registry);
+    // the stars the slot card shows come back with the save (QA-B-FE-08); a save from before the field has them on its card only
+    var wl = U.clamp((data.wanted != null ? data.wanted : (data.summary && data.summary.wanted)) | 0, 0, 5), wd = GTP.AI && GTP.AI.wanted;
+    if (wl && wd && wd.set) wd.set(wl);
     // the car the player sat in comes back under them (the pod van is home; it respawns at the garage either way)
     if (data.vehicle && GTP.Vehicle && data.vehicle.type && C.VEHICLES[data.vehicle.type]) {
       try {
@@ -579,6 +607,8 @@
   Game.prototype.saveSlot = function (n, opts) {
     opts = opts || {};
     n = n | 0; if (n < 1 || n > SLOTS) n = this.activeSlot || 1;
+    // never in the middle of a cutscene: its flag is set but its onDone (the opening's hand-off to the story) has not run (QA-B-FE-07)
+    if (GTP.Cutscenes && GTP.Cutscenes.active) { if (!opts.auto) toast('Not during a cutscene.'); return false; }
     var data = this.serialize(n, opts); if (!data) return false;
     var ok = storeSet(slotKey(n), encode(data));
     if (ok) {

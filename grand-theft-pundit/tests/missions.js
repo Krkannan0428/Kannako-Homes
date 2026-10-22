@@ -193,13 +193,17 @@ H.run('missions', async (t) => {
     const c = T_.ctx(), d = T_.door('dorm_studio');
     const pks = c.pickups.map((p) => ({ x: +p.x.toFixed(1), z: +p.z.toFixed(1), label: p.label, type: p.pickupType, dist: +Math.hypot(p.x - d.x, p.z - d.z).toFixed(1), tile: GTP.World.tileAt(p.x, p.z) }));
     const texts = [];
-    for (const p of c.pickups) { T_.tp(p.x, p.z); GTP.game.advance(0.3); texts.push(GTP.Missions.state.objectiveText); }
+    const prog = [], marks = [GTP.Missions.markers().filter((k) => k.kind === 'objective').length];
+    for (const p of c.pickups) { T_.tp(p.x, p.z); GTP.game.advance(0.3); texts.push(GTP.Missions.state.objectiveText); prog.push(GTP.Missions.state.progress ? GTP.Missions.state.progress.n + '/' + GTP.Missions.state.progress.total : null); marks.push(GTP.Missions.markers().filter((k) => k.kind === 'objective').length); }
     const s = T_.until(T_.done, 3);
-    return { pks, texts, s, completed: GTP.Missions.state.completed.has('t_pickup'), left: GTP.Entities.list.filter((e) => e.kind === 'pickup' && e.pickupType === 'mission' && !e.removed).length, fxTexts: GTP.Render.fx.texts.length };
+    return { pks, texts, prog, marks, s, completed: GTP.Missions.state.completed.has('t_pickup'), left: GTP.Entities.list.filter((e) => e.kind === 'pickup' && e.pickupType === 'mission' && !e.removed).length, fxTexts: GTP.Render.fx.texts.length };
   });
   console.log('  pickup: ' + JSON.stringify(r));
   t.assert(r.pks.length === 3 && r.pks.every((p) => p.type === 'mission' && p.dist <= 22 && p.tile !== 3 && p.tile !== 5), 'three mission crates within 20 m of the dorm on open ground');
-  t.assert(r.texts[0].indexOf('(1/3)') > 0 && r.texts[1].indexOf('(2/3)') > 0, 'objective text carries the progress: ' + r.texts.join(' | '));
+  // the count lives in state.progress (the panel draws it at its right edge), not twice in the text too (QA-B-NP-05)
+  t.assert(r.prog[0] === '1/3' && r.prog[1] === '2/3' && r.texts.every((x) => !/\(\d+\/\d+\)/.test(x)), 'progress counts 1/3, 2/3 and the text carries no second count: ' + JSON.stringify({ prog: r.prog, texts: r.texts }));
+  // one minimap blip per open crate, dropped as each is collected (QA-B-NP-03)
+  t.assert(r.marks[0] === 3 && r.marks[1] === 2 && r.marks[2] === 1, 'a blip per open crate: ' + JSON.stringify(r.marks));
   t.assert(r.s > 0 && r.completed && r.left === 0, 'pickup completes after the third crate');
 
   // defeat: two goons, punched out with Combat.damage; no heat for self-defence
@@ -542,15 +546,16 @@ H.run('missions', async (t) => {
     const m = T_.base('t_any', [{ type: 'collect_any', spawn: { pickupType: 'mission', count: 4, around: { landmark: 'campus_quad' }, radius: 100 }, need: 2, text: 'Grab two' }]);
     T_.start(m);
     const c = T_.ctx(), pks = c.pickups.slice();
-    const text0 = GTP.Missions.state.objectiveText;
+    const pr = () => { const q = GTP.Missions.state.progress; return q ? q.n + '/' + q.total : null; };
+    const text0 = pr();
     T_.tp(pks[0].x, pks[0].z); GTP.game.advance(0.3);
-    const text1 = GTP.Missions.state.objectiveText;
+    const text1 = pr();
     T_.tp(pks[1].x, pks[1].z); GTP.game.advance(0.3);
     const s = T_.until(T_.done, 3);
     return { count: pks.length, text0, text1, s, completed: GTP.Missions.state.completed.has('t_any'), left: pks.filter((k) => !k.removed).length };
   });
   console.log('  collect_any: ' + JSON.stringify(r));
-  t.assert(r.count === 4 && /\(0\/2\)/.test(r.text0) && /\(1\/2\)/.test(r.text1) && r.s > 0 && r.completed && r.left === 0, 'collect_any completes at two of four and removes the rest');
+  t.assert(r.count === 4 && r.text0 === '0/2' && r.text1 === '1/2' && r.s > 0 && r.completed && r.left === 0, 'collect_any completes at two of four and removes the rest (progress ' + r.text0 + ', ' + r.text1 + ')');
 
   // shop: the objective completes when Both Sides Arms opens at that landmark
   r = await page.evaluate(() => {

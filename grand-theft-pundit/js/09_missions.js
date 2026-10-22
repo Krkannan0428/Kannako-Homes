@@ -54,7 +54,7 @@
     stopNear: 6, stopNearFoot: 3, escapeTime: 5,   // stop_vehicle: the player's car this close (or on foot), beyond maxDist this long = escaped
     boardRadius: 4, boardHold: 1, dropRadius: 12, passengerLeaveTime: 10,
     cutsceneAfterDelay: 5,    // the MISSION PASSED card (4.8 s) is gone before an act cutscene starts (QA-C1-12)
-    subsPerReward: 3,         // story subscribers: reward x 3, so the story alone ends in tier 3 (GDD_EXPANSION §5.8, QA-STR-16)
+    subsPerReward: 2,         // story subscribers: reward x 2: the 35-mission v0.3 chain pays $62,011 (124k subs), so the story alone ends in tier 3 (GDD_EXPANSION §5.8, QA-STR-16)
     chaosCapPerMinute: 500,
     weaponAmmo: { megaphone: 20, pistol: 40, hottake: 8, smg: 90, shotgun: 16, tableleg: Infinity, revolver: 24, rifle: 90, hotmic: 4, sniper: 10, ratio: 3 },
     meleeSwing: [1.6, 2.4],   // seconds between a mission goon's punches (a wind-up, not the fist's 2.5/s player rate; QA-C1-01)
@@ -63,7 +63,7 @@
     followGrace: 4,           // a tail's 'too close' clock starts after this many seconds or once the target first pulls away
     followLead: 14,           // the tailing target starts this far ahead of the player along its path
     ammoRefillDelay: 2,       // a weapon-restricted objective refills its weapon this long after it runs dry (QA-C1-03)
-    stationaryFireRange: 140, // stationary ranged goons (snipers, couriers on a causeway) open fire from this far, badly
+    stationaryFireRange: 170, // stationary ranged goons open fire from this far, badly (m12b's couriers stand 110-146 m from the causeway door)
     beaconHeight: 140,        // the story light's sky beam: seen from 200 m and more
     callDelay: 3.5,           // seconds after MISSION PASSED (and any act cutscene) before the next giver phones
     retryExpire: 180,         // a RETRY offer goes stale after this many seconds of free roam
@@ -395,8 +395,9 @@
     try { var m = Rd.markerMesh(color); Rd.addMarker(m); return m; } catch (e) { U.reportError(e, 'missions.marker'); return null; }
   }
   function dropMesh(m) { if (!m) return; var Rd = GTP.Render; if (Rd && Rd.removeMarker) { try { Rd.removeMarker(m); } catch (e) { /* optional */ } } }
-  function addObjMarker(pt, follow) {
-    var mk = { mesh: markerMesh(K.colors.objective), x: pt.x, z: pt.z, y: pt.y || 0, follow: follow || null };
+  // mapOnly: a minimap / map blip with no light in the world (a mission pickup is its own light)
+  function addObjMarker(pt, follow, mapOnly) {
+    var mk = { mesh: mapOnly ? null : markerMesh(K.colors.objective), x: pt.x, z: pt.z, y: pt.y || 0, follow: follow || null };
     if (mk.mesh) mk.mesh.position.set(mk.x, mk.y, mk.z);
     objMarkers.push(mk);
     return mk;
@@ -899,6 +900,8 @@
       if (vehicleLost(c.vehicle)) { c.failReason = 'vehicle_lost:' + (c.tag || c.vehicle.type); return 'fail'; }
       return (p.inVehicle === c.vehicle && c.vehicle.driver === p) ? 'done' : null;
     },
+    // the enter key in context (QA-B-NP-04): the one-shot h_enter hint may have gone by next to some parked car
+    hint: function (o, c, p) { return p.inVehicle ? null : 'Press ' + (GTP.UI && GTP.UI.glyph ? GTP.UI.glyph('enter') : 'F') + ' at a door to get in'; },
     target: function (o, c) { return c.vehicle && !c.vehicle.removed ? { x: c.vehicle.x, z: c.vehicle.z, y: c.vehicle.y } : null; }
   };
   H.pickup = {
@@ -906,10 +909,13 @@
       var sp = o.spawn || {}, center = resolvePoint(sp.around) || { x: player().x, z: player().z, y: player().y };
       c.count = sp.count || 1; c.label = sp.label || null;
       c.total = o.need != null ? Math.min(o.need, c.count) : c.count;   // collect_any: `need` of `count` completes it
-      // collected from a vehicle when the player is driving as it starts (or the data says so): the pickups go on the roads
-      c.byCar = sp.byCar != null ? !!sp.byCar : !!(player() && player().inVehicle);
+      // a collection run driven from a vehicle (several pickups around a place while the player sits at the wheel, or the data
+      // says so) goes on the roads; a pickup at a tagged entity (m09b's proofs beside the stopped van) stays where it is
+      c.byCar = sp.byCar != null ? !!sp.byCar : !!(player() && player().inVehicle && c.count >= 2 && !(sp.around && sp.around.tag));
       c.pickups = spawnPickups(center, metres(sp.radius, sp.around && sp.around.tag ? 5 : 25), c.count, c.label, c, c.byCar);
       c.collected = 0;
+      // a blip on the minimap and the map for each open pickup (QA-B-NP-03); dropped as it is collected
+      c.marks = c.pickups.map(function (pk) { return addObjMarker({ x: pk.x, z: pk.z, y: pk.y }, pk, true); });
     },
     check: function (o, c, p) {
       var n = 0, v = p.inVehicle;
@@ -920,6 +926,7 @@
         if (v && !v.wreck && Math.abs(v.y - pk.y) < 2.5 && v.edgeDistance(pk.x, pk.z) < 1.0) pk.collect(p);
         if (pk.removed) n++;
       }
+      if (c.marks) for (i = 0; i < c.marks.length; i++) if (c.marks[i] && c.pickups[i].removed) { dropObjMarker(c.marks[i]); c.marks[i] = null; }
       c.collected = Math.min(n, c.total);
       if (n >= c.total) { for (i = 0; i < c.pickups.length; i++) if (!c.pickups[i].removed) removeEntity(c.pickups[i]); return 'done'; }
       return null;
@@ -931,6 +938,11 @@
       return best ? { x: best.x, z: best.z, y: best.y } : null;
     }
   };
+  // the giver plays the passenger or the tail (the strangers' eccentrics walk to the car themselves): the copy standing at the
+  // light leaves, so there are never two of them (folded from 26_content_strangers' dedupeGiver, which then finds nothing)
+  function giverTakesPart(castId) {
+    if (run && run.giver && !run.giver.removed && !run.giver.inVehicle && run.giver.castId === castId) { removeEntity(run.giver); run.giver = null; }
+  }
   H.follow = {
     start: function (o, c) {
       var sp = o.spawn || {}, pl = player(), at = resolvePoint(sp.at) || { x: pl.x + 6, z: pl.z, y: pl.y };
@@ -941,6 +953,7 @@
       var base = lead > 4 ? { x: pl.x + ax / al * lead, z: pl.z + az / al * lead } : at;
       var s = randomSpot(base.x, base.z, 0, 3, { clear: 1 });
       if (U.dist2d(s.x, s.z, pl.x, pl.z) < K.followTooClose + 3) s = randomSpot(at.x, at.z, K.followTooClose + 3, K.followTooClose + 9, { clear: 1 });
+      giverTakesPart(sp.ped || 'courier');
       var p = spawnCastPed(sp.ped || 'courier', s.x, s.z, 'npc', { brain: 'follower', ai: { ctx: c } });
       track(p, 'follow');
       c.ped = p; c.wps = wps;
@@ -1162,6 +1175,7 @@
     start: function (o, c) {
       var sp = o.spawn || {}, pl = player(), at = resolvePoint(sp.at) || { x: pl.x + 6, z: pl.z, y: pl.y };
       var s = randomSpot(at.x, at.z, 1.5, 6, { clear: 1 });
+      giverTakesPart(sp.ped || 'kip');
       var ped = spawnCastPed(sp.ped || 'kip', s.x, s.z, 'npc', { brain: 'passenger', ai: { ctx: c } });
       track(ped, 'passenger');
       if (GTP.Cutscenes && GTP.Cutscenes.pose) GTP.Cutscenes.pose(ped, 'wave');
@@ -1499,17 +1513,15 @@
     cleanup: function (o, c) { unlisten(c); }
   };
 
-  // listener counts for the fallbacks above (does anyone draw the heist board, the phone, the chapter card?): GTP.Events.on /
-  // off are wrapped once at load to keep a tally (a wrapper on 00_util, listed in docs/v03/story.md)
-  var evCount = {};
-  (function wrapEvents() {
-    var Ev = GTP.Events; if (!Ev || Ev._counted) return;
-    var on = Ev.on, off = Ev.off;
-    Ev.on = function (name, fn) { evCount[name] = (evCount[name] || 0) + 1; return on.call(Ev, name, fn); };
-    Ev.off = function (name, fn) { if (evCount[name] > 0) evCount[name]--; return off.call(Ev, name, fn); };
-    Ev._counted = true;
-  })();
-  function hasListener(name) { return (evCount[name] | 0) > 0; }
+  // does a UI draw the heist board, the phone, the chapter card? (the fallbacks above toast without one). Asked of the UI's own
+  // API: the load-time listener count on GTP.Events.on / off this replaced also counted Audio's ringtone and sting listeners
+  function hasListener(name) {
+    var UI = GTP.UI; if (!UI) return false;
+    if (name === 'heist:board') return !!(UI.heistBoard || UI.openHeistBoard);
+    if (name === 'phone:call') return !!(UI.phoneCall || UI.skipCall);
+    if (name === 'chapter') return !!(UI.chapter || UI.openStory);
+    return false;
+  }
 
   // ------------------------------------------------------------- the heist (three missions: h01_casing, h02_prep, h03_job) --
   // The planning board's choice arrives as heist:plan {approach, crew:[castIds]}; it changes the job's spawns (hostile counts
@@ -1671,14 +1683,14 @@
     if (!o) { state.objectiveText = run && run.phase === 'outro' ? '' : state.objectiveText; state.progress = null; }
     else {
       var text = o.def.text || '', pr = o.h.progress ? o.h.progress(o.def, o.c, player()) : null;
-      state.progress = pr;
-      if (pr && pr.total != null && pr.n != null) text += ' (' + pr.n + '/' + pr.total + ')';
+      state.progress = pr;   // the panel draws the count at its right edge; the text no longer carries it too (QA-B-NP-05)
       var hint = o.h.hint ? o.h.hint(o.def, o.c, player()) : null;
       state.objectiveText = text; state.hint = hint;
     }
-    var tf = null;
-    for (var i = run ? run.stack.length - 1 : -1; i >= 0; i--) if (run.stack[i].timer) { tf = run.stack[i].timer; break; }
-    state.timer = tf ? { remaining: tf.remaining, total: tf.total } : null;
+    var tf = null, td = null;
+    for (var i = run ? run.stack.length - 1 : -1; i >= 0; i--) if (run.stack[i].timer) { tf = run.stack[i].timer; td = run.stack[i].def; break; }
+    // the wrap's own label ('BATTERY', 'CODE EXPIRES IN'); without one the UI prints a neutral one (QA-B-NP-01)
+    state.timer = tf ? { remaining: tf.remaining, total: tf.total, label: (td && td.label) || null } : null;
   }
   function tickObjective(dt) {
     var o = run.obj, p = player(); if (!o || !p) return;
@@ -1777,7 +1789,7 @@
   };
   function failText(reason) {
     if (!reason) return '';
-    if (reason.indexOf('vehicle_lost:') === 0) { var tag = reason.slice(13), v = run && run.tagged[tag]; return 'The ' + (v ? vehicleName(v.type) : (tag === 'podvan' ? 'pod van' : tag)) + ' is gone.'; }
+    if (reason.indexOf('vehicle_lost:') === 0) { var tag = reason.slice(13), v = run && run.tagged[tag]; return 'The ' + (v ? vehicleName(v.type) : (tag === 'podvan' ? 'pod van' : vehicleName(tag))) + ' is gone.'; }
     if (reason.indexOf('minigame:') === 0) return reason.slice(9) === 'ratio' ? 'You were the ratio.' : 'Minds changed: zero. Crowd: theirs.';
     return FAIL_TEXT[reason] || String(reason);
   }
@@ -1871,7 +1883,7 @@
   }
 
   // ------------------------------------------------- subscribers (GDD_EXPANSION §5.8) --
-  // player.subs is the meta counter (saved). Story missions pay reward x 5, strands their listed amounts, chaos a capped trickle.
+  // player.subs is the meta counter (saved). Story missions pay reward x K.subsPerReward, strands their listed amounts, chaos a capped trickle.
   var SUB_TIERS = [
     { subs: 0, name: 'Pre-Viral', perk: null, line: 'Minds changed so far: zero.' },
     { subs: 5000, name: 'A Voice', perk: 'group_rate', line: 'Group rate: taxi fares and Sponsor Runs pay +25%.' },
@@ -1896,7 +1908,7 @@
     var p = player(); n = n | 0;
     if (!p || n <= 0) return 0;
     p.subs = (p.subs | 0) + n;
-    textFx('+' + (n >= 1000 ? (n / 1000).toFixed(n % 1000 ? 1 : 0) + 'K' : n) + ' subs', p.x, p.y + 2.7, p.z, '#ff3fa4', 1.4);
+    textFx('+' + (n >= 1000 ? (n / 1000).toFixed(n % 1000 ? 1 : 0) + 'K' : n) + ' subs', p.x, p.y + 1.7, p.z, '#ff3fa4', 1.4);   // under the cash float: at +2.7 m it rose off the top of the screen (QA-B-HUD-12)
     GTP.Events.emit('subs', { n: n, why: why || null, total: p.subs });
     var t = tierFor(p.subs);
     if (t > subsTier) {
@@ -2063,7 +2075,7 @@
   }
   function clearGps() { if (!lastGps) return; lastGps = null; Story.gpsTarget = null; GTP.Events.emit('gps:clear', {}); }
   // the objective's own GPS during a mission: a fixed target (a door, a drop-off) gets the line, a moving one the arrow only
-  var GPS_TYPES = { goto: 1, drive_to: 1, interior: 1, shop: 1, buy: 1, range: 1 };
+  var GPS_TYPES = { goto: 1, drive_to: 1, interior: 1, shop: 1, buy: 1, range: 1, fly_to: 1, land: 1, skydive: 1 };   // the last three: 06b's
   function objectiveGps() {
     var o = run && run.obj; if (!o) return;
     var t = null;
@@ -2190,7 +2202,17 @@
   var Missions = GTP.Missions = {
     K: K,
     state: null,
+    // GTP.Systems (14) rides after the missions' own init and update: folded here from 14's load-time wrappers, which stand down
+    // on the _sys flags set below
     init: function () {
+      Missions._reset();
+      if (GTP.Systems && GTP.Systems.reset) { try { GTP.Systems.reset(); } catch (e) { U.reportError(e, 'systems.reset'); } }
+    },
+    update: function (dt) {
+      Missions._tick(dt);
+      if (GTP.Systems && GTP.Systems.update) { try { GTP.Systems.update(dt); } catch (e) { U.reportError(e, 'systems.update'); } }
+    },
+    _reset: function () {
       if (run) { try { endObjective(); } catch (e) { /* the objective's own cleanup (event listeners) */ } try { cleanupEntities(run.entities, false); } catch (e) { /* entities may be gone */ } }
       run = null; lastFail = null; pendingCut = null; mrng = GTP.rng.fork(0x3155);
       dlg.active = false; dlg.queue = []; dlg.current = null; dlg.done = null; dlg.restore = null; dlg.uiDriven = false;
@@ -2209,7 +2231,7 @@
       Heist.reset(); Story.reset();
       var Q = GTP.ObjectiveTypes; if (Q) for (var qn in Q) registerObjectiveType(qn, Q[qn]);
     },
-    update: function (dt) {
+    _tick: function (dt) {
       if (!state) Missions.init();
       var g = game(), p = player();
       if (!g || !p) return;
@@ -2454,7 +2476,9 @@
     registerTest: function (m) { if (!m || !m.id) return null; registry[m.id] = m; return m.id; },
     missionById: missionById,
     allMissions: allMissions,
-    allMarkers: function () { var out = Missions.markers(); if (GTP.Strands && GTP.Strands.markers) out = out.concat(GTP.Strands.markers()); return out; },
+    // the strands' icons first: the minimap draws in list order, so the mission lights and objective dots stay on top of the home
+    // icon at the garage (QA-B-NP-02)
+    allMarkers: function () { var out = GTP.Strands && GTP.Strands.markers ? GTP.Strands.markers() : []; return out.concat(Missions.markers()); },
     resolvePoint: resolvePoint,
     on: function (ev, fn) { return GTP.Events.on('mission:' + ev, fn); },
     off: function (ev, fn) { return GTP.Events.off('mission:' + ev, fn); },
@@ -2470,6 +2494,7 @@
     debug: { run: function () { return run; }, avail: function () { return avail; }, objMarkers: function () { return objMarkers; }, snapshot: function () { return run ? run.checkpoint : null; } }
   };
   Missions.TIERS = SUB_TIERS;
+  Missions.update._sys = true; Missions.init._sys = true;   // 14_systems' wrappers check these and leave the folded calls above alone
   Missions.init();
 
   // ------------------------------------------------------------ events --
@@ -2551,7 +2576,8 @@
     turnLookAhead: 80, turnSpeed: 13,   // the chauffeur brakes for a sharp turn from this far out, down to this speed
     stuntLandRadius: 14, stuntSlowAfter: 0.6, stuntSlowFor: 2.2, stuntSlowScale: 0.35, stuntSideYaw: 1.22, stuntFov: 55,
     stuntLaunchAngle: 0.42,   // the wedge's effective launch angle (rad): the car keeps its speed and gets speed * sin(angle) upward (arcade physics)
-    ensureEvery: 2, chip: true
+    stuntMaxLift: 12, stuntOvershoot: 0.5,   // the lift tops out at 12 m/s (a 30 m/s run-up); a faster car flies at most half a landing radius past the landing point (QA-A-DRV-06)
+    ensureEvery: 2, chip: true, hornStart: 1   // hornStart: seconds of horn, stopped in a taxi / patrol car, that start the shift (QA-B-HUD-01)
   }, C.STRANDS || {});
 
   // ---------------------------------------------------------------------- DEFAULTS (GDD_EXPANSION §5) --
@@ -2871,9 +2897,17 @@
           best = r; bd = d;
         }
         if (best) {
-          // the physics drops vy to zero as the wheels leave the wedge: the launch keeps the run-up speed and adds the lift
-          var sp = v.speed2d(), lift = sp * Math.sin(SK.stuntLaunchAngle);
+          // the physics drops vy to zero as the wheels leave the wedge: the launch keeps the run-up speed and adds the lift, capped
+          var sp = v.speed2d(), lift = Math.min(sp * Math.sin(SK.stuntLaunchAngle), SK.stuntMaxLift);
           if (v.vy < lift) v.vy = lift;
+          // arcade reach: a car faster than the jump needs comes down just past the landing point, not in the sea beyond sj_07's
+          // beach or against the map edge (QA-A-DRV-06); the flight time counts the drop to the surface under the landing
+          var ld = best.landing;
+          if (ld) {
+            var bf = U.yawToDir(best.yaw), reach = (ld.x - v.x) * bf.x + (ld.z - v.z) * bf.z + SK.stuntLandRadius * SK.stuntOvershoot;
+            var grav = C.PHYS.gravity, drop = Math.max(0, v.y - W().heightAt(ld.x, ld.z, v.y)), tAir = (v.vy + Math.sqrt(v.vy * v.vy + 2 * grav * drop)) / grav;
+            if (reach > 0 && sp * tAir > reach) { var kr = reach / (sp * tAir); v.vx *= kr; v.vz *= kr; }
+          }
           stunts.air = { v: v, ramp: best, airT: 0, speed: sp, slow: false, x0: v.x, z0: v.z };
           sfx('jump', v.x, v.z, 0.9); GTP.Events.emit('stunt:launch', { ramp: best.id, speed: sp });
         }
@@ -3460,7 +3494,7 @@
     hud: function () { var def = cur.def; return { line: 'Hecklers ratioed: ' + cur.kills + ' / ' + def.hecklers, timer: cur.countdown > 0 ? null : { remaining: Math.max(0, cur.timer), total: def.seconds }, progress: (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(def.weapon) : def.weapon) + (cur.wrong ? '  WRONG TAKES ' + cur.wrong : ''), target: null, countdown: Math.max(0, cur.countdown) }; }
   };
   // a weapon's carry cap (mag + reserve) and whether the shop still locks it
-  function weaponCap(id) { var CB = GTP.Combat, w = CB && CB.WEAPONS ? CB.WEAPONS[id] : null; if (!w) return Infinity; var c = (w.mag || 0) + (w.reserve || w.maxReserve || 0); return c > 0 ? c : Infinity; }
+  function weaponCap(id) { var CB = GTP.Combat, w = CB && CB.WEAPONS ? CB.WEAPONS[id] : null; if (!w) return Infinity; var c = CB.ammoCap ? CB.ammoCap(player(), id) : (w.mag || 0) + (w.reserve || w.maxReserve || 0); return c > 0 ? c : Infinity; }   // Combat's own cap: mag mods, rampage_king's x1.5 reserve
   function shopLocked(id) {
     var sh = GTP.Combat && GTP.Combat.shop; if (!sh || !sh.items) return false;
     try { var it = sh.items('weapons'); for (var i = 0; i < it.length; i++) if (it[i].weapon === id) return !!it[i].locked; } catch (e) { /* shop optional */ }
@@ -3601,9 +3635,9 @@
     if (flagHas('cab_home')) ensure('homecab', 'pod_garage', 'taxi', { color: '#ffc21a' });
     if (state.completed.has('m10_pellets')) ensure('hoasuv', 'hoa_hall', 'suv', { color: '#f4ead8' });
     if (flagHas('sponsored_van')) { var van = liveTagged('podvan'); if (van && van.maxHp < 320) { van.maxHp = 320; van.hp = Math.max(van.hp, 320); } }
-    // the vests appear when their flag is set, not only when the car is first parked (QA-STR-11, QA-STR-15): the Firmness Vest by
-    // the HOA SUV after patrol level 6, the memo-20 vest by the pod garage
-    if (flagHas('hoa_vest')) ensureVest('hoa', liveTagged('hoasuv'), 'FIRMNESS VEST');
+    // the vests appear when their flag is set, not only when the car is first parked (QA-STR-11, QA-STR-15): the Firmness Vest at
+    // the HOA Hall after patrol level 6 (never wherever the SUV was being driven when the flag landed), the memo-20 vest by the pod garage
+    if (flagHas('hoa_vest')) { var hh = Wd.landmark('hoa_hall'); ensureVest('hoa', hh && hh.door ? { x: hh.door.x, z: hh.door.z } : null, 'FIRMNESS VEST'); }
     if (flagHas('memo_vest')) { var pg = Wd.landmark('pod_garage'); ensureVest('memo', pg && pg.door ? { x: pg.door.x, z: pg.door.z } : null, 'MEMO VEST'); }   // the garage, never the moving van
   }
   var vests = {};
@@ -3633,9 +3667,13 @@
     GTP.Events.emit('strand:start', { id: id, title: cur ? cur.title : s.title });
     return true;
   }
-  function pollInput(p) {
-    var In = GTP.Input, v = playerVehicle();
-    if (!In || !In.pressed('action') || !v || !stopped(v)) return;
+  // the horn held while stopped starts a shift too: no pad or touch button is 'action' in a car (QA-B-HUD-01)
+  var hornHeld = 0;
+  function pollInput(p, dt) {
+    var In = GTP.Input, v = playerVehicle(), was = hornHeld;
+    hornHeld = In && v && !cur && !run && In.down('horn') && stopped(v) ? hornHeld + (dt || 0) : 0;
+    var horn = was < SK.hornStart && hornHeld >= SK.hornStart;
+    if (!In || !(In.pressed('action') || horn) || !v || !stopped(v)) return;
     if (run) return;
     if (!cur) {
       if (S.loud_cab.canStart(v)) startStrand('loud_cab');
@@ -3661,8 +3699,8 @@
         // the handbrake (Space in a car) or the foot brake held for a second on the line; while stopped in the light the foot
         // brake holds the car instead of reversing it out (QA-STR-12), and a chip says how to start
         var In = GTP.Input, insideR = !!v && U.dist2d(v.x, v.z, mk.x, mk.z) <= 6 && Math.abs(v.y - mk.y) < 3;
-        if (!insideR) { mk.holdT = 0; mk.told = false; continue; }
-        var footBrake = !!(In && In.down('back') && !In.down('forward')) && Math.abs(v.speed) < 1.5;
+        if (!insideR) { mk.holdT = 0; mk.told = false; mk.told2 = false; continue; }
+        var footBrake = !cur && !run && !!(In && In.down('back') && !In.down('forward')) && Math.abs(v.speed) < 1.5;   // only when the race can start: on a mission or another strand the brake still reverses out
         if (footBrake) v.setControls(0, 0, true, 1);
         var braking = !!(In && (In.down('jump') || footBrake || v.handbrake));
         if (!mk.told && stopped(v) && !cur && !run) {
@@ -3697,7 +3735,7 @@
         ensureT += dt;
         if (ensureT >= SK.ensureEvery) { ensureT = 0; ensureVehicles(); }
         stunts.update(dt);
-        pollInput(p);
+        pollInput(p, dt);
         pollMarkers(p, dt);
         if (cur) {
           var s = S[cur.id];

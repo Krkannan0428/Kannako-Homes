@@ -245,8 +245,9 @@ function installPlayer(budget) {
     // ---- one objective's worth of play, chosen from the objective text and what the HUD points at ----
     // returns {ok, why} once the objective text changes or the mission ends
     playObjective(maxSec) {
-      const text0 = NP.objectiveText(), mid = NP.hud().active, p = NP.p();
-      const changed = () => NP.hud().active !== mid || NP.objectiveText() !== text0 || NP.hud().phase !== 'play';
+      const text0 = NP.objectiveText(), mid = NP.hud().active, p = NP.p(), prog = () => { const pr = NP.hud().progress; return pr && pr.n != null ? pr.n + '/' + pr.total : ''; }, prog0 = prog();
+      // the objective panel moved on: new text, or its count (drawn at the right edge, e.g. 2/5) went up
+      const changed = () => NP.hud().active !== mid || NP.objectiveText() !== text0 || prog() !== prog0 || NP.hud().phase !== 'play';
       const t0 = NP.now(); let tries = 0;
       while (!changed() && NP.now() - t0 < maxSec && !NP.over()) {
         if (NP.housekeeping()) continue;
@@ -298,7 +299,7 @@ function installPlayer(budget) {
         }
       }
       NP.releaseAll();
-      return { ok: changed(), text: text0, t: NP.now() - t0 };
+      return { ok: changed(), text: text0 + (prog0 ? ' (' + prog0 + ')' : ''), t: NP.now() - t0 };
     },
     // play the running mission until it completes or fails; returns {ok, why}
     playMission(id, maxSec) {
