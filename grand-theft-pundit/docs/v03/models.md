@@ -73,8 +73,22 @@ Blend weights (aim, crouch, air, hold) ease on the game clock's step (the wall c
 at once after a gap over 0.25 s, so a ped that was off screen or a test that advanced the world without frames shows the
 settled pose.
 
-The held gun Combat hangs on `armR` is re-parented to `handR` every frame and placed at the grip; its orientation is
-set so the barrel follows the aim. Car occupants are drawn through the glass at their seat (the record's `seats`);
+**Holding guns with Combat 0.3 (integration round 1).** Combat now owns the held weapon: `Combat.postSync(ped)` (after
+`syncMesh`) puts it on the ped root from `gunFrame` when raised, or on the node named `handR` when carried. 06c no longer
+re-parents it. Instead it IKs the arms to the same frame (`Combat.debug.gunFrame(ped, id, raised, out, yaw, pitch)`,
+offset by the interpolated root): the right hand to the grip, the left hand to `weaponFitFor(id).support` (raised) or
+`.mag` (low-ready reload). Combat draws guns 1.2x (handguns 1.46x), which puts the support point ~0.8 m ahead of the
+shoulder, so the torso blades, the left shoulder comes forward, and when that still is out of reach the support hand
+slides back along the handguard toward the grip. Pistols use an elbows-out pole so the upper arms stay level.
+`raisedOf` mirrors Combat's raised test. Melee weapons that are not raised and the free hand without a weapon keep the
+06c poses. The skeleton's wrist bones are `wristR` / `wristL`; `handR` / `handL` are grip anchor nodes under them
+(0.075 m down the palm) so Combat's `getObjectByName('handR')` lands the grip in the palm.
+
+**Rides (06b).** For moto, jet ski, cockpit seats (heli, plane, jet) and the parachute, `syncSeated` places the body with
+`GTP.Vehicles.riderPose(ped, alpha)` and poses it: hands on the bars or stick, the moto pillion, free fall spread-eagled,
+hands on the toggles under an open canopy.
+
+Car occupants are drawn through the glass at their seat (the record's `seats`);
 the **player's own body stays hidden in cars** as in v0.2 (`GTP.Anim.showPlayerInCar = true` opts in;
 `GTP.Anim.showOccupants = false` hides everyone as v0.2 did).
 
@@ -96,7 +110,7 @@ The record keeps the v0.2 shape (`body` with material groups paint 0, detail 1, 
 barBlue 6, wrap 7, chrome 8; `wheel`, `wheelRadius`, `wheelWidth`, `wheelOffsets`, `lightPoints`, `doorPoints`,
 `size`, `wrap`), with the same dimensions, wheel positions and door points, plus `lods[3]`, `wheelLods[3]`,
 `seats[{x, y, z}]` (hip points, mesh frame, forward -z), `wheelPoint` (steering wheel centre), `bars` (scooter),
-`mods` (normalised), `modsKey`, `finish`, `models: true`, `tris`. Body LODs (near < 22 m, mid < 55 m): sedan
+`mods` (normalised), `modsKey`, `finish`, `models: true`, `modsApplied: true`, `tris`. Body LODs (near < 22 m, mid < 55 m): sedan
 8.3k / 4.8k / 1.6k triangles, bus 11.9k / 5.3k / 2.4k; wheels 0.9-1.4k / 0.4k / 0.2k. In the perf test scene the
 frame's triangles went from 482k (first cut) to 306k, under the 450k bound; the crowd test (60 peds, 24 cars) draws
 479 calls.
@@ -130,7 +144,11 @@ material. Geometry is cached per `cls|wrap|modsKey`.
   `swimming`, `!onGround`, knocked down while airborne.
 - Weapon hold class: `GTP.Content.parity.weapons[].hold`, else `GTP.Combat.WEAPONS[id].hold`, else by id / length.
   Weapon lengths from `GTP.Assets.weaponFit` (the support hand sits at 40 % of the length on rifle-likes).
-- `ped._held` (Combat's held weapon mesh) is re-parented to `handR`.
+- Combat 0.3: `Combat.debug.gunFrame`, `Combat.holdOf`, `Combat.WEAPONS[id].melee`, `GTP.Assets.weaponFitFor(id)` (support,
+  mag, upright, melee, knuckle); Combat places `ped._held` itself (`postSync`); 06c reads `ped._held` / `_heldId` only to
+  know what is drawn.
+- Vehicles 0.3: `GTP.Vehicles.riderPose(ped, alpha)`; records set `rec.modsApplied = true` so 06b does not layer its own
+  rims / spoiler / tint / finish on 05d cars.
 - `GTP.Content.parity.clothing` (content track) for outfit ids; `GTP.Content.looks.skinColors`.
 - `vehicle.mods` (vehicles track; read every frame, so no rebuild is needed for mods to show), `vehicle.wheelSteer`,
   the vehicle mesh's `userData.rec / paint / wheels` built by `GTP.Render.buildVehicleMesh` (environment track).
@@ -146,6 +164,8 @@ material. Geometry is cached per `cls|wrap|modsKey`.
   because Render loads later): detach releases the ped's look geometry and disposes its skeleton's bone texture;
   attach of a mesh that was detached (09_missions `setSign`, 12_cutscenes `placeActor` detach and re-attach the same
   mesh) takes the look back, re-registering it if it was evicted meanwhile.
+- `GTP.Render.buildEntityMesh` wrapped (from `05d`, installed on the first `vehicleGeometry` call): a modded car gets
+  empty `spoiler` / `rims` nodes (the parts are merged into the body and wheel geometry) for code that finds them by name.
 
 ## Adversarial review (fixed)
 A review pass over the diff found and this branch fixed: the look released on a detach + re-attach of the same mesh
@@ -166,9 +186,10 @@ record, modded records never leaving the cache (now swept after 120 s unused), a
 
 ## Tests
 `cd grand-theft-pundit && NODE_PATH=/opt/node-tools/node_modules node tests/characters.js`
-Full suite on this branch: all 20 files pass (`tests/all.js`; `actors`, `combat` and `perf` were re-run after the
-fixes that keep their v0.2 expectations: the player hidden in cars, the arm raised in the pistol aim, the triangle
-bound).
+Integration round 1 (merged build): `characters` passes. The failures in the merged suite that came from this track
+(the rifle hold, the pistol aim arm, the moto / jet ski rider, the mod parts) are fixed; the rest reproduce on the base
+branch and belong to other tracks. Per-test evidence: `docs/v03/triage_models.md`.
+The QA block in `characters.js` guards QA-A-ENT-01, ENT-02, ENT-09 and CAM-04.
 Covers the rig, aliases, proportions, LOD budgets, hair / hat variety, outfits and parity clothing ids, locomotion,
 rifle and pistol IK holds (gun in the hand along the aim, the left hand on the foregrip), the pose contract (pitch,
 reload), melee, cover, swim, knockdown tilt, first-person hide, LOD and distance cull, the cutscene pose wrapper, the
@@ -182,4 +203,9 @@ budget, and five screenshots (`tests/out/characters_*.png`).
 - The bus windshield reads as a tall glass box from some angles.
 - IK targets are tuned for the v0.2 weapon meshes (`05b`); new weapons with very different grips may need a hold
   offset (`GTP.Anim.weaponInfo` is the place).
-- No QA bug in `docs/v03/qa_r1_bugs.json` points at `05d_models.js` or `06c_animation.js`; none were fixed here.
+- Two-handed melee (bat) keeps the v0.2 swing: the left hand is not on the handle (~0.5 m away).
+- Clothing from `GTP.Content.parity.clothing` maps to the built-in styles; items with no matching style (flannel,
+  quarter-zip) only change colours.
+- The 1.2x weapon scale (Combat's `HOLD_SCALE`) is tuned for the v0.2 rig; with the 0.3 rig the support hand often sits
+  back on the handguard rather than on the foregrip. Reducing that scale in Combat would let the hands land exactly.
+- QA triage for this round: `docs/v03/triage_models.md`.

@@ -212,6 +212,43 @@ H.run('characters', async (t) => {
   t.assert(reg.seatsDistinct, 'occupants keep distinct seats: ' + reg.seats.join(' | '));
   t.assert(reg.sameRec, 'mods {} shares the base vehicle record');
 
+  // ---- QA round 1 (docs/v03/triage_models.md): ENT-01 interiors under the roof, ENT-02 a stance foot on the ground while
+  // running, ENT-09 a swimmer at the waterline, CAM-04 the scooter rider's eye
+  const qa = await page.evaluate(() => {
+    const out = { ent01: {} }, C = GTP.C, E = GTP.Entities, p = GTP.game.player, W = GTP.World;
+    ['sedan', 'taxi', 'cop', 'sports', 'suv', 'van', 'bus'].forEach((c) => {
+      const rec = GTP.Assets.vehicleGeometry(c), g = rec.lods[0], P = g.attributes.position.array, I = g.index.array, spec = C.VEHICLES[c], hw = spec.width / 2;
+      const gof = new Int8Array(P.length / 3).fill(-1); g.groups.forEach((gr) => { for (let k = gr.start; k < gr.start + gr.count; k++) gof[I[k]] = gr.materialIndex; });
+      const top = {}; for (let v = 0; v < P.length / 3; v++) { if ((gof[v] !== 0 && gof[v] !== 2) || Math.abs(P[v * 3]) > 0.35) continue; const bn = Math.round(P[v * 3 + 2] * 10); top[bn] = Math.max(top[bn] || -9, P[v * 3 + 1]); }
+      let poke = 0;
+      for (let v = 0; v < P.length / 3; v++) {
+        if (gof[v] !== 1) continue; const x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
+        if (Math.abs(x) > hw * 0.75 || y < 0.6 || y > spec.height + 0.01 || !rec.seats.some((s) => Math.abs(z - s.z) < 0.9 && Math.abs(x - s.x) < 0.45)) continue;
+        const bn = Math.round(z * 10); if (y > Math.max(top[bn] || -9, top[bn - 1] || -9, top[bn + 1] || -9) + 0.005) poke++;
+      }
+      out.ent01[c] = poke;
+    });
+    out.cam04 = GTP.Assets.vehicleGeometry('bike').lightPoints.eye.y;
+    const r = new GTP.Ped({ x: p.x + 2, z: p.z + 2, look: { skin: 2, hair: 'short' }, persistent: true }); r.y = W.heightAt(r.x, r.z, p.y); r.snap(); E.add(r);
+    r.update = function (dt) { this.age += dt; this.animTime += dt; };
+    GTP.game.debug.freeCam(r.x + 3, r.y + 1.5, r.z + 3, r.x, r.y + 1, r.z);
+    const v3 = new THREE.Vector3(), feet = [];
+    for (let ph = 0; ph < 6.28; ph += 0.35) { r.state = 'run'; r.speed = 6.5; r.animPhase = ph; E.sync(1); r.mesh.updateMatrixWorld(true); const B = r.mesh.userData.bones; feet.push(Math.min(B.footL.getWorldPosition(v3).y, B.footR.getWorldPosition(v3).y) - r.y); }
+    out.ent02 = { max: +Math.max(...feet).toFixed(3), min: +Math.min(...feet).toFixed(3) };
+    const sw = new GTP.Ped({ x: p.x - 2, z: p.z + 2, look: { skin: 2, hair: 'short' }, persistent: true }); E.add(sw);
+    sw.swimming = true; sw.y = C.WATER_Y + 0.29; sw.tilt = -(Math.PI / 2 - 0.22); sw.speed = 1.2; sw.animPhase = 1; sw.snap(); sw.update = function (dt) { this.age += dt; this.animTime += dt; };
+    E.sync(1); sw.mesh.updateMatrixWorld(true);
+    const SB = sw.mesh.userData.bones;
+    out.ent09 = { hips: +(SB.hips.getWorldPosition(v3).y - C.WATER_Y).toFixed(2), head: +(SB.head.getWorldPosition(v3).y - C.WATER_Y).toFixed(2) };
+    [r, sw].forEach((e) => { e.removed = true; });
+    return out;
+  });
+  console.log('  qa: ' + JSON.stringify(qa));
+  t.assert(Object.values(qa.ent01).every((n) => n === 0), 'ENT-01: car interiors stay under the roof and glass: ' + JSON.stringify(qa.ent01));
+  t.assert(qa.ent02.max < 0.12 && qa.ent02.min > 0.07, 'ENT-02: a running stance foot stays on the ground (ankle rest 0.085): ' + JSON.stringify(qa.ent02));
+  t.assert(Math.abs(qa.ent09.hips) < 0.15 && qa.ent09.head > 0 && qa.ent09.head < 0.3, 'ENT-09: a swimmer lies at the waterline, head above it: ' + JSON.stringify(qa.ent09));
+  t.assert(qa.cam04 > 1.4, 'CAM-04: the scooter rider\'s eye: ' + qa.cam04);
+
   // ---- a crowd: 60 peds and 24 cars around the camera stay inside the draw and CPU budgets
   const crowd = await page.evaluate(() => {
     const E = GTP.Entities, p = GTP.game.player, W = GTP.World, R = GTP.rng;

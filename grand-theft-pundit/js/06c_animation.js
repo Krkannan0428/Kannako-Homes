@@ -157,6 +157,8 @@
 
   // ------------------------------------------------------------ the main --
   var POLE_R = new THREE.Vector3(0.7, -1, 0.35), POLE_L = new THREE.Vector3(-0.7, -1, 0.35), POLE_LIN = new THREE.Vector3(-0.15, -1, 0.1), POLE_RIN = new THREE.Vector3(0.15, -1, 0.1);
+  // the pistol stance: elbows out to the sides, the upper arms near level
+  var POLE_ROUT = new THREE.Vector3(1, -0.35, 0.3), POLE_LOUT = new THREE.Vector3(-1, -0.35, 0.3);
   var gripC = new THREE.Vector3(), supC = new THREE.Vector3(), tmpR = new THREE.Vector3(), tmpR2 = new THREE.Vector3();
 
   function animate(p, m, st, P, lod) {
@@ -201,6 +203,14 @@
     rot(B.armL, aL + br * 0.01 * idle, 0, -0.09 - idle * 0.02); rot(B.lowerArmL, eB + Math.max(0, aL) * 0.4, 0, 0); rot(B.handL, 0, 0, 0.1);
     rot(B.armR, aR - br * 0.01 * idle, 0, 0.09 + idle * 0.02); rot(B.lowerArmR, eB + Math.max(0, aR) * 0.4, 0, 0); rot(B.handR, 0, 0, -0.1);
 
+    // ---- keep the stance foot on the ground (QA-A-ENT-02): forward kinematics of both legs; the hips drop by however far
+    // the lower ankle rides above its rest height (a run keeps a short flight phase)
+    if (k > 0.05 && p.onGround !== false) {
+      var lowA = Math.min(ankleY(B, B.legL, B.lowerLegL, B.footL), ankleY(B, B.legR, B.lowerLegR, B.footR)), restA = R.footL.y + R.lowerLegL.y + R.legL.y + R.hips.y;
+      var over = lowA - restA - (run ? 0.025 * k : 0);
+      if (over > 0) B.hips.position.y -= over;
+      else if (lowA < restA - 0.008) B.hips.position.y += restA - 0.008 - lowA;   // nor sink below the pavement at heel strike
+    }
     // ---- crouch (low cover, the counter's duck)
     var cw = st.crouchW;
     if (cw > 0.01) {
@@ -257,6 +267,12 @@
     }
     headLook(p, B, st, aimW * pitch);
   }
+  // the ankle's height in the root frame from the hips down one leg
+  function ankleY(B, up, lo, foot) {
+    B.hips.updateMatrix(); up.updateMatrix(); lo.updateMatrix(); foot.updateMatrix();
+    _m2.multiplyMatrices(B.hips.matrix, up.matrix).multiply(lo.matrix).multiply(foot.matrix);
+    return _m2.elements[13];
+  }
   function mixRot(b, x, y, z, w) { var r = b.rotation; r.set(r.x + (x - r.x) * w, r.y + (y - r.y) * w, r.z + (z - r.z) * w); }
 
   // ------------------------------------------------ v0.3: Combat places the gun --
@@ -309,7 +325,7 @@
     if (fit.upright) { _ax.set(fr.X[0], fr.X[1], fr.X[2]); _az.set(-fr.Y[0], -fr.Y[1], -fr.Y[2]); _ay.crossVectors(_az, _ax); }
     _mb.makeBasis(_ax, _ay, _az); _qHand.setFromRotationMatrix(_mb).premultiply(_qRoot);
     chestFrame(B, _m, _qChest);
-    armIK(B.armR, B.lowerArmR, B.handR, _m, _qChest, _tR, _qHand, POLE_R, 1.0);
+    armIK(B.armR, B.lowerArmR, B.handR, _m, _qChest, _tR, _qHand, raised && oneH ? POLE_ROUT : POLE_R, 1.0);
     if (leftOn && !oneH) {
       // beyond reach (the 1.2x guns): slide the support hand back along the handguard toward the grip, so it stays on the gun
       var S = _v3.copy(B.armL.position).applyMatrix4(_m), reachMax = (L1 + L2) * 0.985 + 0.07;
@@ -321,7 +337,7 @@
     if (leftOn) {
       // the support hand under the handguard / cupping the pistol grip: the right hand's frame turned palm-up a little
       _q2.setFromAxisAngle(_v2.set(0, 0, 1), oneH ? -0.6 : -1.2); _qL.copy(_qHand).multiply(_q2);
-      armIK(B.armL, B.lowerArmL, B.handL, _m, _qChest, _tL, _qL, oneH ? POLE_L : POLE_LIN, 1.0);
+      armIK(B.armL, B.lowerArmL, B.handL, _m, _qChest, _tL, _qL, oneH ? (raised ? POLE_LOUT : POLE_L) : POLE_LIN, 1.0);
     }
     return true;
   }
@@ -492,15 +508,27 @@
     }
   }
   // seated in a car or on a scooter: hips on the seat, hands on the wheel or the bars (the vehicle record's points)
+  // the 06b rides (moto, jet ski, cockpit seats) carry no seat / bars points: the hands' targets from the root
+  var RIDER_SEAT = { x: 0, y: 0, z: 0 }, RIDER_WHEEL = { moto: { x: 0, y: 0.36, z: -0.5 }, jetski: { x: 0, y: 0.3, z: -0.48 }, seated: { x: 0, y: 0.22, z: -0.42 } };
+  // under a parachute: spread-eagled in free fall, both hands up on the toggles once it opens
+  function chutePose(p, B, rp, t) {
+    var free = rp.chute !== 'open', k = Math.sin(t * 2.2) * 0.05;
+    rot(B.hips, 0, 0, 0); rot(B.torso, free ? -0.15 : 0.05, 0, 0); rot(B.chest, 0, 0, 0); rot(B.neck, free ? -0.35 : 0, 0, 0); rot(B.head, free ? -0.25 : 0.15, 0, 0);
+    rot(B.legL, free ? -0.2 : 0.2 + k, 0, -0.18); rot(B.legR, free ? -0.2 : 0.12 - k, 0, 0.18);
+    rot(B.lowerLegL, free ? 0.6 : -0.25, 0, 0); rot(B.lowerLegR, free ? 0.6 : -0.15, 0, 0); rot(B.footL, 0.3, 0, 0); rot(B.footR, 0.3, 0, 0);
+    if (free) { rot(B.armL, 0.2, 0, -1.3 - k); rot(B.armR, 0.2, 0, 1.3 + k); rot(B.lowerArmL, 0.35, 0, 0); rot(B.lowerArmR, 0.35, 0, 0); }
+    else { rot(B.armL, 2.75, 0, -0.3); rot(B.armR, 2.75, 0, 0.3); rot(B.lowerArmL, 0.35 + k, 0, 0); rot(B.lowerArmR, 0.35 - k, 0, 0); }
+  }
   function seatedPose(p, B, R, P, st, t) {
-    var v = p.inVehicle, ud = v.mesh && v.mesh.userData, rec = ud && ud.rec, ride = P.ride;
+    var v = p.inVehicle, ud = v.mesh && v.mesh.userData, rec = ud && ud.rec, ride = P.ride, rp = st.rider;
     var sc = (p.look && p.look.scale) || 1;
+    if (rp && rp.kind === 'chute') return chutePose(p, B, rp, t);
     rot(B.hips, ride ? 0.15 : -0.05, 0, 0);
     rot(B.torso, ride ? -0.3 : 0.08, 0, 0); rot(B.chest, ride ? -0.05 : 0.02, 0, 0); rot(B.neck, ride ? 0.25 : -0.05, 0, 0); rot(B.head, ride ? 0.1 : 0, 0, 0);
     if (ride) { rot(B.legL, 1.15, 0, -0.12); rot(B.legR, 1.15, 0, 0.12); rot(B.lowerLegL, -1.05, 0, 0); rot(B.lowerLegR, -1.05, 0, 0); rot(B.footL, -0.1, 0, 0); rot(B.footR, -0.1, 0, 0); }
     else { rot(B.legL, 1.45, 0, -0.08); rot(B.legR, 1.42, 0, 0.1); rot(B.lowerLegL, -0.5, 0, 0); rot(B.lowerLegR, -0.6, 0, 0); rot(B.footL, -0.45, 0, 0); rot(B.footR, -0.35, 0, 0); }
     var driver = v.driver === p;
-    var wheel = rec && (ride ? rec.bars : rec.wheelPoint), seat = rec && rec.seats && rec.seats[seatIndex(p, v, rec)];
+    var wheel = rp ? RIDER_WHEEL[rp.kind] : rec && (ride ? rec.bars : rec.wheelPoint), seat = rp ? RIDER_SEAT : rec && rec.seats && rec.seats[seatIndex(p, v, rec)];
     if (driver && wheel && seat && B.chest) {
       // the wheel point in the body's root frame: (wheel - seat) / scale + the hips' rest height
       chestFrame(B, _m, _qChest);
@@ -549,7 +577,7 @@
     var t = this.tilt || 0;
     var lying = this.knockedDown || !this.alive;
     if (lying) y += 0.16 * Math.abs(Math.sin(t));
-    else if (this.swimming) y -= 0.12;
+    else if (this.swimming) y -= 0.54;   // the hips at the waterline, the head just above it (QA-A-ENT-09; v0.2: 0.12)
     var d2 = camDist2(x, z), lod = GTP.Models.lodFor(Math.sqrt(d2));
     GTP.Models.setLod(m, lod);
     // far peds animate at a third of the frame rate (their phase still runs)
@@ -565,8 +593,21 @@
     var i = v.driver === p ? 0 : 1 + Math.max(0, v.passengers ? v.passengers.indexOf(p) : (p.seat | 0) - 1);
     return Math.min(i, rec.seats.length - 1);
   }
+  // 06b's rides (moto, jet ski, chute, the pilot seen through the canopy): its riderPose places the body
+  function syncRider(p, m, st, P, firstPerson, rp) {
+    m.visible = !firstPerson && !p.removed && p.alive && !tooFar(p, C.QUALITY.pedDraw);
+    if (!m.visible) return;
+    m.position.set(rp.x, rp.y, rp.z);
+    m.rotation.set(rp.pitch, rp.yaw, rp.roll, 'YXZ');
+    P.ride = rp.kind === 'moto' || rp.kind === 'jetski'; P.drive = rp.kind === 'seated';
+    var lod = GTP.Models.lodFor(Math.sqrt(camDist2(rp.x, rp.z)));
+    GTP.Models.setLod(m, lod);
+    animate(p, m, st, P, lod);
+  }
   function syncSeated(p, m, a, st, P, firstPerson) {
     var v = p.inVehicle, vm = v.mesh, ud = vm && vm.userData, rec = ud && ud.rec;
+    var rp = st.rider = GTP.Vehicles && GTP.Vehicles.riderPose ? GTP.Vehicles.riderPose(p, a) : null;
+    if (rp) return syncRider(p, m, st, P, firstPerson, rp);
     var seat = rec && rec.seats && rec.seats[seatIndex(p, v, rec)];
     var ride = P.ride && !v.wreck && !v.sinking && v.driver === p;
     var show = !firstPerson && !p.removed && p.alive && !v.wreck && !v.sinking && !(vm && !vm.visible) && !tooFar(p, Math.min(C.QUALITY.pedDraw, ride ? 999 : 55));

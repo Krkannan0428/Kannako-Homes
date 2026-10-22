@@ -1243,7 +1243,8 @@
       if (q === 0) { blob(vb, 'detail', 0, py, z + dir * 0.012, 0.18, 0.02, 0.003, 6, 2, [0.15, 0.2, 0.4], 6); }
     }
     plate(cls === 'truck' ? hl : rz(0, py), 1);
-    if (cls !== 'bus') plate(fz(0, Math.max(py - 0.04, 0.3)), -1);
+    // the front plate sits below the grille, never inside it (QA-A-ENT-08)
+    if (cls !== 'bus') { var fpy = cls === 'truck' ? py : Math.max(pw(sp.yb, 0.02) + 0.09, gy - gh - 0.085); py = fpy; plate(fz(0, fpy), -1); }
     // ---- mirrors (secondary colour when two-tone)
     var my = pw(sp.yt, c.tA) + 0.08, mz = c.zA + 0.12, mxs = B.sideX(c.tA + 0.02, pw(sp.yt, c.tA) - 0.02);
     if (cls !== 'bus' || q < 2) [-1, 1].forEach(function (s) {
@@ -1288,7 +1289,7 @@
         if (q === 0) blob(vb, 'detail', s0.x, s0.y + 0.56, s0.z + 0.23, 0.11, 0.07, 0.05, 8, 3, SEAT, 4);
       });
       if (cls !== 'bus') {
-        var dz = hz - 0.82, dy = pw(sp.yt, c.tA + 0.03) - 0.05;
+        var dz = hz - 0.82, dy = pw(sp.yt, c.tA + 0.03) - 0.11;   // the dash's top stays under the windshield's base (QA-A-ENT-01)
         blob(vb, 'detail', 0, dy, dz, hw * 0.86, 0.09, 0.16, small, 3, DASH, 5);
         torus(vb, 'detail', 'z', wheelPoint.x, wheelPoint.y, wheelPoint.z, 0.17, 0.015, q ? 10 : 16, 5, [0.05, 0.05, 0.06]);
         cyl(vb, 'detail', 'z', wheelPoint.x, wheelPoint.y - 0.05, wheelPoint.z - 0.18, 0.025, 0.025, 0.3, 6, DASH);
@@ -1338,7 +1339,7 @@
     [-1, 1].forEach(function (s) {
       for (var i = 0; i < n; i++) {
         var ta = t0 + (t1 - t0) * i / n, tb = t0 + (t1 - t0) * (i + 1) / n, za = -hl + ta * L, zb = -hl + tb * L;
-        var a0 = B.sideX(ta, y0) + 0.004, a1 = B.sideX(ta, y1) + 0.004, b0 = B.sideX(tb, y0) + 0.004, b1 = B.sideX(tb, y1) + 0.004;
+        var a0 = B.sideX(ta, y0) + 0.008, a1 = B.sideX(ta, y1) + 0.008, b0 = B.sideX(tb, y0) + 0.008, b1 = B.sideX(tb, y1) + 0.008;   // 8 mm off the skin: no z-fight at range (QA-A-ENT-08)
         if (s > 0) vb.quad('detail', [a0, y0, za], [a1, y1, za], [b1, y1, zb], [b0, y0, zb], col);
         else vb.quad('detail', [-a0, y0, za], [-b0, y0, zb], [-b1, y1, zb], [-a1, y1, za], col);
       }
@@ -1487,6 +1488,7 @@
     }
   }
   function vehicleGeometry(cls, wrap, mods) {
+    hookBuild();
     var key = cls + (wrap ? ':' + wrap : '') + '|' + modsKey(mods);
     if (CACHE[key]) { CACHE[key].usedT = gameT(); return CACHE[key]; }
     var spec = C.VEHICLES[cls];
@@ -1517,14 +1519,15 @@
     }
     var wheelLods = [0, 1, 2].map(function (k) { return wheelGeo(cls, wr, ww, M.wheels, k); });
     var ly = cls === 'bike' ? 0.78 : cls === 'truck' ? 0.82 : cls === 'bus' ? 0.75 : 0.62;
-    var eyeZ = info.seats ? info.seats[0].z - 0.1 : -hl * 0.2, eyeY = info.seats ? Math.min(H - 0.12, info.seats[0].y + 0.72) : H * 0.82;
+    // the first-person eye: a seated driver's eye under the roof; on the scooter the rider's (saddle hip + 0.64: QA-A-CAM-04)
+    var eyeZ = info.seats ? info.seats[0].z - 0.1 : -hl * 0.2, eyeY = info.seats ? (cls === 'bike' ? info.seats[0].y + 0.64 : Math.min(H - 0.12, info.seats[0].y + 0.72)) : H * 0.82;
     var rec = CACHE[key] = {
       body: lods[0], groups: A.GROUPS || { paint: 0, detail: 1, glass: 2, head: 3, tail: 4, barRed: 5, barBlue: 6, wrap: 7, chrome: 8 }, wheel: wheelLods[0], wheelRadius: wr, wheelWidth: ww, wheelOffsets: wheelOffsets,
       lightPoints: { headL: { x: -hw + 0.3, y: ly, z: -hl }, headR: { x: hw - 0.3, y: ly, z: -hl }, head: { x: 0, y: ly, z: -hl }, tailL: { x: -hw + 0.3, y: ly, z: hl }, tailR: { x: hw - 0.3, y: ly, z: hl }, roof: { x: 0, y: H + 0.1, z: 0 }, eye: { x: cls === 'bike' ? 0 : (info.seats ? info.seats[0].x : -0.4), y: eyeY, z: eyeZ } },
       doorPoints: [{ x: -(hw + 0.7), z: -hl * 0.15, seat: 0 }, { x: hw + 0.7, z: -hl * 0.15, seat: 1 }],
       size: { length: L, width: Wd, height: H }, wrap: wrap || null,
       lods: lods, wheelLods: wheelLods, seats: info.seats || null, wheelPoint: info.wheelPoint || null, bars: info.bars || null,
-      mods: M, modsKey: modsKey(mods), finish: M.finish, models: true, usedT: gameT(), tris: lods.map(function (g) { return g.userData.tris; })
+      mods: M, modsKey: modsKey(mods), finish: M.finish, models: true, modsApplied: true, usedT: gameT(), tris: lods.map(function (g) { return g.userData.tris; })
     };
     stats.built++;
     return rec;
@@ -1537,13 +1540,32 @@
     var F = FINISH[f]; if (F) { mat.roughness = F.roughness; mat.metalness = F.metalness; if (mat.clearcoat != null) mat.clearcoat = f === 'matte' ? 0 : 1; if (f === 'chrome') mat.color.setRGB(0.85, 0.86, 0.9); }
     if (primary && f !== 'chrome') mat.color.set(primary);
   }
+  // the spoiler and the rims are merged into the body / wheel geometry: empty nodes by those names mark them for
+  // the code that looks the mod parts up by name (06b's mod shop, tests/vehicles.js)
+  function markMods(m, rec) {
+    var M = rec.models && rec.mods;
+    ['spoiler', 'rims'].forEach(function (n) {
+      var on = !!M && (n === 'spoiler' ? M.spoiler > 0 : M.wheels > 0), o = m.getObjectByName(n);
+      if (on && !o) { o = new THREE.Object3D(); o.name = n; m.add(o); }
+      else if (!on && o && !o.isMesh && !o.children.length) m.remove(o);
+    });
+  }
+  function hookBuild() {
+    var R = GTP.Render, orig = R && R.buildEntityMesh; if (!orig || orig._models) return;
+    R.buildEntityMesh = function (e) {
+      var m = orig.apply(this, arguments);
+      if (e && e.kind === 'vehicle' && m && m.userData && m.userData.rec) markMods(m, m.userData.rec);
+      return m;
+    };
+    R.buildEntityMesh._models = true;
+  }
   var sweepN = 0;
   function syncVehicle(v, m, ud) {
     var body = ud._body || (ud._body = m.getObjectByName('body')); if (!body || !ud.rec) return;
     var mk = modsKey(v.mods);
     if (ud.rec.models && ud.rec.modsKey !== mk) {
       var rec = vehicleGeometry(v.type || 'sedan', v.wrap, v.mods);
-      if (rec.models) { ud.rec = rec; ud.lodI = -1; }
+      if (rec.models) { ud.rec = rec; ud.lodI = -1; markMods(m, rec); }
     }
     if (ud.rec.modsKey) ud.rec.usedT = gameT();
     if (!ud._paint0 && ud.paint) {
