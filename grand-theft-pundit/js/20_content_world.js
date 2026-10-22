@@ -70,7 +70,7 @@
         road('v', 58, 8, 22, 'Citation Pending Way'),
         road('v', 58, 36, 127, 'Citation Pending Way'),
         road('v', 70, 8, 91, 'Jet Street (extension pending)'),
-        road('v', 70, 106, 127, 'Jet Street (extension pending)'),
+        road('v', 70, 105, 127, 'Jet Street (extension pending)'),   // from the Jet Ramp's foot through the whole Sponsor Boulevard box (QA-A-TRF-09)
         road('v', 82, 21, 127, 'Lower Third Street', 'avenue'),
         road('v', 94, 8, 127, 'Ratio Row'),
         road('v', 110, 37, 91, 'Quote Post Crescent'),
@@ -118,7 +118,7 @@
         road('h', 70, 162, 214, 'Inheritance Avenue', 'avenue', { district: 'uptown' }),        // the causeway lands here
         road('h', 82, 169, 214, 'Quiet Part Loud Lane', 'street', { district: 'uptown' }),      // these stop at Provenance Place so the Shoreline Stroll runs unbroken
         road('h', 94, 169, 214, 'Stoop Speech Street', 'street', { district: 'uptown' }),
-        road('h', 106, 169, 181, 'Vetted Vista', 'street', { district: 'uptown' }), road('h', 106, 195, 214, 'Vetted Vista', 'street', { district: 'uptown' }),   // gap for Old Money Common
+        road('h', 106, 169, 182, 'Vetted Vista', 'street', { district: 'uptown' }), road('h', 106, 195, 214, 'Vetted Vista', 'street', { district: 'uptown' }),   // gap for Old Money Common; the west part spans Trust Fund Terrace's box (QA-A-TRF-09)
         road('h', 118, 169, 214, 'Generational Way', 'street', { district: 'uptown' }),
         road('h', 130, 169, 214, 'Minds Made Up Mews', 'street', { district: 'uptown' }),
         road('h', 142, 164, 214, 'Portfolio Parade', 'street', { district: 'uptown' }),
@@ -129,7 +129,10 @@
         road('v', 30, 152, 196, 'Baggage Claim Boulevard', 'street', { district: 'airport' }),
         road('v', 50, 152, 196, 'Layover Lane', 'street', { district: 'airport' }),
         road('v', 94, 152, 163, 'Gate Ten Street', 'street', { district: 'airport' }), road('v', 94, 177, 196, 'Gate Ten Street', 'street', { district: 'airport' }),   // the Arrivals Ramp fills 168..176
-        road('h', 158, 8, 107, 'Departures Drive', 'street', { district: 'airport' }),           // x 104..107 sit under the Lower Loop's east leg; the Manifest Ramp fills 108..116
+        // the Manifest Ramp fills 108..116 and its 7 m end faces the Lower Loop's east leg (x 104..107): the drive is a dead
+        // end past Gate Ten Street and stops at the plaza under the leg, so no lane runs into the ramp's end (QA-A-GEO-02)
+        road('h', 158, 8, 94, 'Departures Drive', 'street', { district: 'airport' }),
+        road('h', 158, 95, 103, 'Departures Drive', 'street', { district: 'airport', dead: true }),
         road('h', 182, 8, 109, 'Lost Luggage Lane', 'street', { district: 'airport' }),
         road('h', 196, 8, 109, 'Final Boarding Boulevard', 'street', { district: 'airport' }),  // the runway's north edge
 

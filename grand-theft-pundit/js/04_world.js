@@ -772,6 +772,7 @@
       World._placeStuntRamps(CW.stuntRamps || []);
       World._clearStuntCorridors();
       World._placeBoatSlips(CW.boatSlips || []);
+      World._rampEndPosts();
       World._buildDoors();
       World._roadTiles = []; World._sidewalkTiles = [];
       for (var i2 = 0; i2 < N; i2++) {
@@ -833,6 +834,22 @@
       });
     },
     _isX: function (m) { return (m & M.H) && (m & M.V); },
+    // A ramp's deck end is a 7 m face where it meets the plaza under its Loop leg: a row of bollards on the ground in
+    // front of it keeps cars driving the plaza (or off a dead end, QA-A-GEO-02) out of the face. No RNG; appended last.
+    _rampEndPosts: function () {
+      World.ramps.forEach(function (rec) {
+        var ea = rec.end + rec.dir, lo = rec.at - 1;
+        for (var l = 0; l < 2; l++) {
+          var tx = rec.axis === 'h' ? ea : lo + l, tz = rec.axis === 'h' ? lo + l : ea, t = World.tile(tx, tz);
+          if (t !== T.PLAZA && t !== T.SIDEWALK && t !== T.PARKING && t !== T.GRASS) return;
+        }
+        var face = rec.a1 + rec.dir * 0.6;
+        for (var q = 0; q < 6; q++) {
+          var c = lo * TILE + 0.6 + q * (2 * TILE - 1.2) / 5;
+          World._prop(rec.axis === 'h' ? { kind: 'bollard', x: face, z: c, r: 0.2, solid: true, h: 0.7, rampEnd: rec.name } : { kind: 'bollard', x: c, z: face, r: 0.2, solid: true, h: 0.7, rampEnd: rec.name });
+        }
+      });
+    },
 
     // ------------------------------------------------------------ builders --
     _addBuilding: function (tx, tz, tw, td, o, R) {
