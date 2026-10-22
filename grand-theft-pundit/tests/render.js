@@ -1,4 +1,6 @@
-/* render.js: free-camera screenshots of the city at street level and from above, by day and at
+/* render.js (v0.3 environment track adds the last section: cascades, interiors, ocean, grass, TAA / SSR / DoF, the
+ * rebuildEntityMesh / vehicleMeshes APIs, the camera QA fixes, a district sample on high and medium).
+ * Free-camera screenshots of the city at street level and from above, by day and at
  * night, including the expansion's three districts (the airport runway with the tower, the port's
  * container maze and quay, uptown's brownstones, the Sponsor Span, the Lower Loop's viaduct). Each
  * PNG must not be monochrome, the night shots must contain warm lit windows / lamps, worldToScreen,
@@ -204,4 +206,120 @@ H.run('render', async (t) => {
   t.assert(sw.bad === false && sw.weatherBad === false && sw.weatherOk === true && sw.weatherState === 'overcast', 'unknown presets and weather states are refused');
   const hqErrs = await t.errors(hq);
   t.assert(hqErrs.length === 0, 'high-quality errors:\n' + hqErrs.join('\n'));
+  await hp.close();
+
+  // ---- v0.3 environment: the systems, the APIs, the QA fixes, and a district / time-of-day sample on medium and high ----
+  const v3 = await t.boot({ seed: 7, quality: 'high', weather: 'clear' });
+  const vp = v3.page;
+  const sys = await vp.evaluate(() => {
+    const R = GTP.Render, A = GTP.Assets, L = R.lights, out = {};
+    GTP.game.debug.setClock(12); GTP.game.debug.teleport(536, 300); GTP.game.advance(0.3); GTP.game.render(); GTP.game.render();
+    out.cascades = { far: !!L.sunFar && L.sunFar.castShadow, nearMap: !!(L.sun.shadow.map), farMap: !!(L.sunFar.shadow.map), farRenders: R.stats.farShadow || 0, chunkPatched: !!THREE.ShaderChunk.__gtpCascades };
+    out.muzzle = { resident: !!R.muzzleLight && R.muzzleLight.parent === R.scene, intensity: R.muzzleLight && R.muzzleLight.intensity };
+    out.masks = Object.keys(A.masks || {}).length;
+    const dm = A.masks && A.masks.downtown, ctx = dm && dm.getContext('2d'), d = ctx ? ctx.getImageData(0, 0, dm.width, dm.height / 8 * 5).data : [];
+    let glass = 0, lit = 0, n = 0; for (let i = 0; i < d.length; i += 64) { n++; if (d[i] > 128) glass++; if (d[i + 1] > 128) lit++; }
+    out.downtownGlass = +(glass / n).toFixed(2); out.downtownLit = +(lit / n).toFixed(2);
+    out.glassShader = !!A.facadeMaterial('downtown').userData.glass;
+    out.shore = !!R._shoreTex && !!A.waterUniforms.tGtpShore.value;
+    out.grass = R.stats.grass || 0;
+    out.trees = !!A.prop('tree').foliage && A.prop('tree').material.alphaTest > 0;
+    out.post = { taa: GTP.PostFX.stats.taa, flags: GTP.PostFX.flags };
+    out.signs = (() => { let k = 0; R.chunks.forEach((ch) => { if (ch.signs) k++; }); return k; })();
+    out.tint = R.districtTint ? R.districtTint.ground.map((v) => +v.toFixed(2)) : null;
+    out.ammo = GTP.C.MISSIONS && GTP.C.MISSIONS.weaponAmmo ? [GTP.C.MISSIONS.weaponAmmo.rifle, GTP.C.MISSIONS.weaponAmmo.ratio] : null;
+    out.missionsK = GTP.Missions && GTP.Missions.K && GTP.Missions.K.weaponAmmo ? [GTP.Missions.K.weaponAmmo.rifle, GTP.Missions.K.weaponAmmo.ratio] : null;
+    return out;
+  });
+  console.log('  v0.3 systems: ' + JSON.stringify(sys));
+  t.assert(sys.cascades.far && sys.cascades.nearMap && sys.cascades.farMap && sys.cascades.farRenders >= 1 && sys.cascades.chunkPatched, 'two shadow cascades render: ' + JSON.stringify(sys.cascades));
+  t.assert(sys.muzzle.resident && sys.muzzle.intensity === 0, 'the muzzle light is resident from boot at intensity 0 (QA CMB-04)');
+  t.assert(sys.masks >= 3 && sys.downtownGlass > 0.25 && sys.downtownLit > 0.05 && sys.glassShader, 'facade glass masks and the interior-mapped glass shader: ' + JSON.stringify([sys.masks, sys.downtownGlass, sys.downtownLit]));
+  t.assert(sys.shore && sys.trees && sys.grass > 200, 'the ocean shore field, leaf-card trees and the grass around a park: ' + JSON.stringify([sys.shore, sys.trees, sys.grass]));
+  t.assert(sys.post.taa && sys.post.flags.ssr && sys.post.flags.dof, 'high resolves with TAA and has SSR and DoF on');
+  t.assert(sys.ammo && sys.ammo[0] === 90 && sys.ammo[1] === 3, 'mission unlock ammo follows GDD_EXPANSION 2.1 (QA-C1-13): ' + JSON.stringify(sys.ammo));
+  if (sys.missionsK) t.assert(sys.missionsK[0] === 90 && sys.missionsK[1] === 3, 'Missions.K picks the config table up: ' + JSON.stringify(sys.missionsK));
+  // the APIs: rebuildEntityMesh (mods applied), GTP.Assets.vehicleMeshes[type]
+  const api3 = await vp.evaluate(() => {
+    const R = GTP.Render, A = GTP.Assets, p = GTP.game.player, out = {};
+    const v = GTP.game.debug.spawnVehicle(p.x + 6, p.z, 'sedan', { color: '#c94040' });
+    const m0 = v.mesh; v.mods = { paint: { primary: '#22cc44', finish: 'matte' }, tint: 2 };
+    const m1 = R.rebuildEntityMesh(v);
+    out.rebuilt = !!m1 && m1 !== m0 && m1.parent === R.entityGroup && !m0.parent && Math.abs(m1.position.x - v.x) < 1e-6;
+    const mats = m1.userData.mats; out.paint = mats ? '#' + mats[0].color.getHexString() : null; out.finish = mats ? mats[0].userData.finish : null; out.tinted = mats ? mats[2].name : null;
+    A.vehicleMeshes.sedan = function (veh) { const g = new THREE.Group(); g.name = 'custom:' + veh.type; g.add(new THREE.Mesh(new THREE.BoxGeometry(2, 1, 4), A.propMaterial())); return g; };
+    const m2 = R.rebuildEntityMesh(v); out.custom = m2 && m2.name; delete A.vehicleMeshes.sedan;
+    GTP.game.advance(0.1); GTP.game.render();
+    out.syncOk = GTP.errors.length === 0;
+    const m3 = R.rebuildEntityMesh(p); out.ped = !!m3 && m3.parent === R.entityGroup;
+    return out;
+  });
+  console.log('  v0.3 api: ' + JSON.stringify(api3));
+  t.assert(api3.rebuilt && api3.paint === '#22cc44' && api3.finish === 'matte' && api3.tinted === 'glass2', 'rebuildEntityMesh rebuilds with vehicle.mods: ' + JSON.stringify(api3));
+  t.assert(api3.custom === 'custom:sedan' && api3.syncOk && api3.ped, 'GTP.Assets.vehicleMeshes[type] is honoured and syncs without errors; peds rebuild too');
+  // the camera: aiming looks far up (QA CMB-07), recoil at the top of the range recovers in full (QA CMB-13)
+  const cam3 = await vp.evaluate(() => {
+    const R = GTP.Render, rig = R.rig, p = GTP.game.player, C = GTP.C, out = {};
+    GTP.game.debug.followCam(); if (!p.weapons || !p.weapons.pistol) { try { GTP.Combat.giveAmmo(p, 'pistol', 30, true); } catch (e) { /* the shooting track may rename it */ } } p.weapon = p.weapons && p.weapons.pistol ? 'pistol' : p.weapon;
+    GTP.Input.set('aim', true);
+    for (let i = 0; i < 40; i++) { GTP.Input.set('aim', true); p.aiming = true; GTP.Input.setLook(0, -60); GTP.game.advance(1 / 60); p.aiming = true; }
+    const dir = new THREE.Vector3(); R.camera.getWorldDirection(dir);
+    out.aimPitchDeg = +(rig.pitch * 180 / Math.PI).toFixed(1); out.aimElevDeg = +(Math.asin(dir.y) * 180 / Math.PI).toFixed(1);
+    const before = rig.pitch;
+    for (let k = 0; k < 6; k++) { rig.kick(3, 0, 0.25); for (let j = 0; j < 42; j++) { p.aiming = true; GTP.game.advance(1 / 60); } }
+    out.recoilDriftDeg = +((rig.pitch - before) * 180 / Math.PI).toFixed(2);
+    GTP.Input.set('aim', false); p.aiming = false; GTP.game.advance(1.5);
+    out.chasePitchDeg = +(rig.pitch * 180 / Math.PI).toFixed(1); out.chaseMinDeg = +(C.CAMERA.pitchMin * 180 / Math.PI).toFixed(1);
+    return out;
+  });
+  console.log('  v0.3 camera: ' + JSON.stringify(cam3));
+  t.assert(cam3.aimElevDeg > 45, 'aiming can look 45+ degrees up (the helicopter at 49 degrees): ' + JSON.stringify(cam3));
+  t.assert(Math.abs(cam3.recoilDriftDeg) < 0.2, 'recoil at the top of the pitch range does not drift the view down: ' + cam3.recoilDriftDeg);
+  t.assert(cam3.chasePitchDeg >= cam3.chaseMinDeg - 0.5, 'leaving aim eases the pitch back into the chase range: ' + JSON.stringify(cam3));
+  // DoF follows a cutscene, motion blur follows speed (inputs only; the passes run on high)
+  const fx3 = await vp.evaluate(() => {
+    const R = GTP.Render, CS = GTP.Cutscenes, out = {};
+    GTP.game.debug.freeCam(327, 2, 372, 329, 6, 300);
+    const was = CS ? CS.active : false; if (CS) CS.active = true;
+    GTP.game.render(); out.dof = GTP.PostFX.stats.dof; out.dofActive = R.dofActive;
+    if (CS) CS.active = was; GTP.game.render(); out.dofAfter = GTP.PostFX.stats.dof;
+    GTP.Render.weather.set('rain', true); GTP.game.debug.setClock(22); for (let i = 0; i < 3; i++) GTP.game.render(); out.ssr = GTP.PostFX.stats.ssr;
+    GTP.Render.weather.set('clear', true);
+    return out;
+  });
+  console.log('  v0.3 post: ' + JSON.stringify(fx3));
+  t.assert(fx3.dof && fx3.dofActive && !fx3.dofAfter && fx3.ssr, 'DoF runs only in cutscenes, SSR runs on wet roads: ' + JSON.stringify(fx3));
+  // a district / time sample: high and medium (each shot several frames so TAA settles)
+  const V3 = [
+    { name: 'v3_downtown_noon', cam: [327, 1.7, 372], look: [329, 6, 300], clock: 12, weather: 'clear' },
+    { name: 'v3_strip_rain_night', cam: [262, 1.8, 427], look: [256, 4, 395], clock: 21.5, weather: 'rain' },
+    { name: 'v3_uptown_sunset', cam: [672, 1.7, 380], look: [690, 6, 362], clock: 18.7, weather: 'clear' },
+    { name: 'v3_marina_noon', cam: [300, 5, 566], look: [300, 1, 508], clock: 12, weather: 'clear' },
+    { name: 'v3_park_noon', cam: [524, 4, 160], look: [588, 9, 134], clock: 12, weather: 'clear' },
+    { name: 'v3_downtown_night', cam: [327, 2, 372], look: [329, 8, 300], clock: 22.5, weather: 'clear' }
+  ];
+  const v3r = {};
+  for (const preset of ['high', 'medium']) {
+    await vp.evaluate((p) => GTP.Render.quality.set(p), preset);
+    for (const s of V3) {
+      await vp.evaluate((s) => {
+        GTP.Render.weather.set(s.weather, true); GTP.game.debug.setClock(s.clock);
+        const dx = s.look[0] - s.cam[0], dz = s.look[2] - s.cam[2], l = Math.hypot(dx, dz) || 1;
+        GTP.game.debug.teleport(s.cam[0] + dx / l * 6, s.cam[2] + dz / l * 6);
+        GTP.game.debug.freeCam(s.cam[0], s.cam[1], s.cam[2], s.look[0], s.look[1], s.look[2]);
+        GTP.game.advance(0.3); for (let i = 0; i < 5; i++) GTP.game.render();
+      }, s);
+      const nm = s.name + '_' + preset;
+      const file = await t.shot(vp, nm);
+      const st = await t.pixelStats(vp);
+      v3r[nm] = st;
+      console.log('  ' + nm + ': ' + JSON.stringify(st) + ' -> ' + file);
+      t.assert(st.colors > 400 && st.dark < 0.9 && st.bright < 0.9, nm + ' is a real picture: ' + JSON.stringify(st));
+    }
+  }
+  t.assert(v3r.v3_strip_rain_night_high.warm > 0.01, 'the strip in the rain has warm light and neon: ' + v3r.v3_strip_rain_night_high.warm);
+  t.assert(v3r.v3_park_noon_high.green > 0.1, 'the park reads green (grass, trees): ' + v3r.v3_park_noon_high.green);
+  t.assert(v3r.v3_marina_noon_high.blue > 0.1, 'the marina shows sea and sky: ' + v3r.v3_marina_noon_high.blue);
+  const v3e = await t.errors(v3);
+  t.assert(v3e.length === 0, 'v0.3 errors:\n' + v3e.join('\n'));
 });
