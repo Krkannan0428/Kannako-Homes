@@ -40,6 +40,107 @@
   // loading-screen stages this module reports (GDD_EXPANSION §6.1): bar = the absolute share of the loading bar at the stage's start
   var STAGES = { tiles: { label: 'Paving Grievance City', bar: 0.10 }, roads: { label: 'Painting lanes, elevating the Loop', bar: 0.25 }, landmarks: { label: 'Renaming things after the President', bar: 0.35 }, props: { label: 'Setting up folding tables', bar: 0.50 }, done: { label: 'City generated', bar: 0.60 } };
 
+  // ---- the far interior region ----------------------------------------------------------------------------------
+  // js/13_interiors.js builds its walk-in rooms west of FAR_X (x < -3000, far off the map). Each city query below
+  // (heightAt, solidAt, resolveCapsule, raycastBuildings, tileAt, districtAt) tests `x < FAR_X` first, one compare
+  // on the hot path, and only there asks the interior hooks, registered with
+  //   World.setInteriorHooks({ roomAt(x, z) -> room | null,
+  //     height(room, x, z, y) -> metres, solid(room, x, z, y) -> bool, resolve(room, x, z, y, r) -> a World._res-shaped
+  //     {x, z, hitX, hitZ, normal, prop}, ray(room, ox, oy, oz, dx, dy, dz, maxDist) -> hit | null,
+  //     tile(room, x, z) -> T.*, district(room, x, z) -> district })
+  // y arrives defaulted to 0 and r to 0.4; a missing hook (or a point in no room) gets the city's answer.
+  // Bridge for the old wrapWorld (which assigned wrappers over these six functions, so every call paid a wrapper and
+  // V8 stopped inlining resolveCapsule into Vehicle._collideWorld): World.generate puts its own functions back and
+  // keeps such a wrapper as the far-region handler for its query, still reached only when x < FAR_X. A wrapper that
+  // calls back into the original lands on the city path. Behaviour is the same either way.
+  var FAR_X = -3000, NONE = { none: true }, FAR_NAMES = ['heightAt', 'solidAt', 'resolveCapsule', 'raycastBuildings', 'tileAt', 'districtAt'];
+  var farOn = false, farLegacy = null, farDepth = 0, NATIVE = null;
+  function farQuery(q, a, b, c, d, e, f, g) {
+    var hk = GTP.World.interiorHooks;
+    if (hk) {
+      var rm = hk.roomAt ? hk.roomAt(a, q === 3 ? c : b) : null;
+      if (!rm) return NONE;
+      if (q === 0) return hk.height ? hk.height(rm, a, b, c == null || c !== c ? 0 : c) : NONE;
+      if (q === 1) return hk.solid ? hk.solid(rm, a, b, c == null || c !== c ? 0 : c) : NONE;
+      if (q === 2) return hk.resolve ? hk.resolve(rm, a, b, c == null || c !== c ? 0 : c, d || 0.4) : NONE;
+      if (q === 3) return hk.ray ? hk.ray(rm, a, b, c, d, e, f, g) : NONE;
+      if (q === 4) return hk.tile ? hk.tile(rm, a, b) : NONE;
+      return hk.district ? hk.district(rm, a, b) : NONE;
+    }
+    var fn = farLegacy !== null ? farLegacy[q] : null;
+    if (!fn || farDepth > 0) return NONE;   // the wrapper calling the original: the city path
+    farDepth++;
+    try { return fn.call(GTP.World, a, b, c, d, e, f, g); } finally { farDepth--; }
+  }
+  // a NaN position reaching the collision queries: say so once on the console (not GTP.errors: the source is elsewhere)
+  var nanNoted = false;
+  function nanNote(where) { if (nanNoted) return; nanNoted = true; if (typeof console !== 'undefined' && console.warn) console.warn('World.' + where + ': NaN position, moved to the map centre'); }
+
+  // ---- allocation-free push-outs (the result in _px / _pz) ------------------------------------------------------
+  var _px = 0, _pz = 0;
+  // long solid props collide as boxes [half x, half z] in their own frame (World._propCollider); the rest as circles
+  // (a container is 2.4 x 6 m along its local z, Assets 'container'; a hedge is sx by sz, the renderer's scale)
+  var PROP_BOX = {
+    container: function () { return [1.2, 3.0]; },   // QA-A-DRV-04: the yard's columns were 1.3 m circles with 3 m gaps
+    // QA-A-DRV-05: the maze hedges were 1 m circles. A hedge the Hedge Fund jump flies over (jumpOver) starts its box
+    // 7 m from the wedge's centre, so the car leaving the 1.3 m wedge has risen past the 1.8 m hedge tops before its
+    // bumper reaches one (the first 4 m of the three long hedges at the wedge end stay open)
+    hedge: function (p) {
+      var hx = (p.sx || 1) / 2, hz = (p.sz || 1) / 2, sj = p.jumpOver && GTP.World.stuntRamps.filter(function (s) { return s.id === p.jumpOver; })[0];
+      if (!sj || p.rot) return [hx, hz];
+      // near: the hedge end toward the wedge; keep: the nearest z its box may reach
+      var near = sj.z < p.z ? -1 : 1, edge = p.z + near * hz, keep = near < 0 ? sj.z + STUNT_LEN / 2 + 4 : sj.z - STUNT_LEN / 2 - 4;
+      if ((near < 0 && edge >= keep) || (near > 0 && edge <= keep)) return [hx, hz];
+      var far = p.z - near * hz, nz = (Math.abs(far - keep)) / 2;
+      return [hx, nz, 0, (far + keep) / 2 - p.z];
+    }
+  };
+  // circle (cx, cz, r) out of the axis-aligned box (ax, az, aw, ad); same answers as U.aabbCircle
+  function boxPush(ax, az, aw, ad, cx, cz, r) {
+    var qx = cx < ax ? ax : (cx > ax + aw ? ax + aw : cx), qz = cz < az ? az : (cz > az + ad ? az + ad : cz);
+    var dx = cx - qx, dz = cz - qz, d2 = dx * dx + dz * dz;
+    if (d2 >= r * r) return false;
+    if (d2 < 1e-9) {   // centre inside: out along the shortest axis
+      var l = cx - ax, rr = ax + aw - cx, u = cz - az, dd = az + ad - cz, m = Math.min(l, rr, u, dd);
+      if (m === l) { _px = -(l + r); _pz = 0; } else if (m === rr) { _px = rr + r; _pz = 0; } else if (m === u) { _px = 0; _pz = -(u + r); } else { _px = 0; _pz = dd + r; }
+      return true;
+    }
+    var d = Math.sqrt(d2), push = r - d + 0.001;
+    _px = dx / d * push; _pz = dz / d * push;
+    return true;
+  }
+  // circle out of solid prop collider `id` (World._buildColliders): a circle of radius r, or (bx set) a box of half
+  // extents bx (local x) by bz (local z) turned by the prop's rot the way the renderer turns it (three.js rotation.y)
+  var cStart = null, cList = null, cData = null, cSt = null, cProp = null;
+  function colPush(id, x, z, r) {
+    var o = id * 8, ddx = x - cData[o], ddz = z - cData[o + 1], bx = cData[o + 4];
+    if (bx > 0) {
+      var c = cData[o + 6], s = cData[o + 7], bz = cData[o + 5], lx = c * ddx - s * ddz, lz = s * ddx + c * ddz;   // into the prop's frame
+      if (!boxPush(-bx, -bz, 2 * bx, 2 * bz, lx, lz, r)) return false;
+      var wx = c * _px + s * _pz, wz = -s * _px + c * _pz;   // and back out
+      _px = wx; _pz = wz;
+      return true;
+    }
+    var rr = r + cData[o + 2], d2 = ddx * ddx + ddz * ddz;
+    if (d2 >= rr * rr) return false;
+    if (d2 < 1e-12) {   // dead centre: no direction to push along, so take one from the prop's index (QAC-56)
+      var a = U.hash2(cProp[id].index | 0, 17, 29) * Math.PI * 2;
+      _px = Math.cos(a) * (rr + 0.001); _pz = Math.sin(a) * (rr + 0.001);
+      return true;
+    }
+    var d = Math.sqrt(d2), push = rr - d + 0.001;
+    _px = ddx / d * push; _pz = ddz / d * push;
+    return true;
+  }
+  // the slab test without U.rayAabb's four arrays per box (the camera and every bullet cast); -1 on a miss
+  function rayBox(ox, oy, oz, dx, dy, dz, x0, y0, z0, x1, y1, z1, maxT) {
+    var tmin = 0, tmax = maxT, inv, t1, t2, tt;
+    if (Math.abs(dx) < 1e-9) { if (ox < x0 || ox > x1) return -1; } else { inv = 1 / dx; t1 = (x0 - ox) * inv; t2 = (x1 - ox) * inv; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return -1; }
+    if (Math.abs(dy) < 1e-9) { if (oy < y0 || oy > y1) return -1; } else { inv = 1 / dy; t1 = (y0 - oy) * inv; t2 = (y1 - oy) * inv; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return -1; }
+    if (Math.abs(dz) < 1e-9) { if (oz < z0 || oz > z1) return -1; } else { inv = 1 / dz; t1 = (z0 - oz) * inv; t2 = (z1 - oz) * inv; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return -1; }
+    return tmin;
+  }
+
   var World = GTP.World = {
     T: T, M: M,
     w: 0, h: 0,
@@ -51,6 +152,32 @@
     bounds: { x0: 0, z0: 0, x1: 0, z1: 0 },
     loopName: 'The Loop', lowerLoopName: 'The Lower Loop', generateMs: 0,
     _seed: null, _lm: {}, _roadTiles: [], _sidewalkTiles: [], _propGrid: null, _propTile: null, _wedges: null, _wedgeTile: null, _stamp: 1,
+    // 1 per tile that holds a building, a ramp wedge or a solid prop's collider: resolveCapsule's fast path reads it
+    _colTile: null,
+
+    // ------------------------------------------------- the interior region --
+    // (see FAR_X above) World.setInteriorHooks(hooks | null); World.interiorHooks is what is registered
+    FAR_X: FAR_X,
+    interiorHooks: null,
+    setInteriorHooks: function (hooks) {
+      World.interiorHooks = hooks || null;
+      World._adoptWrappers();
+      farOn = !!(World.interiorHooks || farLegacy);
+      return World.interiorHooks;
+    },
+    // put the native queries back over any wrapper assigned on top of them and keep that wrapper as the far-region
+    // handler (the old 13_interiors wrapWorld; its _interiors flags carry over). Run by generate and setInteriorHooks.
+    _adoptWrappers: function () {
+      if (!NATIVE) return;
+      for (var q = 0; q < FAR_NAMES.length; q++) {
+        var nm = FAR_NAMES[q], cur = World[nm], nat = NATIVE[q];
+        if (cur === nat || typeof cur !== 'function') continue;
+        (farLegacy || (farLegacy = []))[q] = cur;
+        if (cur._interiors) nat._interiors = true;
+        World[nm] = nat;
+      }
+      farOn = !!(World.interiorHooks || farLegacy);
+    },
 
     // ------------------------------------------------------------ queries --
     tileIndex: function (tx, tz) { return tz * World.w + tx; },
@@ -58,7 +185,11 @@
     tile: function (tx, tz) { return World.inBounds(tx, tz) ? World.tiles[tz * World.w + tx] : T.VOID; },
     deckAt: function (tx, tz) { return World.inBounds(tx, tz) ? World.deck[tz * World.w + tx] : 0; },
     metaAt: function (tx, tz) { return World.inBounds(tx, tz) ? World.meta[tz * World.w + tx] : 0; },
-    tileAt: function (x, z) { return World.tile(Math.floor(x / TILE), Math.floor(z / TILE)); },
+    tileAt: function (x, z) {
+      if (x < FAR_X && farOn) { var fo = farQuery(4, x, z); if (fo !== NONE) return fo; }
+      var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE);
+      return tx >= 0 && tz >= 0 && tx < World.w && tz < World.h ? World.tiles[tz * World.w + tx] : T.VOID;
+    },
     tileCenter: function (tx, tz) { return { x: (tx + 0.5) * TILE, z: (tz + 0.5) * TILE }; },
     isRoadTile: function (t) { return t === T.ROAD || t === T.BRIDGE || t === T.RAMP; },
     isIntersection: function (tx, tz) { var m = World.metaAt(tx, tz); return (m & M.H) !== 0 && (m & M.V) !== 0; },
@@ -85,10 +216,11 @@
     },
     // surface height under (x,z): the layer nearest at/below yHint + 0.6
     heightAt: function (x, z, yHint) {
-      var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE);
-      if (!World.inBounds(tx, tz)) return WATER_Y;
-      var i = tz * World.w + tx, t = World.tiles[i];
-      if (yHint == null) yHint = 0;
+      if (x < FAR_X && farOn) { var fo = farQuery(0, x, z, yHint); if (fo !== NONE) return fo; }
+      var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE), w = World.w;
+      if (!(tx >= 0 && tz >= 0 && tx < w && tz < World.h)) return WATER_Y;   // NaN lands here too
+      var i = tz * w + tx, t = World.tiles[i];
+      if (yHint == null || yHint !== yHint) yHint = 0;   // a NaN hint reads as the ground, not as "below the deck" (QAC-57)
       if (World._wedgeTile && World._wedgeTile[i]) { var wy = World._wedgeAt(i, x, z, yHint); if (wy != null) return wy; }   // a byte test first: heightAt runs ~800 times a step
       if (World.deck[i] && yHint + 0.6 >= DECK_Y) return DECK_Y;
       if (t === T.RAMP) return World.rampHeight(x, z);
@@ -117,10 +249,11 @@
     },
     // blocks movement at that height: building volumes, ramp wedges, the void
     solidAt: function (x, z, y) {
-      var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE);
-      if (!World.inBounds(tx, tz)) return true;
-      var i = tz * World.w + tx, t = World.tiles[i];
-      if (y == null) y = 0;
+      if (x < FAR_X && farOn) { var fo = farQuery(1, x, z, y); if (fo !== NONE) return fo; }
+      var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE), w = World.w;
+      if (!(tx >= 0 && tz >= 0 && tx < w && tz < World.h)) return true;
+      var i = tz * w + tx, t = World.tiles[i];
+      if (y == null || y !== y) y = 0;
       if (t === T.BUILDING) { var b = World.buildings[World.bidx[i] - 1]; return !b || y < b.y + b.h; }
       if (t === T.RAMP) return y < World.rampHeight(x, z) - 0.3;
       if (World.deck[i] && y > DECK_Y - C.DECK_THICK - 0.05 && y < DECK_Y - 0.05) return true;
@@ -172,8 +305,9 @@
 
     landmark: function (id) { return World._lm[id] || null; },
     districtAt: function (x, z) {
+      if (x < FAR_X && farOn) { var fo = farQuery(5, x, z); if (fo !== NONE) return fo; }
       var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE);
-      if (!World.inBounds(tx, tz)) return null;
+      if (!(tx >= 0 && tz >= 0 && tx < World.w && tz < World.h)) return null;
       var zi = World.zone[tz * World.w + tx];
       return zi ? World.districts[zi - 1] : null;
     },
@@ -263,53 +397,73 @@
     // ---------------------------------------------------------- collision --
     // XZ push-out of a capsule (circle of radius r at height y) vs building
     // volumes, ramp wedges, deck barriers, solid props and the map edge.
+    // resolveCapsule runs ~310 times a step (every car's bumper points, every ped): the common case, a capsule whose
+    // tiles hold no building, ramp or solid prop and that is not on the deck, answers from one byte per covered tile
+    // (World._colTile) and stays small enough for V8 to inline into its callers; the rest is _resolveSlow.
     _res: { x: 0, z: 0, hitX: false, hitZ: false, normal: { x: 0, z: 0 }, prop: null },
     resolveCapsule: function (x, z, y, r) {
+      if (x < FAR_X && farOn) { var fo = farQuery(2, x, z, y, r); if (fo !== NONE) return fo; }
+      if (y == null || y !== y) y = 0;   // NaN too (QAC-57)
+      var lim = World.bounds, col = World._colTile;
+      if (col !== null && x - r > lim.x0 && x + r < lim.x1 && z - r > lim.z0 && z + r < lim.z1) {
+        // inside the map with margin: the coordinates are positive, so `| 0` is Math.floor
+        var w = World.w, a0 = ((x - r) / TILE) | 0, a1 = ((x + r) / TILE) | 0, b0 = ((z - r) / TILE) | 0, b1 = ((z + r) / TILE) | 0, busy = col[b0 * w + a0];
+        if (a1 !== a0) busy |= col[b0 * w + a1];
+        if (b1 !== b0) { busy |= col[b1 * w + a0]; if (a1 !== a0) busy |= col[b1 * w + a1]; }
+        if (a1 - a0 > 1 || b1 - b0 > 1) busy = 1;   // a capsule wider than a tile: the general path
+        if (busy === 0 && (y <= DECK_Y - 1.2 || !World.deck[((z / TILE) | 0) * w + ((x / TILE) | 0)])) {
+          var res = World._res;
+          res.x = x; res.z = z; res.hitX = false; res.hitZ = false; res.normal.x = 0; res.normal.z = 0; res.prop = null;
+          return res;
+        }
+      }
+      return World._resolveSlow(x, z, y, r);
+    },
+    _resolveSlow: function (x, z, y, r) {
       var res = World._res, hitX = false, hitZ = false, nx = 0, nz = 0;
-      var w = World.w, tiles = World.tiles, stamp = ++World._stamp;
+      var w = World.w, h = World.h, tiles = World.tiles, stamp = ++World._stamp;
       res.prop = null;   // the last solid prop that pushed (vehicles knock the small ones over)
-      if (y == null) y = 0;
-      // map edge
       var lim = World.bounds;
+      // a NaN position (from a bad normalise elsewhere) never recovers on its own: back to the middle of the map (QAC-57)
+      if (x !== x || z !== z) { nanNote('resolveCapsule'); x = (lim.x0 + lim.x1) / 2; z = (lim.z0 + lim.z1) / 2; }
+      // map edge
       if (x < lim.x0 + r) { x = lim.x0 + r; hitX = true; nx = 1; }
       if (x > lim.x1 - r) { x = lim.x1 - r; hitX = true; nx = -1; }
       if (z < lim.z0 + r) { z = lim.z0 + r; hitZ = true; nz = 1; }
       if (z > lim.z1 - r) { z = lim.z1 - r; hitZ = true; nz = -1; }
+      if (tiles === null) { res.x = x; res.z = z; res.hitX = hitX; res.hitZ = hitZ; res.normal.x = nx; res.normal.z = nz; return res; }
       for (var iter = 0; iter < 3; iter++) {
         var moved = false;
         var tx0 = Math.floor((x - r) / TILE), tz0 = Math.floor((z - r) / TILE);
         var tx1 = Math.floor((x + r) / TILE), tz1 = Math.floor((z + r) / TILE);
+        if (tx0 < 0) tx0 = 0; if (tz0 < 0) tz0 = 0; if (tx1 > w - 1) tx1 = w - 1; if (tz1 > h - 1) tz1 = h - 1;
         for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) {
-          if (!World.inBounds(tx, tz)) continue;
-          var i = tz * w + tx, t = tiles[i], p;
+          var i = tz * w + tx, t = tiles[i];
+          if (World._colTile !== null && World._colTile[i] === 0) continue;
           if (t === T.BUILDING) {
             var b = World.buildings[World.bidx[i] - 1];
             if (!b || b._st === stamp) continue;
             b._st = stamp;
             if (y >= b.y + b.h - 0.05) continue;
-            p = U.aabbCircle(b.x, b.z, b.w, b.d, x, z, r);
-            if (p.hit) { x += p.px; z += p.pz; moved = true; if (Math.abs(p.px) > Math.abs(p.pz)) { hitX = true; nx = U.sign(p.px); nz = 0; } else { hitZ = true; nz = U.sign(p.pz); nx = 0; } }
+            if (boxPush(b.x, b.z, b.w, b.d, x, z, r)) { x += _px; z += _pz; moved = true; if (Math.abs(_px) > Math.abs(_pz)) { hitX = true; nx = _px > 0 ? 1 : -1; nz = 0; } else { hitZ = true; nz = _pz > 0 ? 1 : -1; nx = 0; } }
           } else if (t === T.RAMP) {
             // the wedge is solid where its top is above the capsule's feet (+ step-up)
             var rx = tx * TILE, rz = tz * TILE;
             var qx = x < rx ? rx : (x > rx + TILE ? rx + TILE : x), qz = z < rz ? rz : (z > rz + TILE ? rz + TILE : z);
             var hTop = World.rampHeight(Math.min(rx + TILE - 0.01, Math.max(rx, qx)), Math.min(rz + TILE - 0.01, Math.max(rz, qz)));
             if (hTop > y + 0.6) {
-              p = U.aabbCircle(rx, rz, TILE, TILE, x, z, r);
-              if (p.hit) { x += p.px; z += p.pz; moved = true; if (Math.abs(p.px) > Math.abs(p.pz)) { hitX = true; nx = U.sign(p.px); nz = 0; } else { hitZ = true; nz = U.sign(p.pz); nx = 0; } }
+              if (boxPush(rx, rz, TILE, TILE, x, z, r)) { x += _px; z += _pz; moved = true; if (Math.abs(_px) > Math.abs(_pz)) { hitX = true; nx = _px > 0 ? 1 : -1; nz = 0; } else { hitZ = true; nz = _pz > 0 ? 1 : -1; nx = 0; } }
             }
           }
-          // solid props
-          var pl = World._propTile[i] ? World._propGrid.get(i) : null;   // a byte test before the Map lookup (most tiles hold no solid prop)
-          if (pl) for (var k = 0; k < pl.length; k++) {
-            var pr = pl[k];
-            if (pr._st === stamp) continue; pr._st = stamp;
-            if (pr.fallen || y > pr.y + (pr.h || 3) - 0.1) continue;
-            var ddx = x - pr.x, ddz = z - pr.z, rr = r + pr.r, d2 = ddx * ddx + ddz * ddz;
-            if (d2 >= rr * rr) continue;
-            var d = Math.sqrt(d2) || 0.001, push = rr - d + 0.001;
-            x += ddx / d * push; z += ddz / d * push; moved = true; res.prop = pr;
-            if (Math.abs(ddx) > Math.abs(ddz)) { hitX = true; nx = U.sign(ddx); nz = 0; } else { hitZ = true; nz = U.sign(ddz); nx = 0; }
+          // solid props (World._buildColliders' flat arrays)
+          if (cStart !== null) for (var k = cStart[i], ke = cStart[i + 1]; k < ke; k++) {
+            var id = cList[k];
+            if (cSt[id] === stamp) continue; cSt[id] = stamp;
+            if (y > cData[id * 8 + 3]) continue;
+            if (!colPush(id, x, z, r)) continue;
+            var pr = cProp[id]; if (pr.fallen) continue;   // knocked over (Vehicle._knockProp): read only when it would push
+            x += _px; z += _pz; moved = true; res.prop = pr;
+            if (Math.abs(_px) > Math.abs(_pz)) { hitX = true; nx = _px > 0 ? 1 : -1; nz = 0; } else { hitZ = true; nz = _pz > 0 ? 1 : -1; nx = 0; }
           }
         }
         if (!moved) break;
@@ -318,6 +472,15 @@
       var ctx = Math.floor(x / TILE), ctz = Math.floor(z / TILE);
       if (World.inBounds(ctx, ctz)) {
         var ci = ctz * w + ctx, ct = tiles[ci], pad = r + 0.25;
+        // a bridge walkway's railing, drawn 0.2 m in from each water edge (QA-A-DRV-03); boats (y below the kerb) and
+        // anything clearing the 1 m rail pass
+        if (World._colTile !== null && (World._colTile[ci] & 2) && y > -0.3 && y < CURB + 1.0) {
+          var wx0 = ctx * TILE, wz0 = ctz * TILE, rp = r + 0.2;
+          if (World.tile(ctx + 1, ctz) === T.WATER && x > wx0 + TILE - rp) { x = wx0 + TILE - rp; hitX = true; nx = -1; }
+          if (World.tile(ctx - 1, ctz) === T.WATER && x < wx0 + rp) { x = wx0 + rp; hitX = true; nx = 1; }
+          if (World.tile(ctx, ctz + 1) === T.WATER && z > wz0 + TILE - rp) { z = wz0 + TILE - rp; hitZ = true; nz = -1; }
+          if (World.tile(ctx, ctz - 1) === T.WATER && z < wz0 + rp) { z = wz0 + rp; hitZ = true; nz = 1; }
+        }
         var onDeck = World.deck[ci] && y > DECK_Y - 1.2 && y < DECK_Y + 1.6;
         var onRamp = ct === T.RAMP && World.rampHeight(x, z) > 0.8 && y < World.rampHeight(x, z) + 1.6;
         if (onDeck || onRamp) {
@@ -346,6 +509,7 @@
 
     // Ray vs building boxes (camera pull-in, bullets). Returns {t, point, normal} | null.
     raycastBuildings: function (ox, oy, oz, dx, dy, dz, maxDist) {
+      if (ox < FAR_X && farOn) { var fo = farQuery(3, ox, oy, oz, dx, dy, dz, maxDist); if (fo !== NONE) return fo; }
       var l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1; dx /= l; dy /= l; dz /= l;
       maxDist = maxDist || 100;
       var w = World.w, tiles = World.tiles, stamp = ++World._stamp;
@@ -362,7 +526,7 @@
             var b = World.buildings[World.bidx[i] - 1];
             if (b && b._st !== stamp) {
               b._st = stamp;
-              var t = U.rayAabb(ox, oy, oz, dx, dy, dz, b.x, b.y, b.z, b.x + b.w, b.y + b.h, b.z + b.d, bestT);
+              var t = rayBox(ox, oy, oz, dx, dy, dz, b.x, b.y, b.z, b.x + b.w, b.y + b.h, b.z + b.d, bestT);
               if (t >= 0 && t < bestT) { bestT = t; best = b; }
             }
           }
@@ -501,7 +665,10 @@
         if (typeof onProgress === 'function') { try { onProgress(frac, s.label); } catch (e) { U.reportError(e, 'world.progress'); } }
         GTP.Events.emit('load:progress', { stage: stage, frac: frac, bar: s.bar, label: s.label, source: 'world' });
       }
-      if (World._seed === seed && World.tiles) { prog('done', 1); return; }
+      World._adoptWrappers();
+      // the same city again (Restart, New Game or Load on the same seed): the map stands, but the per-game prop state
+      // goes back to how generate left it, so knocked-over props stand up again (QAC-22)
+      if (World._seed === seed && World.tiles) { World._resetProps(); prog('done', 1); return; }
       prog('tiles', 0);
       var CW = GTP.Content.world, L = CW.layout;
       var w = World.w = L.w || C.MAP_W, h = World.h = L.h || C.MAP_H, N = w * h;
@@ -525,7 +692,7 @@
       World.lowerLoopName = (CW.streets && CW.streets.lowerHighway) || (L.loop && L.loop.lowerName) || 'The Lower Loop';
       World._seed = seed;
       World.bounds = { x0: 0, z0: 0, x1: w * TILE, z1: h * TILE };
-      World._propGrid = new Map(); World._propTile = new Uint8Array(N);
+      World._propGrid = new Map(); World._propTile = new Uint8Array(N); World._colTile = null; cStart = null;   // rebuilt with the prop grid
       World._wedges = new Map(); World._wedgeTile = new Uint8Array(N);
 
       function I(tx, tz) { return tz * w + tx; }
@@ -782,18 +949,28 @@
       }
       World._roadBuckets = World._bucketTiles(World._roadTiles);
       World._sidewalkBuckets = World._bucketTiles(World._sidewalkTiles);
+      var colTile = World._colTile = new Uint8Array(N);
+      for (var i3 = 0; i3 < N; i3++) {
+        if (tiles[i3] === T.BUILDING || tiles[i3] === T.RAMP) colTile[i3] = 1;
+        // 2: a bridge walkway along the water, whose railing (Render._rail) resolveCapsule makes solid (QA-A-DRV-03)
+        else if (meta[i3] & M.WALKWAY) { var wx3 = i3 % w, wz3 = (i3 / w) | 0; if (World.tile(wx3 + 1, wz3) === T.WATER || World.tile(wx3 - 1, wz3) === T.WATER || World.tile(wx3, wz3 + 1) === T.WATER || World.tile(wx3, wz3 - 1) === T.WATER) colTile[i3] = 2; }
+      }
       World.props.forEach(function (p, pi) {
         p.index = pi;
+        p._solid0 = !!p.solid;   // what _resetProps restores
         if (!p.solid) return;
-        var r = p.r || 0.4;
-        var tx0 = Math.floor((p.x - r) / TILE), tz0 = Math.floor((p.z - r) / TILE), tx1 = Math.floor((p.x + r) / TILE), tz1 = Math.floor((p.z + r) / TILE);
+        World._propCollider(p);
+        // every tile the collider can touch: the circle, or the turned box's bounding circle
+        var r = p.bx ? Math.sqrt(p.bx * p.bx + p.bz * p.bz) : (p.r || 0.4), ox = p.bx ? p._cx : p.x, oz = p.bx ? p._cz : p.z;
+        var tx0 = Math.floor((ox - r) / TILE), tz0 = Math.floor((oz - r) / TILE), tx1 = Math.floor((ox + r) / TILE), tz1 = Math.floor((oz + r) / TILE);
         for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) {
           if (!inB(tx, tz)) continue;
           var key = I(tx, tz), arr = World._propGrid.get(key);
-          if (!arr) { arr = []; World._propGrid.set(key, arr); World._propTile[key] = 1; }
+          if (!arr) { arr = []; World._propGrid.set(key, arr); World._propTile[key] = 1; colTile[key] |= 1; }
           arr.push(p);
         }
       });
+      World._buildColliders(N);
       World.generateMs = U.now ? U.now() - genT0 : 0;
       prog('done', 1);
       GTP.Events.emit('world:generated', { seed: seed, ms: World.generateMs });
@@ -968,6 +1145,39 @@
     },
 
     _prop: function (p) { if (p.y == null) p.y = CURB; if (p.rot == null) p.rot = 0; World.props.push(p); return p; },
+    // the collider of a solid prop: a circle of p.r, or for the long ones a box of half extents bx by bz in the prop's
+    // own frame (resolveCapsule turns the capsule into that frame with _cos / _sin of p.rot)
+    _propCollider: function (p) {
+      var box = PROP_BOX[p.kind];
+      if (box) {
+        var bb = box(p); if (!bb) return;
+        p.bx = bb[0]; p.bz = bb[1]; p._cos = Math.cos(p.rot || 0); p._sin = Math.sin(p.rot || 0);
+        // an off-centre box ([.., .., local x, local z] offset): its centre in world space (three.js rotation.y)
+        p._cx = p.x + (bb[2] || 0) * p._cos + (bb[3] || 0) * p._sin; p._cz = p.z - (bb[2] || 0) * p._sin + (bb[3] || 0) * p._cos;
+      }
+    },
+    // the prop grid as flat typed arrays for resolveCapsule: props come in a hundred object shapes, so reading x / z / r
+    // off them is a megamorphic load each (that made the slow path ~0.75 us a call). Same props in the same order per
+    // tile as World._propGrid; a collider's data are x, z, r, top (the height above which it stops counting), bx, bz, cos, sin.
+    _buildColliders: function (N) {
+      var grid = World._propGrid, start = new Int32Array(N + 1), ids = new Map(), props = [], n = 0, i, k;
+      grid.forEach(function (arr, key) { start[key + 1] = arr.length; n += arr.length; for (k = 0; k < arr.length; k++) if (!ids.has(arr[k])) { ids.set(arr[k], props.length); props.push(arr[k]); } });
+      for (i = 0; i < N; i++) start[i + 1] += start[i];
+      var list = new Int32Array(n), data = new Float64Array(props.length * 8);
+      grid.forEach(function (arr, key) { for (k = 0; k < arr.length; k++) list[start[key] + k] = ids.get(arr[k]); });
+      for (i = 0; i < props.length; i++) {
+        var p = props[i], o = i * 8;
+        data[o] = p.bx ? p._cx : p.x; data[o + 1] = p.bx ? p._cz : p.z; data[o + 2] = p.r != null ? p.r : 0.4; data[o + 3] = p.y + (p.h || 3) - 0.1;
+        data[o + 4] = p.bx || 0; data[o + 5] = p.bz || 0; data[o + 6] = p.bx ? p._cos : 1; data[o + 7] = p.bx ? p._sin : 0;
+      }
+      cStart = start; cList = list; cData = data; cProp = props; cSt = new Float64Array(props.length);
+      World._colliders = { start: start, list: list, data: data, props: props };
+    },
+    // the per-game state a game writes on props (Vehicle._knockProp: fallen, solid = false) back to generate's
+    _resetProps: function () {
+      var list = World.props;
+      for (var i = 0; i < list.length; i++) { var p = list[i]; if (p.fallen) p.fallen = null; if (p._solid0 != null) p.solid = p._solid0; }
+    },
 
     // kind-specific decoration for a landmark lot
     _landmarkProps: function (lmk, def, lot, R, parkTile) {
@@ -1884,4 +2094,6 @@
       });
     }
   };
+  // the six queries as defined here: _adoptWrappers restores these over a wrapper
+  NATIVE = FAR_NAMES.map(function (n) { return World[n]; });
 })();

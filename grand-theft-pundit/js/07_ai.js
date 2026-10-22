@@ -2236,9 +2236,8 @@
     var Ev = GTP.Events, I = GTP.Interiors, v = pl.inVehicle, rec = { id: d.id, kind: d.kind, t: simT() };
     doors.latched[d.id] = true; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
     if (d.foot) doors.latched[d.foot] = true;   // a garage sharing the kerb with its front door: stepping out of the car does not walk in
-    // Spin Doctor's bay: the vehicles module runs the drive-in itself (GTP.Vehicles.modshop: modshop:open with the catalog,
-    // modshop:close on the way out, its own no-heat rule); a second modshop:open from the marker opened the UI twice
-    if (d.kind === 'modshop' && GTP.Vehicles && GTP.Vehicles.modshop) { rec.result = 'vehicles'; return; }
+    // Spin Doctor's bay: this marker is the one drive-in for a shop with a World.doors 'modshop' door (06b's own bay tick
+    // stands down for those and only listens to modshop:open for the wrench sound and modshop:close on the way out)
     if (d.kind !== 'armory' && storyBusy()) { toast('Finish what you started first.'); rec.result = 'busy'; return; }
     if (wanted.level > 0 && d.kind !== 'armory') { toast('Lose the heat first.'); rec.result = 'wanted'; return; }
     Ev.emit('door:enter', { door: d, landmark: d.landmark, kind: d.kind, vehicle: v || null });
