@@ -220,22 +220,25 @@ H.run('ui_v03', async (t) => {
     const g = GTP.game, p = g.player; p.money = 2000; const look0 = JSON.stringify(p.look);
     GTP.Events.emit('clothing:open'); T_.adv(0.8); g.render();
     const m = T_.ui.modal; const a = { modal: m && m.kind, free: GTP.Render.free };
-    T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.preview = p.look.outfit && p.look.outfit.top;
-    T_.press('confirm'); a.money = p.money; a.ev = T_.last('shop:buy') && T_.last('shop:buy').item.id;
-    T_.press('back'); T_.adv(0.3); a.preview2 = p.look.outfit.top;
+    // the data: the systems' rows when they are real clothing, else the content's (GTP.UI._v3.wardrobeCats)
+    const c0 = GTP.UI._v3.wardrobeCats('clothing')[0], it1 = c0.items[1], it2 = c0.items[2];
+    a.slot = c0.id; a.want = [it1.id, it2.id]; a.price = it1.owned ? 0 : (it1.price || 0);
+    T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.preview = p.look.outfit && p.look.outfit[c0.id];
+    T_.press('confirm'); a.money = p.money; const ev = T_.last('shop:buy'); a.ev = ev && (typeof ev.item === 'string' ? ev.item : ev.item.id);
+    T_.press('back'); T_.adv(0.3); a.preview2 = p.look.outfit[c0.id];
     g.render();
     window.LOOK0 = look0;
     return a;
   });
   await shot('wardrobe');
-  const ward2 = await page.evaluate(() => { const p = GTP.game.player; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); return { modal: !!T_.ui.modal, top: p.look.outfit && p.look.outfit.top, shirt: p.look.shirt }; });
-  await page.evaluate(() => { GTP.Events.emit('barber:open'); T_.adv(0.8); T_.press('confirm'); T_.press('back'); T_.adv(0.3); GTP.game.render(); });
+  const ward2 = await page.evaluate((slot) => { const p = GTP.game.player; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); return { modal: !!T_.ui.modal, top: p.look.outfit && p.look.outfit[slot], shirt: p.look.shirt }; }, ward.slot);
+  await page.evaluate(() => { window.HAIR0 = GTP.game.player.look.hair; const c0 = GTP.UI._v3.wardrobeCats('barber')[0]; window.HAIRW = c0.items[1].style || String(c0.items[1].id).replace(/^hair_/, ''); GTP.Events.emit('barber:open'); T_.adv(0.8); T_.press('confirm'); T_.press('back'); T_.adv(0.3); GTP.game.render(); });
   await shot('barber');
-  const barb = await page.evaluate(() => { const p = GTP.game.player, a = { hair: p.look.hair }; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); a.after = p.look.hair; a.free = GTP.Render.free; return a; });
+  const barb = await page.evaluate(() => { const p = GTP.game.player, a = { hair: p.look.hair, want: HAIRW, before: HAIR0 }; T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); a.after = p.look.hair; a.free = GTP.Render.free; return a; });
   console.log('  wardrobe: ' + JSON.stringify([ward, ward2, barb]));
-  t.assert(ward.modal === 'wardrobe' && ward.free && ward.preview === 'top_quarterzip' && ward.money === 1820 && ward.ev === 'top_quarterzip' && ward.preview2 === 'top_blazer', 'clothing previews on player.look, buys the quarter-zip and previews the next: ' + JSON.stringify(ward));
-  t.assert(!ward2.modal && ward2.top === 'top_quarterzip', 'leaving keeps what was bought and drops the preview: ' + JSON.stringify(ward2));
-  t.assert(barb.hair === 'slick' && barb.after === 'short' && !barb.free, 'the barber previews a cut and reverts it on exit: ' + JSON.stringify(barb));
+  t.assert(ward.modal === 'wardrobe' && ward.free && ward.preview === ward.want[0] && ward.money === 2000 - ward.price && (ward.price === 0 || ward.ev === ward.want[0]) && ward.preview2 === ward.want[1], 'clothing previews on player.look, buys the second item and previews the third: ' + JSON.stringify(ward));
+  t.assert(!ward2.modal && ward2.top === ward.want[0], 'leaving keeps what was bought and drops the preview: ' + JSON.stringify(ward2));
+  t.assert(barb.hair === barb.want && barb.after === barb.before && !barb.free, 'the barber previews a cut and reverts it on exit: ' + JSON.stringify(barb));
 
   // ---- 9. property ----
   const prop = await page.evaluate(() => { const p = GTP.game.player; p.money = 100000; GTP.Events.emit('property:open', { id: 'safe_brownstone' }); T_.adv(0.3); GTP.game.render(); return { modal: T_.ui.modal && T_.ui.modal.kind }; });

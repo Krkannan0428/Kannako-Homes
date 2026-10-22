@@ -1183,6 +1183,7 @@
       var fade = p.lineTime < 0.4 ? p.lineTime / 0.4 : 1, scale = U.clamp(1.25 - cands[i].d / 60, 0.7, 1);
       var tw = Math.min(measure(ctx, p.line, font) * scale, px(300)), bw = tw + px(16), bh = px(22) * scale;
       var bx = U.clamp(s.sx - bw / 2, px(4), W - bw - px(4)), by = s.sy - bh - px(8);
+      if (by < safe.t + px(160) && (bx + bw > W - safe.r - px(170) || bx < safe.l + px(240))) continue;   // never over the bars, money or weapon panel
       ctx.globalAlpha = fade;
       panel(ctx, bx, by, bw, bh, px(8), 'rgba(12,14,22,0.85)', p._barkColor || 'rgba(255,255,255,0.35)', 1.5);
       ctx.fillStyle = 'rgba(12,14,22,0.85)'; ctx.beginPath(); ctx.moveTo(s.sx - px(5), by + bh); ctx.lineTo(s.sx + px(5), by + bh); ctx.lineTo(s.sx, by + bh + px(6)); ctx.closePath(); ctx.fill();
@@ -5189,6 +5190,11 @@
     }
     var Wr = S.wardrobe; if (!Wr || typeof Wr.items !== 'function') return null;
     var list = call(Wr.items, Wr, [null, store || null], null); if (!list || !list.length) return null;
+    // 14_systems' table('clothing') runs asList over parity.clothing ({name, tagline, stores, clerk, items}) and so lists its
+    // keys as items; keep only rows that are real clothing (a name, and an id the content lists), else use the content
+    var src = parity().clothing, known = src && Array.isArray(src.items) ? src.items.map(function (it) { return it.id; }) : Array.isArray(src) ? src.map(function (it) { return it && it.id; }) : null;
+    list = list.filter(function (it) { return it && typeof it.name === 'string' && (!known || known.indexOf(it.id) >= 0); });
+    if (!list.length) return null;
     var by = {}, order = [];
     list.forEach(function (it) { var k = String(it.slot || 'other'); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(Object.assign({}, it, { _sys: 'clothing' })); });
     return order.map(function (k) { return { id: k, name: SLOT_NAMES[k] || k.charAt(0).toUpperCase() + k.slice(1), items: by[k] }; });
@@ -5265,6 +5271,7 @@
     var fns = m.mode === 'barber' ? [[S, 'buyHaircut'], [S && S.barber, 'buy']] : [[S, 'buyClothing'], [S && S.clothing, 'buy']];
     for (var i = 0; i < fns.length && res == null; i++) if (fns[i][0] && typeof fns[i][0][fns[i][1]] === 'function') res = call(fns[i][0][fns[i][1]], fns[i][0], [it.id, { slot: c.id }], null);
     if (res == null && S && typeof S.buy === 'function') res = call(S.buy, S, [m.mode, it.id, { slot: c.id }], null);
+    if (res && res.ok === false && res.reason === 'unknown') res = null;   // a content item the systems table does not know: buy it here
     var ok = res === true || (res && res.ok);
     if (res != null && !ok) { var rz = res && res.reason; modalMsg(m, rz === 'funds' || rz === 'money' ? 'NOT ENOUGH CASH.' + (res.need ? ' Need ' + U.fmtMoney(res.need) + ' more.' : '') : rz === 'locked' ? 'LOCKED. ' + (it.unlock && it.unlock.mission ? 'Unlocks after "' + missionTitle(it.unlock.mission) + '".' : 'Not yet.') : 'No sale.', COL.red); sfx('fail', 0.3); return; }
     if (res == null) {
