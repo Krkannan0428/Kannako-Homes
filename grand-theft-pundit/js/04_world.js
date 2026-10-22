@@ -79,7 +79,22 @@
   // ---- allocation-free push-outs (the result in _px / _pz) ------------------------------------------------------
   var _px = 0, _pz = 0;
   // long solid props collide as boxes [half x, half z] in their own frame (World._propCollider); the rest as circles
-  var PROP_BOX = {};
+  // (a container is 2.4 x 6 m along its local z, Assets 'container'; a hedge is sx by sz, the renderer's scale)
+  var PROP_BOX = {
+    container: function () { return [1.2, 3.0]; },   // QA-A-DRV-04: the yard's columns were 1.3 m circles with 3 m gaps
+    // QA-A-DRV-05: the maze hedges were 1 m circles. A hedge the Hedge Fund jump flies over (jumpOver) starts its box
+    // 7 m from the wedge's centre, so the car leaving the 1.3 m wedge has risen past the 1.8 m hedge tops before its
+    // bumper reaches one (the first 4 m of the three long hedges at the wedge end stay open)
+    hedge: function (p) {
+      var hx = (p.sx || 1) / 2, hz = (p.sz || 1) / 2, sj = p.jumpOver && GTP.World.stuntRamps.filter(function (s) { return s.id === p.jumpOver; })[0];
+      if (!sj || p.rot) return [hx, hz];
+      // near: the hedge end toward the wedge; keep: the nearest z its box may reach
+      var near = sj.z < p.z ? -1 : 1, edge = p.z + near * hz, keep = near < 0 ? sj.z + STUNT_LEN / 2 + 4 : sj.z - STUNT_LEN / 2 - 4;
+      if ((near < 0 && edge >= keep) || (near > 0 && edge <= keep)) return [hx, hz];
+      var far = p.z - near * hz, nz = (Math.abs(far - keep)) / 2;
+      return [hx, nz, 0, (far + keep) / 2 - p.z];
+    }
+  };
   // circle (cx, cz, r) out of the axis-aligned box (ax, az, aw, ad); same answers as U.aabbCircle
   function boxPush(ax, az, aw, ad, cx, cz, r) {
     var qx = cx < ax ? ax : (cx > ax + aw ? ax + aw : cx), qz = cz < az ? az : (cz > az + ad ? az + ad : cz);
@@ -457,6 +472,15 @@
       var ctx = Math.floor(x / TILE), ctz = Math.floor(z / TILE);
       if (World.inBounds(ctx, ctz)) {
         var ci = ctz * w + ctx, ct = tiles[ci], pad = r + 0.25;
+        // a bridge walkway's railing, drawn 0.2 m in from each water edge (QA-A-DRV-03); boats (y below the kerb) and
+        // anything clearing the 1 m rail pass
+        if (World._colTile !== null && (World._colTile[ci] & 2) && y > -0.3 && y < CURB + 1.0) {
+          var wx0 = ctx * TILE, wz0 = ctz * TILE, rp = r + 0.2;
+          if (World.tile(ctx + 1, ctz) === T.WATER && x > wx0 + TILE - rp) { x = wx0 + TILE - rp; hitX = true; nx = -1; }
+          if (World.tile(ctx - 1, ctz) === T.WATER && x < wx0 + rp) { x = wx0 + rp; hitX = true; nx = 1; }
+          if (World.tile(ctx, ctz + 1) === T.WATER && z > wz0 + TILE - rp) { z = wz0 + TILE - rp; hitZ = true; nz = -1; }
+          if (World.tile(ctx, ctz - 1) === T.WATER && z < wz0 + rp) { z = wz0 + rp; hitZ = true; nz = 1; }
+        }
         var onDeck = World.deck[ci] && y > DECK_Y - 1.2 && y < DECK_Y + 1.6;
         var onRamp = ct === T.RAMP && World.rampHeight(x, z) > 0.8 && y < World.rampHeight(x, z) + 1.6;
         if (onDeck || onRamp) {
@@ -924,19 +948,23 @@
       World._roadBuckets = World._bucketTiles(World._roadTiles);
       World._sidewalkBuckets = World._bucketTiles(World._sidewalkTiles);
       var colTile = World._colTile = new Uint8Array(N);
-      for (var i3 = 0; i3 < N; i3++) if (tiles[i3] === T.BUILDING || tiles[i3] === T.RAMP) colTile[i3] = 1;
+      for (var i3 = 0; i3 < N; i3++) {
+        if (tiles[i3] === T.BUILDING || tiles[i3] === T.RAMP) colTile[i3] = 1;
+        // 2: a bridge walkway along the water, whose railing (Render._rail) resolveCapsule makes solid (QA-A-DRV-03)
+        else if (meta[i3] & M.WALKWAY) { var wx3 = i3 % w, wz3 = (i3 / w) | 0; if (World.tile(wx3 + 1, wz3) === T.WATER || World.tile(wx3 - 1, wz3) === T.WATER || World.tile(wx3, wz3 + 1) === T.WATER || World.tile(wx3, wz3 - 1) === T.WATER) colTile[i3] = 2; }
+      }
       World.props.forEach(function (p, pi) {
         p.index = pi;
         p._solid0 = !!p.solid;   // what _resetProps restores
         if (!p.solid) return;
         World._propCollider(p);
         // every tile the collider can touch: the circle, or the turned box's bounding circle
-        var r = p.bx ? Math.sqrt(p.bx * p.bx + p.bz * p.bz) : (p.r || 0.4);
-        var tx0 = Math.floor((p.x - r) / TILE), tz0 = Math.floor((p.z - r) / TILE), tx1 = Math.floor((p.x + r) / TILE), tz1 = Math.floor((p.z + r) / TILE);
+        var r = p.bx ? Math.sqrt(p.bx * p.bx + p.bz * p.bz) : (p.r || 0.4), ox = p.bx ? p._cx : p.x, oz = p.bx ? p._cz : p.z;
+        var tx0 = Math.floor((ox - r) / TILE), tz0 = Math.floor((oz - r) / TILE), tx1 = Math.floor((ox + r) / TILE), tz1 = Math.floor((oz + r) / TILE);
         for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) {
           if (!inB(tx, tz)) continue;
           var key = I(tx, tz), arr = World._propGrid.get(key);
-          if (!arr) { arr = []; World._propGrid.set(key, arr); World._propTile[key] = 1; colTile[key] = 1; }
+          if (!arr) { arr = []; World._propGrid.set(key, arr); World._propTile[key] = 1; colTile[key] |= 1; }
           arr.push(p);
         }
       });
@@ -1075,7 +1103,12 @@
     // own frame (resolveCapsule turns the capsule into that frame with _cos / _sin of p.rot)
     _propCollider: function (p) {
       var box = PROP_BOX[p.kind];
-      if (box) { var bb = box(p); if (bb) { p.bx = bb[0]; p.bz = bb[1]; p._cos = Math.cos(p.rot || 0); p._sin = Math.sin(p.rot || 0); } }
+      if (box) {
+        var bb = box(p); if (!bb) return;
+        p.bx = bb[0]; p.bz = bb[1]; p._cos = Math.cos(p.rot || 0); p._sin = Math.sin(p.rot || 0);
+        // an off-centre box ([.., .., local x, local z] offset): its centre in world space (three.js rotation.y)
+        p._cx = p.x + (bb[2] || 0) * p._cos + (bb[3] || 0) * p._sin; p._cz = p.z - (bb[2] || 0) * p._sin + (bb[3] || 0) * p._cos;
+      }
     },
     // the prop grid as flat typed arrays for resolveCapsule: props come in a hundred object shapes, so reading x / z / r
     // off them is a megamorphic load each (that made the slow path ~0.75 us a call). Same props in the same order per
@@ -1088,7 +1121,7 @@
       grid.forEach(function (arr, key) { for (k = 0; k < arr.length; k++) list[start[key] + k] = ids.get(arr[k]); });
       for (i = 0; i < props.length; i++) {
         var p = props[i], o = i * 8;
-        data[o] = p.x; data[o + 1] = p.z; data[o + 2] = p.r != null ? p.r : 0.4; data[o + 3] = p.y + (p.h || 3) - 0.1;
+        data[o] = p.bx ? p._cx : p.x; data[o + 1] = p.bx ? p._cz : p.z; data[o + 2] = p.r != null ? p.r : 0.4; data[o + 3] = p.y + (p.h || 3) - 0.1;
         data[o + 4] = p.bx || 0; data[o + 5] = p.bz || 0; data[o + 6] = p.bx ? p._cos : 1; data[o + 7] = p.bx ? p._sin : 0;
       }
       cStart = start; cList = list; cData = data; cProp = props; cSt = new Float64Array(props.length);
