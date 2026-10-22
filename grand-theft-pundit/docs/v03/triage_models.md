@@ -42,8 +42,9 @@ These were seen in the full suite (`tests/all.js`, log kept in the scratchpad) a
 | interiors | racks missing 12 weapon meshes | Same on base. Interiors / weapon assets. |
 | vehicles | `a garage holds four: full,full,full,full` | `js/14_systems.js` gives `safe_dorm` `garage: 1`; 06b's `capacity()` returns that, the test expects 4. Systems vs vehicles data. Base stops earlier, at the jet ski rider (fixed here). |
 | audio | `phoneRing` makes no voice | Audio. |
-| bosses, campaign, feel, missions, newplayer | mission / marker / content counts | Missions / content; no mesh or animation in the asserts. |
-| perf | `simulation keeps up (>600 steps/s)` | `game.advance` only steps the simulation (no `syncMesh`, no models code). Measured while other test processes were running; see models.md for the re-measure. |
+| ui_v03 | a paint previews through `Vehicles.mod` | The test replaces `GTP.Vehicles.mod` with its own stub; the buy path is UI. |
+| bosses, campaign, feel, missions, newplayer, saves, story, strands, strangers, systems, ui | mission / marker / content / table asserts | Missions / content; no mesh or animation in the asserts. |
+| perf | `simulation keeps up (>600 steps/s)` | `game.advance` only steps the simulation (no `syncMesh`, no models code). Run alone: 587 steps/s on this branch, 590 on base; 359 in the suite run was CPU contention. |
 
 Other hints in the QA files that mention meshes but belong to other owners: QA-A-ENT-10 (headlight gate in
 `Vehicle.syncMesh` / `Render.syncVehicle`), QA-A-CAM-03 / QAC-17 (render interpolation), QA-A-TRF-07 (parked-car footprint
