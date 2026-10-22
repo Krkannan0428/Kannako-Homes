@@ -1,0 +1,64 @@
+# Triage: test failures on the integrated build, as seen from the strangers track
+
+Branch `v03/strangers` with `origin/game/grand-theft-pundit` at 10ba585 (all seventeen tracks) merged. `tests/all.js`:
+**19 of 32 files failed**, 18 of them other tracks' (below). The 19th was `strangers.js` itself (`st_gasp_2`'s jump on the
+integrated vehicle physics), fixed in 187b50f / bc0edab and passing now. Passing: ai, artifact, content_audit, content_parity, cover, cutscenes, feel2, perf, radio, render, smoke, tune, world.
+
+**Method.** Every failing file was re-run in a separate worktree of the same commit with `js/26_content_strangers.js`
+replaced by an empty stub (the strangers module removed). A failure that comes back with the same assertion is not
+caused by the strangers. The "without strangers" column is that run; the "with strangers" column is the `tests/all.js`
+run on the branch. Owners follow PLAN_V03.md and the coordinator's integration sessions (combat, story, bosses,
+environment + world).
+
+## Result
+
+All failures reproduce with the strangers removed, and `tests/strangers.js` itself passes on this build (see
+`docs/v03/final_strangers.md`). Two of them have a second, smaller reason when the strangers are loaded, noted in the
+rows: `missions.js` (the count) and `feel.js` (one more lit marker). Neither assertion passes without the strangers either.
+
+| test | owner | with strangers (branch) | without strangers (stub) | same? | reading |
+|---|---|---|---|---|---|
+| `actors.js` | shooting / combat integration | crash damage: 0 | crash damage: 0 | yes | vehicle crash damage to peds reads 0 |
+| `audio.js` | vehicles (03_audio.js) | every SFX name makes a voice; failed: phoneRing,gps | every SFX name makes a voice; failed: phoneRing,gps | yes | SFX names `phoneRing` and `gps` (fired by the story / UI tracks) have no voice |
+| `bosses.js` | bosses | b01_goldplate: the mission completed (the boss beaten) within 360 s of play: {"completed":false,"phases":[1],"defeated":false,"errors":[],"bot":{"steps":5460,"jumps":0,"dodges":26,"deaths":0,"retries":3,"debates":0,"hpLost":375.10... | b01_goldplate: the mission completed (the boss beaten) within 360 s of play: {"completed":false,"phases":[1],"defeated":false,"errors":[],"bot":{"steps":5460,"jumps":0,"dodges":26,"deaths":0,"retries":3,"debates":0,"hpLost":375.10... | yes | b01_goldplate stays in phase 1 for 360 s of bot play (380 pistol damage dealt, phase never advances) |
+| `campaign.js` | story (tests/campaign.js) | m01b_airport started by walking into its light (or by the story): {"ok":false,"note":"no marker for m01b_airport: m01c_both_sides"} | m01b_airport started by walking into its light (or by the story): {"ok":false,"note":"no marker for m01b_airport: m01c_both_sides"} | yes | `m01c_both_sides` now gates `m01b_airport`, so the test's fixed ORDER has no light for m01b; it also asserts `allMissions().length === 25` (35 without the strangers) |
+| `characters.js` | models / combat integration | aimed rifle: in the right hand, barrel along the facing at chest height: {"parent":"handR","dot":1,"y":0.01,"gripY":2.75,"leftToBarrel":1.411,"leftAhead":-0.1} | aimed rifle: in the right hand, barrel along the facing at chest height: {"parent":"handR","dot":1,"y":0.01,"gripY":2.75,"leftToBarrel":1.411,"leftAhead":-0.1} | yes | aimed rifle grip: left hand behind the grip (`leftAhead -0.1`) |
+| `combat.js` | shooting / combat integration | a scoped shot lands at 40 m and the readout says so: {"hovered":1,"range":39,"dmg":0,"casingsSoon":0,"casingsLater":1} | a scoped shot lands at 40 m and the readout says so: {"hovered":1,"range":39,"dmg":0,"casingsSoon":0,"casingsLater":1} | yes | a scoped shot at 40 m deals 0 damage |
+| `events.js` | world (tests/events.js) with vehicles / systems | driving into the mod shop: [["modshop:open","spin_doctor_strip",true],["modshop:open","spin_strip",true]] | driving into the mod shop: [["modshop:open","spin_doctor_strip",true],["modshop:open","spin_strip",true]] | yes | driving into the mod shop fires `modshop:open` twice, for `spin_doctor_strip` and `spin_strip` (two triggers for one shop) |
+| `feel.js` | story (tests/feel.js expectations) | saved with m00..m02 done (m03 lit): {"ok":true,"x":258,"z":418,"money":4321,"weapons":{"fist":"inf","pistol":17,"smg":33},"weapon":"smg","completed":["m00_intro","m01_van","m01b_airport","m02_read"],"markers":["m03_ratio","m01c_bo... | saved with m00..m02 done (m03 lit): {"ok":true,"x":258,"z":418,"money":4321,"weapons":{"fist":"inf","pistol":17,"smg":33},"weapon":"smg","completed":["m00_intro","m01_van","m01b_airport","m02_read"],"markers":["m03_ratio","m01c_bo... | yes | asserts the lit markers after m00..m02 are exactly `m03_ratio`; the parity track's `m01c_both_sides` is also lit (and with the strangers, Moira's `st_heckle_1`, whose unlock is `m02_read` by design). The check should compare story markers only |
+| `interiors.js` | interiors / combat integration | racks stocked with every weapon as a real mesh: 52 items, 45 weapons, missing megaphone,flare_gun,mute_button,merch_cannon,minigun,liveblog,carbine,rifle,bullpup,battle_rifle,autoshotgun,marksman | racks stocked with every weapon as a real mesh: 52 items, 45 weapons, missing megaphone,flare_gun,mute_button,merch_cannon,minigun,liveblog,carbine,rifle,bullpup,battle_rifle,autoshotgun,marksman | yes | armory racks miss 12 of the parity weapons as meshes |
+| `missions.js` | story (tests/missions.js) | 17 base missions (25 with the expansion), got 17 / 61 | 17 base missions (25 with the expansion), got 17 / 35 | same check | asserts `allMissions().length` is 17 or 25; it is 35 without the strangers (parity missions), 61 with them |
+| `newplayer.js` | qa-b (tests/newplayer.js) | the new-player bar is not met; missing steps: m01c, save, ten_min | the new-player bar is not met; missing steps: m01c, save, ten_min | yes | new-player bar steps `m01c`, `save`, `ten_min` not reached |
+| `saves.js` | story (tests/saves.js / 30_game.js) | missions, flags, best times and the next light come back: m01c_both_sides | missions, flags, best times and the next light come back: m01c_both_sides | yes | the restored "next light" is `m01c_both_sides`, not what the test expects (chain change from the parity track) |
+| `story.js` | story | m01_van: the GPS and the call go to the next story mission: {"id":"m01_van","done":true,"next":null,"gps":null,"call":null,"chapter":[]} | m01_van: the GPS and the call go to the next story mission: {"id":"m01_van","done":true,"next":null,"gps":null,"call":null,"chapter":[]} | yes | after `m01_van` `Story.next()` is null: no GPS, no call, no chapter |
+| `strands.js` | story (09_missions.js GTP.Strands / tests/strands.js) | braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}} | braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}} | yes | the player never gets into the car at the Loop Race start: a property modal left open by the Sponsor Runs step (root cause below) |
+| `systems.js` | systems | tables: {"tickers":8,"holes":9,"ach":26,"cheats":8,"jobs":2,"props":11,"safes":5,"wrapped":true,"reg":8,"hook":true,"marks":11,"minimap":11,"untouched":true,"holeLens":[34,29,27,72,29,27,27,65,73],"course":{"x0":516,"z0":92,"x1":5... | tables: {"tickers":8,"holes":9,"ach":26,"cheats":8,"jobs":2,"props":11,"safes":5,"wrapped":true,"reg":8,"hook":true,"marks":11,"minimap":11,"untouched":true,"holeLens":[34,29,27,72,29,27,27,65,73],"course":{"x0":516,"z0":92,"x1":5... | yes | the "tables" assertion (tickers, holes, achievements, cheats, jobs, properties ...) |
+| `ui.js` | ui / radio | the mattress ad runs at minute 20 on every station | the mattress ad runs at minute 20 on every station | yes | the Nap Dynasty ad no longer runs at minute 20 on every station |
+| `ui_v03.js` | ui / vehicles | a paint previews through Vehicles.mod, BUY pays and emits shop:buy: {"focus":1,"previews":1,"preview":"#d7262e","money0":20000,"money1":20000,"applied":null,"ev":null,"engPreview":1} | a paint previews through Vehicles.mod, BUY pays and emits shop:buy: {"focus":1,"previews":1,"preview":"#d7262e","money0":20000,"money1":20000,"applied":null,"ev":null,"engPreview":1} | yes | a mod-shop paint preview through `Vehicles.mod` is never applied and BUY does not charge |
+| `vehicles.js` | vehicles | the jet ski leans into the turn with the rider on it: {"sp":12.92,"alt":0.2,"p":0.147,"r":-0.42,"hd":309,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":174,"z":533} | the jet ski leans into the turn with the rider on it: {"sp":12.92,"alt":0.2,"p":0.147,"r":-0.42,"hd":309,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":174,"z":533} | yes | the jet ski does not lean into the turn with the rider on it |
+
+## Root cause: `strands.js`, the Loop Race never starts (coordinator item "strands race start")
+
+Diagnosed in the stubbed worktree (the strangers module removed), so it is not a strangers issue, but it is the same
+family as the round-1 `st_ghost_1` bug: a systems property marker opening its purchase modal under the player.
+
+- Step 3 of `tests/strands.js` (Sponsor Runs) leaves the player at the Fish Shack drop, `tests/strands.js:104`
+  (`dest.x + 2`), and waits out the 15 s (`:108-109`). That spot is the `biz_fish_shack` for-sale marker
+  (`js/14_systems.js:125`, radius 1.9 at `:1389`).
+- While the strand runs, `busy()` (`js/14_systems.js:1399`) holds the marker. The strand ends at about t 34.9
+  (`js/09_missions.js:3513`); about 0.5 s later, during `T_.reset()`, `tickMarkers` fires `openProperty`
+  (`js/14_systems.js:1411-1417` → `:411`). The UI opens `openModal('property')` (`js/11_ui.js:4945` → `:4357`), which
+  sets `player.controlEnabled = false`, and the modal stays open (`GTP.UI.modal()` still reads `property:biz_fish_shack`).
+- Steps 4 and 5 pass anyway because they use teleports and direct calls. Step 6 presses `enter` and the brake, which
+  `Player.control` ignores (`js/06_entities.js:1005` returns early). The car, the door, the lock and the input are fine;
+  step 6 alone passes. There is exactly one false-write to `controlEnabled` on that path.
+- **Test fix (story track, `tests/strands.js`)**: in `T_.reset()` (line 27) add `if (GTP.UI.modal()) GTP.UI.closeModal();`
+  after `T_.leave();`. A scratch copy with only that change passes the whole file (in the car, three racers, eight rings,
+  countdown 3).
+- **Game fix (systems track, optional)**: `js/14_systems.js` disarms the markers under the player when golf and job runs
+  end (`:760`, `:1192`) but not when a strand ends, so in real play finishing a strand on a for-sale marker pops the
+  property screen by itself. Calling `disarmNear()` on `strand:end`, next to the `strand:start` listener at `:1541`, closes
+  that gap.
+
+Probe scripts: `/tmp/claude-0/-home-user-Kannako-Homes/2f5773d0-ad2b-5087-8974-834ab085a62c/scratchpad/agent_strands/`
+(session scratch, not in the repo).
