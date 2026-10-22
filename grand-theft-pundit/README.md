@@ -2,24 +2,83 @@
 
 *Steal the Discourse.*
 
-A third-person, 360-degree-movement open-city parody game in the GTA III / Vice
-City mold, running entirely in the browser. You are Bryce Takesworth, a
-folding-table campus pundit who climbs from Founders' Quad to the cable chair
-through sponsor reads, donor galas, ratio wars, airport runs, a container-yard
-ferry job and errands for a spook agency that officially repairs weather
-balloons. Twenty-five story missions in three acts with cutscenes, two endings,
-an 896 m square city of eleven districts with a figure-eight elevated highway,
-two bridges, an airport with a drivable runway and a working port, traffic,
-pedestrians, a five-star police response, a twelve-weapon arsenal with a shop
-chain, seven side strands (taxi fares, HOA patrols, sponsor deliveries, ratio
-rampages, fifty hidden memos, Loop races, ten stunt jumps), a subscribers
-meta-game, two minigames (a debate and a ratio war), three save slots with
-autosave, and four procedural radio stations. Everything is content; everything
-is a joke about the pundit-industrial complex.
+A third-person, 360-degree-movement open-city parody game in the GTA mold,
+running in the browser and as a desktop app for macOS, Windows and Linux. You are
+Bryce Takesworth, a folding-table campus pundit who climbs from Founders' Quad to
+the cable chair through sponsor reads, donor galas, ratio wars, airport runs, a
+container-yard ferry job, a three-part heist and errands for a spook agency that
+officially repairs weather balloons.
 
-The whole game is procedural: no image, model, font or audio files. Textures are
-drawn on canvases, meshes are built from primitives, sound is WebAudio
-synthesis. The only dependency is three.js, vendored.
+What is in v0.3:
+
+- **A story you play from the first minute:** 35 story missions in three acts
+  (the 25 campaign missions, the armory tutorial, six boss fights and a
+  three-part heist with a planning board), cutscenes with a hold-Enter skip,
+  chapter cards and two endings. The GPS always points at the next story beat.
+- **Ten "Strangers and Freaks" side strands:** 26 more missions with their own
+  eccentrics. On top of those come the taxi, HOA patrol, sponsor runs, ratio
+  rampages, 50 hidden memos, Loop races and ten stunt jumps.
+- **Six boss fights with special attacks:** the gold helicopter, the silent
+  yacht, the runway jets, the weather balloon, the folding-table brawl and the
+  five-podium panel. Each has its own phases, weak points and telegraphed
+  attacks. You get four specials (Focus, Shout, Chat Mob, Boost).
+- **Shooting you can see:** the gun is in the character's hand, the shot leaves
+  the barrel, and there is cover with peeking, a scope, attachments and a weapon
+  wheel. The Both Sides Arms stores are walk-in armories: racks of the whole
+  arsenal (over forty weapons), a counter, and a shooting range out back.
+- **Everything with an engine:** cars, bikes, helicopters, a plane, a jet,
+  boats, a jet ski and a parachute. Spin Doctor mod shops, owned garages and
+  pay-and-spray complete the set.
+- **The rest of the open world:**
+  - eleven properties with daily income and safehouses
+  - a stock market of eight tickers
+  - nine holes of golf
+  - two side jobs
+  - clothing and barber shops
+  - 26 achievements and 8 cheats
+  - six radio stations with talk, ads and news that follows the story
+- **Life-like graphics:** physically based materials, real-time shadows,
+  bloom, ambient occlusion, reflections, weather and a day/night cycle. Four
+  quality presets plus auto.
+- **Saves:** three slots with autosave after every mission, and a CONTINUE on
+  the title screen.
+
+Grievance City is 896 m square, with eleven districts, a figure-eight elevated
+highway, two bridges, an airport with a drivable runway and a working port. It
+has traffic, pedestrians and a five-star police response. The whole game is
+procedural: there are no image, model, font or audio files. Textures are drawn
+on canvases, meshes are built from primitives, and sound is WebAudio synthesis.
+The only dependency is three.js, vendored.
+
+## Download and play
+
+The desktop builds are on the repository's GitHub Releases page:
+
+- the `.dmg` for a Mac, with Apple Silicon (`arm64`) and Intel (`x64`) builds
+- the `-setup.exe` or the `-portable.exe` for Windows
+- the `.AppImage` for Linux
+
+`desktop/README.md` covers installing them, the first launch of an unsigned
+build, where saves and the mods folder live, and how to build the installers
+yourself.
+
+## Editing the code
+
+Everything is plain JavaScript with no build step. Edit a file in `js/`, then
+reload `index.html` in a browser, or run the desktop app from source:
+
+```
+cd grand-theft-pundit/desktop
+npm install
+npm start        # copies the game into desktop/app and opens it in Electron
+npm run dist:mac # builds the Mac .dmg files locally (dist:win, dist:linux too)
+```
+
+`ARCHITECTURE.md` documents every module, and `CONTENT_RULES.md` is binding for
+every string. The tests below are the safety net. A push to the
+`game/grand-theft-pundit` branch builds every platform on GitHub Actions. A
+commit message with `[release]` also publishes the version in
+`desktop/package.json` as a GitHub Release.
 
 ## Running it
 
