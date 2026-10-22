@@ -178,9 +178,12 @@ H.run('feel', async (t) => {
   // ---- 5. save, reload, CONTINUE ----
   const saved = await page.evaluate(() => {
     const p = GTP.game.player, W = GTP.World, M = GTP.Missions;
-    // the expansion's chain puts m01b_airport between m01_van and m02_read (GDD_EXPANSION §3.3): with it done, only m03 is lit
-    ['m00_intro', 'm01_van', 'm01b_airport', 'm02_read'].forEach((id) => M.state.completed.add(id));
+    // the chain puts m01b_airport (GDD_EXPANSION §3.3) and v0.3's m01c_both_sides between m01_van and m02_read: with them done,
+    // m03 is the only story light (the strangers' side lights are not story and are left out below)
+    const pre = ['m00_intro', 'm01_van', 'm01c_both_sides', 'm01b_airport', 'm02_read'].filter((id) => M.missionById(id));
+    pre.forEach((id) => M.state.completed.add(id));
     M.state.flags.has_table = true; M.state.flags.has_van = true; M.state.flags.seen_airport = true; M.state.flags.sponsored = true;
+    window.FEEL_STORY = (id) => GTP.Story.order().indexOf(id) >= 0;
     M.refreshMarkers();
     GTP.game.debug.setMoney(4321);
     GTP.game.debug.giveWeapon('pistol', 17); GTP.game.debug.giveWeapon('smg', 33);
@@ -188,7 +191,7 @@ H.run('feel', async (t) => {
     GTP.game.debug.setClock(9.25);
     GTP.game.advance(0.2);
     const ok = GTP.game.save();
-    return { ok, x: +p.x.toFixed(2), z: +p.z.toFixed(2), money: p.money, weapons: Object.assign({}, p.weapons, { fist: 'inf' }), weapon: p.weapon, completed: Array.from(M.state.completed), markers: M.markers().map((m) => m.id), clock: +GTP.game.time.clock.toFixed(2), hasSave: GTP.game.hasSave() };
+    return { ok, x: +p.x.toFixed(2), z: +p.z.toFixed(2), money: p.money, weapons: Object.assign({}, p.weapons, { fist: 'inf' }), weapon: p.weapon, completed: Array.from(M.state.completed), markers: M.markers().map((m) => m.id).filter(FEEL_STORY), clock: +GTP.game.time.clock.toFixed(2), hasSave: GTP.game.hasSave(), pre: pre.length };
   });
   console.log('  saved: ' + JSON.stringify(saved));
   t.assert(saved.ok && saved.hasSave && saved.markers.join(',') === 'm03_ratio', 'saved with m00..m02 done (m03 lit): ' + JSON.stringify(saved));
@@ -196,14 +199,14 @@ H.run('feel', async (t) => {
   const loaded = await page.evaluate(() => {
     const p = GTP.game.player, M = GTP.Missions;
     GTP.game.advance(0.5);
-    return { state: GTP.game.state, x: +p.x.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2), money: p.money, weapons: Object.assign({}, p.weapons, { fist: 'inf' }), weapon: p.weapon, completed: Array.from(M.state.completed), flags: M.state.flags, markers: M.markers().map((m) => m.id), clock: +GTP.game.time.clock.toFixed(2), errors: GTP.errors.length };
+    return { state: GTP.game.state, x: +p.x.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2), money: p.money, weapons: Object.assign({}, p.weapons, { fist: 'inf' }), weapon: p.weapon, completed: Array.from(M.state.completed), flags: M.state.flags, markers: M.markers().map((m) => m.id).filter((id) => GTP.Story.order().indexOf(id) >= 0), clock: +GTP.game.time.clock.toFixed(2), errors: GTP.errors.length };
   });
   console.log('  loaded: ' + JSON.stringify(loaded));
   t.assert(loaded.state === 'playing', 'CONTINUE resumes play');
   t.assert(Math.hypot(loaded.x - saved.x, loaded.z - saved.z) < 1.5 && Math.abs(loaded.yaw - 1.2) < 0.05, 'position restored: ' + loaded.x + ',' + loaded.z);
   t.assert(loaded.money === 4321, 'money restored: ' + loaded.money);
   t.assert(loaded.weapons.pistol === 17 && loaded.weapons.smg === 33 && loaded.weapon === saved.weapon, 'weapons and ammo restored: ' + JSON.stringify(loaded.weapons));
-  t.assert(loaded.completed.length === 4 && loaded.completed.indexOf('m02_read') >= 0 && loaded.flags.sponsored === true && loaded.markers.join(',') === 'm03_ratio', 'completed missions, flags and the next light restored: ' + JSON.stringify({ completed: loaded.completed, markers: loaded.markers }));
+  t.assert(loaded.completed.length === saved.pre && loaded.completed.indexOf('m02_read') >= 0 && loaded.flags.sponsored === true && loaded.markers.join(',') === 'm03_ratio', 'completed missions, flags and the next light restored: ' + JSON.stringify({ completed: loaded.completed, markers: loaded.markers }));
   t.assert(Math.abs(loaded.clock - saved.clock) < 0.05, 'clock restored: ' + loaded.clock);
   await page.evaluate(() => { GTP.Render.rig.pitch = 0.2; GTP.Render.rig.snap(); GTP.game.advance(0.05); });
   await t.shot(page, 'feel_continue');

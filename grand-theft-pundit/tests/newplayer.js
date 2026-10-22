@@ -272,6 +272,7 @@ function installPlayer(budget) {
         if (p.inVehicle) {
           NP.myCar = p.inVehicle;
           const r = NP.drive(() => NP.routeTo(pt, 'car', 'objective'), () => changed() || U.dist2d(p.inVehicle ? p.inVehicle.x : p.x, p.inVehicle ? p.inVehicle.z : p.z, pt.x, pt.z) < 3.5, 40);
+          if (!r.ok) NP.say('  drive to ' + pt.src + ' ' + Math.round(pt.x) + ',' + Math.round(pt.z) + ': ' + (r.why || '') + ' (left ' + Math.round(U.dist2d(p.x, p.z, pt.x, pt.z)) + ' m)');
           if (!r.ok && r.why === 'not in a vehicle') continue;
           if (!changed()) {
             // parked beside the blip but it did not count (a kerb, a bench, a lamp in the way): roll forward a touch, then hop out for it
@@ -291,7 +292,8 @@ function installPlayer(budget) {
           // stuck on one blip: every other attempt walks the player's own way there instead of the GPS line
           tries++;
           const rt = tries % 2 === 0 ? () => { NP.usedFallback.objective_retry = true; return NP.ownRoute(pt.x, pt.z, 'ped'); } : () => NP.routeTo(pt, 'ped', 'objective');
-          NP.walk(rt, () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 25);
+          const wr = NP.walk(rt, () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 25);
+          if (!wr.ok) NP.say('  walk to ' + pt.src + ' ' + Math.round(pt.x) + ',' + Math.round(pt.z) + ': ' + (wr.why || '') + ' (left ' + Math.round(U.dist2d(p.x, p.z, pt.x, pt.z)) + ' m)');
           if (!changed() && NP.inArmory() && U.dist2d(p.x, p.z, pt.x, pt.z) < 2) { NP.press('action'); NP.adv(1); }
         }
       }
@@ -678,14 +680,23 @@ if (require.main === module) H.run('newplayer', async (t) => {
       let guard = 0; while ((g.state !== 'playing' || NP.talking() || NP.cutscene()) && guard++ < 200) { if (!NP.housekeeping()) NP.adv(0.25); }
       NP.press('pause'); NP.adv(0.2);
       if (g.state !== 'paused') return { ok: false, why: 'Esc did not open the pause menu (state ' + g.state + ')' };
-      // walk the menu down to the SAVE item by its label
+      // walk the menu down to the SAVE item: by its label when the UI lists its items, else by what confirming it opens (the slot
+      // page in save mode; anything else is backed out of with Esc, as a player reading the menu would)
       const items = () => (GTP.UI.pauseItems ? GTP.UI.pauseItems() : null);
-      for (let i = 0; i < 12; i++) {
-        const lbl = (window.__npPauseLabel = (function () { try { const it = items(); return it ? it[ui.pause.sel] && it[ui.pause.sel].label : null; } catch (e) { return null; } })());
-        if (lbl ? /^SAVE/.test(lbl) : ui.pause.sel === 1) break;
-        NP.press('back');   // S / Down steps the selection
+      const label = () => { try { const it = items(); return it ? it[ui.pause.sel] && it[ui.pause.sel].label : null; } catch (e) { return null; } };
+      const onSaveSlots = () => ui.pause.page === 'slots' && ui.pause.slotMode === 'save';
+      for (let i = 0; i < 12 && !onSaveSlots(); i++) {
+        const lbl = label();
+        if (lbl) { if (/^SAVE/.test(lbl)) { NP.press('confirm'); NP.adv(0.2); break; } NP.press('back'); continue; }   // S / Down steps the selection
+        const sel = ui.pause.sel;
+        if (sel === 0) { NP.press('back'); continue; }   // RESUME would close the menu
+        NP.press('confirm'); NP.adv(0.2);
+        if (onSaveSlots()) break;
+        for (let k = 0; k < 3 && g.state === 'paused' && ui.pause.page !== 'pause'; k++) { NP.press('cancel'); NP.adv(0.15); }
+        if (g.state !== 'paused') { NP.press('pause'); NP.adv(0.2); }
+        while (ui.pause.sel !== sel + 1 && ui.pause.sel < 20) { NP.press('back'); if (ui.pause.sel === 0) break; }
       }
-      NP.press('confirm'); NP.adv(0.2);
+      if (!onSaveSlots()) { NP.press('confirm'); NP.adv(0.2); }
       for (let i = 0; i < 4 && NP.events.saved.filter((s) => !s.auto).length === n0; i++) { NP.press('confirm'); NP.adv(0.3); }
       const ok = NP.events.saved.filter((s) => !s.auto).length > n0;
       // back to play

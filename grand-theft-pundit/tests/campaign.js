@@ -15,7 +15,7 @@
  *  - stars left over from a mission (a destroy objective's blast) are lost before the next light, lying low far from the police
  *  - the act cutscenes (cs_act2, cs_act3, cs_twist, cs_ending_a, cs_ending_b) are verified to start after MISSION PASSED and skipped
  *  - asserts per mission: completed, the reward paid (minus respray costs, plus cash picked up), onComplete flags, weapon
- *    unlocks in the GDD order (megaphone m03, table leg m03b, pistol m05, revolver m05b, rifle m08b, hottake m09, hot mic m09b,
+ *    unlocks in the GDD order as v0.3 retunes it (pistol m01c, megaphone m03, table leg m03b, pocket pistol m05, revolver m05b, rifle m08b, hottake m09, hot mic m09b,
  *    smg m11, sniper m12b, launcher m13b; the shotgun only as a pickup after m11), the subscribers counter (reward x 5) and its
  *    tier, the credits hook on both endings, GTP.errors empty
  *  - after the endings: one cycle of every side strand (Loud Cab, HOA Patrol, Sponsor Runs, a Ratio Rampage, ten Monday Memos,
@@ -29,8 +29,9 @@ const H = require('./_harness');
 const ORDER = ['m00_intro', 'm01_van', 'm01b_airport', 'm02_read', 'm03_ratio', 'm03b_range', 'm04_hit', 'm05_peer', 'm05b_provenance', 'm06_rally',
   'm07_listen', 'm07b_ferry', 'm08_scooters', 'm08b_jets', 'm09_balloon', 'm09b_hotmic', 'm10_pellets', 'm11_trustless', 'm12_memo', 'm12b_scope',
   'm13_thursday', 'm13b_ratio', 'm14_grift', 'm15a_primetime', 'm15b_liveread'];
-// expected unlocks per the GDD (and GDD_EXPANSION §2 / §3)
-const UNLOCKS = { m03_ratio: 'megaphone', m03b_range: 'tableleg', m05_peer: 'pistol', m05b_provenance: 'revolver', m08b_jets: 'rifle', m09_balloon: 'hottake',
+// expected unlocks per the GDD (and GDD_EXPANSION §2 / §3), as v0.3 retunes them: Merle's free pistol moves to m01c_both_sides
+// (the armory tutorial) and m05_peer hands over the Footnote pocket pistol instead (25_content_parity.js retune)
+const UNLOCKS = { m01c_both_sides: 'pistol', m03_ratio: 'megaphone', m03b_range: 'tableleg', m05_peer: 'pocket', m05b_provenance: 'revolver', m08b_jets: 'rifle', m09_balloon: 'hottake',
   m09b_hotmic: 'hotmic', m11_trustless: 'smg', m12b_scope: 'sniper', m13b_ratio: 'ratio' };
 // the act cutscenes that follow a completion (GDD_EXPANSION §4.1)
 const AFTER = { m04_hit: 'cs_act2', m11_trustless: 'cs_act3', m12_memo: 'cs_twist', m15a_primetime: 'cs_ending_a', m15b_liveread: 'cs_ending_b' };
@@ -835,6 +836,9 @@ H.run('campaign', async (t) => {
   t.assert(sub.join(',') === ORDER.join(','), 'GTP.Story.order() keeps the GDD chain in order: ' + STORY.join(','));
   const added = STORY.filter((id) => ORDER.indexOf(id) < 0);
   console.log('  v0.3 story missions present: ' + (added.length ? added.join(',') : 'none (the content track has not landed)'));
+  // v0.3 (PLAN_V03 "Story chain"): m01c, the six boss missions and the three heist missions join, 35 in all, in the content's chain
+  const parityChain = await page.evaluate(() => (GTP.Content.parity && GTP.Content.parity.chain || []).slice());
+  if (parityChain.length) t.assert(STORY.join(',') === parityChain.join(',') && STORY.length === 35, 'GTP.Story.order() is the 35-mission v0.3 chain: ' + STORY.join(','));
   const subsPer = await page.evaluate(() => GTP.Missions.K.subsPerReward);
 
   // debugging aid: CAMPAIGN_FROM=<id> marks the earlier missions complete (prep applies their flags and weapons) and starts there
@@ -898,7 +902,7 @@ H.run('campaign', async (t) => {
     // weapons in the GDD order
     if (oc.unlockWeapon) {
       t.assert(fin.weapons.indexOf(oc.unlockWeapon) >= 0 && fin.weapon === oc.unlockWeapon, id + ' unlocks ' + oc.unlockWeapon + ': ' + JSON.stringify(fin.weapons) + ' held ' + fin.weapon);
-      if (ORDER.indexOf(id) >= 0) t.assert(UNLOCKS[id] === oc.unlockWeapon, id + ' unlock matches the GDD table');
+      if (ORDER.indexOf(id) >= 0 || UNLOCKS[id]) t.assert(UNLOCKS[id] === oc.unlockWeapon, id + ' unlock matches the GDD table: ' + oc.unlockWeapon + ' vs ' + UNLOCKS[id]);
     }
     if (oc.takeWeapon) t.assert(fin.weapons.indexOf(oc.takeWeapon) < 0, id + ' takes the ' + oc.takeWeapon + ' back: ' + JSON.stringify(fin.weapons));
     const expectedWeapons = STORY.slice(0, STORY.indexOf(id) + 1).map((m) => UNLOCKS[m]).filter(Boolean);

@@ -135,7 +135,7 @@ H.run('saves', async (t) => {
     const slots = g.slots(), raw = localStorage.getItem('gtp.save.v4.slot1'), legacy = !!localStorage.getItem('gtp.save.v2');
     const v4 = JSON.parse(localStorage.getItem('gtp.save.v4.slot2') || 'null'), v3kept = !!localStorage.getItem('gtp.save.v3.slot2');
     const ok3 = g.loadSlot(2); g.advance(0.3);
-    const m3 = { ok: ok3, v4: v4 ? { version: v4.version, from: v4.migratedFrom, registry: v4.registry } : null, v3kept, money: g.player.money, completed: GTP.Missions.state.completed.size, fares: GTP.Strands.progress().loud_cab.fares, memos: GTP.Strands.memos().collected.length, megaphone: g.player.weapons.megaphone, next: GTP.Story.next() && GTP.Story.next().missionId };
+    const m3 = { ok: ok3, v4: v4 ? { version: v4.version, from: v4.migratedFrom, registry: v4.registry } : null, v3kept, money: g.player.money, completed: GTP.Missions.state.completed.size, fares: GTP.Strands.progress().loud_cab.fares, memos: GTP.Strands.memos().collected.length, megaphone: g.player.weapons.megaphone, next: GTP.Story.next() && GTP.Story.next().missionId, parity: !!GTP.Missions.missionById('m01c_both_sides') };
     window.T_ = { m3 };
     const ok = g.load();
     g.advance(0.3);
@@ -145,7 +145,9 @@ H.run('saves', async (t) => {
   console.log('  migration: ' + JSON.stringify(mig));
   t.assert(!mig.slots[0] && !mig.slots[1] && mig.slots[2] && mig.hasRaw && mig.legacy, 'the v2 save migrated into slot 1, the v3 slot into slot 2, and the old keys stayed');
   t.assert(mig.m3.ok && mig.m3.v4 && mig.m3.v4.version === 4 && mig.m3.v4.from === 3 && mig.m3.v4.registry && mig.m3.v3kept, 'the v3 slot was upgraded into the v4 key at boot: ' + JSON.stringify(mig.m3));
-  t.assert(mig.m3.money === 2468 && mig.m3.completed === 5 && mig.m3.fares === 7 && mig.m3.memos === 1 && mig.m3.megaphone === 12 && mig.m3.next === 'm03b_range', 'the migrated v3 game loads with its missions, strands and weapons: ' + JSON.stringify(mig.m3));
+  // a v3 game past m01_van never played the v0.3 armory tutorial: the story points it at m01c_both_sides first (m03b_range
+  // stays lit too), so the new chain's missions behind the save are offered, not skipped
+  t.assert(mig.m3.money === 2468 && mig.m3.completed === 5 && mig.m3.fares === 7 && mig.m3.memos === 1 && mig.m3.megaphone === 12 && mig.m3.next === (mig.m3.parity ? 'm01c_both_sides' : 'm03b_range'), 'the migrated v3 game loads with its missions, strands and weapons: ' + JSON.stringify(mig.m3));
   t.assert(mig.meta && mig.meta.missions === 3 && mig.meta.playTime === 0 && mig.meta.money === 4321 && mig.meta.migrated === true, 'the migrated summary was rebuilt: ' + JSON.stringify(mig.meta));
   t.assert(mig.ok && mig.seed === 7 && mig.x === 300 && mig.z === 300 && mig.money === 4321 && mig.pistol === 17 && mig.armor === 25 && mig.hp === 80 && mig.completed.length === 3 && mig.markers.indexOf('m03_ratio') >= 0 && Math.abs(mig.clock - 9.25) < 0.03 && mig.slot === 1, 'load() continues the migrated game in the old city: ' + JSON.stringify(mig));
 

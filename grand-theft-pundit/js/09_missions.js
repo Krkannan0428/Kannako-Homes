@@ -231,8 +231,10 @@
       if (blocked) continue;
       var yaw = 0, over = Math.max(0, (length || 4.5) / 2 - TILE / 2 + 0.35);
       if (kind === 'road') { var rd = Wd.roadDir(x, z, 0); if (rd) yaw = U.dirToYaw(rd.dx, rd.dz); }
-      else if (bW || bE) { yaw = Math.PI / 2; x += bW ? over : (bE ? -over : 0); }
-      else { yaw = bN ? 0 : Math.PI; z += bN ? over : (bS ? -over : 0); }
+      // a bay against a wall is backed into: the nose points away from the building, so a player who gets in can drive straight
+      // out (nose-in, a new driver's first job in m01 was a reverse out of a tight lot)
+      else if (bW || bE) { yaw = bW ? -Math.PI / 2 : Math.PI / 2; x += bW ? over : (bE ? -over : 0); }
+      else { yaw = bN ? Math.PI : 0; z += bN ? over : (bS ? -over : 0); }
       best = { x: x, z: z, y: Wd.heightAt(x, z, 0), yaw: yaw, kind: kind, tx: tx, tz: tz }; bestS = s;
     }
     if (!best) { var rp = Wd.nearestRoadPoint(cx, cz); if (rp) best = { x: rp.x, z: rp.z, y: 0, yaw: U.dirToYaw(rp.dx, rp.dz), kind: 'road' }; }
@@ -324,10 +326,23 @@
     GTP.AI.drive(v, kind === 'hoa' ? 'hoa' : kind === 'cop' ? 'cop' : 'traffic');
     if (kind === 'hoa') { v.ai.hoa = true; if (!v.tag) v.tag = 'hoa'; }
   }
-  function spawnPickups(center, radius, count, labels, ctx) {
+  // byCar: the pickups are collected from a vehicle (m01_van's subscribers): each goes on the road nearest a random spot, where
+  // the GPS line and the van can reach it (a spot on a campus lawn behind hedges and benches cost a driver the whole timer)
+  function roadSpot(cx, cz, rMin, rMax, others, gap) {
+    var Wd = W(); if (!Wd.nearestRoadPoint) return null;
+    for (var tries = 0; tries < 16; tries++) {
+      var s = randomSpot(cx, cz, rMin, rMax, { roads: true }), rp = Wd.nearestRoadPoint(s.x, s.z);
+      if (!rp || U.dist2d(rp.x, rp.z, cx, cz) > rMax + 16) continue;
+      var ok = true; for (var k = 0; k < others.length; k++) if (U.dist2d(rp.x, rp.z, others[k].x, others[k].z) < gap) { ok = false; break; }
+      if (ok) return { x: rp.x, z: rp.z, y: Wd.heightAt(rp.x, rp.z, 0) };
+    }
+    return null;
+  }
+  function spawnPickups(center, radius, count, labels, ctx, byCar) {
     var out = [], CB = GTP.Combat;
     for (var i = 0; i < count; i++) {
-      var s = randomSpot(center.x, center.z, Math.min(4, radius * 0.3), radius, { others: out, gap: Math.min(8, radius / 2), clear: 1.2 });
+      var s = (byCar && roadSpot(center.x, center.z, Math.min(4, radius * 0.3), radius, out, Math.max(8, Math.min(16, radius / 2)))) ||
+        randomSpot(center.x, center.z, Math.min(4, radius * 0.3), radius, { others: out, gap: Math.min(8, radius / 2), clear: 1.2 });
       var label = Array.isArray(labels) ? labels[i % labels.length] : (labels || 'MERCH');
       var pk;
       if (CB && CB.spawnPickup) pk = CB.spawnPickup({ type: 'mission', x: s.x, z: s.z, persistent: true, label: label, tag: 'mission' });
@@ -414,14 +429,41 @@
       var mm = list[i]; if (have[mm.id]) continue;
       var pt = resolvePoint({ landmark: mm.marker });
       if (!pt) continue;
-      // two markers on one door: nudge the second along the sidewalk
-      for (var j = 0; j < avail.length; j++) if (U.dist2d(avail[j].x, avail[j].z, pt.x, pt.z) < 3) { pt.x += 4; }
+      pt = lightSpot(pt, mm.marker);
       var mk = { id: mm.id, m: mm, x: pt.x, z: pt.z, y: pt.y, landmark: mm.marker, mesh: markerMesh(K.colors.mission), giver: null, kip: null, armed: false, holdT: 0 };
       if (mk.mesh) { mk.mesh.position.set(mk.x, mk.y, mk.z); addBeacon(mk.mesh, K.colors.mission); }
       var pl = player();
       mk.armed = !pl || U.dist2d(pl.x, pl.z, mk.x, mk.z) > K.markerRadius + 0.6;
       avail.push(mk);
     }
+  }
+  // where a mission light goes at a landmark's door point: clear of solid props (a street lamp on the kerb in front of Both Sides
+  // Arms stopped a player 1.95 m from the 1.9 m light), off the road, 3 m or more out from the facade (a shop's walk-in door
+  // stays its own trigger; never nearer than the door point already is) and not on another light. The door point first, then toward the building, then along the sidewalk
+  function lightSpot(pt, landmarkId) {
+    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [];
+    var ix = 0, iz = 0;   // toward the building
+    if (b) { var cx = U.clamp(pt.x, b.x, b.x + b.w), cz = U.clamp(pt.z, b.z, b.z + b.d), dl = U.dist2d(pt.x, pt.z, cx, cz); if (dl > 0.01) { ix = (cx - pt.x) / dl; iz = (cz - pt.z) / dl; } }
+    else if (lm) { var ll = U.dist2d(pt.x, pt.z, lm.x, lm.z); if (ll > 0.01) { ix = (lm.x - pt.x) / ll; iz = (lm.z - pt.z) / ll; } }
+    function face(x, z) { return b ? U.dist2d(x, z, U.clamp(x, b.x, b.x + b.w), U.clamp(z, b.z, b.z + b.d)) : 1e9; }
+    var minFace = Math.min(3, face(pt.x, pt.z) - 0.01);   // never nearer the facade than the door point itself already is
+    var sx = -iz, sz = ix, clear = K.markerRadius + 0.45, offs = [[0, 0], [1, 0], [1.5, 0], [2, 0], [2.5, 0], [0, 1.5], [0, -1.5], [1.5, 1.5], [1.5, -1.5], [0, 3], [0, -3], [1.5, 3], [1.5, -3], [0, 4.5], [0, -4.5], [-1, 0], [-1.5, 0], [-1, 1.5], [-1, -1.5]];
+    function ok(x, z) {
+      var t = Wd.tileAt ? Wd.tileAt(x, z) : null;
+      if (t === T.BUILDING || t === T.ROAD || t === T.WATER || t === T.VOID || t === T.HIGHWAY) return false;
+      if (Wd.solidAt(x, z, 0.5)) return false;
+      if (face(x, z) < minFace) return false;
+      for (var j = 0; j < avail.length; j++) if (U.dist2d(avail[j].x, avail[j].z, x, z) < 3) return false;
+      for (var k = 0; k < props.length; k++) { var pr = props[k]; if (pr.solid && Math.abs(pr.x - x) < 4 && Math.abs(pr.z - z) < 4 && U.dist2d(pr.x, pr.z, x, z) - (pr.r || 0.3) < clear) return false; }
+      return true;
+    }
+    for (var i = 0; i < offs.length; i++) {
+      var x = pt.x + ix * offs[i][0] + sx * offs[i][1], z = pt.z + iz * offs[i][0] + sz * offs[i][1];
+      if (ok(x, z)) return { x: x, z: z, y: Wd.heightAt(x, z, pt.y || 0) };
+    }
+    // nowhere clear: the door point, nudged off another light along the sidewalk as before
+    for (var j2 = 0; j2 < avail.length; j2++) if (U.dist2d(avail[j2].x, avail[j2].z, pt.x, pt.z) < 3) { pt.x += 4; }
+    return pt;
   }
   function dropAvail(mk) {
     dropMesh(mk.mesh); mk.mesh = null;
@@ -777,6 +819,13 @@
     emit('supply', { weapon: id, ammo: n });
   }
 
+  // where the player stands as far as the street goes: inside an interior (rooms are built far away, x = -4000) that is the
+  // door of the landmark they walked in through, so "walk up to the door" is met by a player who went straight in
+  function outsidePos(p) {
+    var I = GTP.Interiors, cur = I && I.active ? I.current : null, lm = cur && typeof cur === 'object' ? cur.landmark : null;
+    var d = lm ? resolvePoint({ landmark: lm }) : null;
+    return d || p;
+  }
   var H = {};
   H.goto = {
     start: function (o, c) {
@@ -786,7 +835,7 @@
     },
     check: function (o, c, p) {
       if (!c.target) return 'done';
-      var v = p.inVehicle, e = v || p;
+      var v = p.inVehicle, e = v || outsidePos(p);
       var inside = U.dist2d(e.x, e.z, c.target.x, c.target.z) <= c.radius + (v ? (v.hl || 2) : 0) && Math.abs(e.y - c.target.y) < 4;
       if (!inside) return null;
       // arriving by car counts once it has stopped in the light (the long return legs are driven; QA-C1-10); `onFoot` insists
@@ -854,7 +903,9 @@
       var sp = o.spawn || {}, center = resolvePoint(sp.around) || { x: player().x, z: player().z, y: player().y };
       c.count = sp.count || 1; c.label = sp.label || null;
       c.total = o.need != null ? Math.min(o.need, c.count) : c.count;   // collect_any: `need` of `count` completes it
-      c.pickups = spawnPickups(center, metres(sp.radius, sp.around && sp.around.tag ? 5 : 25), c.count, c.label, c);
+      // collected from a vehicle when the player is driving as it starts (or the data says so): the pickups go on the roads
+      c.byCar = sp.byCar != null ? !!sp.byCar : !!(player() && player().inVehicle);
+      c.pickups = spawnPickups(center, metres(sp.radius, sp.around && sp.around.tag ? 5 : 25), c.count, c.label, c, c.byCar);
       c.collected = 0;
     },
     check: function (o, c, p) {

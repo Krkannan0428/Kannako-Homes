@@ -21,7 +21,7 @@ H.run('strands', async (t) => {
       until(pred, maxSec, step) { step = step || 0.1; let s = 0; while (s < maxSec) { GTP.game.advance(step); s += step; if (pred()) return s; } return -1; },
       tp(x, z, y) { GTP.game.debug.teleport(x, z, y); },
       car(type, dx) { const p = GTP.game.player; const rp = GTP.World.nearestRoadPoint(p.x + (dx || 12), p.z); const v = GTP.game.debug.spawnVehicle(rp.x, rp.z, type); return v; },
-      enter(v) { const d = v.doorWorld(0); T_.tp(d.x, d.z); GTP.game.advance(0.1); T_.press('enter'); GTP.game.advance(0.7); return GTP.game.player.inVehicle === v; },
+      enter(v) { const d = v.doorWorld(0); T_.tp(d.x, d.z, v.y); GTP.game.advance(0.1); T_.press('enter'); GTP.game.advance(0.7); return GTP.game.player.inVehicle === v; },
       leave() { const p = GTP.game.player; if (p.inVehicle) p.exitVehicle(); GTP.game.advance(0.2); },
       lookAt(x, z) { const p = GTP.game.player; GTP.Render.rig.yaw = GTP.util.dirToYaw(x - p.x, z - p.z); GTP.Render.rig.pitch = 0.15; GTP.Render.rig.snap(); GTP.game.advance(0.2); },
       reset() { if (GTP.Strands.active()) GTP.Strands.end('test'); T_.leave(); GTP.AI.wanted.clear(); GTP.game.debug.godMode(false); GTP.game.advance(0.2); }
