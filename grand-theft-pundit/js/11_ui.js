@@ -50,6 +50,7 @@
     blue: '#4a7cff', green: '#3fd27f', cream: '#f4ead8', white: '#ffffff',
     panel: 'rgba(13,16,32,0.86)', panelSoft: 'rgba(13,16,32,0.8)', line: 'rgba(46,230,255,0.25)', dark: 'rgba(6,7,13,0.8)', outline: 'rgba(4,6,14,0.82)'
   };
+  var COL_LABEL = '#b8bfd6';   // a muted label that still reads 5.6:1 over the soft panels on a bright sky (QA-B-HUD-13)
   var MINIMAP_PX = 220, LOGICAL_W = 1280, LOGICAL_H = 720;
   var SETTINGS_KEY = 'gtp.settings.v1';
   // NEW GAME with no save anywhere starts at once in slot 1 (nothing to choose or overwrite) and, like the slot picker,
@@ -699,8 +700,14 @@
     if (ui.map.routeT > 0) return;
     ui.map.routeT = 2;
     // a search only when the player moved 12 m or the waypoint changed; a failed search backs off 10 s / 30 m (QAC-25)
-    var key = wp.x + ',' + wp.z, rc = ui.map.routeCache;
-    if (rc && rc.key === key && U.dist2d(p.x, p.z, rc.x, rc.z) < (rc.failed ? 30 : 12) && (!rc.failed || ui.t - rc.t < 10) && ui.map.route) return;
+    var key = wp.x + ',' + wp.z, rc = ui.map.routeCache, R0 = ui.map.route;
+    if (rc && rc.key === key && R0 && !rc.failed) {
+      // a route is kept while the player stays on it: trim the points behind, search again only 35 m off it (QAC-25)
+      var best = -1, bd = 1e9;
+      for (var ri = 0; ri < Math.min(R0.length, 12); ri++) { var dd = U.dist2d(p.x, p.z, R0[ri].x, R0[ri].z); if (dd < bd) { bd = dd; best = ri; } }
+      if (bd < 35) { if (best > 0) ui.map.route = R0.slice(best); return; }
+    }
+    if (rc && rc.key === key && rc.failed && U.dist2d(p.x, p.z, rc.x, rc.z) < 30 && ui.t - rc.t < 10 && R0) return;
     var path = computeRoute(p.x, p.z, wp.x, wp.z, { fromY: p.y }), failed = !path || path.failed;
     ui.map.routeCache = { key: key, x: p.x, z: p.z, t: ui.t, failed: failed };
     ui.map.route = path && path.length > 1 ? path : [{ x: p.x, z: p.z }, { x: wp.x, z: wp.z }];
@@ -918,13 +925,13 @@
     var fl = GTP.Missions && GTP.Missions.state ? GTP.Missions.state.flags || {} : {};
     panel(ctx, x, y, bw, bh, px(8), COL.panelSoft, 'rgba(255,255,255,0.14)');
     drawWeaponIcon(ctx, w.id, x + px(6), y + px(4), px(36), COL.ink);
-    txt(ctx, String(w.name || w.id).toUpperCase(), x + px(48), y + px(18), { font: F(11, 'bold'), color: COL.muted, outline: false, maxW: bw - px(56) });
+    txt(ctx, String(w.name || w.id).toUpperCase(), x + px(48), y + px(18), { font: F(11, 'bold'), color: COL_LABEL, outline: false, maxW: bw - px(56) });
     var ammoCol = fl.rampage_king ? COL.pink : COL.ink;
     if (w.infinite) txt(ctx, '∞', x + bw - px(10), y + px(38), { font: F(22, 'bold'), color: ammoCol, align: 'right', outline: false });
     else if (w.mag != null && w.magSize) {
       var low = w.mag <= Math.max(1, Math.floor(w.magSize / 4));
       txt(ctx, String(w.mag), x + bw - px(10) - measure(ctx, ' | ' + (w.reserve == null ? '-' : w.reserve), F(12, 'bold')), y + px(38), { font: F(18, 'bold'), color: low ? COL.red : ammoCol, align: 'right', outline: false });
-      txt(ctx, ' | ' + (w.reserve == null ? '-' : w.reserve), x + bw - px(10), y + px(37), { font: F(12, 'bold'), color: COL.muted, align: 'right', outline: false });
+      txt(ctx, ' | ' + (w.reserve == null ? '-' : w.reserve), x + bw - px(10), y + px(37), { font: F(12, 'bold'), color: COL_LABEL, align: 'right', outline: false });
     } else {
       var ammo = String(w.ammo == null ? 0 : w.ammo);
       txt(ctx, ammo, x + bw - px(10), y + px(38), { font: F(18, 'bold'), color: (w.ammo <= 5) ? COL.red : ammoCol, align: 'right', outline: false });
@@ -1005,6 +1012,18 @@
   }
   // hint sentences name keyboard keys; on a pad or touch the key words become that device's glyphs (QA-B-HUD-02)
   var KEYWORD_ACTION = { 'E': 'action', 'F': 'enter', 'R': 'reload', 'Q': 'cover', 'M': 'map', 'N': 'radio', 'H': 'horn', 'V': 'cameraMode', 'Tab': 'lockOn', 'Space': 'jump', 'Shift': 'run', 'Enter': 'confirm', 'Esc': 'pause', 'Ctrl': 'shoot', 'right mouse button': 'aim', 'left mouse button': 'shoot' };
+  // the hints whose sentence starts with a key ("R reloads.", "W goes, S brakes", "F or Enter gets in", "M opens the map"):
+  // their own pad / touch sentence and pills, built from the bindings (QA-B-HUD-02)
+  var HINT_DEVICE = {
+    h_move: function (d) { return d === 'touch' ? { text: 'The left stick moves; push it all the way to run. ' + glyph('jump') + ' jumps.', keys: [glyph('jump')] } : { text: 'The left stick moves. Hold ' + glyph('run') + ' to run. ' + glyph('jump') + ' jumps.', keys: [glyph('run'), glyph('jump')] }; },
+    h_look: function (d) { return d === 'touch' ? { text: 'Drag the right half of the screen to look around.', keys: [] } : { text: 'The right stick looks around.', keys: ['RS'] }; },
+    h_enter: function () { return { text: glyph('enter') + ' gets in. The same button gets out.', keys: [glyph('enter')] }; },
+    h_drive: function (d) { return d === 'touch' ? { text: 'The stick steers, forward goes, back brakes and reverses. ' + glyph('jump') + ' is the handbrake: hold it for a slide.', keys: [glyph('jump')] } : { text: 'RT goes, LT brakes and reverses, ' + glyph('jump') + ' is the handbrake. Hold it for a slide.', keys: ['RT', 'LT', glyph('jump')] }; },
+    h_aim: function () { return { text: 'Hold ' + glyph('aim') + ' to aim. ' + glyph('lockOn') + ' switches targets. Head shots count double.', keys: [glyph('aim'), glyph('shoot')] }; },
+    h_reload: function () { return { text: glyph('reload') + ' reloads. An empty magazine reloads itself.', keys: [glyph('reload')] }; },
+    h_wheel: function (d) { return d === 'touch' ? { text: 'Hold WPN for the weapon wheel and drag to pick; a tap cycles.', keys: ['WPN'] } : { text: 'Hold ' + glyph('lockOn') + ' (no gun raised) for the weapon wheel. ' + glyph('weaponPrev') + ' / ' + glyph('weaponNext') + ' cycle.', keys: [glyph('lockOn')] }; },
+    h_map: function (d) { return d === 'touch' ? { text: 'MAP opens the map. Tap anywhere to set a waypoint.', keys: ['MAP'] } : { text: glyph('map') + ' opens the map. ' + glyph('confirm') + ' sets a waypoint at the cursor.', keys: [glyph('map')] }; }
+  };
   function deviceText(t) {
     if (device() === 'keyboard') return t;
     return t.replace(/\b(Press|press|Hold|hold|Tap|tap|with|With)( the)? (right mouse button|left mouse button|E|F|R|Q|M|N|H|V|Tab|Space|Shift|Enter|Esc|Ctrl)\b/g, function (all, verb, the, key) { return verb + ' ' + glyph(KEYWORD_ACTION[key]); });
@@ -1012,10 +1031,13 @@
   function drawHint(ctx, y) {
     var Hs = GTP.Hints, h = Hs && Hs.hud ? Hs.hud() : null, g = game();
     if (!h || !g || g.state !== 'playing') return y;
-    var k = h.k || 0, a = k < 0.06 ? k / 0.06 : k > 0.92 ? (1 - k) / 0.08 : 1;
+    var ht = h.t || 0, tot = Math.min(h.total || 6, 4.5), a = ht < 0.3 ? ht / 0.3 : ht > tot - 0.4 ? Math.max(0, (tot - ht) / 0.4) : 1;   // hintActed retires a hint at 4.5 s
     var font = F(12, '', FONT_TEXT), maxW = Math.min(px(560), W - safe.l - safe.r - px(20));
     var htext = deviceText(String(h.text || '').replace(/\s*\(or Q\)/g, ''));   // v0.3: Q is cover now, aim is the right mouse button / LT
-    var lines = wrap(ctx, htext, font, maxW - px(60)), keys = hintGlyphs(h.id, h.keys).filter(function (k) { return !(h.id === 'h_aim' && k === 'Q'); });
+    var keys = hintGlyphs(h.id, h.keys).filter(function (k) { return !(h.id === 'h_aim' && k === 'Q'); });
+    var dv = device(), own = dv !== 'keyboard' && HINT_DEVICE[h.id] ? HINT_DEVICE[h.id](dv) : null;
+    if (own) { htext = own.text; keys = own.keys; }
+    var lines = wrap(ctx, htext, font, maxW - px(60));
     var kw = 0; for (var i = 0; i < keys.length; i++) kw += measure(ctx, keys[i], F(10, 'bold')) + px(18);
     var pw = Math.max(px(220), Math.min(maxW, Math.max(kw + px(60), measure(ctx, lines[0] || '', font) + px(60)))), ph = px(16) + lines.length * px(16) + (keys.length ? px(22) : 0);
     var x = (W - pw) / 2;
@@ -1036,11 +1058,11 @@
     var r = h && h.race; if (!r || !r.active) return y;
     var pw = Math.min(px(420), W - safe.l - safe.r), x = (W - pw) / 2, ph = px(54);
     panel(ctx, x, y, pw, ph, px(10), COL.panelSoft, 'rgba(255,255,255,0.2)');
-    txt(ctx, (r.name || 'RACE').toUpperCase(), x + px(14), y + px(18), { font: F(10, 'bold'), color: COL.muted, outline: false, maxW: pw * 0.5 });
+    txt(ctx, (r.name || 'RACE').toUpperCase(), x + px(14), y + px(18), { font: F(10, 'bold'), color: COL_LABEL, outline: false, maxW: pw * 0.5 });
     txt(ctx, U.fmtTime(r.time || 0), x + pw - px(14), y + px(18), { font: F(12, 'bold'), color: COL.ink, align: 'right', outline: false });
     var pos = r.countdown > 0 ? '-' : 'P' + r.position, col = r.position === 1 ? COL.lime : r.position === 2 ? COL.amber : COL.ink;
     txt(ctx, pos, x + px(14), y + px(46), { font: F(26, '900', FONT_DISPLAY), color: col, outline: false });
-    txt(ctx, '/ ' + r.racers, x + px(14) + measure(ctx, pos, F(26, '900', FONT_DISPLAY)) + px(6), y + px(46), { font: F(12, 'bold'), color: COL.muted, outline: false });
+    txt(ctx, '/ ' + r.racers, x + px(14) + measure(ctx, pos, F(26, '900', FONT_DISPLAY)) + px(6), y + px(46), { font: F(12, 'bold'), color: COL_LABEL, outline: false });
     txt(ctx, 'LAP ' + r.lap + ' / ' + r.laps, x + pw * 0.45, y + px(44), { font: F(14, 'bold'), color: COL.ink, align: 'center', outline: false });
     txt(ctx, 'CHECKPOINT ' + r.checkpoint + ' / ' + r.total, x + pw - px(14), y + px(44), { font: F(12, 'bold'), color: COL.cyan, align: 'right', outline: false });
     return y + ph + px(8);
@@ -2132,7 +2154,7 @@
       var tx = tx0 + i * tabW, sel = i === pg.tab;
       panel(ctx, tx + px(2), ty, tabW - px(4), px(28), px(6), sel ? 'rgba(46,230,255,0.2)' : 'rgba(255,255,255,0.05)', sel ? COL.cyan : 'rgba(255,255,255,0.1)');
       txt(ctx, PHONE_TABS[i], tx + tabW / 2, ty + px(19), { font: F(portrait || tabW < px(80) ? 9 : 11, 'bold'), color: sel ? COL.ink : COL.muted, align: 'center', outline: false, maxW: tabW - px(8) });
-      hit(tx, ty, tabW, px(28), (function (k) { return function () { pg.tab = k; pg.sel = 0; pg.scroll = 0; pg.row = 0; if (k === 0) mapCenterOnPlayer(); }; })(i), 'tab-' + i);
+      hit(tx, ty, tabW, px(28), (function (k) { return function () { pg.tab = k; pg.sel = 0; pg.scroll = 0; pg.row = 0; pg.rows = []; if (k === 0) mapCenterOnPlayer(); }; })(i), 'tab-' + i);
     }
     // a close control on every tab, for touch above all (QA-B-TCH-01)
     var clw = px(30), clx = x + pw - clw - px(8), cly = y + px(6);
@@ -2159,7 +2181,13 @@
   }
   // --------------------------------------------------------- the big map ----
   var MAP_LEGEND = [['mission', 'Mission', '#4aa8ff'], ['objective', 'Objective', COL.amber], ['gunshop', 'Both Sides Arms', COL.green], ['rampage', 'Ratio Rampage', COL.pink], ['race', 'Loop Race', COL.white], ['ramp', 'Stunt ramp', COL.pink], ['violation', 'HOA target', COL.cream], ['home', 'Home', COL.white], ['stranger', 'Stranger', '#c084fc'], ['waypoint', 'Waypoint', COL.white], ['dot', 'GPS route', COL.gold]];
-  function mapCenterOnPlayer() { var p = player(); if (p) { ui.map.cx = p.x; ui.map.cz = p.z; } }
+  function mapCenterOnPlayer() { var p = player(); if (p) { ui.map.cx = p.x; ui.map.cz = p.z; } ui.map.cursor = null; }   // the pad cursor re-seeds on the player
+  // the zoom focus: the player's spot on the map when it is in view, else the map's centre (QA-B-HUD-07)
+  function mapPlayerFocus(r) {
+    var M = ui.map, p0 = player(), focus = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    if (p0) { var k0 = mapScale(r.w, r.h), fx0 = r.x + r.w / 2 + (p0.x - M.cx) * k0, fy0 = r.y + r.h / 2 + (p0.z - M.cz) * k0; if (fx0 > r.x && fx0 < r.x + r.w && fy0 > r.y && fy0 < r.y + r.h) focus = { x: fx0, y: fy0 }; }
+    return focus;
+  }
   function mapScale(w, h) { var bake = ensureMap(); if (!bake) return 1; return Math.min(w / bake.width, h / bake.height) * ui.map.zoom; }
   function mapClampCenter(w, h) {
     var bake = ensureMap(); if (!bake) return;
@@ -2257,8 +2285,8 @@
     var bx = x + w - px(60), by = y + h - px(64);
     panel(ctx, bx, by, px(24), px(24), px(6), 'rgba(10,12,24,0.85)', 'rgba(255,255,255,0.25)'); txt(ctx, '-', bx + px(12), by + px(17), { font: F(14, 'bold'), color: COL.ink, align: 'center', outline: false });
     panel(ctx, bx + px(28), by, px(24), px(24), px(6), 'rgba(10,12,24,0.85)', 'rgba(255,255,255,0.25)'); txt(ctx, '+', bx + px(40), by + px(17), { font: F(14, 'bold'), color: COL.ink, align: 'center', outline: false });
-    hit(bx, by, px(24), px(24), function () { mapZoomAt(1 / 1.5, x + w / 2, y + h / 2); }, 'map-zoom-out');
-    hit(bx + px(28), by, px(24), px(24), function () { mapZoomAt(1.5, x + w / 2, y + h / 2); }, 'map-zoom-in');
+    hit(bx, by, px(24), px(24), function () { var f = mapPlayerFocus({ x: x, y: y, w: w, h: h }); mapZoomAt(1 / 1.5, f.x, f.y); }, 'map-zoom-out');
+    hit(bx + px(28), by, px(24), px(24), function () { var f = mapPlayerFocus({ x: x, y: y, w: w, h: h }); mapZoomAt(1.5, f.x, f.y); }, 'map-zoom-in');
     var cbw = px(110);
     panel(ctx, x + w - px(8) - cbw, y + px(40), cbw, px(22), px(6), 'rgba(10,12,24,0.85)', 'rgba(255,255,255,0.2)');
     txt(ctx, 'CENTRE ON ME', x + w - px(8) - cbw / 2, y + px(55), { font: F(9, 'bold'), color: COL.ink, align: 'center', outline: false });
@@ -2273,12 +2301,11 @@
     if (In.down('forward')) M.cz -= pan; if (In.down('back') && !In.pressed('cancel')) M.cz += pan;
     var pad = In.gamepad;
     // keys and pad zoom around the player (or the pad cursor), not the city centre (QA-B-HUD-07)
-    var p0 = player(), focus = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-    if (p0) { var k0 = mapScale(r.w, r.h), fx0 = r.x + r.w / 2 + (p0.x - M.cx) * k0, fy0 = r.y + r.h / 2 + (p0.z - M.cz) * k0; if (fx0 > r.x && fx0 < r.x + r.w && fy0 > r.y && fy0 < r.y + r.h) focus = { x: fx0, y: fy0 }; }
+    var focus = mapPlayerFocus(r);
     var pad = In.gamepad;
-    if (pad && pad.index >= 0 && In.gamepadEnabled) {
-      // the pad moves a cursor; the map pans when the cursor pushes an edge (QA-B-HUD-08)
-      if (!M.cursor) M.cursor = { x: 0.5, y: 0.5 };
+    if (pad && pad.index >= 0 && In.gamepadEnabled && device() === 'gamepad') {
+      // the pad moves a cursor (seeded on the player when the map opens); the map pans when it pushes an edge (QA-B-HUD-08)
+      if (!M.cursor) M.cursor = { x: (focus.x - r.x) / r.w, y: (focus.y - r.y) / r.h };
       M.cursor.x += pad.lx * dt * 0.6; M.cursor.y += pad.ly * dt * 0.6 * (r.w / r.h);
       if (M.cursor.x < 0.05) { M.cx -= pan * 1.5; M.cursor.x = 0.05; } if (M.cursor.x > 0.95) { M.cx += pan * 1.5; M.cursor.x = 0.95; }
       if (M.cursor.y < 0.05) { M.cz -= pan * 1.5; M.cursor.y = 0.05; } if (M.cursor.y > 0.95) { M.cz += pan * 1.5; M.cursor.y = 0.95; }
@@ -2497,7 +2524,7 @@
     else if (res && res.reason === 'notOwned') { sh.msg = { text: 'Buy the weapon first.', color: COL.amber }; sfx('ui', 0.2); }
     else if (res && res.reason === 'flagship') { sh.msg = { text: 'The range is at the flagship on the Strip.', color: COL.muted }; sfx('ui', 0.2); }
     else { sh.msg = { text: 'No sale.', color: COL.muted }; }
-    sh.msgT = 3;
+    sh.msgT = 3; sh.msgKey = sh.tab + ':' + sh.sel;   // the message belongs to this card: another tab or row hides it (QA-B-TCH-13)
   }
   function drawShop(ctx) {
     var sh = ui.shop, CB = GTP.Combat, p = player(), X = expansion(), shopC = X.shop || {};
@@ -2583,7 +2610,7 @@
       // Merle's pitch with his portrait, and the message line
       var ps = px(44), pyy = Math.min(by + px(6), cy + chh - ps - px(50)), roomForMerle = pyy >= by - px(2);
       if (roomForMerle) castPortrait(ctx, shopC.clerk || 'merle', cx + px(20), pyy, ps);
-      var pitch = wrap(ctx, '“' + (sh.msgT > 0 && sh.bark ? sh.bark : (cur.pitch || sh.bark || '')) + '”', F(11, 'italic', FONT_TEXT), cw - ps - px(50));
+      var pitch = wrap(ctx, '“' + (sh.msgT > 0 && sh.bark && sh.msgKey === sh.tab + ':' + sh.sel ? sh.bark : (cur.pitch || sh.bark || '')) + '”', F(11, 'italic', FONT_TEXT), cw - ps - px(50));
       for (i = 0; i < (roomForMerle ? Math.min(3, pitch.length) : 0); i++) txt(ctx, pitch[i], cx + px(30) + ps, pyy + px(16) + i * px(14), { font: F(11, 'italic', FONT_TEXT), color: '#bfe3ff', outline: false });
       if (roomForMerle) txt(ctx, castName(shopC.clerk || 'merle'), cx + px(20), pyy + ps + px(12), { font: F(8, 'bold'), color: COL.green, outline: false, maxW: ps + px(20) });
       // the buy button
@@ -2592,7 +2619,7 @@
       panel(ctx, bbx, bby, bbw, px(32), px(8), can ? (sh.flash > 0 ? 'rgba(157,255,60,0.5)' : hovering(bbx, bby, bbw, px(32)) ? 'rgba(63,210,127,0.45)' : 'rgba(63,210,127,0.25)') : 'rgba(255,255,255,0.05)', can ? COL.green : 'rgba(255,255,255,0.2)', can ? 2 : 1);
       txt(ctx, label, bbx + bbw / 2, bby + px(21), { font: F(13, 'bold'), color: can ? COL.ink : COL.muted, align: 'center', outline: false });
       hit(bbx, bby, bbw, px(32), (function (id) { return function () { shopBuy(id); }; })(cur.id), 'shop-buy');
-      if (sh.msgT > 0 && sh.msg) txt(ctx, sh.msg.text, cx + px(20), bby + px(21), { font: F(10, 'bold'), color: sh.msg.color, outline: false, maxW: cw - bbw - px(50) });
+      if (sh.msgT > 0 && sh.msg && sh.msgKey === sh.tab + ':' + sh.sel) txt(ctx, sh.msg.text, cx + px(20), bby + px(21), { font: F(10, 'bold'), color: sh.msg.color, outline: false, maxW: cw - bbw - px(50) });
     }
     if (tabs[sh.tab] === ((shopC.flagshipTab) || 'RANGE') && CB && CB.shop) {
       var rt = CB.shop.rangeT || 0, best = CB.shop.rangeBest;
@@ -3369,15 +3396,15 @@
         if (pg.page === 'phone') {
           if (menuBack(In) && pg.phoneFrom === 'pause') { pg.page = 'pause'; pg.phoneFrom = null; return true; }   // back to the pause menu it came from (QA-B-FE-09)
           if (In.pressed('map') || In.pressed('pause') || menuBack(In)) { closePause(); return true; }
-          if (In.pressed('tabNext') || In.pressed('lockOn')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
+          if (In.pressed('tabNext') || In.pressed('lockOn')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; pg.rows = []; if (pg.tab === 0) mapCenterOnPlayer(); }
           if (pg.tab === 0) {
-            if (In.pressed('weaponPrev')) { pg.tab = PHONE_TABS.length - 1; pg.scroll = 0; pg.row = 0; }
-            if (In.pressed('weaponNext')) { pg.tab = 1; pg.scroll = 0; pg.row = 0; }
+            if (In.pressed('weaponPrev')) { pg.tab = PHONE_TABS.length - 1; pg.scroll = 0; pg.row = 0; pg.rows = []; }
+            if (In.pressed('weaponNext')) { pg.tab = 1; pg.scroll = 0; pg.row = 0; pg.rows = []; }
             mapInput(In, dt);
             return true;
           }
-          if (In.pressed('left') || In.pressed('weaponPrev')) { pg.tab = (pg.tab + PHONE_TABS.length - 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
-          if (In.pressed('right') || In.pressed('weaponNext')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
+          if (In.pressed('left') || In.pressed('weaponPrev')) { pg.tab = (pg.tab + PHONE_TABS.length - 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; pg.rows = []; if (pg.tab === 0) mapCenterOnPlayer(); }
+          if (In.pressed('right') || In.pressed('weaponNext')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; pg.rows = []; if (pg.tab === 0) mapCenterOnPlayer(); }
           var rows = pg.rows || [];
           var row0 = pg.row;
           if (In.pressed('forward')) { if (rows.length) pg.row = (pg.row - 1 + rows.length) % rows.length; else pg.scroll = Math.max(0, pg.scroll - px(24)); }
@@ -3655,6 +3682,8 @@
   function computeRoute(ax, az, bx, bz, o) {
     var Wd = GTP.World, path = null, failed = false;
     try { if (Wd && typeof Wd.route === 'function') path = Wd.route(ax, az, bx, bz); } catch (e) { path = null; }
+    // World.route answers a failed search with the straight two-point line: that is a failure here (the back-off needs it)
+    if (path && path.length === 2 && U.dist2d(ax, az, bx, bz) > 24) { failed = true; path = path.slice(); path.failed = true; return path; }
     if (!path || path.length < 2) { try { if (Wd && Wd.findPath) path = Wd.findPath(ax, az, bx, bz, { mode: 'car', fromY: o && o.fromY, maxExpansions: 20000 }); } catch (e) { path = null; } }
     if (!path || !path.length) { path = [{ x: ax, z: az }]; failed = true; }
     var last = path[path.length - 1];

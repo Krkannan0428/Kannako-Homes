@@ -278,10 +278,18 @@
       pad.lx = dz(ax[0] || 0); pad.ly = dz(ax[1] || 0);
       pad.rx = dz(ax[2] || 0); pad.ry = dz(ax[3] || 0);
       var ctx = Input._padContext(), map = ctx === 'menu' ? PAD_MENU : ctx === 'mini' ? PAD_MINI : ctx === 'car' ? PAD_CAR : ctx === 'air' ? PAD_AIR : PAD_FOOT;
+      // a button still held across a context switch (A held to skip a cutscene, A on RETRY) is not a new press in the new
+      // map until it is let go (QA-B-FE-05: the held A jumped on the first step back on foot)
+      if (ctx !== pad._ctxPrev) {
+        pad._stale = {};
+        if (pad._ctxPrev) for (var bi = 0; bi < (g.buttons || []).length; bi++) { var bb = g.buttons[bi]; if (bb && (bb.pressed || (typeof bb === 'number' ? bb > 0.5 : bb.value > 0.5))) pad._stale[bi] = true; }
+        pad._ctxPrev = ctx;
+      }
       pad.context = ctx;
       var nb = {}, b, now, was, used = false;
       for (b in map) {
         var btn = g.buttons[b], on = !!(btn && (btn.pressed || (typeof btn === 'number' ? btn > 0.5 : btn.value > 0.5)));
+        if (pad._stale && pad._stale[b]) { if (on) continue; delete pad._stale[b]; }
         if (on) nb[map[b]] = true;
       }
       // triggers on pads that report them as axes
