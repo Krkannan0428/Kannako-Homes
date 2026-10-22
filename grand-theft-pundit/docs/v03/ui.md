@@ -6,6 +6,11 @@ modules are stubs on this branch, so every screen reads the plan's events and AP
 built-in sample data where content is missing, and is tested by emitting the events with sample payloads
 (`tests/ui_v03.js`). No wrapper is installed on another track's module.
 
+**Integration round 1** (merged `game/grand-theft-pundit` 65dc2b7, then 10ba585): every screen now reads the real
+modules' APIs and events (see "Integration round 1" below; the tables that follow describe the screens, the section
+below is what they consume now). The QA triage of every finding whose hint points at this track is in
+`docs/v03/triage_ui.md`.
+
 ## What was built
 
 | Screen | Opened / fed by | Notes |
@@ -40,7 +45,39 @@ Phone tabs are now `MAP, STORY, MISSIONS, STOCKS, STATS, STRANDS, REPLAY` (`GTP.
 STORY after RESUME. Every screen works at 400 px wide (side panels become bottom sheets, lists shrink, the heist board
 scales its polaroids, touch buttons add COVER / SPCL and switch labels in vehicles and aircraft).
 
-## Interfaces consumed (all feature-detected)
+## Integration round 1 (the real modules)
+
+What each screen reads now (all still feature-detected; the sample-payload paths stay as fallbacks for a build
+without the module):
+
+| Screen | Real source | Notes |
+|---|---|---|
+| GPS / chapter / calls / STORY | `09_missions.js` (`GTP.Story`): `gps:set {x, z, label, kind:'story'|'objective', route, missionId, giver, landmark}`, `chapter {act, title, roman, missionId}`, `phone:call {from, lines:[{who, name, color, text}]}`, `Story.next()`, `Story.progress() {done, total}` | The payload's `route` is used when present (there is no `World.route`; `World.findPath` otherwise). Story / objective / stranger routes never auto-clear. The chip says STORY or OBJECTIVE. The chapter card strips the "Act I:" prefix and shows `roman`. Call lines keep the speaker's name and colour. |
+| Heist board | `heist:board {missionId, approaches:[{id, name, hostiles, payout, wanted, line}], crew:[{id, name, cut, perk}], mission}` from `GTP.Heist` | The payload is authoritative (its ids are what `Heist.setPlan` knows); `parity.heists.<id>` only adds the board title, an approach's pitch and a crew member's role / pitch. Crew is a row of toggles (up to 4, `Heist.setPlan` keeps 4); the sticky note shows the job's pay (`h03_job` reward x payout, minus the cuts capped at 60 %, the same rule as `Heist.payout`) and the heat stars. `heist:plan {approach, crew, missionId, take}`. The board reopens on the saved plan. |
+| Interiors | `13_interiors.js`: `interior:enter {id, kind, store, branch, landmark}`, `interior:fade`, `interior:exit`, `armory:inspect {weaponId, itemId, store, ...}`, `UI.openArmory({store, landmark, counter})`, `clothing:open {store, wardrobe, booth}`, `barber:open {store}` | `GTP.UI.interiorFade = true` so Interiors skips its DOM fade (the UI draws it). Store names come from `Combat.shop._stores` / `World.landmark(id)`. Indoors (`Interiors.active`) the minimap becomes an INDOORS card with the store name and the GPS chip, the objective arrow and the long-range labels are hidden (the rooms are built far from the city: the newplayer run showed "TURN AROUND 4.3 km" in the armory). |
+| Range | `range:start {store, weapon, seconds}`, `range:hit {points, zone, score, moderator}`, `range:end {score, medal, hits, shots, best, aborted, bonus}`, `GTP.Interiors.range` (raw `{running, t, score, hits, shots}`), `GTP.Interiors.MEDALS` | A 3-2-1 countdown (Interiors' `COUNTDOWN` 3 s is inside `range.t`), the clock from `range.t`, negative floats for moderators, hits / shots, an aborted round is a toast instead of a medal card. |
+| Armory | `Combat.catalog(store)`, `Combat.buy(itemId, {store})` | `{store}` (not `storeId`); an owned attachment toggles (REMOVED: ... when `equipped` comes back false). Tint swatches from `GTP.Assets.weaponTints[variant].main`. |
+| Cover / aim | `Combat.hud()`: `cover {active, high, edge, canVault, blind}` or `{near, nearHigh}`, `prompt 'counter'|'cover'|'vault'|'peek'`, `crosshair {hostile, target, inRange}` | COUNTER prompt (jump) on an incoming melee; PEEK at an edge or over low cover, else AIM; VAULT on `canVault`. The aim tutor retires after the first aim (or 15 s) and never shows under the `h_aim` hint. |
+| Lock-on labels | entities | A boss weak point (a `BossPart`, kind `heli`) shows its `label`, never WEATHER BALLOON, and is not a cop blip; a boss ped's bar uses the encounter's hp (its own is a 100000 placeholder); vehicles show their display name (`Vehicles.hud(v).name`, else the UI table), never the class id. |
+| Vehicle HUDs | `06b_vehicles_air_sea.js`: `vehicle.hud() {family, name, mph, alt, vs, pitch, roll, heading (degrees), throttle, gear, rotor, stall, lean, wheelie, chute, prompt}`, `vehicle.cls.family` | The category comes from `cls.family`; heading is degrees; the bike gauge uses `lean` / `wheelie`; BAIL OUT follows `hud().prompt`. Parachute: `v.chute 'free'` is the DEPLOY prompt, `'open'` the canopy panel (CUT AWAY), `'landed'` nothing; the radio ticker is hidden under a canopy. |
+| Mod shop | `Vehicles.modCatalog(v)`, `buyMod(v, part, value)`, `priceOf`, `mod` | Categories are the catalog's parts; a colour costs a respray (`priceOf('paint', {finish})`); `buyMod` charges and emits `shop:buy` itself. |
+| Property | `Systems.properties.list()` rows `{id, name, kind, price, income, garage, flavor, landmark, owned, locked, unlock}`, `buy(id)` (reasons `money`, `mission`, `locked`, `owned`), `sleep(id)` | `property:open`'s payload gets `handled = true` so Systems does not also toast / save. An owned safehouse shows SLEEP & SAVE (Systems sleeps six hours and saves; refused while wanted, on a mission or in a cutscene). A locked listing names the mission that unlocks it. |
+| Stocks | `Systems.stocks.list()` `{ticker, name, price, change (24 h), history, qty, avg, gain}`, `buy/sell(ticker, qty)` (reasons `money`, `none`, `qty`) | Systems plays the register sound; the toast shows the total with the fee. |
+| Golf | `Systems.golf.state()` | Systems owns the round and reads the input itself; the UI only draws (hole 1-based, `clubName`, `distToPin`, the meter while swinging, wind relative to the aim, the card total) and never emits `golf:shot`. `golf:hole` shows the hole's card, `golf:end {strokes, par, toPar, holes, full}` the round's (queued behind a hole card). |
+| Stats / achievements | `Systems.statsPage()` sections, `Systems.achievements.list()` (+ `def(id).hidden`) | With the page present the phone keeps only Subscribers, Day / time and Wanted on top; achievements show progress bars; hidden ones read ??? until unlocked. |
+| Wardrobe / barber | `Systems.wardrobe.items(slot, store)` / `buy(id)`, `Systems.barber.options()` / `buy(styleId, colorId)` | The rows carry `_sys` so the buy goes back with the same ids; Systems applies the look. Rows that are not clothing (see "Other tracks" below) are dropped and the content list is bought locally instead. |
+| Map markers | `Systems.markers()` (properties, safehouses, golf, jobs, job calls, the pin), strangers' missions | Systems' entries are appended (icons golf, $, job, fire, client); a mission whose `strandOf()` is a stranger strand is drawn as a purple `?` and listed in MISSIONS as a purple row with the strand's progress and a GPS button (the fake `Strangers.markers()` / `list()` paths are gone). |
+| Boss bar / specials | `boss:start`, `boss:phase {id, phase, phases, hp, maxHp, name, shield, state, hint}`, `boss:end`, `boss:defeated`, `Bosses.hud()`; `special:state {id, meter, active, unlocked, name}` | `GTP.UI.drawsBossBar = drawsSpecials = true` so 08b_bosses' fallback bar and meters stand down. Grey bar and the shield text while shielded, the hint under it; no PHASE announcement (the bosses banner it); hidden during dialogue. A special that is not `unlocked` is not shown. |
+| Radio | `Content.radio.nowPlaying(id)` for stations with songs | `Audio.radio.nowPlaying()` returns the "Station - tagline" string; it is ignored (the chip already says it). The news runner in `23_content_radio.js` keeps calling `UI.ticker` (not replaced). |
+| Hints | `GTP.Hints.current()` / `dismiss()` | A hint leaves a second after the player did what it asks (aim, move, look, reload, open the wheel, open the map) instead of its full six seconds. |
+| Title | `GTP.VERSION` | Shows 0.3.0 while `00_util.js` still says 0.2.0 (`desktop/package.json` is 0.3.0); a newer `GTP.VERSION` wins. |
+
+Exposed for the other tracks and tests: `GTP.UI.interiorFade`, `drawsBossBar`, `drawsSpecials` (flags),
+`openArmory({store, landmark, counter})` as well as `(storeId, weaponId)`, `openHeistBoard(payload | missionId)`,
+`allMarkers()`, `pauseItems()` (the pause menu ids / labels; `tests/newplayer.js` walks to SAVE with it),
+`wantsMenuPad()` (02_input asks it for the pad context), `Input.consume(actions)`.
+
+## Interfaces consumed before integration (sample payloads; still the fallbacks)
 
 - Events listened to: `gps:set`, `gps:clear`, `phone:call`, `chapter`, `interior:fade`, `interior:enter`,
   `interior:exit`, `armory:inspect`, `range:start`, `range:hit`, `range:end`, `clothing:open`, `barber:open`,
@@ -111,8 +148,12 @@ scales its polaroids, touch buttons add COVER / SPCL and switch labels in vehicl
   keys so the closing press never fires.
 - The mod shop and wardrobe charge `player.money` and emit `shop:buy` only when no systems / vehicles API exists; with
   the API the UI only calls it.
-- The swing meter belongs to the UI (the plan has the systems track simulate, the UI draw); `golf:shot` carries the
-  power (0..1) and the aim angle (radians, + right).
+- Golf: with `GTP.Systems.golf` present the systems module owns the swing and its input and the UI only draws; the
+  UI's own meter (`golf:shot {power, angle}`) is the fallback for a build without it.
+- Integration: a payload from the module that owns the data (heist ids, store ids, golf holes) wins over the content
+  tables; the content only adds text. A module's flag (`interiorFade`, `drawsBossBar`, `drawsSpecials`) is set once the
+  UI draws that piece, so the fallbacks never double up.
+- Indoors the HUD stops navigating the city (no GPS chip, objective arrow, long-range labels, city minimap).
 - STORY sits right after MAP in the phone so RB from the map lands on it.
 - GPS story routes do not clear on arrival (the story track moves them on); other kinds do.
 - Hip fire shows a bare dot only while the bloom from recent shots is up.
