@@ -268,7 +268,7 @@
     osc.frequency.setValueAtTime(f0, t0);
     if (o.f1) osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.f1), t0 + (o.glide || dur));
     if (o.detune) osc.detune.value = o.detune;
-    var g = ctx.createGain(); env(g.gain, t0, o.a, o.g == null ? 0.3 : o.g, dur, o.hold);
+    var g = ctx.createGain(); g.gain.value = 0; env(g.gain, t0, o.a, o.g == null ? 0.3 : o.g, dur, o.hold);   // silent until the envelope (a new gain is 1)
     addFilter(o, osc, t0, dur).connect(g); g.connect(dest);
     if (o.vib) {
       var l = ctx.createOscillator(); l.frequency.value = o.vib; var lg = ctx.createGain();
@@ -282,7 +282,8 @@
   function hiss(dest, t0, o) {
     var s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
     if (o.rate) s.playbackRate.value = o.rate;
-    var dur = o.dur || 0.1, g = ctx.createGain(); env(g.gain, t0, o.a, o.g == null ? 0.3 : o.g, dur, o.hold);
+    // a new gain node is 1 until the envelope's first event: start it silent (a one-sample click from the radio's hats)
+    var dur = o.dur || 0.1, g = ctx.createGain(); g.gain.value = 0; env(g.gain, t0, o.a, o.g == null ? 0.3 : o.g, dur, o.hold);
     addFilter(o, s, t0, dur).connect(g); g.connect(dest);
     s.start(t0, arng.random() * 1.5); s.stop(t0 + dur + 0.05);
     return s;

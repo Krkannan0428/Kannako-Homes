@@ -19,6 +19,8 @@
 const H = require('./_harness');
 
 async function livePage(t, params) {
+  // none of these pages is about the opening cutscene (the story track plays it after NEW GAME): ?opening=0
+  params = Object.assign({ opening: 0 }, params);
   const page = await t.browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.setDefaultTimeout(240000);
   const pageErrors = [], consoleErrors = [];
@@ -221,7 +223,8 @@ H.run('audio', async (t) => {
   t.assert(unlocked.has && (unlocked.state === 'running' || unlocked.state === 'suspended'), 'a click creates the AudioContext (running or suspended)');
   if (unlocked.game === 'title') { await page.keyboard.press('Enter'); await page.evaluate(() => GTP.game.advance(0.2)); }
   // NEW GAME now plays the opening cutscene (the story track's fast path): skip it the way tests/ui.js does
-  await page.evaluate(() => { GTP.game._openingPending = false; if (GTP.Cutscenes && GTP.Cutscenes.active && GTP.Cutscenes.skip) GTP.Cutscenes.skip(); for (let i = 0; i < 60 && GTP.game.state !== 'playing'; i++) { GTP.Input.press('confirm'); GTP.game.advance(0.1); } });
+  // (booted with ?opening=0; a cutscene that starts anyway, after the loading screen, is skipped as it comes up)
+  await page.evaluate(() => { GTP.game._openingPending = false; for (let i = 0; i < 120 && GTP.game.state !== 'playing'; i++) { if (GTP.Cutscenes && GTP.Cutscenes.active && GTP.Cutscenes.skip) GTP.Cutscenes.skip(); GTP.game.advance(0.1); } });
   const playing = await page.evaluate(() => GTP.game.state);
   t.assert(playing === 'playing', 'Enter starts play: ' + playing);
 
@@ -269,6 +272,9 @@ H.run('audio', async (t) => {
     if (A._clearGaps) A._clearGaps();   // another track may have played a name a moment ago (the per-name rate limit)
     A.names.forEach((n) => { out.played[n] = A.play(n, { x: p.x + 2, z: p.z - 3, gain: 0.8 }); });
     out.voices = A.state().voices; out.max = A.state().maxVoices;
+    // a name the wiring just played (phoneRing, gps: their MIN_GAP) or one past the voice cap gets one more try on its own
+    out.retried = Object.keys(out.played).filter((n) => !out.played[n]);
+    out.retried.forEach((n) => { A._clearGaps(); out.played[n] = A.play(n, { x: p.x + 2, z: p.z - 3, gain: 0.8 }); });
     out.far = A.play('ui', { x: p.x + 900, z: p.z, gain: 1 });   // beyond earshot: nothing is created
     return out;
   });
