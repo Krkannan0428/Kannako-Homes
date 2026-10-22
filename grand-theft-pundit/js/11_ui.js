@@ -1277,10 +1277,11 @@
   function sidKey(st) { return st ? String(st.id || st.name || '') : ''; }
   function radioLine(o, st) {
     var kind = String(o.kind || o.type || '').toLowerCase(), text = o.text || o.line || '';
-    if (kind === 'song' || kind === 'music' || (!text && o.title)) return { text: (o.title || '') + (o.artist ? '  ·  ' + o.artist : '') + (st && st.name ? '  ·  ' + String(st.name).replace(/\s*".*"$/, '') : ''), tag: 'NOW PLAYING', color: stationColor(st) };
+    var on = st && st.name ? '  ·  ' + String(st.name).replace(/\s*".*"$/, '') : '';   // song and show lines name the station
+    if (kind === 'song' || kind === 'music' || (!text && o.title)) return { text: (o.title || '') + (o.artist ? '  ·  ' + o.artist : '') + on, tag: 'NOW PLAYING', color: stationColor(st) };
     if (kind === 'news' || kind === 'bulletin') return { text: text || o.headline || o.title, tag: 'NEWS', color: COL.red };
     if (kind === 'caller' || kind === 'call') return { text: (o.caller || o.name ? (o.caller || o.name) + ' on the line: ' : 'Caller: ') + text, tag: 'CALLER', color: COL.lime };
-    if (kind === 'show' || kind === 'host') return { text: (o.title ? o.title + '  ·  ' : '') + text, tag: 'ON AIR', color: stationColor(st) };
+    if (kind === 'show' || kind === 'host') return { text: (o.title ? o.title + '  ·  ' : '') + text + on, tag: 'ON AIR', color: stationColor(st) };
     return { text: text || o.title || '', tag: 'ON AIR', color: stationColor(st) };
   }
   function updateTicker(dt) {
