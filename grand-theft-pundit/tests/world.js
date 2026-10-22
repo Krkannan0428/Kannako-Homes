@@ -476,6 +476,17 @@ H.run('world', async (t) => {
       }
     }
     out.rampPosts = W.props.filter((p) => p.rampEnd).length;
+    // VIS-04: no tree canopy (05_assets tree 2.34 m, palm 2.6 m, x scale) reaches more than 0.6 m into a building
+    const TILE = GTP.C.TILE; out.treesInWalls = [];
+    W.props.forEach((p) => {
+      if (p.kind !== 'tree' && p.kind !== 'palm') return;
+      let g = 1e9; const tx0 = Math.floor(p.x / TILE), tz0 = Math.floor(p.z / TILE);
+      for (let tz = tz0 - 2; tz <= tz0 + 2; tz++) for (let tx = tx0 - 2; tx <= tx0 + 2; tx++) if (W.tile(tx, tz) === T.BUILDING) g = Math.min(g, Math.hypot(Math.max(tx * TILE - p.x, 0, p.x - (tx + 1) * TILE), Math.max(tz * TILE - p.z, 0, p.z - (tz + 1) * TILE)));
+      if ((p.kind === 'palm' ? 2.6 : 2.34) * (p.scale || 1) - g > 0.6) out.treesInWalls.push(p.x.toFixed(1) + ',' + p.z.toFixed(1));
+    });
+    out.trees = W.props.filter((p) => p.kind === 'tree' || p.kind === 'palm').length;
+    // QAC-45: pole billboards are wider than tall (a duplicate h key made them 9 x 9 m)
+    out.squareBoards = W.props.filter((p) => p.kind === 'billboard' && p.pole && !(p.h < p.w)).length;
     const ccc = W.landmark('memo_press');
     out.memo = ccc && ccc.building ? [ccc.building.tx, ccc.building.tz, ccc.building.tw, ccc.building.td] : null;
     out.coupon = W.streetAt ? [W.streetAt(30 * 4, 122 * 4), W.streetAt(60 * 4, 122 * 4)] : null;
@@ -485,7 +496,9 @@ H.run('world', async (t) => {
   t.assert(lay.buildingOnLane.length === 0, 'no building tile carries lane bytes or a road id (QA-A-GEO-01): ' + lay.buildingOnLane.slice(0, 10).join(' '));
   t.assert(lay.laneIntoWall.length === 0, 'no ground lane runs into a building wall or a ramp deck end (QA-A-GEO-01/02, TRF-08): ' + lay.laneIntoWall.slice(0, 10).join(' '));
   t.assert(lay.halfBox.length === 0, 'every junction box carries both lane axes (QA-A-TRF-09): ' + lay.halfBox.join(' '));
-  t.assert(lay.rampPosts >= 30, 'bollards stand in front of the ramps\' deck-end faces on the plaza under the Loop: ' + lay.rampPosts);
+  t.assert(lay.treesInWalls.length === 0 && lay.trees > 600, 'tree canopies stay out of the facades (QA-A-VIS-04): ' + lay.trees + ' trees, in walls ' + lay.treesInWalls.slice(0, 8).join(' '));
+  t.assert(lay.squareBoards === 0, 'pole billboards are 9 x 3.4 m panels, not 9 x 9 (QAC-45): ' + lay.squareBoards);
+  t.assert(lay.rampPosts >= 30,'bollards stand in front of the ramps\' deck-end faces on the plaza under the Loop: ' + lay.rampPosts);
   // TRF-08 / GEO-02: an AI car climbing the Manifest Ramp westbound comes out on the Lower Loop deck (it used to keep
   // the ground street's lane and hit the deck's far barrier, or a street car rammed the ramp's 7 m end)
   const manifest = await page.evaluate(() => {

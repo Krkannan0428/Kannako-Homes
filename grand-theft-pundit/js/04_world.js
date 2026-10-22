@@ -753,6 +753,7 @@
 
       // 9. street furniture and greenery
       World._furnish(styleAt, parkTile, seed, R);
+      World._fitTrees();   // before the clearings below, so they see where the trees end up
       // 9b. v0.3 (PLAN_V03 "world"): shops and safehouses claim filler buildings (no RNG draws, so the city stays as it
       //     was), helipads, the aircraft apron, the nine golf holes. Their own stream, never the city's.
       World._noPark = new Uint8Array(N);
@@ -848,6 +849,34 @@
           var c = lo * TILE + 0.6 + q * (2 * TILE - 1.2) / 5;
           World._prop(rec.axis === 'h' ? { kind: 'bollard', x: face, z: c, r: 0.2, solid: true, h: 0.7, rampEnd: rec.name } : { kind: 'bollard', x: c, z: face, r: 0.2, solid: true, h: 0.7, rampEnd: rec.name });
         }
+      });
+    },
+
+    // Canopies clear of facades (QA-A-VIS-04): a tree whose canopy (05_assets tree 2.34 m, palm 2.6 m, x scale) would reach
+    // more than 0.3 m into a building moves to the kerb side of its walk (street trees), else shrinks to fit, else goes.
+    // Runs on the finished props; no RNG (every tree's draws already happened), so nothing else moves.
+    _fitTrees: function () {
+      var tiles = World.tiles, w = World.w, ALLOW = 0.3, MIN = 0.6;
+      function gap(x, z) {
+        var best = 1e9, tx0 = Math.floor(x / TILE), tz0 = Math.floor(z / TILE);
+        for (var tz = tz0 - 2; tz <= tz0 + 2; tz++) for (var tx = tx0 - 2; tx <= tx0 + 2; tx++) {
+          if (!World.inBounds(tx, tz) || tiles[tz * w + tx] !== T.BUILDING) continue;
+          var dx = Math.max(tx * TILE - x, 0, x - (tx + 1) * TILE), dz = Math.max(tz * TILE - z, 0, z - (tz + 1) * TILE), d = Math.sqrt(dx * dx + dz * dz);
+          if (d < best) best = d;
+        }
+        return best;
+      }
+      World._removeProps(function (p) {
+        if (p.kind !== 'tree' && p.kind !== 'palm') return false;
+        var rc = p.kind === 'palm' ? 2.6 : 2.34, s = p.scale || 1, g = gap(p.x, p.z);
+        if (rc * s - g <= ALLOW) return false;
+        if (p.kerb) {
+          var nx = p.x + p.kerb[0], nz = p.z + p.kerb[1], g2 = gap(nx, nz);
+          if (g2 > g) { p.x = nx; p.z = nz; g = g2; if (rc * s - g <= ALLOW) return false; }
+        }
+        var fit = (g + ALLOW) / rc;
+        if (fit < MIN) return true;
+        p.scale = fit; return false;
       });
     },
 
@@ -1755,7 +1784,7 @@
           } else if (hv > 0.975 && anyRoad && !corner) {
             P({ kind: 'hydrant', x: cx + ox * 0.8, z: cz + oz * 0.8, r: 0.25, solid: true, h: 0.8 });
           } else if (st.trees > 0.3 && anyRoad && !corner && ((x + z) % 6 === 3) && hv < 0.8) {
-            P({ kind: did === 'marina' ? 'palm' : 'tree', x: cx - ox * 0.5, z: cz - oz * 0.5, r: 0.4, solid: true, scale: 0.8 + hv * 0.5, h: 7 });
+            P({ kind: did === 'marina' ? 'palm' : 'tree', x: cx - ox * 0.5, z: cz - oz * 0.5, r: 0.4, solid: true, scale: 0.8 + hv * 0.5, h: 7, kerb: [ox, oz] });
           } else if (hv > 0.94 && hv < 0.96 && anyRoad && (did === 'downtown' || did === 'strip' || did === 'capitol')) {
             P({ kind: 'bin', x: cx + ox * 0.7, z: cz + oz * 0.7, r: 0.3, solid: true, h: 1 });
           }
@@ -1838,7 +1867,7 @@
         var sx = adSpots[k][0], sz = adSpots[k][1], tt = World.tile(sx, sz);
         if (tt !== T.PLAZA && tt !== T.GRASS && tt !== T.SIDEWALK && tt !== T.PARKING) continue;
         if (World.deckAt(sx, sz)) continue;
-        P({ kind: 'billboard', text: ads[k % ads.length], x: (sx + 0.5) * TILE, z: (sz + 0.5) * TILE, y: 6.5, rot: adSpots[k][2], w: 9, h: 3.4, neon: k % 3 === 0, solid: true, r: 0.5, pole: true, h: 9 });
+        P({ kind: 'billboard', text: ads[k % ads.length], x: (sx + 0.5) * TILE, z: (sz + 0.5) * TILE, y: 6.5, rot: adSpots[k][2], w: 9, h: 3.4, neon: k % 3 === 0, solid: true, r: 0.5, pole: true, h2: 9 });   // h2, not a second h (that made the panels 9 x 9 m: QAC-45)
       }
       // the Shoreline Stroll: the second set of billboard pairs face each other along the walk
       var pairs = (CW.billboards && CW.billboards.pairs) || [], strollIdx = (CW.billboards && CW.billboards.stroll) || [];
