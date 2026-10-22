@@ -84,6 +84,45 @@ H.run('saves', async (t) => {
   t.assert(loaded.heist && loaded.heist.approach === 'loud' && loaded.heist.crew.join(',') === 'kip', 'the heist plan comes back through the story entry: ' + JSON.stringify(loaded.heist));
   t.assert(loaded.gps === loaded.markers[0], 'after a load the GPS points at the next story mission: ' + loaded.gps);
 
+
+  // ---- 1b. QA-SAVE-15 / 16 / 12 / 18 (chunk D2) ----
+  const camYaw = await page.evaluate(() => {
+    const g = GTP.game; g.player.yaw = Math.PI; GTP.Render.rig.yaw = Math.PI;
+    g.saveSlot(3); g.loadSlot(3); g.advance(0.5);
+    const r = { p: g.player.yaw, rig: GTP.Render.rig.yaw }; g.deleteSlot(3); g.activeSlot = 2; return r;
+  });
+  t.assert(Math.abs(Math.atan2(Math.sin(camYaw.rig - camYaw.p), Math.cos(camYaw.rig - camYaw.p))) < 0.2, 'QA-SAVE-15: after a load the camera sits behind the player: ' + JSON.stringify(camYaw));
+  const dupCar = await page.evaluate(() => {
+    const g = GTP.game, M = GTP.Missions, S = GTP.Strands, E = GTP.Entities;
+    const tagged = () => E.list.filter((e) => e.kind === 'vehicle' && e.tag === 'ratiocar' && !e.removed);
+    M.state.flags.race_car = true; S.load({ strands: S.serialize(), memos: S.memos().collected.slice() });
+    const v = tagged()[0]; v.enter(g.player, 0);
+    const rp = GTP.World.nearestRoadPoint(v.x + 150, v.z); g.debug.teleport(rp.x, rp.z); g.advance(0.2);
+    g.saveSlot(3); g.loadSlot(3); g.advance(0.5);
+    const r = { n: tagged().length, under: tagged().filter((x) => x.driver === g.player).length };
+    if (g.player.inVehicle) g.player.inVehicle.exit(g.player);
+    g.deleteSlot(3); g.activeSlot = 2; return r;
+  });
+  t.assert(dupCar.n === 1 && dupCar.under === 1, 'QA-SAVE-16: a save made in THE RATIO loads one ratio car, under the player: ' + JSON.stringify(dupCar));
+  const tabs = await page.evaluate(() => {
+    const g = GTP.game; g.saveSlot(3);
+    const other = JSON.parse(localStorage.getItem('gtp.save.v4.slot3')); other.savedAt = Date.now() + 1000; other.money = 99;
+    localStorage.setItem('gtp.save.v4.slot3', JSON.stringify(other));   // another tab saved slot 3 after this one
+    const ok = g.autosave('test'), money = JSON.parse(localStorage.getItem('gtp.save.v4.slot3')).money, disabled = g.autosaveDisabled;
+    g.loadSlot(3); g.advance(0.1); const ok2 = g.autosave('test');
+    g.deleteSlot(3); g.activeSlot = 2; return { ok, money, disabled, ok2 };
+  });
+  t.assert(tabs.ok === false && tabs.money === 99 && !tabs.disabled && tabs.ok2 === true, 'QA-SAVE-12: autosave never overwrites a newer save from another tab, and works again once that save is loaded: ' + JSON.stringify(tabs));
+  const slotPerf = await page.evaluate(() => {
+    const g = GTP.game; g.saveSlot(3);
+    const d = JSON.parse(localStorage.getItem('gtp.save.v4.slot3')), big = {}; for (let i = 0; i < 20000; i++) big['k' + i] = 'x'.repeat(50);
+    d.flags = big; localStorage.setItem('gtp.save.v4.slot3', JSON.stringify(d));
+    g.slots(); const t0 = performance.now(); for (let i = 0; i < 9; i++) g.slots(); const ms = (performance.now() - t0) / 9;
+    d.money = 4242; d.summary.money = 4242; localStorage.setItem('gtp.save.v4.slot3', JSON.stringify(d));
+    const money = g.slots()[2].meta.money; g.deleteSlot(3); g.activeSlot = 2;
+    return { ms: +ms.toFixed(2), money, empty: g.slots()[2].empty };
+  });
+  t.assert(slotPerf.ms < 10 && slotPerf.money === 4242 && slotPerf.empty, 'QA-SAVE-18: slots() decodes a 1.2 MB slot once per change, not per call: ' + JSON.stringify(slotPerf));
   // ---- 2. delete ----
   const del = await page.evaluate(() => { const g = GTP.game; const a = g.deleteSlot(2); const b = g.deleteSlot(2); const slot1 = g.slots()[0].empty; g.deleteSlot(1); return { a, b, slot1, slots: g.slots().map((s) => s.empty), hasSave: g.hasSave() }; });
   console.log('  delete: ' + JSON.stringify(del));
@@ -150,6 +189,27 @@ H.run('saves', async (t) => {
   t.assert(mig.m3.money === 2468 && mig.m3.completed === 5 && mig.m3.fares === 7 && mig.m3.memos === 1 && mig.m3.megaphone === 12 && mig.m3.next === (mig.m3.parity ? 'm01c_both_sides' : 'm03b_range'), 'the migrated v3 game loads with its missions, strands and weapons: ' + JSON.stringify(mig.m3));
   t.assert(mig.meta && mig.meta.missions === 3 && mig.meta.playTime === 0 && mig.meta.money === 4321 && mig.meta.migrated === true, 'the migrated summary was rebuilt: ' + JSON.stringify(mig.meta));
   t.assert(mig.ok && mig.seed === 7 && mig.x === 300 && mig.z === 300 && mig.money === 4321 && mig.pistol === 17 && mig.armor === 25 && mig.hp === 80 && mig.completed.length === 3 && mig.markers.indexOf('m03_ratio') >= 0 && Math.abs(mig.clock - 9.25) < 0.03 && mig.slot === 1, 'load() continues the migrated game in the old city: ' + JSON.stringify(mig));
+
+
+  const v2card = await c2.page.evaluate(() => {
+    const g = GTP.game, M = GTP.Missions, per = M.K.subsPerReward;
+    const exp = ['m00_intro', 'm01_van', 'm02_read'].reduce((s, id) => s + (((M.missionById(id) || {}).reward | 0) * per), 0);
+    const meta = g.slots()[0].meta; return { district: meta.district, landmark: meta.landmark, subs: g.player.subs, exp };
+  });
+  t.assert(v2card.district && v2card.landmark && v2card.exp > 0 && v2card.subs === v2card.exp, 'QA-SAVE-17: the migrated v2 card names its district and landmark, and its missions paid subscribers: ' + JSON.stringify(v2card));
+  // ---- 4c. a malformed slot is flagged on its card, and a failed load leaves the running game alone (QA-SAVE-09) ----
+  const broken = await c2.page.evaluate(() => {
+    const g = GTP.game, p = g.player, real = g.serialize(3), e0 = GTP.errors.length, out = {};
+    g.debug.setMoney(4242);
+    [['noPos', Object.assign({}, real, { x: undefined, z: undefined })], ['completedString', Object.assign({}, real, { completed: 'm00_intro', summary: undefined })], ['minimal', { version: 4, seed: 7 }]].forEach(([k, d]) => {
+      localStorage.setItem('gtp.save.v4.slot3', JSON.stringify(d));
+      let card; try { const s = g.slots()[2]; card = s.corrupt && !s.empty; } catch (e) { card = 'throw'; }
+      out[k] = { card, loaded: g.loadSlot(3), same: g.player === p, money: g.player.money };
+    });
+    g.deleteSlot(3); out.newErrors = GTP.errors.length - e0; return out;
+  });
+  console.log('  malformed slots: ' + JSON.stringify(broken));
+  t.assert(['noPos', 'completedString', 'minimal'].every((k) => broken[k].card === true && broken[k].loaded === false && broken[k].same && broken[k].money === 4242) && broken.newErrors === 0, 'QA-SAVE-09: a malformed slot is flagged and never replaces the game: ' + JSON.stringify(broken));
 
   // ---- 5. blocked storage ----
   const blocked = await c2.page.evaluate(() => {

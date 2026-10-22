@@ -177,6 +177,11 @@
     ped.update = function (dt) { this.age += dt; this.animTime += dt; if (this.gestureT > 0) this.gestureT -= dt; if (this.lineTime > 0) { this.lineTime -= dt; if (this.lineTime <= 0) this.line = null; } };
   }
   function thaw(ped) { if (!ped || !ped._frozen) return; delete ped.update; ped._frozen = false; ped.snap(); }
+  // a new look on screen: Render.rebuildEntityMesh (detach + attach only re-added the old mesh: attach builds when !e.mesh)
+  function rebuildMesh(ped) {
+    var Rd = GTP.Render; if (!Rd) return;
+    try { if (Rd.rebuildEntityMesh) Rd.rebuildEntityMesh(ped); else if (Rd.detach && Rd.attach) { Rd.detach(ped); ped.mesh = null; Rd.attach(ped); ped._parts = null; } } catch (e) { /* cosmetic */ }
+  }
   function placeActor(ped, a) {
     var pt = a.at ? spot(a.at, true) : null;
     if (pt) {
@@ -193,8 +198,9 @@
     }
     // a placard (Roz's CHEESE, Kip's MATTRESS): the look changes, so the mesh is rebuilt
     if (a.sign != null && ped.look && ped.look.sign !== a.sign && ped.kind !== 'player') {
-      ped.look.sign = a.sign;
-      var Rd = GTP.Render; if (Rd && Rd.detach && Rd.attach) { try { Rd.detach(ped); Rd.attach(ped); ped._parts = null; } catch (e) { /* cosmetic */ } }
+      if (!ped._csLookWas) ped._csLookWas = ped.look;   // a copy carries the placard: the cast's shared look is never written (QAC-39)
+      ped.look = Object.assign({}, ped.look, { sign: a.sign });
+      rebuildMesh(ped);
     }
     if (a.anim !== undefined) pose(ped, a.anim || 'idle');
     else if (!ped.poseAnim) pose(ped, 'idle');
@@ -212,13 +218,15 @@
     var at = a.at ? spot(a.at, true) : null, pl = player(), x = at ? at.x : (pl ? pl.x : null), z = at ? at.z : (pl ? pl.z : null);
     return AI.residents.near(id, x, z, 60);
   }
-  function actorFor(a) {
+  // key: '<id>#<n>' for the n-th actor of a role a shot repeats (six protesters), so each is its own ped (QAC-38)
+  function actorFor(a, key) {
     var id = a.castId || a.id; if (!id) return null;
-    var ped = cur.actors[id];
+    key = key || id;
+    var ped = cur.actors[key];
     if (ped && !ped.removed) return ped;
     if (id === 'player') ped = player();
-    else if (cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
-    else if (residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
+    else if (key === id && cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
+    else if (key === id && residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
     else {
       var at = a.at ? spot(a.at, true) : null, pl = player();
       var x = at ? at.x : (pl ? pl.x + 2 : 0), z = at ? at.z : (pl ? pl.z : 0);
@@ -232,7 +240,7 @@
       E().add(ped);
       cur.spawned.push(ped);
     }
-    cur.actors[id] = ped;
+    cur.actors[key] = ped;
     if (id === 'player') { if (ped.inVehicle && a.at) ped.exitVehicle(); ped.stop(); ped.aiming = false; ped.lockTarget = null; }
     freeze(ped);
     return ped;
@@ -240,7 +248,7 @@
   function removeActors() {
     var i, p;
     for (i = 0; i < cur.spawned.length; i++) { p = cur.spawned[i]; pose(p, null); thaw(p); if (!p.removed) { if (p.destroy) p.destroy(); E().remove(p); } }
-    for (i = 0; i < cur.reused.length; i++) { p = cur.reused[i]; pose(p, null); thaw(p); }
+    for (i = 0; i < cur.reused.length; i++) { p = cur.reused[i]; pose(p, null); thaw(p); if (p._csLookWas) { p.look = p._csLookWas; p._csLookWas = null; if (!p.removed) rebuildMesh(p); } }   // its own look back (QAC-39)
     for (i = 0; i < cur.vehicles.length; i++) { var v = cur.vehicles[i]; if (!v.removed) { if (v.destroy) v.destroy(); E().remove(v); } }
     var pl = player(); if (pl) { pose(pl, null); thaw(pl); pl.controlEnabled = true; }
     cur.spawned.length = 0; cur.reused.length = 0; cur.vehicles.length = 0; cur.actors = {};
@@ -267,7 +275,11 @@
     cur.i = index; cur.shot = shot; cur.t = 0; cur.hold = 0; cur.linesDone = false; cur.camSnap = true;
     // actors first: the camera may frame them
     var acts = shot.actors || [];
-    for (var i = 0; i < acts.length; i++) { var ped = actorFor(acts[i]); if (ped) placeActor(ped, acts[i]); }
+    var seen = {};
+    for (var i = 0; i < acts.length; i++) {
+      var aid = acts[i].castId || acts[i].id, nth = seen[aid] = (seen[aid] || 0) + 1;
+      var ped = actorFor(acts[i], nth > 1 ? aid + '#' + nth : null); if (ped) placeActor(ped, acts[i]);
+    }
     // a later shot of a mission intro: whoever has no facing of their own turns to the player, and the player to the giver,
     // so the reverse shot sees faces, not the backs the first shot left them with (QA-C1-04)
     if (index > 0 && s.mission) faceForShot(acts, cam.to);
@@ -327,12 +339,14 @@
       if (!spec || spec === 'off') { cur.musicWas = A.radio.isPlaying && A.radio.isPlaying() ? A.station : null; A.radio.stop(); }
       else if (typeof spec === 'string' && spec.indexOf('station:') === 0) {
         var want = spec.slice(8), list = (GTP.Content.radio && GTP.Content.radio.stations) || [];
-        for (var i = 0; i < list.length; i++) if (list[i].id === want) { cur.musicWas = A.station; A.radio.setStation(i); break; }
+        for (var i = 0; i < list.length; i++) if (list[i].id === want) { cur.musicWas = A.station; A.radio.setStation(i); if (A.radio.force) { A.radio.force(true); cur.musicForced = true; } break; }   // heard on foot too (QAC-12)
       }
     } catch (e) { /* audio optional */ }
   }
   function musicEnd(c) {
-    var A = GTP.Audio; if (!A || !A.radio || !c || c.musicWas == null) return;
+    var A = GTP.Audio; if (!A || !A.radio || !c) return;
+    if (c.musicForced && A.radio.force) { try { A.radio.force(false); } catch (e) { /* audio optional */ } }
+    if (c.musicWas == null) return;
     try { A.radio.setStation(c.musicWas); } catch (e) { /* audio optional */ }
   }
 
@@ -359,7 +373,7 @@
     }
     cur = null;
     if (GTP.AI) GTP.AI.alarmMuted = !!c.alarmWas;
-    if (c.wantedWas && GTP.AI && GTP.AI.wanted && GTP.AI.wanted.set) { try { GTP.AI.wanted.set(c.wantedWas); } catch (e) { /* ai optional */ } }
+    if (c.wantedWas && pl && pl.alive !== false && GTP.AI && GTP.AI.wanted && GTP.AI.wanted.set) { try { GTP.AI.wanted.set(c.wantedWas); } catch (e) { /* ai optional */ } }   // never onto a dead player (QAC-11)
     musicEnd(c);
     var Rd = GTP.Render;
     if (Rd) { Rd.freeCam(false); if (Rd.rig && pl) { Rd.rig.target(pl); Rd.rig.yaw = pl.yaw; Rd.rig.pitch = 0.2; Rd.rig.snap(); Rd.updateCamera(0); } }
@@ -497,6 +511,10 @@
     actors: function () { return cur ? cur.actors : {}; },
     debug: { cur: function () { return cur; }, spot: spot, lookAt: lookAt }
   };
+  // a death or a bust mid-script ends it at once, without its onDone: the WASTED / BUSTED shot needs the rig, the body, no letterbox (QAC-11)
+  function downDuringScript() { if (cur) { try { finish(false); } catch (e) { U.reportError(e, 'cutscenes.down'); } } }
+  GTP.Events.on('player:wasted', downDuringScript);
+  GTP.Events.on('busted', downDuringScript);
 
   // ====================================================================== GTP.Hints ==
   var HINT_DEFS = [

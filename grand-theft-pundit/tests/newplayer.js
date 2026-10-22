@@ -167,7 +167,17 @@ function installPlayer(budget) {
     },
     // ---- driving: throttle + left / right keys (pulse steering), handbrake to stop ----
     drive(getRoute, stop, maxSec) {
-      const p = NP.p(); let route = getRoute(), i = 0, t = 0, lastProg = 0, best = 1e9, rev = 0, reroutes = 0;
+      const p = NP.p(); let t = 0;
+      // parked off the road (a bay, a kerb) with the road straight ahead: pull out onto it first, as a driver would, and take the
+      // GPS line from there (the line through a car park ran the van into a kerb tree)
+      { const v0 = p.inVehicle, Wd = GTP.World, T = Wd.T, roadAt = (x, z) => { const tt = Wd.tileAt(x, z); return tt === T.ROAD || tt === T.BRIDGE || tt === T.HIGHWAY; };
+        if (v0 && !roadAt(v0.x, v0.z)) {
+          const f = U.yawToDir(v0.yaw); let ahead = 0; for (let d = 3; d <= 12; d += 1) if (roadAt(v0.x + f.x * d, v0.z + f.z * d)) { ahead = d; break; }
+          // someone on the pavement in front (the giver, Kip, a passer-by): wait for them, a few seconds at most, never drive through
+          const inPath = (v) => { const fd = U.yawToDir(v.yaw); return GTP.Entities.near(v.x, v.z, 9).some((e) => e !== v && e !== p && !e.removed && ((e.kind === 'ped' && e.alive && !e.inVehicle) || e.kind === 'vehicle') && (() => { const dx = e.x - v.x, dz = e.z - v.z, al = dx * fd.x + dz * fd.z, sd = Math.abs(dx * -fd.z + dz * fd.x); return al > 1 && al < 6.5 && sd < 1.9; })()); };
+          if (ahead) { let waited = 0; for (let k = 0; k < 240 && p.inVehicle && !roadAt(p.inVehicle.x, p.inVehicle.z) && !stop(); k++) { const blocked = inPath(p.inVehicle); if (blocked) { waited += 1 / 30; if (waited > 4) break; } NP.hold('forward', !blocked && p.inVehicle.speed < 5); NP.hold('back', false); NP.hold('jump', blocked); NP.adv(1 / 30); t += 1 / 30; } NP.releaseAll(); NP.notes.pulledOut = (NP.notes.pulledOut || 0) + 1; if (waited) NP.notes.pullOutWaited = +((NP.notes.pullOutWaited || 0) + waited).toFixed(1); }
+        } }
+      let route = getRoute(), i = 0, lastProg = t, best = 1e9, rev = 0, reroutes = 0, aheadT = 0, passT = 0;
       while (t < maxSec && !NP.over()) {
         if (stop()) { NP.releaseAll(); NP.hold('jump', true); NP.adv(0.4); NP.releaseAll(); return { ok: true, t }; }
         if (NP.housekeeping()) { t += 0.2; continue; }
@@ -183,19 +193,27 @@ function installPlayer(budget) {
         let want = dEnd < 25 ? 7 : (Math.abs(err) > 0.6 || turn > 0.8 ? 8 : 16);
         // something in the lane ahead (a car, a pedestrian): ease off like a careful new driver
         const fwd = U.yawToDir(v.yaw);
+        let aheadCar = false;
         const ahead = GTP.Entities.near(v.x, v.z, 14).some((e) => {
           if (e === v || e === p || e.removed || !(e.kind === 'vehicle' || (e.kind === 'ped' && e.alive && !e.inVehicle))) return false;
           const dx = e.x - v.x, dz = e.z - v.z, along = dx * fwd.x + dz * fwd.z, side = Math.abs(dx * -fwd.z + dz * fwd.x);
-          return along > 1.5 && along < 4 + Math.max(0, v.speed) * 0.8 && side < (e.kind === 'vehicle' ? 2.2 : 1.6);
+          const hit = along > 1.5 && along < 4 + Math.max(0, v.speed) * 0.8 && side < (e.kind === 'vehicle' ? 2.2 : 1.6);
+          if (hit && e.kind === 'vehicle') aheadCar = true;
+          return hit;
         });
-        if (ahead) want = Math.min(want, 4);
+        // stuck behind it for 3 s (a car waiting at a light, a parked van): go round it on the left, as a driver would
+        aheadT = aheadCar && Math.abs(v.speed) < 2 ? aheadT + 1 / 30 : (aheadCar ? aheadT : 0);   // a car, never a person
+        if (ahead && aheadT < 3) want = Math.min(want, 4);
+        if (aheadT >= 3 && passT <= 0) { passT = 1.6; aheadT = 0; NP.notes.overtakes = (NP.notes.overtakes || 0) + 1; }
         if (rev > 0) {   // backing out of a wall: reverse with opposite lock
           NP.hold('forward', false); NP.hold('back', true); NP.hold(err > 0 ? 'right' : 'left', true); NP.hold(err > 0 ? 'left' : 'right', false); rev -= 1 / 30;
           if (rev <= 0) { NP.hold('back', false); NP.hold('left', false); NP.hold('right', false); }
         } else {
           const sp = v.speed;
           NP.hold('forward', sp < want); NP.hold('back', sp > want + 4);
-          const thr = 0.06; NP.hold('left', err > thr); NP.hold('right', err < -thr);
+          const thr = 0.06;
+          if (passT > 0) { passT -= 1 / 30; const sw = passT > 0.8 ? 1 : -1; NP.hold('left', sw > 0); NP.hold('right', sw < 0); NP.hold('forward', sp < 6); }   // out, then back in
+          else { NP.hold('left', err > thr); NP.hold('right', err < -thr); }
         }
         NP.adv(1 / 30); t += 1 / 30;
         const rem = dEnd + (pts.length - 1 - i) * 4;
@@ -207,7 +225,8 @@ function installPlayer(budget) {
         void d;
       }
       NP.releaseAll();
-      return { ok: stop(), t, why: NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s' };
+      const vv = p.inVehicle;
+      return { ok: stop(), t, why: (NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s') + (vv ? ' at ' + Math.round(vv.x) + ',' + Math.round(vv.z) + (aheadT > 0 ? ', blocked ahead' : '') + ', overtakes ' + (NP.notes.overtakes || 0) : '') };
     },
     // the nearest objective blip on the minimap (pickups show one blip each), else the HUD arrow's point
     objectivePoint() {

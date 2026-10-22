@@ -35,6 +35,7 @@
   var GTP = window.GTP = window.GTP || {};
   var C = GTP.C, U = GTP.util;
   var LEGACY_KEY = 'gtp.save.v2';
+  var LEGACY_DONE = 'gtp.save.v2.migrated';   // set once the v2 save went to slot 1, or slot 1 was deleted: it never comes back (QA-SAVE-07)
   var SLOTS = 3;
   var SAVE_VERSION = 4;
   var SIM_STATES = { playing: 1, cutscene: 1 };   // the world keeps running through dialogue; it pauses for a minigame
@@ -54,8 +55,10 @@
       var q = (typeof location !== 'undefined' && location.search) ? location.search.slice(1) : '';
       q.split('&').forEach(function (kv) {
         if (!kv) return;
-        var p = kv.split('='), k = decodeURIComponent(p[0]), v = p.length > 1 ? decodeURIComponent(p[1]) : '1';
-        out[k] = v;
+        try {   // one bad escape ('ref=100%') drops only its own pair (QAC-54)
+          var p = kv.split('='), k = decodeURIComponent(p[0]), v = p.length > 1 ? decodeURIComponent(p[1]) : '1';
+          out[k] = v;
+        } catch (e) { /* malformed pair */ }
       });
     } catch (e) { /* no location (inlined pages) */ }
     return out;
@@ -69,6 +72,12 @@
   function encode(data) { return JSON.stringify(data, function (k, v) { return v === Infinity ? 'inf' : v; }); }
   function decode(raw) { return JSON.parse(raw, function (k, v) { return v === 'inf' ? Infinity : v; }); }
   function copyWeapons(w) { var out = {}; if (w) for (var k in w) out[k] = w[k]; return out; }
+  // a save that can be applied: finite x / z, completed an array, weapons / ammo / flags / vehicle objects (QA-SAVE-09)
+  function validSave(d) {
+    function obj(v) { return v == null || (typeof v === 'object' && !Array.isArray(v)); }
+    return !!d && typeof d === 'object' && typeof d.x === 'number' && isFinite(d.x) && typeof d.z === 'number' && isFinite(d.z) &&
+      (d.completed == null || Array.isArray(d.completed)) && obj(d.weapons) && obj(d.ammo) && obj(d.flags) && obj(d.vehicle);
+  }
 
   // ---------------------------------------------------------------- Game --
   function Game() {
@@ -95,6 +104,8 @@
     this._storyPending = false;         // after the opening: GTP.Story.begin() starts the first mission
     this._fireLatch = false;            // shoot / action held across a state change into play stay dead until released (QA-CMB-06)
     this._loadT = 0;
+    this._seen = {};                    // per slot: the savedAt this page last read or wrote; a newer one is another tab's (QA-SAVE-12)
+    this._bornAt = Date.now();
     this.debug = this._makeDebug();
   }
 
@@ -122,11 +133,12 @@
       GTP.Audio.init({ headless: this.headless, mute: truthy(opts.mute) });
       GTP.Render.init(gl); lap('render');
       this._bindEvents();
+      this.newGame(this.seed); lap('newGame');
+      // after the city exists: a migrated save's card needs districtAt and the landmarks (QA-SAVE-17)
       this.migrateLegacySave();
       this.migrateV3Saves();
-      this.newGame(this.seed); lap('newGame');
       bt.generate = Math.round(GTP.World.generateMs || 0);
-      if (opts.clock != null && opts.clock !== '') this.debug.setClock(parseFloat(opts.clock));
+      if (opts.clock != null && opts.clock !== '') { try { this.debug.setClock(parseFloat(opts.clock)); } catch (e) { U.reportError(e, 'boot.clock'); } }   // a bad ?clock never stops UI.init
       GTP.UI.init(); lap('ui');
       this.setState(skipTitle ? 'playing' : 'title');
       // ?mission=<id> starts that mission right away (prerequisites complete, flags and weapons applied, intro skipped unless &intro=1)
@@ -142,12 +154,23 @@
     if (!this.headless && typeof requestAnimationFrame === 'function') {
       this._last = U.now();
       this._raf = requestAnimationFrame(function (ts) { self._loop(ts); });
-      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', function () { self._last = U.now(); self._acc = 0; });
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', function () { self._last = U.now(); self._acc = 0; self._onVisibility(!!document.hidden); });
     }
     try { if (window.claude && window.claude.hot) window.claude.hot.snapshot = function () { return GTP.game.debug.snapshot(); }; } catch (e) { /* optional */ }
     return this;
   };
 
+  // a hidden tab stops rAF, so the engine / siren / heli loops would hold their last gain for as long as it is hidden: pause
+  // (GTA pauses when minimised) and suspend the AudioContext; visible again resumes the audio, the pause menu stays up (QA-SAVE-13, QA-D-02)
+  Game.prototype._onVisibility = function (hidden) {
+    var A = GTP.Audio, ac = A && A.ctx;
+    if (hidden && !this.loading.active && (this.state === 'playing' || this.state === 'cutscene' || this.state === 'minigame')) {
+      if (GTP.UI && GTP.UI.openPause) { try { GTP.UI.openPause('pause'); } catch (e) { U.reportError(e, 'ui.openPause'); } }
+      if (this.state === 'playing') this.setState('paused');
+    }
+    if (!ac) return;
+    try { var pr = hidden ? (ac.state === 'running' ? ac.suspend() : null) : (ac.state === 'suspended' && A.unlocked ? ac.resume() : null); if (pr && pr.catch) pr.catch(function () { /* a later gesture resumes it (Audio.unlock) */ }); } catch (e) { /* audio optional */ }
+  };
   Game.prototype._bindEvents = function () {
     var self = this;
     if (this._eventsBound) return;
@@ -455,13 +478,16 @@
       // hold the simulation while the chunks build; the UI draws the bar
       this._tickLoading(dt);
       this._acc = 0;
+      // keys, clicks and mouse look made over the loading bar are dropped, not all applied on the first step after it (QAC-51)
+      try { GTP.Input.beginFrame(); GTP.Input.endFrame(); } catch (e) { U.reportError(e, 'loading.input'); }
       this._renderLoading();
       return;
     }
     this._acc += dt * (this.timeScale > 0 ? this.timeScale : 1);
-    var n = 0;
-    while (this._acc >= C.STEP && n < C.MAX_STEPS) { this.step(); this._acc -= C.STEP; n++; }
-    if (n >= C.MAX_STEPS && this._acc >= C.STEP) this._acc = 0;
+    // a slow frame (under 12 fps) still gets its time, up to 8 steps (133 ms); only beyond that is time dropped (QAC-53)
+    var n = 0, cap = Math.max(C.MAX_STEPS, Math.min(8, Math.ceil(dt / C.STEP)));
+    while (this._acc >= C.STEP && n < cap) { this.step(); this._acc -= C.STEP; n++; }
+    if (n >= cap && this._acc >= C.STEP) this._acc = 0;
     this.render(this._acc / C.STEP);
     this._fpsN++; this._fpsT += dt;
     if (this._fpsT >= 0.5) { this.fps = this._fpsN / this._fpsT; this._fpsN = 0; this._fpsT = 0; }
@@ -480,7 +506,7 @@
       bestTimes: Object.assign({}, st.bestTimes || {}),
       clock: this.time.clock, day: this.time.day, radioStation: GTP.Audio.station || 0, cameraMode: p.cameraMode || 'chase',
       memos: [], strands: {}, waypoint: this.waypoint || null,
-      vehicle: v && !v.wreck && !v.sinking ? { type: v.type, wrap: v.wrap || null, color: v.color || null, tag: v.tag || null, x: v.x, z: v.z, yaw: v.yaw, hp: v.hp } : null,
+      vehicle: v && !v.wreck && !v.sinking ? { type: v.type, wrap: v.wrap || null, color: v.color || null, tag: v.tag || null, x: v.x, z: v.z, y: v.y, yaw: v.yaw, hp: v.hp } : null,
       settingsSnapshot: null,
       reason: extra && extra.reason ? extra.reason : 'manual', auto: !!(extra && extra.auto)
     };
@@ -530,7 +556,8 @@
   Game.prototype.applyData = function (data) {
     var p = this.player, Ms = GTP.Missions;
     p.money = data.money | 0; p.subs = data.subs | 0;
-    this.debug.teleport(data.x, data.z); p.yaw = data.yaw || 0; p.moveYaw = p.yaw; p.aimYaw = p.yaw;
+    // the saved height picks the layer (a Loop deck, a bridge), never the ground under it (QAC-13)
+    this.debug.teleport(data.x, data.z, data.y != null ? GTP.World.heightAt(data.x, data.z, data.y) : undefined); p.yaw = data.yaw || 0; p.moveYaw = p.yaw; p.aimYaw = p.yaw;
     p.weapons = data.weapons ? copyWeapons(data.weapons) : { fist: Infinity }; if (!p.weapons.fist) p.weapons.fist = Infinity;
     p.weapon = data.weapon && p.weapons[data.weapon] ? data.weapon : 'fist';
     p.ammo = {}; if (data.ammo && typeof data.ammo === 'object') for (var k in data.ammo) { var a = data.ammo[k]; if (a && p.weapons[k]) p.ammo[k] = { mag: a.mag, reserve: a.reserve, total: a.total != null ? a.total : (a.mag + a.reserve) }; }
@@ -560,12 +587,18 @@
       try {
         var sv = data.vehicle;
         if (sv.tag === 'hoa' && sv.type === 'suv') sv.tag = 'hoasuv';   // v3 saves: the strand SUV's old tag (QA-STR-11)
-        var veh = this.debug.spawnVehicle(sv.x != null ? sv.x : p.x, sv.z != null ? sv.z : p.z, sv.type, { color: sv.color || undefined, wrap: sv.wrap || undefined, yaw: sv.yaw, tag: sv.tag || undefined });
-        if (veh) { if (sv.hp) veh.hp = Math.min(veh.hp, sv.hp); if (sv.tag === 'podvan' || sv.tag === 'sponsorvan') veh.persistent = true; veh.enter(p, 0); }
+        // a strand-owned car (sponsor van, THE RATIO, home cab, HOA SUV) was already parked at its bay by Strands.load: bring that one here (QA-SAVE-16)
+        var veh = null, L = GTP.Entities.list, sx = sv.x != null ? sv.x : p.x, sz = sv.z != null ? sv.z : p.z;
+        for (var j = 0; sv.tag && j < L.length; j++) { var lv = L[j]; if (lv.kind === 'vehicle' && lv.tag === sv.tag && lv.type === sv.type && !lv.removed && !lv.wreck && !lv.sinking && !lv.driver) { veh = lv; break; } }
+        var sy = GTP.World.heightAt(sx, sz, sv.y != null ? sv.y : p.y);   // the deck it was saved on; an older save: the player's layer (QAC-13)
+        if (veh) { veh.x = sx; veh.z = sz; veh.y = sy; if (sv.yaw != null) veh.yaw = sv.yaw; veh.vx = veh.vz = veh.vy = 0; veh.speed = 0; veh.snap(); if (veh._sh) GTP.Entities.hash.update(veh); }
+        else veh = this.debug.spawnVehicle(sx, sz, sv.type, { color: sv.color || undefined, wrap: sv.wrap || undefined, yaw: sv.yaw, tag: sv.tag || undefined, y: sy });
+        if (veh) { if (typeof sv.hp === 'number') veh.hp = Math.min(veh.hp, sv.hp); if (sv.tag === 'podvan' || sv.tag === 'sponsorvan') veh.persistent = true; this._restoring = true; try { veh.enter(p, 0); } finally { this._restoring = false; } }   // a load seats the player: not a fresh vehicle:enter for the strands
       } catch (e) { U.reportError(e, 'load.vehicle'); }
     }
     if (Ms.refreshMarkers) Ms.refreshMarkers();
     GTP.Render.updateEnvironment(this.time.clock);
+    GTP.Render.rig.yaw = p.inVehicle ? p.inVehicle.yaw : p.yaw;   // the chase camera behind the player, not north (QA-SAVE-15)
     GTP.Render.rig.snap();
     this.fresh = false;
     this._openingPending = false; this._storyPending = false;
@@ -580,27 +613,33 @@
     if (!raw) return null;
     var d;
     try { d = decode(raw); } catch (e) { return { corrupt: true }; }
-    if (!d || typeof d !== 'object') return { corrupt: true };
+    if (!d || typeof d !== 'object' || ((d.version === 3 || d.version === SAVE_VERSION) && !validSave(d))) return { corrupt: true };   // unappliable: flagged on the card, never loaded (QA-SAVE-09)
     if (d.version === 3) return { data: this.upgradeV3(d), migrated: true };
     if (d.version === SAVE_VERSION && !old) return { data: d };
     return { corrupt: true, version: d.version };
   };
   Game.prototype.slots = function () {
-    var out = [];
+    var out = [], cache = this._slotCache || (this._slotCache = {});
     for (var n = 1; n <= SLOTS; n++) {
-      var r = this._readSlot(n), meta = r && r.data ? (r.data.summary || this._summary(r.data)) : null;
-      out.push({ slot: n, empty: !meta, corrupt: !!(r && r.corrupt), meta: meta, version: r && r.data ? r.data.version : (r && r.version) || null });
+      // the title and slot pages ask three times a frame: a slot is decoded again only when its stored text changed (QA-SAVE-18)
+      var raw = storeGet(slotKey(n)) || storeGet(v3Key(n)) || storeGet(altSlotKey(n)), c = cache[n];
+      if (!c || c.raw !== raw) {
+        var r = this._readSlot(n), meta = r && r.data ? (r.data.summary || this._summary(r.data)) : null;
+        // empty: nothing stored. An unreadable slot (corrupt, another version) is occupied, never free space (QA-SAVE-05)
+        c = cache[n] = { raw: raw, row: { slot: n, empty: !r, corrupt: !!(r && r.corrupt), meta: meta, version: r && r.data ? r.data.version : (r && r.version) || null } };
+      }
+      out.push(Object.assign({}, c.row));
     }
     return out;
   };
   Game.prototype.hasSave = function () {
     var s = this.slots();
-    for (var i = 0; i < s.length; i++) if (!s[i].empty) return true;
-    return !!storeGet(LEGACY_KEY);
+    for (var i = 0; i < s.length; i++) if (s[i].meta) return true;   // CONTINUE only for a slot that can be read
+    return !!storeGet(LEGACY_KEY) && !storeGet(LEGACY_DONE);
   };
   Game.prototype.latestSlot = function () {
     var s = this.slots(), best = 0, bt = -1;
-    for (var i = 0; i < s.length; i++) if (!s[i].empty && (s[i].meta.savedAt || 0) > bt) { bt = s[i].meta.savedAt || 0; best = s[i].slot; }
+    for (var i = 0; i < s.length; i++) if (s[i].meta && (s[i].meta.savedAt || 0) > bt) { bt = s[i].meta.savedAt || 0; best = s[i].slot; }
     return best;
   };
   // opts: {auto, reason, quiet}
@@ -608,11 +647,12 @@
     opts = opts || {};
     n = n | 0; if (n < 1 || n > SLOTS) n = this.activeSlot || 1;
     // never in the middle of a cutscene: its flag is set but its onDone (the opening's hand-off to the story) has not run (QA-B-FE-07)
-    if (GTP.Cutscenes && GTP.Cutscenes.active) { if (!opts.auto) toast('Not during a cutscene.'); return false; }
+    var Mb = GTP.Missions, cutQueued = !opts.auto && Mb && Mb.busy && Mb.busy() && !(Mb.state && Mb.state.active);   // MISSION PASSED -> act cutscene: pendingCut is not in the save (QA-SAVE-04)
+    if ((GTP.Cutscenes && GTP.Cutscenes.active) || cutQueued) { if (!opts.auto) toast('Not during a cutscene.'); return false; }
     var data = this.serialize(n, opts); if (!data) return false;
     var ok = storeSet(slotKey(n), encode(data));
     if (ok) {
-      this.activeSlot = n;
+      this.activeSlot = n; this._seen[n] = data.savedAt;
       if (!opts.auto && !opts.quiet) toast('Game saved to slot ' + n);
       GTP.Events.emit('saved', { slot: n, reason: opts.reason || 'manual', auto: !!opts.auto, meta: data.summary });
       return true;
@@ -629,11 +669,12 @@
     return this._loadData(r.data, n);
   };
   Game.prototype._loadData = function (data, slot) {
+    if (!validSave(data)) { toast('Save file is corrupt'); return false; }   // checked before newGame replaces the running game (QA-SAVE-09)
     try {
       if (GTP.Missions.state && GTP.Missions.state.active && GTP.Missions.abort) GTP.Missions.abort();
       this.newGame(data.seed | 0, { noLoading: true });
       this.applyData(data);
-      if (slot) this.activeSlot = slot;
+      if (slot) { this.activeSlot = slot; this._seen[slot] = data.savedAt || 0; }
       this.setState('playing');
       this._beginLoading('load');
       toast('Game loaded' + (slot ? ' (slot ' + slot + ')' : ''));
@@ -649,19 +690,20 @@
     n = n | 0; if (n < 1 || n > SLOTS) return false;
     var had = !!(storeGet(slotKey(n)) || storeGet(v3Key(n)) || storeGet(altSlotKey(n)));
     storeDel(slotKey(n)); storeDel(v3Key(n)); storeDel(altSlotKey(n));   // the v3 copy too, or the migration would bring it back
+    if (n === 1 && storeGet(LEGACY_KEY)) storeSet(LEGACY_DONE, '1');   // nor the v2 save (migrated before the marker existed) (QA-SAVE-07)
     if (had) GTP.Events.emit('save:deleted', { slot: n });
     return had;
   };
   // the old single save becomes slot 1 once (play time unknown, the summary rebuilt); the old key stays
   Game.prototype.migrateLegacySave = function () {
-    var raw = storeGet(LEGACY_KEY); if (!raw) return false;
+    var raw = storeGet(LEGACY_KEY); if (!raw || storeGet(LEGACY_DONE)) return false;
     if (storeGet(slotKey(1)) || storeGet(v3Key(1)) || storeGet(altSlotKey(1))) return false;
     var old;
     try { old = decode(raw); } catch (e) { return false; }
     if (!old || old.version !== 2) return false;
     var data = this.upgradeLegacy(old);
     var ok = storeSet(slotKey(1), encode(data));
-    if (ok) GTP.Events.emit('save:migrated', { slot: 1 });
+    if (ok) { storeSet(LEGACY_DONE, '1'); GTP.Events.emit('save:migrated', { slot: 1 }); }
     return ok;
   };
   // v3 -> v4 (PLAN_V03): every slot whose v4 key is empty gets its v3 save upgraded; the v3 key is left alone
@@ -671,7 +713,7 @@
       if (storeGet(slotKey(n))) continue;
       var raw = storeGet(v3Key(n)) || storeGet(altSlotKey(n)); if (!raw) continue;
       var old; try { old = decode(raw); } catch (e) { continue; }
-      if (!old || old.version !== 3) continue;
+      if (!old || old.version !== 3 || !validSave(old)) continue;   // a broken v3 slot stays put; its card says so
       if (storeSet(slotKey(n), encode(this.upgradeV3(old)))) { moved++; GTP.Events.emit('save:migrated', { slot: n, from: 3 }); }
     }
     return moved;
@@ -692,6 +734,10 @@
       clock: typeof old.clock === 'number' ? old.clock : C.DAY.startClock, day: old.day || 1, radioStation: old.radioStation | 0, cameraMode: old.cameraMode || 'chase',
       memos: [], strands: {}, waypoint: null, vehicle: null, settingsSnapshot: null, registry: {}, reason: 'migrated', auto: false, migratedFrom: 2
     };
+    // v2 kept no subscribers: credit what its completed missions paid, reward x subsPerReward as completeRun does (QA-SAVE-17)
+    var Ms = GTP.Missions, per = Ms && Ms.K ? Ms.K.subsPerReward || 0 : 0;
+    if (old.subs != null) data.subs = old.subs | 0;
+    else if (Ms && Ms.missionById) data.completed.forEach(function (id) { var m = Ms.missionById(id); if (m && m.reward) data.subs += (m.reward | 0) * per; });
     data.summary = this._summary(data);
     data.summary.migrated = true;
     return data;
@@ -701,7 +747,7 @@
   Game.prototype.load = function (n) {
     var slot = n ? (n | 0) : this.latestSlot();
     if (slot) return this.loadSlot(slot);
-    var raw = storeGet(LEGACY_KEY); if (!raw) return false;
+    var raw = storeGet(LEGACY_KEY); if (!raw || storeGet(LEGACY_DONE)) return false;
     var old;
     try { old = decode(raw); } catch (e) { toast('Save file is corrupt'); return false; }
     if (!old || old.version !== 2) { toast('Save file is from another version'); return false; }
@@ -712,6 +758,7 @@
     var p = this.player, Ms = GTP.Missions, St = GTP.Strands, Cs = GTP.Cutscenes;
     if (!p || this.state !== 'playing' || this.loading.active) return true;
     if (Ms && Ms.state && Ms.state.active) return true;
+    if (Ms && Ms.busy && Ms.busy()) return true;   // an act / ending cutscene still queued behind MISSION PASSED, an outro, a minigame (QA-SAVE-04)
     if (St && St.active && St.active()) return true;
     if (Cs && Cs.active) return true;
     if ((p.wanted | 0) > 0) return true;
@@ -721,7 +768,10 @@
   Game.prototype.autosave = function (reason) {
     if (this.autosaveDisabled || !this.player) return false;
     if (this._autosaveBlocked(reason)) return false;
-    var ok = this.saveSlot(this.activeSlot || 1, { auto: true, reason: reason || 'auto', quiet: true });
+    // another tab saved this slot after this page last read or wrote it: never autosave over that (QA-SAVE-12)
+    var n = this.activeSlot || 1, cur = this._readSlot(n), seen = this._seen[n] != null ? this._seen[n] : this._bornAt;
+    if (cur && cur.data && !cur.data.migratedFrom && (cur.data.savedAt || 0) > seen) { toast('Autosave skipped: slot ' + n + ' was saved in another tab'); GTP.Events.emit('save:conflict', { slot: n, savedAt: cur.data.savedAt, reason: reason || 'auto' }); return false; }
+    var ok = this.saveSlot(n, { auto: true, reason: reason || 'auto', quiet: true });
     if (!ok) { this.autosaveDisabled = true; toast('Autosave is off: storage is blocked'); }
     return ok;
   };
@@ -765,7 +815,7 @@
       completeMission: function () { var a = GTP.Missions.state.active; var guard = 0; while (GTP.Missions.state.active && GTP.Missions.state.active === a && guard++ < 50) { if (GTP.Missions.completeObjective() === false) break; } },
       godMode: function (on) { if (g.player) g.player.godMode = on !== false; },
       listLandmarks: function () { return GTP.World.landmarks.map(function (l) { return { id: l.id, name: l.name, kind: l.kind, district: l.district, x: Math.round(l.x), z: Math.round(l.z), door: l.door ? { x: l.door.x, z: l.door.z } : null }; }); },
-      setClock: function (h) { g.time.clock = ((h % 24) + 24) % 24; GTP.Render.updateEnvironment(g.time.clock); },
+      setClock: function (h) { h = Number(h); if (!isFinite(h)) return false; g.time.clock = ((h % 24) + 24) % 24; GTP.Render.updateEnvironment(g.time.clock); return true; },   // ?clock=abc: ignored, never NaN (QAC-52)
       freeCam: function (x, y, z, lx, ly, lz) { GTP.Render.freeCam(true); var c = GTP.Render.camera; c.position.set(x, y, z); if (lx != null) c.lookAt(lx, ly, lz); },
       followCam: function () { GTP.Render.freeCam(false); },
       // the graphics track's hooks: weather state ('clear' | 'overcast' | 'rain', instant unless false) and a quality preset

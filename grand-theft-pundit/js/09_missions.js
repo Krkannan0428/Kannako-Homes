@@ -988,13 +988,21 @@
   H.escape_wanted = {
     start: function (o, c) {
       var n = o.setWanted != null ? o.setWanted : 2, wd = GTP.AI && GTP.AI.wanted;
+      c.wantedWas = wd ? wd.level | 0 : (player().wanted | 0);   // torn down unescaped, the stars go back to this (QAC-14)
       if (wd && wd.set) wd.set(n); else if (game() && game().debug) game().debug.setWanted(n);
       c.t = 0;
     },
     check: function (o, c, p) {
       if (c.t < 1) return null;
       var wd = GTP.AI && GTP.AI.wanted, lvl = wd ? wd.level : p.wanted;
-      return lvl === 0 && p.wanted === 0 ? 'done' : null;
+      if (lvl === 0 && p.wanted === 0) { c.escaped = true; return 'done'; }
+      return null;
+    },
+    // an abort, a timer fail (m13's timer_wrap) or a skip: the mission's stars are not the player's to keep
+    cleanup: function (o, c) {
+      if (c.escaped) return;
+      var wd = GTP.AI && GTP.AI.wanted, n = c.wantedWas | 0;
+      if (wd && wd.set && wd.clear) { if (n) wd.set(n); else wd.clear(); } else if (game() && game().debug) game().debug.setWanted(n);
     }
   };
   H.survive = {
@@ -1158,12 +1166,12 @@
       var p = player(), CB = GTP.Combat, id = o.weaponId;
       c.done = true;
       if (!p || !id || !CB || !CB.WEAPONS || !CB.WEAPONS[id]) return;
-      var w = CB.WEAPONS[id], n = o.ammo != null ? o.ammo : (K.weaponAmmo[id] || 30);
+      var w = CB.WEAPONS[id], n = o.ammo != null ? o.ammo : (K.weaponAmmo[id] || 30), had = p.weapons[id];   // had: what an abort / fail leaves (QAC-03)
       if (w.melee) p.weapons[id] = Infinity;
       else if (CB.giveAmmo) CB.giveAmmo(p, id, n, false);
       else p.weapons[id] = (p.weapons[id] || 0) + n;
       p.weapon = id;
-      if (run) run.equipped.push(id);
+      if (run) run.equipped.push({ id: id, had: had != null ? had : null, gave: had === Infinity ? 0 : p.weapons[id] === Infinity ? Infinity : (p.weapons[id] || 0) - (had > 0 ? had : 0) });
       toast('Equipped: ' + (CB.weaponName ? CB.weaponName(id) : id));
       sfx('swap', p.x, p.z, 0.6);
       emit('equip', { weapon: id, ammo: n });
@@ -1592,6 +1600,8 @@
       vehicle: p.inVehicle ? vehicleRecord(p.inVehicle) : null,
       tagged: {}, flags: Object.assign({}, state.flags), equipped: run.equipped.slice()
     };
+    // the car itself, not enumerable (snapshots stay JSON-safe): RETRY puts the player back in it, not in a clone beside it (QAC-15)
+    if (snap.vehicle) Object.defineProperty(snap.vehicle, 'ref', { value: p.inVehicle });
     for (var i = 0; i < run.stack.length; i++) { snap.cursor.push(run.stack[i].i); snap.timers.push(run.stack[i].timer ? run.stack[i].timer.remaining : null); }
     for (var tag in run.tagged) { var rec = vehicleRecord(run.tagged[tag]); if (rec && !run.tagged[tag].wreck && !run.tagged[tag].sinking) snap.tagged[tag] = rec; }
     return snap;
@@ -1740,6 +1750,16 @@
     if (oc.giveMoney && p) { p.money += oc.giveMoney | 0; if (!silent) textFx('+' + U.fmtMoney(oc.giveMoney), p.x, p.y + 2.6, p.z, '#9dff3c', 1.6); }
     if (oc.subs && !silent) Missions.addSubs(oc.subs | 0, 'mission:' + m.id);
   }
+  // an abort or a fail takes back what the run's equip objectives loaned (QAC-03); RETRY restores its checkpoint's own loadout
+  function takeBackLoans(r) {
+    var p = player(), L = r && r.equipped; if (!p || !p.weapons || !L) return;
+    for (var i = L.length - 1; i >= 0; i--) {
+      var e = L[i]; if (!e || typeof e !== 'object' || p.weapons[e.id] == null) continue;
+      if (e.had == null) { delete p.weapons[e.id]; if (p.ammo) delete p.ammo[e.id]; }
+      else if (e.had !== Infinity && p.weapons[e.id] !== Infinity && e.gave > 0) { p.weapons[e.id] = Math.max(0, p.weapons[e.id] - e.gave); if (GTP.Combat && GTP.Combat.ammo) GTP.Combat.ammo(p, e.id); }
+    }
+    if (p.weapons[p.weapon] == null) p.weapon = 'fist';
+  }
   // the weapons a REPLAY borrowed go back (GDD_EXPANSION §6.5)
   function restoreWeapons(r) {
     var p = player(); if (!p || !r || !r.weaponsBefore) return;
@@ -1799,7 +1819,7 @@
     endObjective();
     cleanupEntities(run.entities, false);
     clearObjMarkers();
-    if (run.replay) restoreWeapons(run);
+    if (run.replay) restoreWeapons(run); else takeBackLoans(run);   // a loaner never outlives an abort or a fail (QAC-03)
     var g = game(); if (g && g.state === 'cutscene') g.setState('playing');
     var Rd = GTP.Render; if (Rd && Rd.rig && Rd.rig.target && player()) Rd.rig.target(player(), true);
     run = null;
@@ -2372,7 +2392,11 @@
           run.tagged[tag] = v;
         }
         if (s.vehicle) {
-          var mine = s.vehicle.tag && run.tagged[s.vehicle.tag] ? run.tagged[s.vehicle.tag] : spawnFromRecord(s.vehicle);
+          // the checkpoint's own car when it survived (the player's sedan, a strand's keep van), else a copy from the record (QAC-15)
+          var was = s.vehicle.ref, alive = was && !was.removed && !was.wreck && !was.sinking && !was.burning && (!was.driver || was.driver === p) ? was : null;
+          if (!alive && s.vehicle.keep && s.vehicle.tag) alive = liveTagged(s.vehicle.tag);
+          var mine = s.vehicle.tag && run.tagged[s.vehicle.tag] ? run.tagged[s.vehicle.tag] : alive || spawnFromRecord(s.vehicle);
+          if (mine === alive && alive.hp < s.vehicle.hp) alive.hp = s.vehicle.hp;
           mine.x = s.vehicle.x; mine.z = s.vehicle.z; mine.y = s.vehicle.y; mine.yaw = s.vehicle.yaw; mine.vx = mine.vz = mine.vy = 0; mine.speed = 0; mine.snap(); if (mine._sh) E().hash.update(mine);
           mine.enter(p, 0);
           p.x = mine.x; p.z = mine.z; p.y = mine.y; p.snap();
@@ -2768,6 +2792,7 @@
       if (!v || v.kind !== 'vehicle' || v.removed) return null;
       if (v._chauf) drivers.release(v);
       if (v.ai && GTP.AI && GTP.AI.release) GTP.AI.release(v);
+      var drvWas = v.driver && v.driver.alive ? !!v.driver.persistent : !!(run && opts.track !== false);   // what release gives back (QAC-34)
       if (!v.driver || !v.driver.alive) {
         var sp = GTP.AI && GTP.AI.spawner, d = null;
         if (sp && sp.spawnPed) d = sp.spawnPed(v.x, v.z, opts.role || 'civ', { persistent: true });
@@ -2779,7 +2804,7 @@
       v.driver.ai = missionBrain('driver');
       v.driver.persistent = true;
       var c = { v: v, mode: mode || 'flee', goal: null, path: null, pi: 0, repathT: 0, stuckT: 0, revT: 0, t: 0, speedMul: opts.speedMul || 0.9, route: opts.route || null, ri: 0, loop: !!opts.loop,
-        onCheckpoint: opts.onCheckpoint || null, wasPersistent: v.persistent, done: false, from: opts.from || null };
+        onCheckpoint: opts.onCheckpoint || null, wasPersistent: v.persistent, done: false, from: opts.from || null, driver: v.driver, driverWas: drvWas };
       v.persistent = true; v._chauf = c; drivers.list.push(c);
       return c;
     },
@@ -2788,7 +2813,9 @@
       var i = drivers.list.indexOf(c); if (i >= 0) drivers.list.splice(i, 1);
       v._chauf = null; v.persistent = c.wasPersistent;
       if (!v.removed) v.setControls(0, 0, false, 0.6);
-      if (v.driver && v.driver.ai && v.driver.ai.mission === 'driver') v.driver.ai = null;   // the AI gives it a wander brain on sight
+      var dr = c.driver || v.driver;   // the chauffeur, also once it has bailed out (v.driver is null then; QA-D-05)
+      if (dr && dr.ai && dr.ai.mission === 'driver') dr.ai = null;   // the AI gives it a wander brain on sight
+      if (dr && !dr.removed && !c.driverWas && !dr.mission && dr.kind !== 'player') dr.persistent = false;   // the city's again (QAC-34)
     },
     update: function (dt) {
       for (var i = drivers.list.length - 1; i >= 0; i--) {
@@ -3267,7 +3294,7 @@
       S.loud_cab.dropFare();
       GTP.Events.off('vehicle:damage', cur.dmg);
       var sh = cur.shift;
-      toast('Shift over: ' + sh.fares + ' fare' + (sh.fares === 1 ? '' : 's') + ', ' + U.fmtMoney(sh.money) + (why === 'wanted' ? '. The passenger bailed.' : why === 'wreck' ? '. The cab is a take now.' : '.'));
+      if (why !== 'reset') toast('Shift over: ' + sh.fares + ' fare' + (sh.fares === 1 ? '' : 's') + ', ' + U.fmtMoney(sh.money) + (why === 'wanted' ? '. The passenger bailed.' : why === 'wreck' ? '. The cab is a take now.' : '.'));
     },
     hud: function () { var f = cur.fare, sh = cur.shift; return { line: f ? (f.phase === 'ride' ? 'FARE ' + (sh.fares + 1) + ' to ' + f.dest.name : 'Pick up ' + fareName(f.def)) : 'Waiting for a hail', timer: f && f.phase === 'ride' ? { remaining: Math.max(0, f.timer), total: f.total } : null, progress: sh.fares + ' fares  ' + U.fmtMoney(sh.money) + (sh.hot ? '  HOT STREAK' : ''), target: f ? (f.phase === 'ride' ? f.dest : { x: f.ped.x, z: f.ped.z, y: f.ped.y }) : null }; },
     canStart: function (v) { return !!v && v.type === 'taxi'; }
@@ -3293,7 +3320,7 @@
         // a violator already on the move (not one boxed in at a light or behind a jam) makes the chase: a stopped car costs 60 m of score
         var s = Math.abs(d - (SK.hoaTargetMin + SK.hoaTargetMax) / 2) + (Math.abs(o.speed) < 2 ? 60 : 0); if (s < bd) { bd = s; best = o; }
       }
-      if (!best) { var rp = W().nearestRoadPoint(v.x + srng().range(-160, 160), v.z + srng().range(-160, 160)); if (!rp || U.dist2d(rp.x, rp.z, v.x, v.z) < 40) return false; best = new GTP.Vehicle({ x: rp.x, z: rp.z, type: 'sedan', persistent: true }); best.y = W().heightAt(rp.x, rp.z, 0); best.yaw = U.dirToYaw(rp.dx, rp.dz); best.snap(); E().add(best); }
+      if (!best) { var rp = W().nearestRoadPoint(v.x + srng().range(-160, 160), v.z + srng().range(-160, 160)); if (!rp || U.dist2d(rp.x, rp.z, v.x, v.z) < 40) return false; best = new GTP.Vehicle({ x: rp.x, z: rp.z, type: 'sedan' }); best.y = W().heightAt(rp.x, rp.z, 0); best.yaw = U.dirToYaw(rp.dx, rp.dz); best.snap(); E().add(best); }
       drivers.take(best, 'flee', { role: 'civ', speedMul: 0.9 });
       best.hoaFlagged = true;
       cur.target = best; cur.violation = srng().pick(D.violations); cur.holdT = 0;
@@ -3331,7 +3358,7 @@
       var t = cur.target; state.holdBar = null;
       if (t && !t.removed) { drivers.release(t); t.hoaFlagged = false; }
       dropMesh(cur.mk);
-      if (why !== 'complete') toast('Patrol over at level ' + cur.level + (why === 'timer' ? ': they got away.' : '.'));
+      if (why !== 'complete' && why !== 'reset') toast('Patrol over at level ' + cur.level + (why === 'timer' ? ': they got away.' : '.'));
     },
     hud: function () { var t = cur.target; return { line: t ? 'VIOLATION: ' + cur.violation : 'Looking for a violation', timer: t ? { remaining: Math.max(0, cur.timer), total: cur.total } : null, progress: 'LEVEL ' + cur.level, target: t && !t.removed ? { x: t.x, z: t.z, y: t.y } : null }; }
   };
@@ -3390,7 +3417,7 @@
         P.fullReads++; pay(D.bonus, 'sponsor');
         if (!flagHas('sponsored_van')) { flagSet('sponsored_van'); var van = liveTagged('podvan'); if (van) { van.maxHp = 320; van.hp = Math.max(van.hp, 320); } toast('FULL READ. The pod van is wrapped in mattress: 320 hp.'); }
         if (!callUI('card', 'passed', 'FULL READ', 'Eight runs. ' + U.fmtMoney(D.bonus) + '. Code TAKES20.')) toast('FULL READ: ' + U.fmtMoney(D.bonus));
-      } else toast('Sponsor chain over after ' + cur.i + ' run' + (cur.i === 1 ? '' : 's') + '.');
+      } else if (why !== 'reset') toast('Sponsor chain over after ' + cur.i + ' run' + (cur.i === 1 ? '' : 's') + '.');
     },
     hud: function () { var r = cur.run, D = sponsorData(); return { line: r ? 'SPONSOR RUN ' + (cur.i + 1) + '/' + D.chain + ': ' + r.lm.name : 'SPONSOR RUNS', timer: r ? { remaining: Math.max(0, r.timer), total: r.total } : null, progress: r ? 'FIRMNESS ' + (7 + 2 * Math.min(2, r.crashes)) : '', target: r ? r.dest : null }; }
   };
@@ -3472,13 +3499,14 @@
       endCurrent(win ? 'complete' : why);
       void p;
     },
-    end: function () {
+    end: function (why) {
       var p = player(), def = cur.def;
       for (var i = 0; i < cur.hecklers.length; i++) { var h = cur.hecklers[i]; if (h && !h.removed) { if (h.inVehicle) h.inVehicle.exit(h); if (h.alive) releasePed(h, true); else removeEntity(h); } }
       for (i = 0; i < cur.cars.length; i++) { var v = cur.cars[i]; if (v && !v.removed) { drivers.release(v); v.persistent = false; } }
       // the loaner goes back. On a win the player keeps what they had plus the unused loaner rounds, capped at the weapon's
       // mag + reserve (QA-STR-06); on a fail, a death or a bust the loaner is the job's and goes back whole (QA-STR-07); a weapon
       // the shop still locks is never kept from a loaner
+      if (why === 'reset') return;   // New Game / RESTART already made a fresh player: the old loadout is not theirs (QAC-16)
       var w = def.weapon, left = p.weapons[w], had = cur.before.weapons[w] || 0, won = cur.won === true;
       p.weapons = Object.assign({ fist: Infinity }, cur.before.weapons); p.ammo = copyAmmo(cur.before.ammo);
       if (won && left === Infinity) p.weapons[w] = Infinity;
@@ -3595,11 +3623,11 @@
   function rebuildMarkers() {
     for (var i = 0; i < strandMarkers.length; i++) dropMesh(strandMarkers[i].mesh);
     strandMarkers.length = 0;
-    var RR = rampageDefs();
+    var RR = rampageDefs(), pl = player();   // a bubble the player already stands in (a load) arms once they step out, as the mission lights do (QA-SAVE-10)
     for (i = 0; i < RR.length; i++) {
       var d = RR[i], pt = pos(d.at); if (!pt) continue;
       var r = W().resolveCapsule(pt.x, pt.z, pt.y + 0.5, 0.6); pt.x = r.x; pt.z = r.z;
-      strandMarkers.push({ id: d.id, kind: 'rampage', icon: 'rampage', x: pt.x, z: pt.z, y: pt.y, mesh: strandMarker(K.colors.strand, pt, { radius: 1.6, height: 7 }), data: d, armed: true, holdT: 0, cooldown: 0, title: 'Ratio Rampage: ' + (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(d.weapon) : d.weapon) });
+      strandMarkers.push({ id: d.id, kind: 'rampage', icon: 'rampage', x: pt.x, z: pt.z, y: pt.y, mesh: strandMarker(K.colors.strand, pt, { radius: 1.6, height: 7 }), data: d, armed: !pl || U.dist2d(pl.x, pl.z, pt.x, pt.z) > K.markerRadius + 0.6, holdT: 0, cooldown: 0, title: 'Ratio Rampage: ' + (GTP.Combat && GTP.Combat.weaponName ? GTP.Combat.weaponName(d.weapon) : d.weapon) });
     }
     var list = races.list();
     for (i = 0; i < list.length; i++) {
@@ -3621,7 +3649,8 @@
   function ensureVehicles() {
     var Wd = W(), p = player(); if (!p) return;
     function ensure(tag, lmId, type, opts) {
-      if (liveTagged(tag)) return;
+      var lv = liveTagged(tag);
+      if (lv) { if (opts.adopt && !lv.keep && !run) { lv.keep = true; lv.persistent = true; } return; }   // the van the player drove home from m01 becomes home (QA-SAVE-01)
       var lm = Wd.landmark(lmId); if (!lm || !lm.door) return;
       var cls = C.VEHICLES[type] || C.VEHICLES.van, spot = vehicleSpot(lm.door.x, lm.door.z, 40, 'parking', null, cls.length); if (!spot) return;
       var v = new GTP.Vehicle({ x: spot.x, z: spot.z, type: type, color: opts.color, wrap: opts.wrap, tag: tag, persistent: true });
@@ -3634,6 +3663,7 @@
     if (flagHas('race_car')) ensure('ratiocar', 'pod_garage', 'sports', { color: '#ff3fa4', wrap: 'ratio' });
     if (flagHas('cab_home')) ensure('homecab', 'pod_garage', 'taxi', { color: '#ffc21a' });
     if (state.completed.has('m10_pellets')) ensure('hoasuv', 'hoa_hall', 'suv', { color: '#f4ead8' });
+    if (state.completed.has('m01_van')) ensure('podvan', 'pod_garage', 'van', { wrap: 'pod', color: '#f2f2f2', adopt: true });   // home: the 'home' autosave needs it after any trip or load (QA-SAVE-01)
     if (flagHas('sponsored_van')) { var van = liveTagged('podvan'); if (van && van.maxHp < 320) { van.maxHp = 320; van.hp = Math.max(van.hp, 320); } }
     // the vests appear when their flag is set, not only when the car is first parked (QA-STR-11, QA-STR-15): the Firmness Vest at
     // the HOA Hall after patrol level 6 (never wherever the SUV was being driven when the flag landed), the memo-20 vest by the pod garage
@@ -3793,13 +3823,13 @@
         { id: 'stunt_jumps', title: 'Stunt Jumps', line: P.stunt_jumps.done.length + ' / ' + stunts.list().length }
       ];
     },
-    serialize: function () { return JSON.parse(JSON.stringify(progress)); },
+    serialize: function () { var out = JSON.parse(JSON.stringify(progress)), cd = {}; for (var i = 0; i < strandMarkers.length; i++) if (strandMarkers[i].cooldown > 0) cd[strandMarkers[i].id] = Math.ceil(strandMarkers[i].cooldown); out.cooldowns = cd; return out; },   // resting lights stay dark through a load (QA-SAVE-10)
     load: function (data) {
       var fresh = freshProgress(), saved = (data && data.strands) || {};
       for (var k in fresh) if (saved[k]) fresh[k] = Object.assign(fresh[k], saved[k]);
       if (data && Array.isArray(data.memos)) fresh.monday_memos.collected = data.memos.slice();
       progress = fresh;
-      try { S.monday_memos.place(); rebuildMarkers(); ensureVehicles(); } catch (e) { U.reportError(e, 'strands.load'); }
+      try { S.monday_memos.place(); rebuildMarkers(); var cd = saved.cooldowns || {}; for (var i = 0; i < strandMarkers.length; i++) if (cd[strandMarkers[i].id] > 0) strandMarkers[i].cooldown = cd[strandMarkers[i].id]; refreshMarkerVisibility(); ensureVehicles(); } catch (e) { U.reportError(e, 'strands.load'); }
     },
     debug: { markers: function () { return strandMarkers; }, cur: function () { return cur; } }
   };
@@ -3817,7 +3847,7 @@
   GTP.Events.on('pickup', function (e) { var pk = e && e.pickup; if (pk && pk.pickupType === 'memo') { try { S.monday_memos.collect(pk); } catch (err) { U.reportError(err, 'strands.memo'); } } });
   GTP.Events.on('vehicle:enter', function (e) {
     if (!e || !e.ped || e.ped.kind !== 'player' || !e.vehicle || e.seat !== 0) return;
-    if (e.vehicle.tag !== 'sponsorvan' || run) return;
+    if (e.vehicle.tag !== 'sponsorvan' || run || (GTP.game && GTP.game._restoring)) return;   // a load seating the player in the van starts nothing
     if (cur) { toast('One strand at a time. The ' + (cur.title || 'strand') + ' is still running.'); return; }   // QA-STR-10
     startStrand('sponsor_runs');
   });
