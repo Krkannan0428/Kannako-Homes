@@ -47,6 +47,9 @@ function installBot() {
     if (M.canRetry && M.canRetry()) { bot.release(); bot.stats.retries++; const lf = M.lastFail && M.lastFail(); (bot.stats.fails = bot.stats.fails || []).push(lf ? String(lf.reason || '?') + (lf.text ? ': ' + String(lf.text).slice(0, 60) : '') : '?'); M.retry(); return; }
     if (g.state !== 'playing') { bot.release(); return; }
     if (p.hp < bot.lastHp) bot.stats.hpLost += bot.lastHp - p.hp;
+    if (B.active) { const c = B.active.center, d = Math.round(Math.hypot(p.x - c.x, p.z - c.z)); if (d > (bot.stats.maxOut || 0)) bot.stats.maxOut = d; }
+    if (p.swimming) bot.stats.swimT = +((bot.stats.swimT || 0) + 4 / 60).toFixed(1);
+    if (p.inVehicle) bot.stats.vehT = +((bot.stats.vehT || 0) + 4 / 60).toFixed(1);
     bot.lastHp = p.hp;
     if (!p.alive || p.knockedDown) { bot.release(); return; }
     const enc = B.active;
@@ -55,6 +58,13 @@ function installBot() {
     // goons in your face come first, like a player would
     let nearAdd = null, nd = enc.id === 'b05_dunk' ? 4 : 8;
     for (const a of enc.adds) { if (!a.alive || a.removed || a.knockedDown || a.fled || a.inVehicle) continue; const d = Math.hypot(a.x - p.x, a.z - p.z); if (d < nd) { nd = d; nearAdd = a; } }
+    // ...then whoever is shooting at you from range, when the fight points at the boss or a weak point (a wave already
+    // points at its goons)
+    const tg0 = tg && tg.entity !== undefined ? tg.entity : tg;
+    if (!nearAdd && enc.id !== 'b05_dunk' && !(tg0 && enc.adds.indexOf(tg0) >= 0)) {
+      const now = GTP.game.time.t; let gd = 28;
+      for (const a of enc.adds) { if (!a.alive || a.removed || a.knockedDown || a.fled || a.inVehicle || a.weapon === 'fist' || !(now - (a._hurtPlayerT || -99) < 4)) continue; const d = Math.hypot(a.x - p.x, a.z - p.z); if (d < gd) { gd = d; nearAdd = a; } }
+    }
     if (nearAdd) tg = nearAdd;
     // enc.target() is {x, y, z, entity}; an add is the entity itself
     const tgE = tg ? (tg.entity !== undefined ? tg.entity : tg) : null;
@@ -150,6 +160,12 @@ H.run('bosses', async (t) => {
     // the player's state when a telegraph lands (a moving, running player should be dodging them)
     GTP.Events.on('boss:hit', () => { log.hits++; const p = GTP.game.player, k = (p.state || '?') + (GTP.Input.down('run') ? '+run' : '') + (p.aiming ? '+aim' : '') + ':' + Math.round(Math.hypot(p.vx, p.vz)); log.hitStates[k] = (log.hitStates[k] || 0) + 1; });
     GTP.Events.on('boss:bark', () => log.barks++);
+    // the law between and during fights (a bust takes the guns and drops the player at a precinct)
+    log.law = [];
+    const lawNote = (what) => { const e = GTP.Bosses.active; if (log.law.length < 12) log.law.push(what + '@' + (e ? e.id.slice(0, 3) + ':' + e.state : 'none')); };
+    GTP.Events.on('busted', () => lawNote('busted'));
+    GTP.Events.on('wanted', (e) => { if (e && e.level > (e.prev || 0)) lawNote('wanted' + e.level); });
+    GTP.Events.on('heat', (e) => { if (e && e.amount > 0 && log.law.length < 12 && !(log.law[log.law.length - 1] || '').startsWith('heat:' + e.src)) lawNote('heat:' + e.src); });
     log.dmg = {};
     GTP.Events.on('damage', (e) => { if (!e || e.target !== GTP.game.player) return; const k = (e.type || '?') + ':' + (e.src ? (e.src.castId || e.src.role || e.src.kind) : 'none'); log.dmg[k] = Math.round((log.dmg[k] || 0) + e.amount); });
   });
@@ -158,7 +174,7 @@ H.run('bosses', async (t) => {
   for (const id of ALL) {
     if (ONLY && !ONLY.includes(id)) continue;
     const t0 = Date.now();
-    await page.evaluate(() => { window.__bossLog.dmg = {}; window.__bossLog.hitStates = {}; });
+    await page.evaluate(() => { window.__bossLog.dmg = {}; window.__bossLog.hitStates = {}; window.__bossLog.law = []; });
     // a test mission: one approach objective and the boss, started at the arena like the content's missions will be
     const start = await page.evaluate((id) => {
       const B = GTP.Bosses, M = GTP.Missions, g = GTP.game, p = g.player;
@@ -211,7 +227,7 @@ H.run('bosses', async (t) => {
     const res = await page.evaluate((id) => {
       const M = GTP.Missions, log = window.__bossLog, b = window.__bot;
       const phases = log.phase.filter((e) => e.id === id && e.state === 'fight').map((e) => e.phase);
-      return { completed: M.state.completed.has('t_' + id), phases: Array.from(new Set(phases)), defeated: log.defeated.includes(id), errors: GTP.errors.slice(0, 6).map((e) => e.where + ': ' + e.message + ' @ ' + String(e.stack || '').split('\n').slice(1, 4).join(' < ')), bot: b.stats, dmg: log.dmg, hits: log.hits, hitStates: log.hitStates, barks: log.barks, name: (log.phase.find((e) => e.id === id) || {}).name };
+      return { completed: M.state.completed.has('t_' + id), phases: Array.from(new Set(phases)), defeated: log.defeated.includes(id), errors: GTP.errors.slice(0, 6).map((e) => e.where + ': ' + e.message + ' @ ' + String(e.stack || '').split('\n').slice(1, 4).join(' < ')), bot: b.stats, dmg: log.dmg, hits: log.hits, hitStates: log.hitStates, law: log.law, barks: log.barks, name: (log.phase.find((e) => e.id === id) || {}).name };
     }, id);
     results[id] = Object.assign(res, { simSeconds: simT, ms: Date.now() - t0 });
     console.log('  ' + id + ': ' + JSON.stringify(results[id]));

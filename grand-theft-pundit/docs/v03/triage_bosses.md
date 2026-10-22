@@ -45,6 +45,10 @@ Fights:
 - **Goldplate's rotor sound** is refreshed every 0.5 s from the helicopter (03_audio.js forgets `Audio.heli` 1.6 s after the
   last call, so the old one-shot call left the helicopter silent; this was qa_d stab-QA-D-09's symptom).
 - Boss weak points carry `hostile = true`, so Combat's lock-on ranks them with the goons around them.
+- A fight starts with the heat cleared too, not only the stars (a stray round in the last fight's defeat beat left heat under
+  the first star; in the full test sequence the player was then busted at Redacted's start and lost their guns), and crimes
+  are dropped during the defeat beat as well.
+- Back in play from a menu or the pause screen, `Input.latch(['special'])` drops a `special` press made while paused.
 
 UI seams (feature-detected; each stands down once the UI owns it):
 - The fallback boss bar and special meters no longer draw under the UI's own (`UI.state.boss` / `UI.state.specials` exist on

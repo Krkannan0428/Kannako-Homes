@@ -704,7 +704,8 @@
     this.data = {};
     if (pendingResume && pendingResume.bossId === this.id) { from = Math.max(1, Math.min(this.phases, pendingResume.phase)); this.hp = from > 1 ? this.def.thresholds[from - 2] : this.maxHp; this.resumed = from; }
     pendingResume = null;
-    var wd = GTP.AI && GTP.AI.wanted; if (wd && wd.clear && wd.level > 0) { try { wd.clear(); } catch (e) { U.reportError(e, 'bosses.wanted'); } }
+    // a set piece starts clean: stars and the heat under the first star (a stray round from the last fight's defeat beat)
+    var wd = GTP.AI && GTP.AI.wanted; if (wd && wd.clear && (wd.level > 0 || wd.heat > 0)) { try { wd.clear(); } catch (e) { U.reportError(e, 'bosses.wanted'); } }
     try { if (this.def.setup) this.def.setup(this); } catch (e) { U.reportError(e, 'bosses.setup ' + this.id); }
     emit('boss:start', { id: this.id, name: this.name, phases: this.phases, resumed: this.resumed || 0 });
     sfx('mission', this.center.x, this.center.z, 0.8);
@@ -2302,7 +2303,7 @@
   }
   // a boss fight is a set: the police stay out of it (no heat while one runs; a stray round into the crowd is not a crime
   // during a set piece), and shots at a boss part are never shots at the police helicopter
-  function fighting() { for (var i = 0; i < active.length; i++) { var s = active[i].state; if (s === 'intro' || s === 'fight' || s === 'break') return true; } return false; }
+  function fighting() { for (var i = 0; i < active.length; i++) { var s = active[i].state; if (s === 'intro' || s === 'fight' || s === 'break' || s === 'defeated') return true; } return false; }
   function installCrime() {
     var wd = GTP.AI && GTP.AI.wanted; if (!wd || installed.crime || typeof wd.crime !== 'function') return;
     installed.crime = true;
@@ -2335,7 +2336,10 @@
   GTP.Events.on('load:begin', function () { Bosses.endAll('load'); Specials.clear(); });
   // the slow motion never outlives play: a minigame, a menu or the title runs at full speed
   GTP.Events.on('state', function (e) {
-    var s = e && e.state; if (s === 'playing' || s === 'paused') return;
+    var s = e && e.state;
+    // back in play: a `special` press made in a menu or the pause screen is not a shout (Input.latch drops the pending press)
+    if (s === 'playing') { var In = GTP.Input; if (In && In.latch) { try { In.latch(['special']); } catch (er) { /* input optional */ } } }
+    if (s === 'playing' || s === 'paused') return;
     stopFocus();
     if (s === 'cutscene') return;   // the boss's defeat slow motion holds through a line or two
     var g = game(); if (g && g.timeScale < 1) { for (var i = 0; i < active.length; i++) if (active[i]._slowmo > 0) { active[i]._slowmo = 0; g.timeScale = 1; } }
