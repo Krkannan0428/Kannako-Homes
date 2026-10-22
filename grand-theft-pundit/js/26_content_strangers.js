@@ -407,7 +407,7 @@
       ],
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'sports', tag: 'jumpcar', at: { landmark: 'listening_room' }, color: '#ff7ac2' }, text: 'Get in the stunt car' },
-        { type: 'stunt', ramp: 'sj_02', vehicle: 'spawned:jumpcar', minAir: 0.9, text: 'Take the Lower Third Leap on the downtown promenade. Flat out from the end of the block' },
+        { type: 'stunt', ramp: 'sj_02', vehicle: 'spawned:jumpcar', minAir: 0.8, text: 'Take the Lower Third Leap on the downtown promenade. Flat out from the end of the block' },
         { type: 'escape_wanted', setWanted: 2, text: 'The promenade rated your landing a two. Lose the cops' }
       ],
       outro: [

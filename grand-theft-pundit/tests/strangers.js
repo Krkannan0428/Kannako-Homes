@@ -188,11 +188,16 @@ function installDriver() {
       GTP.Events.on('stunt:launch', L); GTP.Events.on('stunt:land', D);
       // a player's run-up: stopped on the ramp's heading `back` metres out, throttle held to the wedge and through the landing
       let tries = 0;
-      const plans = [55, 50, 60, 45, 65, 40];
+      const plans = [45, 50, 40, 35, 30];   // measured on the integrated physics: sj_02 sports 30-50 m in zone, sj_09 taxi 45-50 m; 55 m+ hits a kerb or a container
       GTP.game.debug.godMode(true);
+      const W = GTP.World, T = W.T;
       while (tries < plans.length && ST.def() === def) {
         const back = plans[tries++];
         if (v.wreck || v.sinking) break;
+        // a run-up spot a player could start from: on the ground, not inside a building, not in the water
+        const sx = ramp.x - f.x * back, sz = ramp.z - f.z * back, st = W.tileAt(sx, sz);
+        if (st === T.BUILDING || st === T.WATER || W.solidAt(sx, sz, ramp.y + 0.5)) { runs.push('skip ' + back + ' m'); continue; }
+        if (p.inVehicle !== v) { if (p.inVehicle) { p.exitVehicle(); ST.adv(0.3); } if (!ST.enterVehicle(v)) { runs.push('could not re-enter'); break; } }
         ST.tp(ramp.x - f.x * back, ramp.z - f.z * back, ramp.y); v.yaw = ramp.yaw; v.vx = v.vz = v.vy = 0; v.speed = 0; v.snap(); ST.adv(0.2);
         v.x = ramp.x - f.x * back; v.z = ramp.z - f.z * back; v.yaw = ramp.yaw; v.vx = v.vz = 0; v.speed = 0; v.snap();
         ST.hold('forward', true);
