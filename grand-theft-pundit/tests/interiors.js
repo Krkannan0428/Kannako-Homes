@@ -261,6 +261,9 @@ H.run('interiors', async (t) => {
     out.handled = !!(GTP.Systems && GTP.Systems.clothing) || !!(GTP.UI && GTP.UI.openClothing);
     I.exit({ instant: true });
     const before = { x: p.x, z: p.z };
+    // a safehouse opens only when owned (the systems track's gate): own the two this test walks into
+    const Pr = GTP.Systems && GTP.Systems.properties;
+    if (Pr && Pr.byLandmark) ['safe_penthouse', 'safe_brownstone'].forEach((id) => { const d = Pr.byLandmark(id); if (d && !Pr.owned(d.id)) { p.money = Math.max(p.money, 10000000); Pr.buy(d.id); } });
     out.safe = I.enter('safe_penthouse', { instant: true }); GTP.game.advance(0.5);
     out.safeBranch = I.current && I.current.branch;
     out.bedEv = use('bed');

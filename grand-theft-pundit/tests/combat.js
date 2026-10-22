@@ -748,7 +748,8 @@ H.run('combat', async (t) => {
     if (!lm) { lm = { id: 'both_sides_test', name: 'Both Sides Arms (Test)', kind: 'gunshop', x: spot.x + 6, z: spot.z + 8, door: { x: spot.x + 6, z: spot.z + 3, y: 0 }, flagship: true }; W.landmarks.push(lm); W._lm[lm.id] = lm; }
     const stores = CB.shop.refresh().map((s) => s.id);
     p.weapons = { fist: Infinity }; p.ammo = {}; p.weapon = 'fist'; p.money = 2000; p.hp = 40; p.armor = 0;
-    GTP.Missions.state.completed.add('m03b_range'); GTP.Missions.state.completed.add('m01c_both_sides');   // v0.3: the pistol comes with m01c
+    // the pistol's unlock is the content table's (m03b in v0.2, m01c or m01_van in v0.3): complete whichever it is, and m03b
+    ['m03b_range', CB.UNLOCK.pistol].forEach((m) => { if (m) GTP.Missions.state.completed.add(m); });
     const items = CB.shop.items();
     const pistolItem = items.filter((i) => i.id === 'pistol')[0], sniperItem = items.filter((i) => i.id === 'sniper')[0];
     const buys = {};
@@ -776,7 +777,7 @@ H.run('combat', async (t) => {
   }, { EAST, spot });
   console.log('  shop: ' + JSON.stringify(shop));
   t.assert(shop.stores.indexOf(shop.lmId) >= 0 && shop.entry.markers >= 1, 'every gunshop landmark is a store with a door marker: ' + JSON.stringify(shop.stores));
-  t.assert(shop.pistolItem.price === 450 && !shop.pistolItem.locked && !shop.pistolItem.owned && shop.pistolItem.stats, 'the pistol is listed at $450 and unlocked after m01c: ' + JSON.stringify(shop.pistolItem));
+  t.assert(shop.pistolItem.price === 450 && !shop.pistolItem.locked && !shop.pistolItem.owned && shop.pistolItem.stats, 'the pistol is listed at $450 and unlocked after its mission: ' + JSON.stringify(shop.pistolItem));
   t.assert(shop.buys.pistol.ok && shop.buys.pistolState.money === 1550 && shop.buys.pistolState.ammo === 24 && shop.buys.pistolState.weapon === 'pistol' && shop.buys.pistolState.mag === 12, 'buying the pistol costs $450 and gives a magazine and a spare: ' + JSON.stringify(shop.buys.pistolState));
   t.assert(shop.buys.again === 'owned' && shop.buys.sniper.reason === 'locked' && shop.sniperItem.locked && typeof shop.sniperItem.lockedBy === 'string', 'an owned weapon and a locked one refuse with reasons: ' + JSON.stringify([shop.buys.again, shop.buys.sniper.reason, shop.sniperItem]));
   t.assert(shop.buys.ammo.ok && shop.buys.ammoState.ammo === 48 && shop.buys.ammoState.money === 1490, 'pistol rounds: 24 for $60: ' + JSON.stringify(shop.buys.ammoState));
