@@ -748,7 +748,7 @@
       objectives: [
         { type: 'enter_vehicle', spawn: { type: 'taxi', tag: 'flighttaxi', at: { landmark: 'container_yard' } }, text: 'Get in the taxi at the container yard gate' },
         { type: 'stunt', ramp: 'sj_09', vehicle: 'spawned:flighttaxi', minAir: 0.8, text: 'Take off over the containers. Flat out down the lane: airborne counts as a flight' },
-        { type: 'deliver_passenger', spawn: { ped: 'rutherford', at: { landmark: 'airport_terminal' }, line: 'Was I in the air? You were in the air. Stamp it anyway.' }, to: { landmark: 'ferry_terminal' }, vehicle: 'spawned:flighttaxi', text: 'Pick up Rutherford at the terminal and take him to Gate Ferry at the Ferry to Elsewhere' }
+        { type: 'deliver_passenger', spawn: { ped: 'rutherford', at: { landmark: 'airport_terminal' }, line: 'Was I in the air? You were in the air. Stamp it anyway.' }, to: { landmark: 'ferry_terminal' }, vehicle: 'any', text: 'Pick up Rutherford at the terminal (any car: he\'s on standby, he\'s flexible) and take him to Gate Ferry at the Ferry to Elsewhere' }
       ],
       outro: [
         L('rutherford', 'Boarded. The ferry hasn\'t left. Neither did the flight. I\'m consistent.'),

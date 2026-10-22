@@ -106,6 +106,8 @@ function installDriver() {
     },
     ensureVehicle(def) {
       const p = ST.p(), want = ST.tagged(def);
+      // any car will do: a player trades a smoking wreck for a fresh one
+      if (!want && p.inVehicle && (p.inVehicle.wreck || p.inVehicle.hp < (p.inVehicle.maxHp || 100) * 0.35)) { const old = p.inVehicle; p.exitVehicle(); ST.adv(0.3); old.persistent = false; }
       if (want && p.inVehicle !== want) { if (p.inVehicle) { p.exitVehicle(); ST.adv(0.3); } if (!ST.enterVehicle(want)) return 'could not get into the ' + want.type + ' (' + want.tag + ')'; }
       if (!p.inVehicle && !ST.car()) return 'no car';
       return null;
@@ -186,7 +188,7 @@ function installDriver() {
       GTP.Events.on('stunt:launch', L); GTP.Events.on('stunt:land', D);
       // a player's run-up: stopped on the ramp's heading `back` metres out, throttle held to the wedge and through the landing
       let tries = 0;
-      const plans = [45, 40, 50, 35, 55, 30];
+      const plans = [55, 50, 60, 45, 65, 40];
       GTP.game.debug.godMode(true);
       while (tries < plans.length && ST.def() === def) {
         const back = plans[tries++];
@@ -593,6 +595,7 @@ H.run('strangers', async (t) => {
     const others = [];
     try { (GTP.Systems && GTP.Systems.markers ? GTP.Systems.markers() : []).forEach((m) => others.push({ id: 'systems:' + (m.id || m.kind), x: m.x, z: m.z })); } catch (e) { errs.push('Systems.markers threw ' + e.message); }
     try { (GTP.Combat && GTP.Combat.shop && GTP.Combat.shop.stores ? GTP.Combat.shop.stores() : []).forEach((m) => others.push({ id: 'shop:' + m.id, x: m.x, z: m.z })); } catch (e) { /* optional */ }
+    try { (W.doors || []).forEach((d) => others.push({ id: 'door:' + (d.id || d.landmark) + ':' + (d.mode || ''), x: d.x, z: d.z })); } catch (e) { /* optional */ }
     S.strands.forEach((st) => { const l = W.landmark(st.home); if (!l || !l.door) return; others.forEach((o) => { if (typeof o.x === 'number' && Math.hypot(o.x - l.door.x, o.z - l.door.z) < 4) errs.push('strand ' + st.id + ': home light at ' + st.home + ' shares the spot with ' + o.id); }); });
     return {
       errs, strands: S.strands.length, missions: ids.size, homes: Array.from(new Set(homes)), districts: Array.from(districts).sort(), allDistricts: allDistricts.sort(),
