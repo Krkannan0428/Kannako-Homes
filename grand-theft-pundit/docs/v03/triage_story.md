@@ -71,7 +71,7 @@ typewriter is the UI's (see UI below).
 
   The 600 s bar is unchanged. `NEWPLAYER_TRACE=1` logs the van's track. Runs vary because the frames the live loop runs
   between Enter and the test taking over count as simulated time, which shifts the traffic. Before these fixes the same
-  build ran 368 to 733 s; after them it ran 332 and 344 s.
+  build ran 368 to 733 s; after them, four runs took 329 to 344 s.
 
 ## Test results (final: this branch merged with game/grand-theft-pundit 9f7c65c)
 
