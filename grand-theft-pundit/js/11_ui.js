@@ -3336,7 +3336,8 @@
         if (retryInput(In)) return true;
         if (In.pressed('map')) { openPause('phone'); ui.pause.tab = 0; mapCenterOnPlayer(); return true; }
         if (In.pressed('pause')) { openPause('pause'); return true; }
-        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action'))) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
+        // pad A is 'jump' on foot (the prompt says A): it advances the line too, and the step's consume keeps the jump (QA-B-FE-05)
+        if (ui.dialogue && ui.dialogue.t > 0.12 && (In.pressed('confirm') || In.pressed('action') || (In.lastDevice === 'gamepad' && In.pressed('jump')))) { if (In.latch) In.latch(['shoot', 'action']); advanceDialogue(); return true; }
         if (ui.golf && golfInput(In)) return true;
         if (ui.interior && ui.interior.kind === 'armory' && In.pressed('lockOn')) { openArmory(ui.interior.store && (ui.interior.store.id || ui.interior.store), null); return true; }
         quickSlots(In);
