@@ -37,10 +37,16 @@ function expectedFuses() {
   if (start < 0) throw new Error('electron-builder.yml has no electronFuses block');
   const out = {};
   for (let i = start + 1; i < yml.length; i++) {
-    const m = /^\s+([A-Za-z]+):\s*(true|false)\s*(#.*)?$/.exec(yml[i]);
-    if (!m) { if (/^\S/.test(yml[i])) break; continue; }
-    if (KEYS[m[1]]) out[KEYS[m[1]]] = m[2] === 'true';
+    const line = yml[i];
+    if (/^[^\s#]/.test(line)) break;                       // the next top-level key ends the block
+    if (/^\s*(#.*)?$/.test(line)) continue;                 // blank or comment
+    const m = /^\s+([A-Za-z0-9]+):\s*(true|false)\s*(#.*)?$/.exec(line);
+    if (!m) throw new Error('electron-builder.yml line ' + (i + 1) + ' in electronFuses is not "key: true|false": ' + line.trim());
+    if (m[1] === 'resetAdHocDarwinSignature') continue;   // a build option, not a fuse
+    if (!KEYS[m[1]]) throw new Error('electron-builder.yml line ' + (i + 1) + ': unknown fuse "' + m[1] + '" (add it to KEYS in test/check-fuses.js)');
+    out[KEYS[m[1]]] = m[2] === 'true';
   }
+  if (!Object.keys(out).length) throw new Error('electron-builder.yml electronFuses block sets no fuses');
   return out;
 }
 

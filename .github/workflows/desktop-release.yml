@@ -55,9 +55,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
-  # a newer push to the branch supersedes an older build; tag builds always finish
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
+  # A newer push to a branch supersedes an older plain build. A run that publishes (a tag, a manual run
+  # with release_tag, or a [release] commit) gets a group of its own, so a later push can never cancel
+  # it halfway through uploading the release.
+  group: desktop-release-${{ github.ref }}-${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')) && github.sha || 'build' }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[release]') }}
 
 env:
   NODE_VERSION: "22"
@@ -74,6 +76,7 @@ jobs:
   mac:
     name: macOS (arm64 + x64, dmg + zip)
     runs-on: macos-14
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -158,14 +161,15 @@ jobs:
 
       - name: Check the DMG window artwork
         # mount each disk image and make sure the background (build/background.png, @2x merged into
-        # a .tiff by electron-builder) and the Finder layout (.DS_Store) made it in
+        # .background.tiff by electron-builder) and the Finder layout (.DS_Store) made it in
         run: |
           for dmg in dist/*.dmg; do
             mnt="$(mktemp -d)"
             hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$dmg" > /dev/null
             echo "$dmg:"; ls -la "$mnt" "$mnt/.background" || true
             ok=true
-            ls "$mnt/.background" 2>/dev/null | grep -Eq '\.(tiff|png)$' || { echo "::error::$dmg has no background image"; ok=false; }
+            # electron-builder 26 stores it as .background.tiff at the volume root (older versions used .background/)
+            { ls "$mnt"/.background.tiff "$mnt"/.background.png "$mnt"/.background/*.tiff "$mnt"/.background/*.png 2>/dev/null | grep -q .; } || { echo "::error::$dmg has no background image"; ok=false; }
             test -f "$mnt/.DS_Store" || { echo "::error::$dmg has no Finder layout (.DS_Store)"; ok=false; }
             hdiutil detach "$mnt" > /dev/null || hdiutil detach -force "$mnt" > /dev/null
             $ok || exit 1
@@ -207,6 +211,7 @@ jobs:
   windows:
     name: Windows (x64, installer + portable)
     runs-on: windows-latest
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -403,6 +408,10 @@ jobs:
     # the only job that may write: it creates the tag and the release
     permissions:
       contents: write
+    # two publishing runs (a [release] commit and its tag pushed together) never upload at once
+    concurrency:
+      group: desktop-publish
+      cancel-in-progress: false
     steps:
       - name: Check out (for the version number)
         uses: actions/checkout@v4
@@ -428,6 +437,17 @@ jobs:
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$tag' is not a release tag like v1.2.3 or v1.2.3-beta.1"
             exit 1
+          fi
+          # the file names and latest*.yml carry package.json's version; a tag that disagrees would
+          # publish files no installed game is ever offered
+          version="v$(node -p "require('./grand-theft-pundit/desktop/package.json').version")"
+          if [ "$REF_TYPE" = "tag" ] && [ "$tag" != "$version" ]; then
+            echo "::error::tag $tag does not match desktop/package.json ($version); bump the version and tag again"
+            exit 1
+          fi
+          existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" "refs/tags/$tag" 2>/dev/null | head -n1 | cut -f1)"
+          if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::warning::$tag already exists (at $existing); this run replaces that release's files with builds of $GITHUB_SHA. Bump the version in desktop/package.json for a new release."
           fi
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "Release tag: $tag"

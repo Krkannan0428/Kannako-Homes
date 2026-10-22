@@ -69,7 +69,7 @@ FUSE to run"*, install your distribution's FUSE 2 package (Ubuntu 24.04 and newe
 
 ### 3. Playing, updates, saves and mods
 
-- **Full screen:** F11 (or Cmd+F on a Mac, Ctrl+F on Windows/Linux). **Esc** is the game's pause menu.
+- **Full screen:** F11 (or Cmd+F on a Mac). **Esc** is the game's pause menu.
 - **Updates:** the game checks for new versions by itself. On Windows (installed) and Linux it
   downloads them in the background and asks **Restart to Update** when you are on the title screen
   or paused (or it installs when you quit). On a Mac it says **Version X is available**: click
@@ -78,7 +78,8 @@ FUSE to run"*, install your distribution's FUSE 2 package (Ubuntu 24.04 and newe
 - **Saves** are kept on your computer in the game's data folder, so updating or reinstalling the
   game keeps them. Deleting that folder deletes your saves.
 - **Mods**: drop `.js`, `.css` or image files into the `mods` folder in the same data folder (press
-  **Cmd+Shift+M** / **Ctrl+Shift+M** in the game to open it). See "Mods folder" below.
+  **Cmd+Shift+M** on a Mac; on Windows/Linux press **Alt** and choose *Game > Open Mods Folder*).
+  See "Mods folder" below.
 
 | Your computer | Data folder (saves, mods, logs) |
 | --- | --- |
@@ -130,7 +131,7 @@ Other scripts:
 
 | Script | What it does |
 | --- | --- |
-| `npm run sync` | copy `../index.html`, `../js`, `../vendor` into `app/` (runs automatically before every other script and as electron-builder's `beforePack` hook) |
+| `npm run sync` | copy `../index.html`, `../js`, `../vendor` into `app/` (runs automatically before `start`, `pack` and every `dist*` script, and as electron-builder's `beforePack` hook) |
 | `npm run pack` | unpacked app for the current platform in `dist/<platform>-unpacked/`, no installer; the quickest way to test the packaged app |
 | `npm run dist` | everything electron-builder can build on this machine (dmg/zip on macOS, nsis/portable on Windows, AppImage on Linux) |
 | `npm run dist:win` | Windows installer + portable exe (run on Windows; works on macOS/Linux too if [Wine](https://www.electron.build/multi-platform-build) is installed) |
@@ -143,14 +144,17 @@ In the game:
 
 | Keys | What |
 | --- | --- |
-| **F11**, **Cmd+F** (macOS), **Ctrl+F** (Windows/Linux) | toggle full screen (**Ctrl+Cmd+F** too on macOS) |
-| **Cmd+Shift+M** / **Ctrl+Shift+M** | open the mods folder |
+| **F11**, **Cmd+F** (macOS) | toggle full screen (**Ctrl+Cmd+F** too on macOS) |
+| **Cmd+Shift+M** (macOS) | open the mods folder (Windows/Linux: *Game > Open Mods Folder* in the Alt menu) |
 | **Cmd+Option+I** / **Ctrl+Shift+I** | developer tools (console for mod authors) |
 | **Alt** (Windows/Linux) | show the hidden menu bar: *Game* (full screen, mods folder, quit) and *Help* (check for updates, release notes, mods folder, crash log, developer tools, About) |
 
-**Esc** is left to the game, and the shortcuts above are the only keys the shell takes. On macOS
-the same items are in the app menu and the *Help* menu. Starting the game a second time focuses
-the running window instead of opening another one.
+**Esc** is left to the game, and the shortcuts above are the only keys the shell takes. Windows
+and Linux deliberately have no Ctrl+F or Ctrl+Shift+M: the game uses Ctrl to shoot, Shift to run,
+F to get in and out of vehicles and M for the map, so those combinations happen during play. On
+macOS the same items are in the app menu and the *Help* menu. Starting the game a second time
+focuses the running window (or the splash, while the game is still loading) instead of opening
+another one.
 
 What the desktop shell does around the game:
 
@@ -163,9 +167,12 @@ What the desktop shell does around the game:
   the game launches keep your own theme.
 - **Window memory.** Size, position, maximized and full screen state are saved to
   `window-state.json` in the data folder and restored next time. A position on a monitor that is no
-  longer connected is ignored, so the window never opens off-screen.
+  longer connected is ignored, so the window never opens off-screen. The state is written as it
+  changes and when the window closes; quitting while the splash is still up keeps the previous
+  state, and a window minimized while maximized comes back maximized.
 - **About.** *About Grand Theft Pundit* (app menu on macOS, *Help* on Windows/Linux) shows the
-  version, the Electron and Chromium versions, the update mode and the data folder.
+  version and the Electron and Chromium versions; on Windows/Linux it also shows the update mode
+  and the data folder.
 - **Crash log.** `logs/crash.log` in the data folder collects main-process exceptions, a game or
   GPU process that died, uncaught errors and `console.error` lines from the game, and failed update
   checks, with one `[start]` line per launch (version, OS). *Help > Open Crash Log* opens it; attach
@@ -326,7 +333,7 @@ On a Mac or Windows desktop no xvfb is needed; pass the app binary
 
 The desktop game loads your own files at startup, so you can change or add things without
 rebuilding. The folder is created on first launch. **Open Mods Folder** is in the app menu on macOS
-and in the Alt menu bar on Windows and Linux, and **Cmd/Ctrl+Shift+M** opens it everywhere:
+(also **Cmd+Shift+M**) and under *Game* in the Alt menu bar on Windows and Linux:
 
 | Platform | Folder |
 | --- | --- |

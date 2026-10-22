@@ -13,8 +13,11 @@
  *   - size, position, maximized and full screen state remembered between runs (lib/window-state.js);
  *     1280x800 the first time, minimum 960x600, dark background so there is no white flash
  *   - macOS: a small app menu. Windows/Linux: a hidden menu bar that Alt shows (Game and Help menus)
- *   - F11 and Cmd/Ctrl+F toggle full screen; Esc is left alone for the game
- *   - Ctrl+Shift+M (Cmd+Shift+M) opens the mods folder, Ctrl+Shift+I (Cmd+Option+I) the developer tools
+ *   - F11 toggles full screen (and Cmd+F on macOS); Esc is left alone for the game
+ *   - Cmd+Shift+M opens the mods folder on macOS (Alt menu > Game on Windows/Linux), Ctrl+Shift+I
+ *     (Cmd+Option+I) the developer tools. Windows/Linux get no Ctrl+F or Ctrl+Shift+M: the game uses
+ *     Ctrl to shoot, Shift to run, F to leave a vehicle and M for the map (js/02_input.js), so those
+ *     combinations happen in play
  *   - pointer lock and fullscreen permission requests are granted, everything else is denied
  *   - the window only ever shows app/index.html: any other navigation (a dropped file, a link, a
  *     script) is cancelled, and http(s) links open in the system browser; new windows are never created
@@ -67,12 +70,20 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     const win = gameWindow();
     if (!win) return;
+    // still booting: bring the splash forward, never the half-built game window
+    if (!win.gtpRevealed) {
+      if (win.gtpSplash && !win.gtpSplash.isDestroyed()) win.gtpSplash.focus();
+      return;
+    }
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
   });
   app.whenReady().then(start);
 }
+
+let quitting = false;
+app.on('before-quit', () => { quitting = true; });
 
 function gameWindow() {
   return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.gtpMain) || null;
@@ -85,7 +96,7 @@ function start() {
   app.setAboutPanelOptions({
     applicationName: PRODUCT,
     applicationVersion: app.getVersion(),
-    version: 'Electron ' + process.versions.electron,
+    version: 'Electron ' + process.versions.electron + ', Chromium ' + process.versions.chrome,
     copyright: 'A parody. No real pundits were harmed.',
     iconPath: ICON
   });
@@ -164,14 +175,15 @@ function createWindow() {
   // Window shortcuts. Esc is deliberately not handled here so the game keeps it (pause menu,
   // exiting pointer lock). The menus show these accelerators but do not register them, so the
   // only keys taken from the game are exactly these combinations.
+  // On Windows/Linux only F11 and Ctrl+Shift+I: Ctrl (shoot), Shift (run), F (leave a vehicle) and
+  // M (map) are game keys, so Ctrl+F or Ctrl+Shift+M would fire in the middle of play.
   wc.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return;
-    const mod = IS_MAC ? input.meta : input.control;
     const key = String(input.key || '').toLowerCase();
-    if (input.key === 'F11' || (mod && key === 'f' && !input.alt && !input.shift)) {
+    if (input.key === 'F11' || (IS_MAC && input.meta && key === 'f' && !input.alt && !input.shift)) {
       event.preventDefault();
       win.setFullScreen(!win.isFullScreen());
-    } else if (mod && input.shift && !input.alt && key === 'm') {
+    } else if (IS_MAC && input.meta && input.shift && !input.alt && key === 'm') {
       event.preventDefault();
       openModsFolder();
     } else if ((IS_MAC ? (input.meta && input.alt && !input.shift) : (input.control && input.shift && !input.alt)) && key === 'i') {
@@ -200,8 +212,13 @@ function createWindow() {
     if (!isAppPage(url)) event.preventDefault();
   });
 
+  // 'killed' is also what Linux reports when the out-of-memory killer takes the renderer, so it is
+  // ignored only while the window is closing or the app quitting
+  let closing = false;
+  win.on('close', () => { closing = true; });
   wc.on('render-process-gone', (_event, details) => {
-    if (details.reason === 'clean-exit' || details.reason === 'killed') return;
+    if (details.reason === 'clean-exit') return;
+    if (details.reason === 'killed' && (closing || quitting)) return;
     if (!splash.isDestroyed()) splash.destroy();
     const choice = dialog.showMessageBoxSync({
       type: 'error',
@@ -213,6 +230,8 @@ function createWindow() {
       cancelId: 2
     });
     if (choice === 0) {
+      // the splash is gone; if the game died while booting, show its window for the reload
+      if (!revealed) reveal();
       wc.reload();
     } else {
       if (choice === 1) openCrashLog();
@@ -233,19 +252,23 @@ function createWindow() {
   // Show the game window once the game has booted, close the splash, and restore maximized or
   // full screen state. ready-to-show alone is too early: it fires before the game scripts run.
   let revealed = false;
+  win.gtpSplash = splash;
   function reveal() {
     if (revealed || win.isDestroyed()) return;
     revealed = true;
+    win.gtpRevealed = true;
     if (state.maximized) win.maximize();
     win.show();
     if (state.fullscreen) win.setFullScreen(true);
     win.focus();
     if (!splash.isDestroyed()) splash.destroy();
+    // track only from here: quitting during the splash must not overwrite the saved maximized or
+    // full screen state with the hidden window's plain one
+    windowState.track(win);
   }
   // a page that never loads must not leave the player staring at the splash
   setTimeout(reveal, BOOT_TIMEOUT_MS + 5000);
 
-  windowState.track(win);
   win.on('closed', () => {
     if (!splash.isDestroyed()) splash.destroy();
     if (!gameWindow()) app.quit();
@@ -488,7 +511,7 @@ function installMenu() {
     { label: 'Check for Updates...', click: () => updater.checkNow() },
     { label: 'Release Notes', click: openReleasePage },
     { type: 'separator' },
-    { label: 'Open Mods Folder', ...accel('CmdOrCtrl+Shift+M'), click: openModsFolder },
+    { label: 'Open Mods Folder', ...(IS_MAC ? accel('Cmd+Shift+M') : {}), click: openModsFolder },
     { label: 'Open Crash Log', click: openCrashLog },
     { label: 'Toggle Developer Tools', ...accel(IS_MAC ? 'Alt+Cmd+I' : 'Ctrl+Shift+I'), click: toggleDevTools }
   ];
@@ -499,7 +522,7 @@ function installMenu() {
         label: 'Game',
         submenu: [
           { label: 'Toggle Full Screen', ...accel('F11'), click: toggleFullScreen },
-          { label: 'Open Mods Folder', ...accel('Ctrl+Shift+M'), click: openModsFolder },
+          { label: 'Open Mods Folder', click: openModsFolder },
           { type: 'separator' },
           { label: 'Quit', click: () => app.quit() }
         ]

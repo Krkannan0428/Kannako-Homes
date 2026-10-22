@@ -46,6 +46,7 @@ const OUT = path.resolve(opt('--out', path.join(__dirname, 'out')));
 const TIMEOUT_S = parseInt(opt('--timeout', '180'), 10);
 const NEW_GAME = !args.includes('--no-new-game');
 const NEW_GAME_TIMEOUT_S = 300;
+const CDP_TIMEOUT_MS = 60 * 1000;
 
 if (!exe || !fs.existsSync(exe)) {
   console.error('usage: node test/smoke.js <path to the app executable> [--out dir] [--timeout s]' + (exe ? '\nnot found: ' + exe : ''));
@@ -53,6 +54,7 @@ if (!exe || !fs.existsSync(exe)) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let current = null; // the app run in progress, for the watchdog
 const failures = [];
 const check = (cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) failures.push(msg); };
 
@@ -65,18 +67,30 @@ function freePort() {
   });
 }
 
-/* a minimal CDP client over one target's WebSocket */
+/* a minimal CDP client over one target's WebSocket. Every command fails after CDP_TIMEOUT_MS, and
+ * all pending ones fail at once if the socket closes (the app or its page died), so a dead app
+ * makes the test fail instead of hang. */
 function cdp(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     let id = 0;
+    let closed = false;
     const pending = new Map();
     const listeners = [];
+    ws.onclose = () => {
+      closed = true;
+      for (const p of pending.values()) p.rej(new Error('CDP connection closed (the app or its page went away)'));
+      pending.clear();
+    };
     ws.onopen = () => resolve({
       send(method, params) {
         return new Promise((res, rej) => {
+          if (closed) { rej(new Error('CDP connection closed')); return; }
           const n = ++id;
-          pending.set(n, { res, rej });
+          const timer = setTimeout(() => {
+            if (pending.delete(n)) rej(new Error('CDP ' + method + ' got no answer in ' + CDP_TIMEOUT_MS / 1000 + ' s'));
+          }, CDP_TIMEOUT_MS);
+          pending.set(n, { res: (v) => { clearTimeout(timer); res(v); }, rej: (e) => { clearTimeout(timer); rej(e); } });
           ws.send(JSON.stringify({ id: n, method, params: params || {} }));
         });
       },
@@ -248,26 +262,30 @@ async function checkNavigationLock(client, port, userData) {
   const afterScript = await where();
   check(onGame(afterScript), 'a script cannot navigate the window away from the game (' + JSON.stringify(afterScript) + ')');
 
-  // a real drag and drop of the file onto the middle of the window
-  const box = await evaluateIn(client, '({ x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) })').catch(() => ({ x: 400, y: 300 }));
+  // a real drag and drop of the file onto the middle of the window; the page counts the dragenter
+  // it receives, so the check proves the drop reached the window (and does not pass vacuously)
+  const box = await evaluateIn(client, '(() => { window.__gtpDragSeen = 0; window.addEventListener("dragenter", () => { window.__gtpDragSeen++; }, true); return { x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) }; })()').catch(() => ({ x: 400, y: 300 }));
   const data = { items: [], files: [foreign], dragOperationsMask: 1 };
+  let dropError = null;
   try {
     for (const type of ['dragEnter', 'dragOver', 'drop']) {
       await client.send('Input.dispatchDragEvent', { type, x: box.x, y: box.y, data });
       await sleep(150);
     }
   } catch (err) {
-    console.log('  note: Input.dispatchDragEvent failed: ' + err.message);
+    dropError = err.message;
   }
   await sleep(2000);
   const afterDrop = await where();
-  check(onGame(afterDrop), 'dropping a file on the window does not replace the game (' + JSON.stringify(afterDrop) + ')');
+  const seen = await evaluateIn(client, 'window.__gtpDragSeen || 0').catch(() => 0);
+  check(!dropError && seen > 0 && onGame(afterDrop), 'dropping a file on the window does not replace the game (drag reached the page: ' + seen + (dropError ? ', dispatch failed: ' + dropError : '') + ', ' + JSON.stringify(afterDrop) + ')');
 }
 
 /* 7. a saved size is used on the next start, and the state is written back when the game quits.
  * (Electron does not implement CDP's Browser.setWindowBounds, so the size is seeded in the file.) */
 async function checkWindowState(userData) {
-  const WANT = { width: 1100, height: 680 };
+  // fits the smallest CI screen (windows-latest is 1024x768) and is above the 960x600 minimum
+  const WANT = { width: 1000, height: 640 };
   const file = path.join(userData, 'window-state.json');
   // "seeded" is not a field window-state.js writes, so its absence afterwards proves the app saved
   fs.writeFileSync(file, JSON.stringify({ x: 30, y: 20, width: WANT.width, height: WANT.height, maximized: false, fullscreen: false, seeded: true }));
@@ -275,6 +293,7 @@ async function checkWindowState(userData) {
   fs.writeFileSync(path.join(userData, 'mods', 'zz-bad-mod.js'), 'window.__gtpBadMod = 1;\n}{\n');
   const port = await freePort();
   const run = launch(userData, port);
+  current = run;
   let client = null;
   try {
     const page = await waitForGamePage(port, run, Date.now() + 60000);
@@ -287,6 +306,14 @@ async function checkWindowState(userData) {
       await sleep(250);
     }
     check(size && Math.abs(size.w - WANT.width) <= 2 && Math.abs(size.h - WANT.height) <= 40, 'the saved window size is used on the next start (' + JSON.stringify(size) + ')');
+    // window state is tracked from the moment the game window is shown (the splash closes); a quit
+    // before that deliberately saves nothing, so wait for it (visibilityState is "visible" even while
+    // the window is still hidden behind the splash)
+    for (let i = 0; i < 240; i++) {
+      const splashUp = (await targets(port).catch(() => [])).some((t) => t.type === 'page' && /splash\.html/.test(t.url));
+      if (!splashUp) break;
+      await sleep(250);
+    }
     let mods = null;
     for (let i = 0; i < 40; i++) {
       mods = await evaluateIn(client, '({ loaded: (window.GTP_MODS && GTP_MODS.loaded) || [], errors: (window.GTP_MODS && GTP_MODS.errors) || [], bad: window.__gtpBadMod || null })').catch(() => null);
@@ -306,6 +333,15 @@ async function checkWindowState(userData) {
 }
 
 async function main() {
+  // a last resort if something hangs anyway: report, kill the app, fail
+  const watchdog = setTimeout(() => {
+    console.log('  FAIL the smoke test did not finish in time (watchdog)');
+    if (current) {
+      console.log('\n--- app output (last 60 lines) ---\n' + current.output.split('\n').slice(-60).join('\n'));
+      try { current.child.kill('SIGKILL'); } catch (_e) { /* gone */ }
+    }
+    process.exit(1);
+  }, (TIMEOUT_S + NEW_GAME_TIMEOUT_S + 300) * 1000);
   fs.mkdirSync(OUT, { recursive: true });
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'gtp-smoke-'));
   const modsDir = path.join(userData, 'mods');
@@ -316,6 +352,7 @@ async function main() {
   console.log('smoke: launching ' + exe + ' (user data ' + userData + ', CDP port ' + port + ')');
   const t0 = Date.now();
   const run = launch(userData, port);
+  current = run;
   const deadline = t0 + TIMEOUT_S * 1000;
   let client = null;
   const pageErrors = [];
@@ -427,6 +464,7 @@ async function main() {
     console.log('\nSMOKE FAILED: ' + failures.length + ' problem(s)');
     process.exit(1);
   }
+  clearTimeout(watchdog);
   try { fs.rmSync(userData, { recursive: true, force: true }); } catch (_e) { /* Windows may still hold a file for a moment */ }
   console.log('\nSMOKE PASSED in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s');
 }
