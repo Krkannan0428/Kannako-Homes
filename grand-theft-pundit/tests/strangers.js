@@ -36,6 +36,7 @@ function installDriver() {
     talking() { return !!(M.dialogue && M.dialogue.active) || !!GTP.UI.state.dialogue; },
     pedOut(h) { return !h || h.removed || !h.alive || h.knockedDown || h.fled; },
     lost(v) { return !v || v.removed || v.wreck || v.sinking; },
+    foot(x, z) { const W = GTP.World, T = W.T; return ST.walkable(x, z) && W.tileAt(x, z) !== T.ROAD; },
     walkable(x, z) { const W = GTP.World, T = W.T, t = W.tileAt(x, z); return (t === T.SIDEWALK || t === T.PLAZA || t === T.GRASS || t === T.SAND || t === T.PARKING || t === T.ROAD) && !W.solidAt(x, z, 0.5); },
     target() { const t = M.objectiveTarget(); return t ? { x: t.x, z: t.z, y: t.y } : null; },
     until(pred, maxSec, step) { step = step || 0.1; let s = 0; while (s < maxSec) { GTP.game.advance(step); s += step; if (pred()) return s; } return -1; },
@@ -105,6 +106,8 @@ function installDriver() {
     },
     ensureVehicle(def) {
       const p = ST.p(), want = ST.tagged(def);
+      // any car will do: a player trades a smoking wreck for a fresh one
+      if (!want && p.inVehicle && (p.inVehicle.wreck || p.inVehicle.hp < (p.inVehicle.maxHp || 100) * 0.35)) { const old = p.inVehicle; p.exitVehicle(); ST.adv(0.3); old.persistent = false; }
       if (want && p.inVehicle !== want) { if (p.inVehicle) { p.exitVehicle(); ST.adv(0.3); } if (!ST.enterVehicle(want)) return 'could not get into the ' + want.type + ' (' + want.tag + ')'; }
       if (!p.inVehicle && !ST.car()) return 'no car';
       return null;
@@ -185,11 +188,16 @@ function installDriver() {
       GTP.Events.on('stunt:launch', L); GTP.Events.on('stunt:land', D);
       // a player's run-up: stopped on the ramp's heading `back` metres out, throttle held to the wedge and through the landing
       let tries = 0;
-      const plans = [45, 40, 50, 35, 55, 30];
+      const plans = [45, 50, 40, 35, 30];   // measured on the integrated physics: sj_02 sports 30-50 m in zone, sj_09 taxi 45-50 m; 55 m+ hits a kerb or a container
       GTP.game.debug.godMode(true);
+      const W = GTP.World, T = W.T;
       while (tries < plans.length && ST.def() === def) {
         const back = plans[tries++];
         if (v.wreck || v.sinking) break;
+        // a run-up spot a player could start from: on the ground, not inside a building, not in the water
+        const sx = ramp.x - f.x * back, sz = ramp.z - f.z * back, st = W.tileAt(sx, sz);
+        if (st === T.BUILDING || st === T.WATER || W.solidAt(sx, sz, ramp.y + 0.5)) { runs.push('skip ' + back + ' m'); continue; }
+        if (p.inVehicle !== v) { if (p.inVehicle) { p.exitVehicle(); ST.adv(0.3); } if (!ST.enterVehicle(v)) { runs.push('could not re-enter'); break; } }
         ST.tp(ramp.x - f.x * back, ramp.z - f.z * back, ramp.y); v.yaw = ramp.yaw; v.vx = v.vz = v.vy = 0; v.speed = 0; v.snap(); ST.adv(0.2);
         v.x = ramp.x - f.x * back; v.z = ramp.z - f.z * back; v.yaw = ramp.yaw; v.vx = v.vz = 0; v.speed = 0; v.snap();
         ST.hold('forward', true);
@@ -317,10 +325,14 @@ function installDriver() {
       return c.total + ' ' + (c.spawn.vehicle || 'vehicle') + '(s) wrecked';
     },
     escape_wanted() {
-      const wd = GTP.AI.wanted, def = ST.def(), p = ST.p(), W = GTP.World;
+      const wd = GTP.AI.wanted, def = ST.def(), p = ST.p(), W = GTP.World, hp0 = Math.round(p.hp);
+      const deaths = []; const onW = (e) => deaths.push((e.type || '?') + ' by ' + (e.src ? (e.src.role || e.src.kind || e.src.type) : '?')); GTP.Events.on('player:wasted', onW);
+      try { return ST._escape(wd, def, p, W) + ' (hp ' + hp0 + ')' + (deaths.length ? ' DIED: ' + deaths.join(',') : ''); } finally { GTP.Events.off('player:wasted', onW); }
+    },
+    _escape(wd, def, p, W) {
       ST.adv(1.1);
       const lvl = wd.level;
-      if (lvl >= 3) {
+      if (lvl >= 2) {
         const garages = W.landmarks.filter((l) => l.garage);
         garages.sort((a, b) => U.dist2d(a.garage.cx, a.garage.cz, p.x, p.z) - U.dist2d(b.garage.cx, b.garage.cz, p.x, p.z));
         const g = garages[0];
@@ -361,6 +373,7 @@ function installDriver() {
       const lm = GTP.World.landmark(mk.landmark);
       let ox = mk.x - lm.x, oz = mk.z - lm.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
       let spot = null;
+      for (const d of [9, 7, 5]) for (const s of [0, 3, -3]) { const x = mk.x + ox * d - oz * s, z = mk.z + oz * d + ox * s; if (!spot && ST.foot(x, z)) spot = { x, z }; }
       for (const d of [9, 7, 5]) for (const s of [0, 3, -3]) { const x = mk.x + ox * d - oz * s, z = mk.z + oz * d + ox * s; if (!spot && ST.walkable(x, z)) spot = { x, z }; }
       spot = spot || { x: mk.x + ox * 6, z: mk.z + oz * 6 };
       ST.tp(spot.x, spot.z); ST.adv(4.0);
@@ -377,32 +390,52 @@ function installDriver() {
       const lm = GTP.World.landmark(mk.landmark);
       let ox = mk.x - lm.x, oz = mk.z - lm.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
       const dirs = [[ox, oz], [-oz, ox], [oz, -ox], [-ox, -oz]];
-      // approach: the giver walks up to the light first (placed within giverRange)
-      ST.tp(mk.x + ox * 12, mk.z + oz * 12); ST.adv(1.2);
+      // approach: the giver walks up to the light first (placed within giverRange); from the pavement, not the road
+      let ap = null;
+      for (const r of [12, 10, 14, 8]) for (const a of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6]) { if (ap) break; const c = Math.cos(a), sn = Math.sin(a), x = mk.x + (ox * c - oz * sn) * r, z = mk.z + (ox * sn + oz * c) * r; if (ST.foot(x, z)) ap = { x, z }; }
+      ap = ap || { x: mk.x + ox * 12, z: mk.z + oz * 12 };
+      ST.tp(ap.x, ap.z); ST.adv(1.2);
       const giver = GTP.Entities.list.find((e) => e.kind === 'ped' && !e.removed && e.ai && e.ai.mission === 'giver' && e.ai.marker && e.ai.marker.id === id);
       const giverAt = giver ? { castId: giver.castId, d: +Math.hypot(giver.x - mk.x, giver.z - mk.z).toFixed(1) } : null;
       let how = null;
-      outer: for (const dist of [7, 5, 3.5]) for (const d of dirs) {
+      outer: for (const pass of [0, 1]) for (const dist of [7, 5, 3.5]) for (const d of dirs) {
         const sx = mk.x + d[0] * dist, sz = mk.z + d[1] * dist;
-        if (!ST.walkable(sx, sz)) continue;
+        if (pass === 0 ? !ST.foot(sx, sz) : !ST.walkable(sx, sz)) continue;
         ST.tp(sx, sz); ST.adv(0.1); ST.face(mk.x, mk.z);
         ST.hold('forward', true); ST.hold('run', true);
         const s = ST.until(() => M.state.active === id, 6, 0.1);
         ST.hold('forward', false); ST.hold('run', false);
         if (s > 0) { how = 'walk@' + dist; break outer; }
       }
-      if (!how) { M.start(id); how = 'direct'; }
+      let walkDiag = null;
+      if (!how) {
+        const W = GTP.World, av = M.debug && M.debug.avail ? M.debug.avail().find((a) => a.id === id) : null;
+        walkDiag = { mk: [Math.round(mk.x), Math.round(mk.z), +(mk.y || 0).toFixed(2)], tile: W.tileAt(mk.x, mk.z), solid: W.solidAt(mk.x, mk.z, 0.5), h: +W.heightAt(mk.x, mk.z, 0).toFixed(2), armed: av ? av.armed : null, hold: av ? av.holdT : null,
+          state: GTP.game.state, busy: M.busy(), interior: !!(GTP.Interiors && GTP.Interiors.active), p: [Math.round(p.x), Math.round(p.z), +p.y.toFixed(2)], inVeh: !!p.inVehicle,
+          near: M.markers().filter((m2) => Math.hypot(m2.x - mk.x, m2.z - mk.z) < 12).map((m2) => m2.kind + ':' + m2.id + '@' + Math.hypot(m2.x - mk.x, m2.z - mk.z).toFixed(1)),
+          doors: (W.landmarks || []).filter((l) => l.door && Math.hypot(l.door.x - mk.x, l.door.z - mk.z) < 10).map((l) => l.id + ':' + l.kind),
+          ctl: p.controlEnabled, speed: +(p.speed || 0).toFixed(2), call: !!(GTP.UI.state.call || GTP.UI.state.phoneCall), uiKeys: Object.keys(GTP.UI.state).filter((k) => GTP.UI.state[k] && typeof GTP.UI.state[k] === 'object' && GTP.UI.state[k].active).join(','), cut: !!(GTP.Cutscenes && GTP.Cutscenes.active), dlg: !!(M.dialogue && M.dialogue.active), hint: GTP.Hints && GTP.Hints.current && GTP.Hints.current() ? GTP.Hints.current().id : null,
+          ents: GTP.Entities.near(mk.x, mk.z, 4).filter((e) => !e.removed && e.kind !== 'player').map((e) => e.kind + ':' + (e.castId || e.type || e.pickupType || e.role) + '@' + Math.hypot(e.x - mk.x, e.z - mk.z).toFixed(1)), props: (W.props || []).filter((q) => Math.hypot(q.x - mk.x, q.z - mk.z) < 4).map((q) => q.kind + '@' + Math.hypot(q.x - mk.x, q.z - mk.z).toFixed(1)).slice(0, 10) };
+        M.start(id); how = 'direct';
+      }
       ST.adv(1 / 60);
       const first = M.state.dialogue[0] || (GTP.UI.state.dialogue && GTP.UI.state.dialogue.line) || null;
-      return { ok: M.state.active === id, how, giverAt, firstLine: first ? first.who : null, firstName: first ? first.name : null, state: GTP.game.state, marker: { x: Math.round(mk.x), z: Math.round(mk.z), landmark: mk.landmark } };
+      return { ok: M.state.active === id, how, walkDiag, giverAt, firstLine: first ? first.who : null, firstName: first ? first.name : null, state: GTP.game.state, marker: { x: Math.round(mk.x), z: Math.round(mk.z), landmark: mk.landmark } };
     },
     runMission(id, opts) {
       opts = opts || {};
       const p = ST.p(), m = M.missionById(id), out = { id, steps: [], ok: false };
+      // between missions a player heals (hospital, Clarity Pellets): every mission starts at full health
+      p.hp = p.maxHp || 100;
       const money0 = p.money, subs0 = p.subs | 0;
+      const ev = []; const onW = (e) => ev.push('WASTED ' + (e.type || '?') + ' by ' + (e.src ? (e.src.role || e.src.kind || e.src.type) : '?') + ' at ' + Math.round(p.x) + ',' + Math.round(p.z) + ' phase ' + M.state.phase); const onB = () => ev.push('BUSTED phase ' + M.state.phase);
+      GTP.Events.on('player:wasted', onW); GTP.Events.on('busted', onB); ST._ev = ev; ST._off = () => { GTP.Events.off('player:wasted', onW); GTP.Events.off('busted', onB); };
       const st = ST.startByMarker(id); out.start = st;
-      if (!st.ok) { out.note = st.note || 'did not start'; return out; }
+      if (p.money !== money0) out.steps.push('walk-in: [$' + (p.money - money0) + ']');
+      if (!st.ok) { out.note = st.note || 'did not start'; ST._off(); return out; }
+      const mi = p.money;
       ST.skipTalk(60, () => M.state.phase === 'play' || !M.state.active);
+      if (p.money !== mi) out.steps.push('intro: [$' + (p.money - mi) + ']');
       let guard = 0, lastDef = null, same = 0, retries = 0, shot = false;
       while (guard++ < 80) {
         if (!M.state.active) {
@@ -415,7 +448,7 @@ function installDriver() {
           }
           break;
         }
-        if (M.state.phase === 'outro') { ST.skipTalk(60, () => M.state.active !== id); break; }
+        if (M.state.phase === 'outro') { const mo = p.money; ST.skipTalk(60, () => M.state.active !== id); out.steps.push('outro: [$' + (p.money - mo) + ']'); break; }
         if (ST.talking() && (!ST.def() || ST.def().type !== 'dialogue')) { ST.skipTalk(30); continue; }
         const d = ST.def();
         if (!d) { ST.adv(0.2); continue; }
@@ -423,14 +456,16 @@ function installDriver() {
         lastDef = d;
         if (opts.shotAt != null && !shot && out.steps.length === opts.shotAt) { shot = true; out.shotPending = true; return Object.assign(out, { paused: true, money0, subs0, retries, guard }); }
         let note;
+        const m0 = p.money;
         try { note = ST[d.type] ? ST[d.type]() : 'no driver for ' + d.type; } catch (e) { note = 'threw ' + e.message; }
-        out.steps.push(d.type + ': ' + note);
+        out.steps.push(d.type + ': ' + note + (p.money !== m0 ? ' [$' + (p.money - m0) + ']' : ''));
       }
       return ST.finishMission(out, money0, subs0, retries);
     },
     finishMission(out, money0, subs0, retries) {
       const id = out.id, p = ST.p(), m = M.missionById(id);
-      ST.adv(0.5);
+      const mf = p.money; ST.adv(0.5); if (p.money !== mf) out.steps.push('after the outro: [$' + (p.money - mf) + ']');
+      if (ST._off) { ST._off(); ST._off = null; } if (ST._ev && ST._ev.length) out.steps.push('EVENTS ' + ST._ev.join(' | '));
       const oc = m.onComplete || {}, want = (oc.setFlags || []).concat(oc.setFlag ? [oc.setFlag] : []);
       out.completed = M.state.completed.has(id);
       out.flags = want.filter((f) => !M.state.flags[f]);
@@ -561,6 +596,22 @@ H.run('strangers', async (t) => {
     ['clause', 'hoa_board', 'family_counsel'].forEach((k) => { if (!Ct.debate.opponents[k] || Ct.debate.opponents[k].cards.length < 4) errs.push('debate opponent ' + k); });
     ['scab_heckler', 'smirk', 'house_style'].forEach((k) => { if (!Ct.ratio.opponents[k] || Ct.ratio.opponents[k].replies.length < 4) errs.push('ratio opponent ' + k); });
     ['gus', 'kip', 'merle', 'cutout'].forEach((k) => { if (Ct.cast[k] && Ct.cast[k].stranger) errs.push('cast ' + k + ' was overwritten'); });
+    // no other track's foot marker (property, shop, job, golf) shares a home light: two 0.5 s triggers on one spot
+    const others = [];
+    try { (GTP.Systems && GTP.Systems.markers ? GTP.Systems.markers() : []).forEach((m) => others.push({ id: 'systems:' + (m.id || m.kind), x: m.x, z: m.z })); } catch (e) { errs.push('Systems.markers threw ' + e.message); }
+    try { (GTP.Combat && GTP.Combat.shop && GTP.Combat.shop.stores ? GTP.Combat.shop.stores() : []).forEach((m) => others.push({ id: 'shop:' + m.id, x: m.x, z: m.z })); } catch (e) { /* optional */ }
+    try { (W.doors || []).forEach((d) => others.push({ id: 'door:' + (d.id || d.landmark) + ':' + (d.mode || ''), x: d.x, z: d.z })); } catch (e) { /* optional */ }
+    // no other mission's light on a home door while both can be lit: a story mission that is not already a prerequisite of the
+    // strand's unlock. One reviewed exception: Moira's Quad and boss b05_dunk (Act III) overlap only if Local 404 is left
+    // untouched from Act I to Act III; every campus door hosts a story light or a shop / safehouse trigger
+    const SHARED_OK = { heckle_union: ['b05_dunk'] };
+    const ancestors = (id, acc) => { (byId[id] && byId[id].requires || []).forEach((r) => { if (!acc.has(r)) { acc.add(r); ancestors(r, acc); } }); return acc; };
+    S.strands.forEach((st) => {
+      const before = ancestors(st.unlock.mission, new Set([st.unlock.mission])), ok = SHARED_OK[st.id] || [];
+      all.filter((m) => m.kind !== 'stranger' && m.marker === st.home && !before.has(m.id) && ok.indexOf(m.id) < 0)
+        .forEach((m) => errs.push('strand ' + st.id + ': home ' + st.home + ' is also the light of ' + m.id + ', which can be lit at the same time'));
+    });
+    S.strands.forEach((st) => { const l = W.landmark(st.home); if (!l || !l.door) return; others.forEach((o) => { if (typeof o.x === 'number' && Math.hypot(o.x - l.door.x, o.z - l.door.z) < 4) errs.push('strand ' + st.id + ': home light at ' + st.home + ' shares the spot with ' + o.id); }); });
     return {
       errs, strands: S.strands.length, missions: ids.size, homes: Array.from(new Set(homes)), districts: Array.from(districts).sort(), allDistricts: allDistricts.sort(),
       types: Array.from(types).sort(), total: all.length, story: story.length,
@@ -579,10 +630,11 @@ H.run('strangers', async (t) => {
   const fresh = await page.evaluate(() => {
     GTP.game.advance(0.5);
     const st = GTP.Strangers.summary();
-    return { markers: GTP.Missions.markers().filter((m) => m.kind === 'mission').map((m) => m.id), states: st.map((s) => s.id + ':' + s.state), avail: GTP.Missions.available().filter((m) => m.kind === 'stranger').length };
+    return { markers: GTP.Missions.markers().filter((m) => m.kind === 'mission').map((m) => m.id), states: st.map((s) => s.id + ':' + s.state), avail: GTP.Missions.available().filter((m) => m.kind === 'stranger').length, blips: GTP.Strangers.markers().length, rows: GTP.Strangers.list().map((r) => r.status).join(','), story: GTP.Story && GTP.Story.order ? GTP.Story.order().filter((m) => (m.id || m).toString().indexOf('st_') === 0).length : null };
   });
   console.log('  new game: ' + JSON.stringify(fresh));
-  t.assert(fresh.markers.length === 1 && fresh.markers[0] === 'm00_intro' && fresh.avail === 0 && fresh.states.every((s) => /:locked$/.test(s)), 'a new game shows only m00_intro; every strand is locked');
+  t.assert(fresh.markers.length === 1 && fresh.markers[0] === 'm00_intro' && fresh.avail === 0 && fresh.blips === 0 && fresh.states.every((s) => /:locked$/.test(s)), 'a new game shows only m00_intro; every strand is locked, no purple blips');
+  t.assert(!fresh.story, 'no stranger mission is in Story.order(): ' + fresh.story);
 
   // ---- 3. every strand mission, by marker, through the real checks ----
   const only = (process.env.STRANGERS_ONLY || '').split(',').filter(Boolean);
@@ -593,19 +645,33 @@ H.run('strangers', async (t) => {
     // the story up to the unlock: prep() completes its requires chain and starts it; abort keeps them done; then the unlock itself
     const unlocked = await page.evaluate((s) => {
       const M = GTP.Missions, p = GTP.game.player;
-      if (!M.state.completed.has(s.unlock)) {
-        M.prep(s.unlock); GTP.game.advance(0.2); M.abort(); GTP.game.advance(0.2);
-        // complete the unlock mission the way prep marks its prerequisites (flags, weapons), without playing it
-        const m = M.missionById(s.unlock); M.state.completed.add(s.unlock);
+      // the story up to and including the unlock, marked done the way the save would have it (flags, weapons), with no
+      // teleport: nothing is started, no door marker is stood on
+      const seen = {};
+      const mark = (id) => {
+        if (seen[id]) return; seen[id] = true;
+        const m = M.missionById(id); if (!m) return;
+        (m.requires || []).forEach(mark);
+        if (M.state.completed.has(id)) return;
+        M.state.completed.add(id);
         const oc = m.onComplete || {}; if (oc.setFlag) M.state.flags[oc.setFlag] = true; (oc.setFlags || []).forEach((f) => { M.state.flags[f] = true; });
         if (oc.unlockWeapon) p.weapons[oc.unlockWeapon] = Math.max(p.weapons[oc.unlockWeapon] || 0, 40);
         if (oc.takeWeapon) delete p.weapons[oc.takeWeapon];
-      }
+      };
+      mark(s.unlock);
       if (p.inVehicle) p.exitVehicle();
       GTP.AI.wanted.clear(); M.refreshMarkers(); GTP.game.advance(1.2);
       const first = s.missions[0], mk = M.markers().find((x) => x.id === first), lm = GTP.World.landmark(s.home);
-      return { status: GTP.Strangers.status(s.id).state, marker: !!mk, atHome: mk ? +Math.hypot(mk.x - lm.door.x, mk.z - lm.door.z).toFixed(1) : null, flag: M.state.flags[GTP.Strangers.strand(s.id).unlock.flag] === true };
+      const blip = (GTP.Strangers.blips() || []).find((b) => b.id === s.id), row = (GTP.Strangers.strandRows() || []).find((r) => r.id === s.id);
+      const uiPaths = { markers: GTP.Strangers.markers(), list: GTP.Strangers.list() };
+      return { status: GTP.Strangers.status(s.id).state, marker: !!mk, atHome: mk ? +Math.hypot(mk.x - lm.door.x, mk.z - lm.door.z).toFixed(1) : null, flag: M.state.flags[GTP.Strangers.strand(s.id).unlock.flag] === true,
+        uiEmpty: Array.isArray(uiPaths.markers) && !uiPaths.markers.length && Array.isArray(uiPaths.list) && !uiPaths.list.length,
+        blip: blip ? { d: mk ? +Math.hypot(blip.x - mk.x, blip.z - mk.z).toFixed(1) : null, missionId: blip.missionId, title: blip.title, giver: blip.giver } : null,
+        row: row ? { status: row.status, missionId: row.missionId, title: row.title, hasXZ: typeof row.x === 'number' && typeof row.z === 'number', line: row.line } : null };
     }, st);
+    if (!unlocked.uiEmpty) problems.push(st.id + ': Strangers.markers() / list() must stay [] (the mission paths already draw these lights and rows)');
+    if (!unlocked.blip || unlocked.blip.d == null || unlocked.blip.d > 0.5 || unlocked.blip.missionId !== st.missions[0] || unlocked.blip.giver !== st.giver) problems.push(st.id + ': Strangers.markers() blip ' + JSON.stringify(unlocked.blip));
+    if (!unlocked.row || unlocked.row.status !== 'available' || unlocked.row.missionId !== st.missions[0] || !unlocked.row.hasXZ || !unlocked.row.title || !unlocked.row.line) problems.push(st.id + ': Strangers.list() row ' + JSON.stringify(unlocked.row));
     if (!unlocked.marker || unlocked.atHome > 6 || unlocked.status !== 'available' || !unlocked.flag) problems.push(st.id + ': unlock ' + JSON.stringify(unlocked));
     const hs = await page.evaluate((id) => ST.homeShot(id), st.missions[0]);
     await t.shot(page, 'strangers_home_' + st.id);
@@ -622,9 +688,10 @@ H.run('strangers', async (t) => {
       results.push(r);
       console.log('  ' + id + (r.ok ? ' OK' : ' FAILED') + ' [' + r.start.how + ', giver ' + JSON.stringify(r.start.giverAt) + ', first line ' + r.start.firstLine + '] $' + r.money + ' / reward $' + r.reward + ', subs +' + r.subs + (r.retries ? ', retries ' + r.retries : '') + '\n      ' + r.steps.join('\n      '));
       if (!r.ok) problems.push(id + ': ' + JSON.stringify({ completed: r.completed, flags: r.flags, active: r.active, note: r.note }));
-      if (!r.start.ok || r.start.how === 'direct') problems.push(id + ': not started by walking into the marker (' + r.start.how + ')');
+      if (!r.start.ok || r.start.how === 'direct') problems.push(id + ': not started by walking into the marker (' + r.start.how + ') ' + JSON.stringify(r.start.walkDiag));
       if (!r.start.giverAt || r.start.giverAt.castId !== st.giver || r.start.giverAt.d > 6) problems.push(id + ': the giver ' + st.giver + ' did not stand at the marker: ' + JSON.stringify(r.start.giverAt));
       if (r.start.firstLine == null) problems.push(id + ': no intro line on start');
+      if (r.steps.some((x) => /^EVENTS /.test(x))) problems.push(id + ': ' + r.steps.filter((x) => /^EVENTS /.test(x)).join(' | '));
       if (r.retries) problems.push(id + ': needed ' + r.retries + ' RETRY: ' + r.steps.filter((s) => /FAILED/.test(s)).join(' | '));
       if (r.ok && r.money < r.reward * 0.5) problems.push(id + ': reward not paid ($' + r.money + ' of $' + r.reward + ')');
       if (r.steps.some((s) => /STUCK|FALLBACK OPPONENT|LOST|threw|no driver|FAILED to|no target/.test(s))) problems.push(id + ': ' + r.steps.filter((s) => /STUCK|FALLBACK OPPONENT|LOST|threw|no driver|FAILED to|no target/.test(s)).join(' | '));

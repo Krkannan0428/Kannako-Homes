@@ -25,7 +25,7 @@ points at the next one, its giver phones, and a sky beam stands over the light.
 GTP.Story = {
   next() -> {missionId, title, giver, giverName, landmark, landmarkName, x, z, y, act, chapter} | null,
   chapter: {act, title},            // the act of the next story mission (or the last one when the story is done)
-  order() -> [missionId],           // play order: topological over `requires`, ranked by Content.expansion.chain
+  order() -> [missionId],           // play order: topological over `requires`, ranked by Content.parity.chain (35) or expansion.chain
   actOf(id), chapterTitle(act), progress() -> {done, total}, refresh(),
   gps(force) -> payload | null,     // gps:set to the next story mission
   call(id?) -> bool,                // place the giver's call now
@@ -33,7 +33,9 @@ GTP.Story = {
   gpsTarget, lastCall, pendingCall(), reset()
 }
 ```
-- Story missions are `allMissions()` minus `registerTest` ones, minus `story:false` / `side:true`. `allMissions()` now
+- Story missions are `allMissions()` minus `registerTest` ones, minus `story:false` / `side:true`. The content track appends its
+  parity missions to `expansion.missions` too; they always count as story (integration round 1: they had been dropped as
+  side missions because they sit outside `expansion.chain`). `allMissions()` now
   also merges **`GTP.Content.parity.missions`** (anything with an `objectives` array), so `m01c_both_sides`, the boss
   missions and the heist join the chain as soon as the content track's `requires` edits land. Nothing is hard-coded per
   mission id.
@@ -117,16 +119,35 @@ or `{from, lines}`. Without that data the call uses one of four generic giver li
 `interior:enter`, `shop:buy`, `range:end`, `heist:plan`, `boss:defeated`, `player:wasted`, `busted`, `vehicle:exploded`,
 `vehicle:damage`, `pickup`, `vehicle:enter`.
 
-## Wrappers on other modules (fold in at integration)
-- **`GTP.Events.on` / `off`** (00_util) are wrapped once at 09's load to keep a listener count per event name
-  (`hasListener()`). The fallbacks use it to know whether a UI draws the heist board, the phone (`phone:call`) or the
-  chapter card (`chapter`). With no listener and no `GTP.UI.phoneCall` / `GTP.UI.chapter`, a call shows as toasts and a
-  chapter as an `ACT I: ...` toast. At integration, give `GTP.Events` a `count(name)` and drop the wrapper.
-- **`GTP.Input.down` / `pressed`** are swapped for the length of `player.control()` while `Game._fireLatch` is set, so they
-  read `shoot`/`action` as up (QA-CMB-06). The latch is set by every `setState('playing')` and cleared once both buttons
-  are released. At integration this belongs in the Input module as a `latch(actions)` API.
-- UI hooks called when present (all optional): `GTP.UI.phoneCall(payload)`, `GTP.UI.chapter(c)`, `GTP.UI.chip(text)` (the
-  race start prompt), `GTP.UI.glyph('jump')`, `GTP.UI.heistBoard` / `openHeistBoard` (presence only).
+## Wrappers (integration round 1, v03r1/story)
+- **Folded into 09/30, nothing left to remove elsewhere:** 09's `GTP.Events.on` / `off` listener count is gone; the
+  fallbacks ask the UI's own API (`GTP.UI.openHeistBoard`, `skipCall`, `openStory`). 30's `Input.down` / `pressed` swap is
+  replaced by `GTP.Input.latch(['shoot', 'action'])` in `setState('playing')` (the swap stays only for an Input module
+  without `latch`).
+- **Folded from other files (their wrappers now stand down):** `14_systems` wrapped `Missions.update` / `init` to tick
+  `GTP.Systems`; 09 now calls `Systems.update(dt)` / `Systems.reset()` itself and sets `Missions.update._sys` /
+  `init._sys`, which 14 checks before wrapping. `26_content_strangers` removed a duplicate giver on `mission:objective`;
+  09's follow / deliver_passenger objectives now take the giver off the kerb themselves (26's listener finds nothing).
+- **Hand-over hooks in 30, no-ops until the owner opts in:** `Game._stepModules(dt)` ticks `GTP.Bosses` / `GTP.Specials` and
+  `GTP.Interiors` from `Game.step` when their owner sets `stepFromGame = true` in the same change that drops the
+  `Combat.update` wrapper (08b, 13). A `SaveHooks` entry with `registry: '<key>'` is skipped on a v4 load that carries that
+  registry key, so a module with both paths loads once (06b, 13, 14).
+- **Still installed by others on story modules:** `07_ai` `hookStrands` wraps `GTP.Strands.drivers.take` with A* corners for
+  race legs through buildings. It works; folding needs `routeVias` exported from 07 (see triage_story.md).
+- `GTP.ObjectiveTypes` (files loading before 09 leaving types) is unused on the combined build; `08b` and `06b` register
+  through `GTP.Missions.registerObjectiveType`.
+
+## New in integration round 1
+- `GTP.Missions.isUnlocked(id)`: a shop item with `unlock: <missionId>` is for sale once that mission is complete, or while
+  that mission runs a `buy` objective for it (m01c sells the pistol rounds it unlocks). Until `GTP.Combat`'s `unlocked()`
+  calls it, 09 bridges the shop's `Missions.state.completed.has(id)` for the length of that buy objective only.
+- Mission lights (`lightSpot`) stand clear of solid props, shop door rings (`World.doors`) and other lights, 3 m or more out
+  from a shop facade. `range` and `buy` objectives point the HUD arrow at the range line and the counter inside the room;
+  there is no GPS line indoors, and a story mission finished indoors sets the next GPS when the player is back outside.
+- A pickup run driven from a vehicle (2+ pickups, the player at the wheel, not around a tagged entity) spawns on the roads;
+  every mission pickup has a map-only objective blip. Mission cars in a wall bay are backed in.
+- Cutscene skip: a confirm hold is timed in wall-clock time from the key events and the live loop, so it works at any frame
+  rate (`tests/cutscenes.js` drives the real key path).
 
 ## Interfaces consumed (feature-detected)
 `GTP.World.route`, `GTP.Interiors.{enter, active, current}`, `GTP.Bosses.spawn`, `GTP.Content.parity.{missions, calls,

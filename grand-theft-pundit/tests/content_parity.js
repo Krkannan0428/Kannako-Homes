@@ -62,12 +62,21 @@ function unlockOk(u, where) {
 
 // --------------------------------------------------------------- weapons --
 const EXISTING = ['fist', 'tableleg', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'shotgun', 'sniper', 'hottake', 'hotmic', 'ratio'];
-const CLASSES = new Set(['melee', 'pistol', 'smg', 'rifle', 'shotgun', 'sniper', 'thrown', 'launcher', 'special']);
+const CLASSES = new Set(['melee', 'pistol', 'smg', 'lmg', 'rifle', 'shotgun', 'sniper', 'thrown', 'launcher', 'special']);
 const SLOTS = new Set(P.attachmentSlots);
 const W = P.weapons;
 const WIDS = uniqueIds(W, 'weapons');
 ok(W.length >= 32, 'at least 32 weapons (' + W.length + ')');
 for (const id of EXISTING) ok(WIDS.has(id), 'the existing weapon ' + id + ' is in the table');
+// one arsenal: 08_combat.js merges this table over its own fallback by id and never removes an id, so every fallback id is
+// covered here (no duplicate concepts in the shop) and every id has a mesh builder in 05b_assets_weapons.js
+const COMBAT_SRC = fs.readFileSync(path.join(ROOT, 'js', '08_combat.js'), 'utf8');
+const FALLBACK = (COMBAT_SRC.slice(COMBAT_SRC.indexOf('var WEAPONS = {'), COMBAT_SRC.indexOf('var SLOTS =')).match(/^ {4}([a-z_]+): +\{ name:/gm) || []).map((l) => l.trim().split(':')[0]);
+ok(FALLBACK.length >= 30, 'read the combat fallback table (' + FALLBACK.length + ' ids)');
+for (const id of FALLBACK) ok(WIDS.has(id), 'combat fallback id ' + id + ' is covered by the parity table (no stray duplicate)');
+for (const w of W) ok(FALLBACK.indexOf(w.id) >= 0, 'parity weapon ' + w.id + ' exists in the combat table, so it has a slot and a mesh');
+const MESH_SRC = fs.readFileSync(path.join(ROOT, 'js', '05b_assets_weapons.js'), 'utf8');
+for (const w of W) if (w.id !== 'fist' && w.class !== 'melee' && w.id !== 'tableleg') ok(new RegExp('^ {4}' + w.id + ': function', 'm').test(MESH_SRC), 'weapon ' + w.id + ' has a mesh builder in 05b');
 ok(new Set(W.map((w) => w.name)).size === W.length, 'weapon names are unique');
 for (const w of W) {
   const where = 'weapon ' + w.id;
@@ -96,7 +105,7 @@ const ENGINE = { fist: [12, 2.5, 1.7], megaphone: [0, 1.2, 6], pistol: [18, 4, 3
 for (const id in ENGINE) { const w = P.weaponById(id); ok(w.dmg === ENGINE[id][0] && w.rate === ENGINE[id][1] && w.range === ENGINE[id][2], 'weapon ' + id + ' keeps its v0.2 dmg/rate/range'); }
 ok(P.weaponById('shotgun').dmg > 60, 'CMB-15: the shotgun kills a 60 hp ped in one volley at point blank');
 ok(P.weaponById('tableleg').dmg >= 30, 'CMB-16: two table-leg hits drop a 60 hp ped');
-ok(P.weaponById('pistol').unlock.mission === 'm01c_both_sides', 'the pistol is on the wall from m01c');
+ok(P.weaponById('pistol').unlock.mission === 'm01_van', 'the pistol (and its ammo) is on the wall before m01c, whose last objective buys rounds');
 
 // ----------------------------------------------------------- attachments --
 uniqueIds(P.attachments, 'attachments');
@@ -239,7 +248,9 @@ function lines(ls, where) {
   ok(Array.isArray(ls) && ls.length > 0, where + ': has lines');
   for (const l of ls || []) {
     ok(CAST.has(l.who), where + ': speaker ' + l.who + ' is a cast id');
-    ok(typeof l.text === 'string' && l.text.length > 0 && l.text.length <= 200, where + ': line length (' + (l.text || '').slice(0, 30) + ')');
+    // QA-B-TXT-01: the two-line dialogue box drops the start of a line longer than about 114 characters at phone width
+    ok(typeof l.text === 'string' && l.text.length > 0 && l.text.length <= 114, where + ': line fits the dialogue box, ' + (l.text || '').length + ' chars (' + (l.text || '').slice(0, 40) + ')');
+    ok(!/\*/.test(l.text), where + ': no literal asterisks (QA-B-TXT-02): ' + (l.text || '').slice(0, 40));
   }
 }
 function objective(o, where) {
@@ -288,7 +299,8 @@ for (const m of P.missions) {
   ok(CAST.has(m.giver), where + ': giver ' + m.giver);
   ok(LANDMARKS.has(m.marker), where + ': marker ' + m.marker + ' is a real landmark');
   ok(Array.isArray(m.requires) && m.requires.length === 1, where + ': requires one mission');
-  ok(typeof m.reward === 'number' && m.reward >= 0 && m.reward <= 5000, where + ': reward');
+  ok(typeof m.reward === 'number' && m.reward >= 0 && m.reward <= (m.heist ? 10000 : 5000), where + ': reward');
+  ok(m.story === true, where + ': story:true (09 drops expansion.missions entries outside expansion.chain otherwise)');
   ok([1, 2, 3].indexOf(m.act) >= 0 && P.actOf(m.id) === m.act, where + ': act matches acts table');
   lines(m.intro, where + ' intro'); lines(m.outro, where + ' outro');
   ok(m.intro.length >= 3 && m.intro.length <= 6 && m.outro.length >= 3 && m.outro.length <= 6, where + ': 3 to 6 intro and outro lines');
@@ -300,11 +312,23 @@ for (const m of P.missions) {
   const oc = m.onComplete || {};
   if (oc.unlockWeapon) ok(WIDS.has(oc.unlockWeapon), where + ': unlockWeapon ' + oc.unlockWeapon);
   if (oc.setFlag) ok(/^[a-z_]+$/.test(oc.setFlag), where + ': setFlag');
-  if (oc.unlockWeapon) { const w = P.weaponById(oc.unlockWeapon); ok(w.unlock && w.unlock.mission === m.id, where + ': the unlocked weapon goes on the shop wall from this mission'); }
+  // a mission's buy objective must be buyable while it runs: the shop locks ammo behind its weapon's unlock mission
+  const buys = m.objectives.filter((o) => o.type === 'buy' && o.item.indexOf('ammo_') === 0).map((o) => o.item.slice(5));
+  for (const wid of buys) { const u = P.weaponById(wid).unlock; ok(!u || (u.mission !== m.id && P.chain.indexOf(u.mission) >= 0 && P.chain.indexOf(u.mission) < P.chain.indexOf(m.id)), where + ': buy ammo_' + wid + ' is unlocked before the mission (' + (u && u.mission) + ')'); }
+  if (oc.unlockWeapon && buys.indexOf(oc.unlockWeapon) < 0) { const w = P.weaponById(oc.unlockWeapon); ok(w.unlock && w.unlock.mission === m.id, where + ': the unlocked weapon goes on the shop wall from this mission'); }
   if (BOSSES.indexOf(m.id) >= 0) {
     const bo = m.objectives.filter((o) => o.type === 'boss');
     ok(bo.length === 1 && bo[0].bossId === m.id && m.objectives.indexOf(bo[0]) > 0, where + ': one boss objective with its own bossId, after an approach objective');
   }
+}
+// 09 equips an unlocked weapon on the spot: a boss mission's reward must be a gun when the next boss fight is shot at
+for (const id of BOSSES) {
+  const w = P.weaponById(P.missionById(id).onComplete.unlockWeapon || '');
+  ok(w && w.class !== 'melee', id + ': the reward (' + (w && w.id) + ') is not a melee weapon, since it is equipped going into the next mission');
+}
+for (const id of BOSSES) {
+  const g = P.missionById(id).objectives[0];
+  ok(g.type === 'goto' && g.target.metres === true && g.target.offset && LANDMARKS.has(g.target.landmark) && g.radius >= 120, id + ': the approach goes to the boss arena (landmark + metres offset): ' + JSON.stringify(g.target));
 }
 const m01c = P.missionById('m01c_both_sides');
 const seq = m01c.objectives.map((o) => o.type);
@@ -356,9 +380,11 @@ for (const id of P.chain) {
   if (c) { lines(c.lines, 'call ' + id); ok(c.lines.length >= 2 && c.lines.length <= 4, 'call ' + id + ': 2 to 4 lines'); }
 }
 ok(Object.keys(P.calls).length === 35, 'exactly one call per story mission');
-uniqueIds(P.chapters, 'chapters');
-for (const ch of P.chapters) ok(P.chain.indexOf(ch.first) >= 0 && P.actOf(ch.first) === ch.act && typeof ch.title === 'string', 'chapter ' + ch.id + ' starts at a chain mission in its act');
-for (const a of [1, 2, 3]) ok(P.chapters.some((c) => c.act === a && c.first === P.acts[a][0]), 'act ' + a + ' has a chapter card at its first mission');
+uniqueIds(P.chapters.concat(P.interludes), 'chapters and interludes');
+ok(P.chapters.length === 3, 'chapters are the three acts only (09 lets a later entry of the same act override its title)');
+for (const ch of P.chapters.concat(P.interludes)) ok(P.chain.indexOf(ch.from) >= 0 && P.actOf(ch.from) === ch.act && typeof ch.title === 'string', 'chapter ' + ch.id + ' starts (`from`) at a chain mission in its act');
+for (const ch of P.chapters) ok(!/^act\b/i.test(ch.title), 'chapter ' + ch.id + ': bare title (the UI prints ACT I itself): ' + ch.title);
+for (const a of [1, 2, 3]) ok(P.chapters.some((c) => c.act === a && c.from === P.acts[a][0]), 'act ' + a + ' has a chapter card at its first mission');
 
 // ------------------------------------------------------------------ heist --
 const H = P.heists.hedge_job;
@@ -378,6 +404,17 @@ for (const a of H.approaches) {
     onFootLegs(objs || [], 'heist ' + a.id + ' ' + mid); tagsCovered(P.missionById(mid), objs || [], 'heist ' + a.id + ' ' + mid);
   }
 }
+// the shape GTP.Heist (09_missions.js) reads
+const PH = P.heist;
+ok(PH && PH.missions.join() === H.missions.join(), 'parity.heist.missions');
+for (const a of PH.approaches) ok(typeof a.id === 'string' && typeof a.name === 'string' && a.hostiles > 0 && a.payout > 0 && a.wanted >= 1 && typeof a.line === 'string', 'parity.heist approach ' + a.id + ' {id, name, hostiles, payout, wanted, line}');
+for (const c of PH.crew) ok(CAST.has(c.id) && typeof c.name === 'string' && c.cut >= 0 && typeof c.perk === 'string', 'parity.heist crew ' + c.id + ' {id, name, cut, perk}');
+for (const mid of ['h02_prep', 'h03_job']) {
+  const objs = P.missionById(mid).objectives;
+  ok(objs.every((o) => H.approaches.some((a) => a.id === o.approach)), mid + ': every objective is tagged with an approach');
+  for (const a of H.approaches) ok(objs.filter((o) => o.approach === a.id).length >= 3, mid + ': approach ' + a.id + ' has its own objectives');
+}
+ok(Math.round(P.missionById('h03_job').reward * Math.min(...PH.approaches.map((a) => a.payout)) * (1 - 0.6)) >= H.payout.minimum, 'the heist take after the 60% cut cap still clears the minimum');
 const worst = Math.min(...H.approaches.map((a) => a.payoutMul)) * 0.6 * (1 - 0.2 - 0.12 - 0.15);
 ok(H.payout.base * worst >= H.payout.minimum, 'the priciest crew still clears the minimum payout');
 
@@ -388,9 +425,16 @@ const m03b = X.missionById('m03b_range');
 ok(!('takeWeapon' in m03b.onComplete) && m03b.onComplete.unlockWeapon === 'tableleg', 'retune: m03b keeps the m01c pistol');
 ok(X.cutscenes.cs_intro_m03b_range.shots[0].lines[1].text === m03b.intro[1].text, 'retune: m03b intro cutscene rebuilt from the new line');
 const m05 = X.missionById('m05_peer');
-ok(m05.onComplete.unlockWeapon === 'pocket' && /Footnote/.test(m05.outro[3].text), 'retune: m05 hands over the Footnote, not a second pistol');
+ok(m05.onComplete.unlockWeapon === 'oped' && /Op-Ed/.test(m05.outro[3].text), 'retune: m05 hands over the Op-Ed Compact, not a second pistol');
+ok(P.retuneLog && P.retuneLog.every((r) => r.applied || r.path.indexOf('.text') > 0), 'every retune patch applied (a guarded text patch may skip once its owner fixed the source): ' + JSON.stringify((P.retuneLog || []).filter((r) => !r.applied)));
+ok(/^Five subscribers/.test(byId.m01_van.outro[0].text), 'QA-B-TXT-03: m01_van counts the five subscribers it asks for');
 const before = X.missions.length; P.register(); ok(X.missions.length === before, 'register() is idempotent');
 
+// QA-B-TXT-10: American spelling in every player-facing string of the tables
+(function walk(v, where) {
+  if (typeof v === 'string') { ok(!/\b(colours?|metres?|centres?|recognis\w*|greys?|neighbours?|kerbs?|\w+ised|favourite|honour)\b/i.test(v), 'American spelling at ' + where + ': ' + v.slice(0, 60)); return; }
+  if (v && typeof v === 'object') for (const k in v) walk(v[k], where + '.' + k);
+})(JSON.parse(JSON.stringify(P)), 'parity');
 // ------------------------------------------------- source hygiene --
 const SRC = fs.readFileSync(path.join(ROOT, 'js', '25_content_parity.js'), 'utf8');
 ok(!/Math\.random/.test(SRC), 'no Math.random in 25_');
@@ -418,13 +462,30 @@ if (H2) {
       return {
         parity: !!P, weapons: P && P.weapons.length, calls: P && Object.keys(P.calls).length,
         inGame: ids.filter((id) => all.indexOf(id) >= 0), total: all.length,
-        intros: ids.filter((id) => GTP.Content.expansion.cutscenes['cs_intro_' + id]).length
+        intros: ids.filter((id) => GTP.Content.expansion.cutscenes['cs_intro_' + id]).length,
+        story: (GTP.Story && GTP.Story.order ? GTP.Story.order() : []).map((m) => m.id || m).filter((id) => ids.indexOf(id) >= 0).length,
+        arsenal: (() => { const cw = Object.keys(GTP.Combat.WEAPONS), pw = P.weapons.map((w) => w.id), A = GTP.Assets;
+          return { extra: cw.filter((id) => pw.indexOf(id) < 0), missing: pw.filter((id) => cw.indexOf(id) < 0),
+            noMesh: pw.filter((id) => { if (id === 'fist') return false; try { return !(A.weaponMesh && A.weaponMesh(id)); } catch (e) { return true; } }) }; })(),
+        arenas: ['b01_goldplate', 'b02_velvetine', 'b03_warbanner', 'b04_redacted', 'b05_dunk', 'b06_panel'].map((id) => {
+          const m = P.missionById(id), B = GTP.Bosses, a = B && B.arena ? B.arena(id) : null, lm = GTP.World.landmark(m.marker), d = lm && (lm.door || lm);
+          const t = m.objectives[0].target, at = GTP.Missions.resolvePoint ? GTP.Missions.resolvePoint(t) : null;
+          return { id, arena: !!a, off: a && at ? Math.hypot(a.x - at.x, a.z - at.z) : null, fromMarker: a && d ? Math.round(Math.hypot(a.x - d.x, a.z - d.z)) : null };
+        })
       };
     }, NEW_IDS);
     console.log('  live: ' + JSON.stringify(live));
     t.assert(live.parity && live.weapons >= 32 && live.calls === 35, 'parity tables reach the game: ' + JSON.stringify(live));
     t.assert(live.inGame.length === NEW_IDS.length && live.total >= 35, 'Missions.allMissions sees all 35 story missions: ' + JSON.stringify(live));
     t.assert(live.intros === NEW_IDS.length, 'every new mission has its intro cutscene in the live game');
+    t.assert(live.arsenal.extra.length === 0 && live.arsenal.missing.length === 0, 'Combat.WEAPONS is exactly the parity table: ' + JSON.stringify(live.arsenal));
+    t.assert(live.arsenal.noMesh.length === 0, 'every weapon builds a mesh: ' + live.arsenal.noMesh.join(','));
+    t.assert(live.story === NEW_IDS.length, 'GTP.Story.order() counts all ten new missions as story: ' + live.story);
+    for (const a of live.arenas) {
+      t.assert(a.arena, a.id + ': GTP.Bosses knows the arena');
+      t.assert(a.off == null || a.off < 1, a.id + ': the approach target is the live arena centre (off by ' + a.off + ' m)');
+      t.assert(a.fromMarker == null || a.id === 'b03_warbanner' || a.fromMarker < 260, a.id + ': the arena is within walking distance of the marker (' + a.fromMarker + ' m)');
+    }
     const errs = (await t.errors(ctx)).filter((e) => /25_content_parity/.test(e));
     t.assert(errs.length === 0, 'no errors from 25_content_parity.js: ' + errs.join('\n'));
   });

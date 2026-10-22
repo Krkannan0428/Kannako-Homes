@@ -177,6 +177,11 @@
     ped.update = function (dt) { this.age += dt; this.animTime += dt; if (this.gestureT > 0) this.gestureT -= dt; if (this.lineTime > 0) { this.lineTime -= dt; if (this.lineTime <= 0) this.line = null; } };
   }
   function thaw(ped) { if (!ped || !ped._frozen) return; delete ped.update; ped._frozen = false; ped.snap(); }
+  // a new look on screen: Render.rebuildEntityMesh (detach + attach only re-added the old mesh: attach builds when !e.mesh)
+  function rebuildMesh(ped) {
+    var Rd = GTP.Render; if (!Rd) return;
+    try { if (Rd.rebuildEntityMesh) Rd.rebuildEntityMesh(ped); else if (Rd.detach && Rd.attach) { Rd.detach(ped); ped.mesh = null; Rd.attach(ped); ped._parts = null; } } catch (e) { /* cosmetic */ }
+  }
   function placeActor(ped, a) {
     var pt = a.at ? spot(a.at, true) : null;
     if (pt) {
@@ -193,8 +198,9 @@
     }
     // a placard (Roz's CHEESE, Kip's MATTRESS): the look changes, so the mesh is rebuilt
     if (a.sign != null && ped.look && ped.look.sign !== a.sign && ped.kind !== 'player') {
-      ped.look.sign = a.sign;
-      var Rd = GTP.Render; if (Rd && Rd.detach && Rd.attach) { try { Rd.detach(ped); Rd.attach(ped); ped._parts = null; } catch (e) { /* cosmetic */ } }
+      if (!ped._csLookWas) ped._csLookWas = ped.look;   // a copy carries the placard: the cast's shared look is never written (QAC-39)
+      ped.look = Object.assign({}, ped.look, { sign: a.sign });
+      rebuildMesh(ped);
     }
     if (a.anim !== undefined) pose(ped, a.anim || 'idle');
     else if (!ped.poseAnim) pose(ped, 'idle');
@@ -212,13 +218,15 @@
     var at = a.at ? spot(a.at, true) : null, pl = player(), x = at ? at.x : (pl ? pl.x : null), z = at ? at.z : (pl ? pl.z : null);
     return AI.residents.near(id, x, z, 60);
   }
-  function actorFor(a) {
+  // key: '<id>#<n>' for the n-th actor of a role a shot repeats (six protesters), so each is its own ped (QAC-38)
+  function actorFor(a, key) {
     var id = a.castId || a.id; if (!id) return null;
-    var ped = cur.actors[id];
+    key = key || id;
+    var ped = cur.actors[key];
     if (ped && !ped.removed) return ped;
     if (id === 'player') ped = player();
-    else if (cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
-    else if (residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
+    else if (key === id && cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
+    else if (key === id && residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
     else {
       var at = a.at ? spot(a.at, true) : null, pl = player();
       var x = at ? at.x : (pl ? pl.x + 2 : 0), z = at ? at.z : (pl ? pl.z : 0);
@@ -232,7 +240,7 @@
       E().add(ped);
       cur.spawned.push(ped);
     }
-    cur.actors[id] = ped;
+    cur.actors[key] = ped;
     if (id === 'player') { if (ped.inVehicle && a.at) ped.exitVehicle(); ped.stop(); ped.aiming = false; ped.lockTarget = null; }
     freeze(ped);
     return ped;
@@ -240,7 +248,7 @@
   function removeActors() {
     var i, p;
     for (i = 0; i < cur.spawned.length; i++) { p = cur.spawned[i]; pose(p, null); thaw(p); if (!p.removed) { if (p.destroy) p.destroy(); E().remove(p); } }
-    for (i = 0; i < cur.reused.length; i++) { p = cur.reused[i]; pose(p, null); thaw(p); }
+    for (i = 0; i < cur.reused.length; i++) { p = cur.reused[i]; pose(p, null); thaw(p); if (p._csLookWas) { p.look = p._csLookWas; p._csLookWas = null; if (!p.removed) rebuildMesh(p); } }   // its own look back (QAC-39)
     for (i = 0; i < cur.vehicles.length; i++) { var v = cur.vehicles[i]; if (!v.removed) { if (v.destroy) v.destroy(); E().remove(v); } }
     var pl = player(); if (pl) { pose(pl, null); thaw(pl); pl.controlEnabled = true; }
     cur.spawned.length = 0; cur.reused.length = 0; cur.vehicles.length = 0; cur.actors = {};
@@ -267,7 +275,11 @@
     cur.i = index; cur.shot = shot; cur.t = 0; cur.hold = 0; cur.linesDone = false; cur.camSnap = true;
     // actors first: the camera may frame them
     var acts = shot.actors || [];
-    for (var i = 0; i < acts.length; i++) { var ped = actorFor(acts[i]); if (ped) placeActor(ped, acts[i]); }
+    var seen = {};
+    for (var i = 0; i < acts.length; i++) {
+      var aid = acts[i].castId || acts[i].id, nth = seen[aid] = (seen[aid] || 0) + 1;
+      var ped = actorFor(acts[i], nth > 1 ? aid + '#' + nth : null); if (ped) placeActor(ped, acts[i]);
+    }
     // a later shot of a mission intro: whoever has no facing of their own turns to the player, and the player to the giver,
     // so the reverse shot sees faces, not the backs the first shot left them with (QA-C1-04)
     if (index > 0 && s.mission) faceForShot(acts, cam.to);
@@ -327,12 +339,14 @@
       if (!spec || spec === 'off') { cur.musicWas = A.radio.isPlaying && A.radio.isPlaying() ? A.station : null; A.radio.stop(); }
       else if (typeof spec === 'string' && spec.indexOf('station:') === 0) {
         var want = spec.slice(8), list = (GTP.Content.radio && GTP.Content.radio.stations) || [];
-        for (var i = 0; i < list.length; i++) if (list[i].id === want) { cur.musicWas = A.station; A.radio.setStation(i); break; }
+        for (var i = 0; i < list.length; i++) if (list[i].id === want) { cur.musicWas = A.station; A.radio.setStation(i); if (A.radio.force) { A.radio.force(true); cur.musicForced = true; } break; }   // heard on foot too (QAC-12)
       }
     } catch (e) { /* audio optional */ }
   }
   function musicEnd(c) {
-    var A = GTP.Audio; if (!A || !A.radio || !c || c.musicWas == null) return;
+    var A = GTP.Audio; if (!A || !A.radio || !c) return;
+    if (c.musicForced && A.radio.force) { try { A.radio.force(false); } catch (e) { /* audio optional */ } }
+    if (c.musicWas == null) return;
     try { A.radio.setStation(c.musicWas); } catch (e) { /* audio optional */ }
   }
 
@@ -359,7 +373,7 @@
     }
     cur = null;
     if (GTP.AI) GTP.AI.alarmMuted = !!c.alarmWas;
-    if (c.wantedWas && GTP.AI && GTP.AI.wanted && GTP.AI.wanted.set) { try { GTP.AI.wanted.set(c.wantedWas); } catch (e) { /* ai optional */ } }
+    if (c.wantedWas && pl && pl.alive !== false && GTP.AI && GTP.AI.wanted && GTP.AI.wanted.set) { try { GTP.AI.wanted.set(c.wantedWas); } catch (e) { /* ai optional */ } }   // never onto a dead player (QAC-11)
     musicEnd(c);
     var Rd = GTP.Render;
     if (Rd) { Rd.freeCam(false); if (Rd.rig && pl) { Rd.rig.target(pl); Rd.rig.yaw = pl.yaw; Rd.rig.pitch = 0.2; Rd.rig.snap(); Rd.updateCamera(0); } }
@@ -367,6 +381,37 @@
     if (g && g.state === 'cutscene') g.setState(c.restore && c.restore !== 'cutscene' ? c.restore : 'playing');
     GTP.Events.emit('cutscene:end', { id: c.script.id || null, skipped: !!c.skipped, completed: runDone !== false });
     if (runDone !== false && typeof c.onDone === 'function') { try { c.onDone(); } catch (e) { U.reportError(e, 'cutscenes.onDone'); } }
+  }
+  // how long confirm has been held: game time, or the wall clock while the live loop runs, whichever is longer. At a few frames a
+  // second (a software renderer, the first frames of the opening) each frame adds only a capped slice of game time, so a 0.6 s
+  // hold of Enter took many seconds of real time to skip the opening. Tests that step the game (no live loop) stay on game time.
+  function wallNow() { return typeof performance !== 'undefined' && performance.now ? performance.now() / 1000 : 0; }
+  function skipHeld(c, peek) {
+    var g = game(), live = !!(g && g._raf) && wallNow() > 0, kh = keyHold.script === c ? wallNow() - keyHold.t0 : 0;
+    if (!live || !(c.skipHoldT > 0)) return Math.max(c.skipHoldT || 0, live ? kh : 0);
+    var now = wallNow();
+    if (c.skipWall0 == null) { if (peek) return Math.max(c.skipHoldT, kh); c.skipWall0 = now - c.skipHoldT; }
+    return Math.max(c.skipHoldT, now - c.skipWall0, kh);
+  }
+  // The keyboard's own hold, timed from its events: when frames come seconds apart a whole hold of Enter can fall between two
+  // steps, and polling Input.down never sees it. A confirm key (Enter, Space: GTP.Input.bindings) held for skipHold seconds of
+  // wall clock, by its autorepeat or at its keyup, asks the running script to skip at the next step.
+  var keyHold = { code: null, t0: 0, script: null };
+  function confirmKey(code) { var B = GTP.Input && GTP.Input.bindings, a = B && B[code]; return !!a && a.indexOf('confirm') >= 0; }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('keydown', function (e) {
+      var c = cur; if (!c || c.script.skippable === false || !confirmKey(e.code)) return;
+      var now = wallNow();
+      if (keyHold.code !== e.code || keyHold.script !== c) { keyHold.code = e.code; keyHold.t0 = now; keyHold.script = c; return; }
+      if (now - keyHold.t0 >= K.skipHold) c.skipRequested = true;
+    }, true);
+    window.addEventListener('keyup', function (e) {
+      if (keyHold.code !== e.code) return;
+      var c = keyHold.script, held = wallNow() - keyHold.t0;
+      keyHold.code = null; keyHold.script = null;
+      if (c && c === cur && held >= K.skipHold) c.skipRequested = true;
+    }, true);
+    window.addEventListener('blur', function () { keyHold.code = null; keyHold.script = null; });
   }
   var Cutscenes = GTP.Cutscenes = {
     K: K,
@@ -429,9 +474,10 @@
       c.t += dt;
       // skip: back once = this shot, confirm held = the script
       if (In && c.script.skippable !== false) {
-        if (In.pressed('back')) { Cutscenes.skipShot(); }
-        if (In.down('confirm')) { c.skipHoldT += dt; if (c.skipHoldT >= K.skipHold) { Cutscenes.skip(); return; } }
-        else c.skipHoldT = 0;
+        if (c.skipRequested) { Cutscenes.skip(); return; }
+        if (In.pressed('back') || In.pressed('cancel')) { Cutscenes.skipShot(); }   // cancel: pad B in the menu map (QA-B-FE-05)
+        if (In.down('confirm')) { c.skipHoldT += dt; if (skipHeld(c) >= K.skipHold) { Cutscenes.skip(); return; } }
+        else { c.skipHoldT = 0; c.skipWall0 = null; }
       }
       // the talking actor gestures while their line shows
       var Ms = GTP.Missions, line = Ms && Ms.dialogue && Ms.dialogue.active ? Ms.dialogue.current : null;
@@ -460,28 +506,33 @@
     },
     hud: function () {
       if (!cur) return { active: false, letterbox: false, skip: 0 };
-      return { active: true, letterbox: Cutscenes.letterbox, skip: U.clamp(cur.skipHoldT / K.skipHold, 0, 1), shot: cur.i, shots: cur.script.shots.length, title: scriptTitle(cur), t: cur.t, seconds: cur.seconds, skippable: cur.script.skippable !== false };
+      return { active: true, letterbox: Cutscenes.letterbox, skip: U.clamp(skipHeld(cur, true) / K.skipHold, 0, 1), shot: cur.i, shots: cur.script.shots.length, title: scriptTitle(cur), t: cur.t, seconds: cur.seconds, skippable: cur.script.skippable !== false };
     },
     actors: function () { return cur ? cur.actors : {}; },
     debug: { cur: function () { return cur; }, spot: spot, lookAt: lookAt }
   };
+  // a death or a bust mid-script ends it at once, without its onDone: the WASTED / BUSTED shot needs the rig, the body, no letterbox (QAC-11)
+  function downDuringScript() { if (cur) { try { finish(false); } catch (e) { U.reportError(e, 'cutscenes.down'); } } }
+  GTP.Events.on('player:wasted', downDuringScript);
+  GTP.Events.on('busted', downDuringScript);
 
   // ====================================================================== GTP.Hints ==
   var HINT_DEFS = [
-    { id: 'h_move', text: 'WASD or the left stick moves. Shift runs. Space jumps.', keys: ['W', 'A', 'S', 'D'] },
-    { id: 'h_look', text: 'Move the mouse or the right stick to look. Click the game to lock the pointer.', keys: ['MOUSE'] },
-    { id: 'h_enter', text: 'F or Enter gets in. The same key gets out.', keys: ['F'] },
-    { id: 'h_drive', text: 'W goes, S brakes and reverses, Space is the handbrake. Hold it for a slide.', keys: ['W', 'S', 'SPACE'] },
-    { id: 'h_arrow', text: 'The arrow on the minimap and the top of the screen points at the objective. The Loop is the fast way across town.', keys: [] },
-    { id: 'h_aim', text: 'Hold the right mouse button (or Q) to aim. Tab switches targets. Head shots count double.', keys: ['RMB', 'Q', 'TAB'] },
-    { id: 'h_reload', text: 'R reloads. An empty magazine reloads itself.', keys: ['R'] },
-    { id: 'h_wheel', text: 'Hold Tab (no gun raised) for the weapon wheel. The wheel or [ ] cycles.', keys: ['TAB'] },
+    // pad / touch: the sentence for that device (Hints.hud picks it by GTP.UI.device(); QA-B-HUD-02)
+    { id: 'h_move', text: 'WASD or the left stick moves. Shift runs. Space jumps.', pad: 'The left stick moves. Hold B to run. A jumps.', touch: 'The stick moves; push it all the way to run. JUMP jumps.', keys: ['W', 'A', 'S', 'D'] },
+    { id: 'h_look', text: 'Move the mouse or the right stick to look. Click the game to lock the pointer.', pad: 'The right stick looks around.', touch: 'Drag on the screen to look around.', keys: ['MOUSE'] },
+    { id: 'h_enter', text: 'F or Enter gets in. The same key gets out.', pad: 'Y gets in. The same button gets out.', touch: 'ENTER gets in. In a car the same button is EXIT.', keys: ['F'] },
+    { id: 'h_drive', text: 'W goes, S brakes and reverses, Space is the handbrake. Hold it for a slide.', pad: 'RT goes, LT brakes and reverses, A is the handbrake. Hold it for a slide.', touch: 'The stick drives and steers. BRAKE is the handbrake. Hold it for a slide.', keys: ['W', 'S', 'SPACE'] },
+    { id: 'h_arrow', text: 'The yellow arrow on screen points at the objective. On the minimap it is the yellow dot, or a triangle on the rim when far.', keys: [] },
+    { id: 'h_aim', text: 'Hold the right mouse button (or Q) to aim. Tab switches targets. Head shots count double.', pad: 'Hold LT to aim. R3 switches targets. Head shots count double.', touch: 'Hold AIM to aim. Head shots count double.', keys: ['RMB', 'Q', 'TAB'] },
+    { id: 'h_reload', text: 'R reloads. An empty magazine reloads itself.', pad: 'X reloads. An empty magazine reloads itself.', touch: 'RLD reloads. An empty magazine reloads itself.', keys: ['R'] },
+    { id: 'h_wheel', text: 'Hold Tab (no gun raised) for the weapon wheel. The wheel or [ ] cycles.', pad: 'Hold R3 for the weapon wheel. LB and RB cycle.', touch: 'Hold WPN for the weapon wheel.', keys: ['TAB'] },
     { id: 'h_wanted', text: 'You\'re wanted. Break line of sight and the star fades. Gus\'s Garage resprays it for $100.', keys: [] },
     { id: 'h_bust', text: 'Cops on foot can bust you in a few seconds. Get in a car or run.', keys: ['SHIFT'] },
     { id: 'h_shop', text: 'Green light: a shop. Stand in it to buy weapons, ammo, Clarity Pellets and the Firmness Vest.', keys: [] },
-    { id: 'h_taxi', text: 'Press E while stopped to start taking fares.', keys: ['E'] },
-    { id: 'h_patrol', text: 'Press E while stopped to start an HOA patrol.', keys: ['E'] },
-    { id: 'h_map', text: 'M opens the map. Click anywhere to set a waypoint.', keys: ['M'] },
+    { id: 'h_taxi', text: 'Press E while stopped to start taking fares.', pad: 'Hold B (the horn) while stopped to start taking fares.', touch: 'Hold HORN while stopped to start taking fares.', keys: ['E'] },
+    { id: 'h_patrol', text: 'Press E while stopped to start an HOA patrol.', pad: 'Hold B (the horn) while stopped to start an HOA patrol.', touch: 'Hold HORN while stopped to start an HOA patrol.', keys: ['E'] },
+    { id: 'h_map', text: 'M opens the map. Click anywhere to set a waypoint. The Loop is the fast way across town.', pad: 'BACK opens the map. The Loop is the fast way across town.', touch: 'MAP opens the map. Tap anywhere to set a waypoint.', keys: ['M'] },
     { id: 'h_save', text: 'The pod van is home. Sitting in it here saves the game.', keys: [] }
   ];
   function hintDef(id) {
@@ -491,6 +542,11 @@
     return null;
   }
   function flags() { var Ms = GTP.Missions; return Ms && Ms.state ? Ms.state.flags : null; }
+  // the sentence for the active device: the def's pad / touch line, else the keyboard text (QA-B-HUD-02)
+  function hintText(h) {
+    var d = GTP.UI && GTP.UI.device ? GTP.UI.device() : 'keyboard';
+    return (d === 'gamepad' ? h.pad : d === 'touch' ? h.touch : null) || h.text;
+  }
   var hq = [], hcur = null, hgap = 0, hcheck = 0, hMoveAt = -1;
   var Hints = GTP.Hints = {
     enabled: true,
@@ -508,7 +564,7 @@
       return true;
     },
     current: function () { return hcur; },
-    hud: function () { return hcur ? { id: hcur.id, text: hcur.text, keys: hcur.keys || [], t: hcur.t, total: K.hintSeconds, k: U.clamp(hcur.t / K.hintSeconds, 0, 1) } : null; },
+    hud: function () { return hcur ? { id: hcur.id, text: hintText(hcur), keys: hcur.keys || [], t: hcur.t, total: K.hintSeconds, k: U.clamp(hcur.t / K.hintSeconds, 0, 1) } : null; },
     dismiss: function () { if (hcur) { hcur = null; hgap = K.hintGap; } },
     update: function (dt) {
       var g = game(), p = player(); if (!g || !p || !Hints.enabled) return;
@@ -529,7 +585,7 @@
         if ((id === 'h_enter' && p.inVehicle) || (id === 'h_drive' && !p.inVehicle)) return;
         if (d && f && !f['hint_' + id]) {
           f['hint_' + id] = true;
-          hcur = { id: id, text: d.text, keys: d.keys || [], t: 0 };
+          hcur = { id: id, text: d.text, pad: d.pad || null, touch: d.touch || null, keys: d.keys || [], t: 0 };
           if (id === 'h_move') hMoveAt = simT();
           GTP.Events.emit('hint', { id: id, text: d.text, keys: d.keys || [] });
         }

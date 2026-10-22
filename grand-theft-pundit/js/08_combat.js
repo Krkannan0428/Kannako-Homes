@@ -93,7 +93,7 @@
   };
   // the twelve wheel slots (the wheel shows one weapon per slot; R cycles a slot's weapons while the wheel is open)
   var SLOTS = [
-    { id: 'hand', name: 'Unarmed' }, { id: 'melee', name: 'Melee' }, { id: 'special', name: 'Megaphone' }, { id: 'pistol', name: 'Pistols' },
+    { id: 'hand', name: 'Unarmed' }, { id: 'melee', name: 'Melee' }, { id: 'special', name: 'Specials' }, { id: 'pistol', name: 'Pistols' },
     { id: 'heavypistol', name: 'Heavy Pistols' }, { id: 'smg', name: 'SMGs & MGs' }, { id: 'rifle', name: 'Rifles' }, { id: 'shotgun', name: 'Shotguns' },
     { id: 'sniper', name: 'Snipers' }, { id: 'thrown', name: 'Thrown' }, { id: 'explosive', name: 'Explosives' }, { id: 'heavy', name: 'Heavy' }
   ];
@@ -233,13 +233,32 @@
     if (c === 'thrown') return w.blast ? 10 : 9;
     return 11;
   }
+  // The fallback table's additions that the content track's parity table also has under its own id: when the parity table is
+  // loaded the parity id wins, takes the fallback entry's engine-only fields as its base, and the fallback id leaves the table
+  // (one minigun, one Filibuster). Meshes follow the same map (05b).
+  var LEGACY = { selfie_stick: 'selfie', heavy_pistol: 'filibuster', machine_pistol: 'threadpistol', pdw: 'liveblog', battle_rifle: 'battlerifle',
+    both_barrels: 'doublebarrel', auto_shotgun: 'autoshotgun', heavy_sniper: 'heavysniper', sticky: 'stickynote', spin_smoke: 'smoke', minigun: 'spin' };
+  // engine fields a parity row may carry beside the plan's schema (copied as they are)
+  var ENGINE_KEYS = ['melee', 'lunge', 'knock', 'cone', 'arc', 'push', 'heat', 'stun', 'speed', 'fuse', 'blast', 'ring', 'vehicleDmg', 'restitution', 'bounces',
+    'scope', 'scopedSpread', 'headMul', 'vehicleMul', 'noAuto', 'casingDelay', 'aimSpread', 'pointShots', 'shellReload', 'driveBy', 'floors', 'flipWindow',
+    'spinUp', 'splash', 'burn', 'launch', 'zoom', 'mobility', 'cook'];
   // a parity weapon (the content track's schema) as an engine entry: known ids keep their engine-only fields
   function normalize(src, base) {
     var o = base ? Object.assign({}, base) : {};
     var cls = String(src.class || src.cls || (base && base.cls) || 'pistol').toLowerCase(); cls = CLS_ALIAS[cls] || cls;
+    // a heavy rifle is a machine gun; a heavy special (the minigun) keeps its base's class
+    if (src.heavy && cls === 'rifle') cls = 'lmg';
+    if (src.heavy && cls === 'special') cls = base ? base.cls : 'launcher';
     o.name = src.name || o.name || src.id; o.cls = cls;
     var nums = ['dmg', 'rate', 'mag', 'reserve', 'reload', 'spread', 'recoil', 'range', 'price'];
     for (var i = 0; i < nums.length; i++) if (typeof src[nums[i]] === 'number' && isFinite(src[nums[i]])) o[nums[i]] = src[nums[i]];
+    for (i = 0; i < ENGINE_KEYS.length; i++) if (src[ENGINE_KEYS[i]] != null) o[ENGINE_KEYS[i]] = src[ENGINE_KEYS[i]];
+    if (src.sticks) o.stick = true;
+    if (src.remote && !(o.fuse > 0)) o.fuse = 3;   // no detonator button: a sticky goes off on a timer
+    if (src.smokeSeconds) { o.smoke = src.smokeSeconds; o.fuse = o.fuse || 1.2; o.bounces = o.bounces || 2; }
+    // a lobbed thing that only shoves (the merch cannon's shirts) knocks over what it lands on instead of exploding
+    if (src.projectile === 'lobbed' && !src.blast && !src.stun && !src.fuse && !src.smokeSeconds && (src.knock || 0) >= 5) { o.stun = 1.6; o.shove = true; }
+    if (src.glow) o.glow = src.glow;
     if (src.bloom && typeof src.bloom === 'object') o.bloom = { add: +src.bloom.add || 0, max: +src.bloom.max || 0, decay: +src.bloom.decay || 0.1 };
     if (src.hold === 'one' || src.hold === 'two') o.hold = src.hold;
     if (src.attachments && src.attachments.length) o.attachments = src.attachments.slice();
@@ -268,12 +287,24 @@
     // shell-by-shell reload takes the table's whole-magazine time per shell
     if ((o.lobbed && !o.impact) || o.cone || o.melee) delete o.mag;
     if (o.mag > 0 && !(o.reload > 0)) o.reload = base && base.reload > 0 ? base.reload : 1.8;
+    if (o.melee) { delete o.reload; delete o.reserve; }
     if (o.shellReload && o.mag > 0 && typeof src.reload === 'number' && src.reload > 0) o.reload = base && base.reload > 0 && Math.abs(src.reload - base.reload) < 1e-6 ? base.reload : Math.max(0.25, src.reload / o.mag);
     o.slot = base && base.slot != null && base.cls === cls ? base.slot : slotForClass(o);
     o.parity = true;
     return o;
   }
-  var arsenal = { sig: null, parity: 0 };
+  var arsenal = { sig: null, parity: 0 }, LEGACY_ENTRIES = {}, LEGACY_OF = {};
+  for (var lk in LEGACY) LEGACY_OF[LEGACY[lk]] = lk;
+  function migrateLegacy(p) {
+    for (var old in LEGACY_OF) {
+      if (WEAPONS[old] || !(old in p.weapons)) continue;
+      var nu = LEGACY_OF[old], n = p.weapons[old]; delete p.weapons[old];
+      if (WEAPONS[nu]) p.weapons[nu] = Math.max(p.weapons[nu] || 0, n || 0);
+      if (p.ammo && p.ammo[old]) { if (WEAPONS[nu] && !p.ammo[nu]) p.ammo[nu] = p.ammo[old]; delete p.ammo[old]; }
+      if (p.weapon === old) p.weapon = WEAPONS[nu] ? nu : 'fist';
+      if (p.weaponMods && p.weaponMods[old]) { p.weaponMods[nu] = p.weaponMods[nu] || p.weaponMods[old]; delete p.weaponMods[old]; }
+    }
+  }
   function rebuildOrder() {
     var ids = Object.keys(WEAPONS);
     ids.sort(function (a, b) { var wa = WEAPONS[a], wb = WEAPONS[b]; return (wa.slot - wb.slot) || ((wa.price || 0) - (wb.price || 0)) || (a < b ? -1 : 1); });
@@ -293,9 +324,15 @@
     arsenal.sig = sig; arsenal.parity = 0;
     if (arr) for (var i = 0; i < arr.length; i++) {
       var s = arr[i]; if (!s || !s.id || s.id === 'fist') continue;
-      try { var n = normalize(s, WEAPONS[s.id] || null); WEAPONS[s.id] = n; arsenal.parity++; } catch (e) { U.reportError(e, 'combat.arsenal ' + s.id); }
+      try {
+        var leg = LEGACY[s.id], base = WEAPONS[s.id] || (leg && (WEAPONS[leg] || LEGACY_ENTRIES[leg])) || null;
+        if (leg && WEAPONS[leg]) { LEGACY_ENTRIES[leg] = WEAPONS[leg]; delete WEAPONS[leg]; delete UNLOCK[leg]; delete PITCH[leg]; }
+        WEAPONS[s.id] = normalize(s, base); arsenal.parity++;
+      } catch (e) { U.reportError(e, 'combat.arsenal ' + s.id); }
     }
     rebuildOrder();
+    // a legacy id still in a pocket (an old test or save) becomes its parity weapon
+    var pl = player(); if (pl && pl.weapons) migrateLegacy(pl);
   }
   rebuildOrder();
 
@@ -312,8 +349,15 @@
     // the aim basis: a (forward with pitch), u (up with pitch), r (right)
     var ax = fx_ * cp, ay = sp, az = fz_ * cp, ux = -fx_ * sp, uy = cp, uz = -fz_ * sp;
     var shY = y + (1.38 * ck + (ck < 1 ? 0.06 : 0)) * sc, sx = x + rx * 0.3 * sc, sz = z + rz * 0.3 * sc;
-    var gx, gy, gz, X, Y;
-    if (raised) {
+    var gx, gy, gz, X, Y, rig3 = modelsRig();
+    if (raised && rig3 && !fit.upright && !fit.melee && !fit.knuckle) {
+      // the models-track rig (06c holdPose): the grip in the chest frame, rifle-likes (and launchers, the minigun) in the shoulder
+      // pocket at (0.1 right, 0.1 up, 0.32 ahead), handguns out in front at (0.04, 0.18, 0.51); drawn at scale 1, so the shot leaves
+      // the barrel the player sees
+      var two = hold === 'two', ox = two ? 0.1 : 0.04, oy = two ? 0.1 : 0.18, oz = two ? 0.32 : 0.51, cy = y + MODEL_CHEST * ck * sc;
+      gx = x + (rx * ox + ux * oy + ax * oz) * sc; gy = cy + (uy * oy + ay * oz) * sc; gz = z + (rz * ox + uz * oy + az * oz) * sc;
+      X = [ax, ay, az]; Y = [ux, uy, uz];
+    } else if (raised) {
       if (fit.spinBarrels) { gx = x + rx * 0.1 * sc + fx_ * 0.3 * sc; gy = y + 1.0 * ck * sc; gz = z + rz * 0.1 * sc + fz_ * 0.3 * sc; X = [ax, ay * 0.5, az]; Y = [ux, uy, uz]; }
       else if (fit.shoulder) { gx = sx + ax * 0.12 * sc - ux * 0.16 * sc; gy = shY + ay * 0.12 * sc - uy * 0.16 * sc; gz = sz + az * 0.12 * sc - uz * 0.16 * sc; X = [ax, ay, az]; Y = [ux, uy, uz]; }
       else if (fit.upright) { gx = sx + ax * 0.1 * sc + fx_ * 0.08 * sc; gy = shY + 0.12 * sc; gz = sz + az * 0.1 * sc + fz_ * 0.08 * sc; X = [rx, 0, rz]; Y = id === 'megaphone' ? [ax, ay, az] : [ux * 0.3 + fx_ * 0.2, 0.95, uz * 0.3 + fz_ * 0.2]; }
@@ -338,9 +382,12 @@
     var yl = Math.sqrt(Y[0] * Y[0] + Y[1] * Y[1] + Y[2] * Y[2]) || 1; Y[0] /= yl; Y[1] /= yl; Y[2] /= yl;
     out.X[0] = X[0]; out.X[1] = X[1]; out.X[2] = X[2]; out.Y[0] = Y[0]; out.Y[1] = Y[1]; out.Y[2] = Y[2];
     out.Z[0] = X[1] * Y[2] - X[2] * Y[1]; out.Z[1] = X[2] * Y[0] - X[0] * Y[2]; out.Z[2] = X[0] * Y[1] - X[1] * Y[0];
-    out.gx = gx; out.gy = gy; out.gz = gz; out.s = holdScale(id) * sc; out.raised = !!raised;
+    out.gx = gx; out.gy = gy; out.gz = gz; out.s = (rig3 ? 1 : holdScale(id)) * sc; out.raised = !!raised;
     return out;
   }
+  // the models-track rig (05d + 06c): GTP.Anim draws the gun in the hand at scale 1; the chest frame's origin sits 1.243 m up
+  var MODEL_CHEST = 1.243;
+  function modelsRig() { return !!(GTP.Anim && GTP.Models); }
   // handguns read small in a fist the size of the fallback rig's: they are drawn a little larger than the long guns
   function holdScale(id) { var f = fitOf(id); return f && f.hold === 'one' && !f.melee && !f.upright && !f.knuckle ? HOLD_SCALE * 1.22 : HOLD_SCALE; }
   function framePoint(fr, p, out) {
@@ -413,12 +460,21 @@
     var b = Wd.raycastBuildings(o.x, o.y, o.z, d.x, d.y, d.z, range);
     if (b) { bestT = b.t; hb = b; }
     if (d.y < -1e-4) {
-      var ex = o.x + d.x * bestT, ez = o.z + d.z * bestT, gy = Wd.heightAt(ex, ez, o.y);
-      var tg = (o.y - gy) / (-d.y);
-      if (tg > 0 && tg < bestT) {
-        var gx2 = o.x + d.x * tg, gz2 = o.z + d.z * tg; gy = Wd.heightAt(gx2, gz2, o.y); tg = (o.y - gy) / (-d.y);
-        if (tg > 0 && tg < bestT) { bestT = tg; hb = null; out.ground = true; out.water = gy <= (C.WATER_Y != null ? C.WATER_Y : -1.2) + 0.05; }
+      // march the ground along the ray (a shoreline, a kerb or a ramp edge between the gun and a target below it stops the shot;
+      // the camera's hover trace runs the same test, so the sight never shows a hit the bullet cannot make)
+      var step = Math.max(1.5, bestT / 90), prevT = 0, tg = -1, gy = 0;
+      for (var st = step; ; st += step) {
+        var tt = Math.min(st, bestT), sy = o.y + d.y * tt;
+        gy = Wd.heightAt(o.x + d.x * tt, o.z + d.z * tt, o.y);
+        if (sy <= gy) {
+          // the crossing is in (prevT, tt]: two bisections are plenty at this step
+          var lo = prevT, hi = tt;
+          for (var bi = 0; bi < 4; bi++) { var mid = (lo + hi) * 0.5; if (o.y + d.y * mid <= Wd.heightAt(o.x + d.x * mid, o.z + d.z * mid, o.y)) hi = mid; else lo = mid; }
+          tg = hi; gy = Wd.heightAt(o.x + d.x * tg, o.z + d.z * tg, o.y); break;
+        }
+        prevT = tt; if (tt >= bestT) break;
       }
+      if (tg > 0 && tg < bestT) { bestT = tg; hb = null; out.ground = true; out.water = gy <= (C.WATER_Y != null ? C.WATER_Y : -1.2) + 0.05; }
     }
     var mx = o.x + d.x * bestT * 0.5, mz = o.z + d.z * bestT * 0.5;
     var list = E().hash.query(mx, mz, bestT * 0.5 + 4, scratch);
@@ -427,7 +483,7 @@
       if (e === shooter || e.removed || (shooter && e === shooter.inVehicle)) continue;   // never your own car
       if (e.kind === 'ped' || e.kind === 'player') { if (!e.alive || e.inVehicle) continue; t = rayPed(o, d, e, bestT); if (t >= 0 && t < bestT) zone = lastZone; }
       else if (e.kind === 'vehicle') { if (e.sinking) continue; t = rayVehicle(o, d, e, bestT); }
-      else if (e.kind === 'heli') { if (e.down) continue; t = raySphere(o, d, e.x, e.y, e.z, 3.4, bestT); }
+      else if (e.kind === 'heli') { if (e.down) continue; t = raySphere(o, d, e.x, e.y, e.z, e.hitRadius || (e.radius ? e.radius + 0.4 : 3.4), bestT); }   // the police helicopter 3.4 m, a boss weak point its own size
       else continue;
       if (t >= 0 && t < bestT) { bestT = t; hitE = e; hb = null; out.ground = false; out.water = false; if (e.kind !== 'ped' && e.kind !== 'player') zone = null; }
     }
@@ -560,7 +616,7 @@
   // ------------------------------------------------------------ aim mode --
   var aim = {
     active: false, target: null, hover: null, point: null, screen: null, targetScreen: null, weapon: 'fist', inRange: false, lockT: 0, zone: null, range: 0,
-    hip: false, assist: true, snapT: 0, wasActive: false, crosshair: null
+    hip: false, assist: true, snapT: 0, wasActive: false, crosshair: null, hop: false
   };
   function lockValid(p, e, cd, range) {
     if (!validTarget(e, p, true)) return false;
@@ -613,7 +669,7 @@
     aim.active = active;
     var range = w.melee ? 7 : Math.max(w.range, 8);
     if (!active) {
-      aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0;
+      aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0; aim.hop = false;
       aim.hip = !!(p.alive && !p.inVehicle && !w.melee && !w.cone && p.weapon !== 'fist');
       if (aim.hip) {
         // the hip crosshair: a dot where a hip shot would go (the UI draws it from hud().crosshair)
@@ -628,10 +684,16 @@
     var cur = p.lockTarget;
     if (scope.active) cur = null;   // the scope is a pure sight: no lock-on magnetism
     else {
-      if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) cur = null;
-      var cycle = In.pressed('lockOn') && !wheel.open;
-      if ((rising && settings.aimAssist) || cycle) {
-        var cands = lockCandidates(p, cd, range, (rising ? 20 : 45) * DEG, candBuf, !!w.rocket);
+      if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) {
+        // a hard lock (kind 'heli': the police helicopter, a boss weak point) whose target went down hands over like a fresh aim
+        // press: it dragged the rig up to the pitch limit, where the 6-degree crosshair re-acquire below never finds a body again
+        if (cur.kind === 'heli' && (cur.removed || cur.down)) aim.hop = true;
+        cur = null;
+      }
+      if (aim.hop && In.look && (In.look.dx || In.look.dy)) aim.hop = false;   // the player took the camera back
+      var cycle = In.pressed('lockOn') && !wheel.open, hop = !!aim.hop && !cur && !cycle && settings.aimAssist;
+      if ((rising && settings.aimAssist) || cycle || hop) {
+        var cands = lockCandidates(p, cd, range, (rising || hop ? 20 : 45) * DEG, candBuf, !!w.rocket);
         if (cands.length) {
           if (cycle && cur) {
             cands.sort(function (a, b) { return a.ang - b.ang; });
@@ -643,9 +705,11 @@
             for (var k = 1; k < cands.length; k++) if (cands[k].score < best.score) best = cands[k];
             cur = best.e;
           }
+          aim.hop = false;
           if (cur !== p.lockTarget) { aim.lockT = simT(); aim.snapT = 0; sfx('ui', p.x, p.z, 0.2); emit('aim:assist', { target: cur }); }
         } else if (cycle) cur = null;
-      } else if (!cur && settings.aimAssist) {
+      }
+      if (!cur && !rising && !cycle && settings.aimAssist) {
         // held aim re-acquires: a body the crosshair passes over (within 6°), or the helicopter anywhere in the cone (the rig cannot
         // look up at it)
         var cr0 = cameraRay(), cs = lockCandidates(p, cd, range * (w.rocket ? 1 : 1.9), 20 * DEG, candBuf, !!w.rocket), pick = null;
@@ -653,7 +717,7 @@
           var ce = cs[q].e; if (ce.kind !== 'heli' && cs[q].d > range) continue;
           if (ce.kind === 'heli' || (cr0 && rayAngleTo(cr0, ce.x, chestY(ce), ce.z) < 6 * DEG)) { if (!pick || cs[q].score < pick.score) pick = cs[q]; }
         }
-        if (pick) { cur = pick.e; aim.lockT = simT(); aim.snapT = 0.31; }   // no snap: it is already under the sight
+        if (pick) { cur = pick.e; aim.lockT = simT(); aim.snapT = 0.31; aim.hop = false; }   // no snap: it is already under the sight
       }
     }
     // the assist: a snap onto the lock (0.3 s), then a light stickiness while the crosshair stays near it; looking well away
@@ -794,7 +858,7 @@
     var base = w.spread || 0;
     if (w.scope) base = scope.active ? (w.scopedSpread || 0) : w.spread;
     else if (w.aimSpread != null && p.aiming) base = w.aimSpread;
-    if (hip) base = base * 1.6 + 0.004;   // from the hip: looser
+    if (hip) base = locked ? base * 1.1 + 0.002 : base * 1.6 + 0.004;   // from the hip: looser (the assist's target still gets a near-aimed cone)
     if (p.cover && p.cover.blind) base = base * 2.5 + 0.03;   // blind fire over or around cover
     if (w.pointShots && bloom.burst < w.pointShots && !hip) return base;   // the first rounds of a burst from rest: the "point"
     return base + bloom.cone * (locked ? 0.5 : 1);   // a lock-on is an aim assist: half the bloom lands on a locked target
@@ -922,6 +986,7 @@
       e.applyDamage(dmg, shooter, id);
       if (e.alive && !e.knockedDown && !e.inVehicle) {
         if (w.floors && zone !== 'head' && isPlayer && e.kind !== 'player') e.knockDown(d.x * w.knock, d.z * w.knock, 0, shooter, id);   // the Rebuttal puts a body hit on the floor
+        else if (w.stun && !w.lobbed && e.kind !== 'player') e.knockDown(d.x * 0.5, d.z * 0.5, 0, shooter, id);   // the Mute Button: down and quiet
         else { e.vx += d.x * (w.knock || 1); e.vz += d.z * (w.knock || 1); }
         // a hit reaction the anim reads (pose.hit): the zone, which way it came from
         var hr = e._hitReact || (e._hitReact = { t: 0, zone: null, dx: 0, dz: 0 }); hr.t = 0.3; hr.zone = zone; hr.dx = d.x; hr.dz = d.z;
@@ -963,7 +1028,7 @@
   }
   function hitscan(ped, w, id, ctx) {
     var pellets = w.pellets || 1, isPlayer = ped.kind === 'player';
-    var spread = isPlayer ? playerSpread(ped, w, !!(ped.aiming && ctx.target && ctx.target === aim.target), ctx.hip) : (w.spread || 0) * 2.2 + 0.03;
+    var spread = isPlayer ? playerSpread(ped, w, !!(ctx.target && ((ped.aiming && ctx.target === aim.target) || (ctx.hip && assistable(ctx.target, ped)))), ctx.hip) : (w.spread || 0) * 2.2 + 0.03;
     var o = ctx.origin, pelletHits = null, range = reachFor(ctx.target || aim.hover, w.range), volley = { counted: false };
     if (isPlayer && ctx.target && ctx.dist > range && ctx.target === aim.target) range = ctx.dist + 1;   // a locked target is in reach of the shot
     if (!isPlayer && smokeBetween(o.x, o.z, ctx.point.x, ctx.point.z)) spread = spread * 4 + 0.08;   // shooting blind through smoke
@@ -1257,7 +1322,7 @@
       var m = this.mesh; if (!m) return;
       var a = alpha == null ? 1 : alpha;
       m.position.set(this._px + (this.x - this._px) * a, this._py + (this.y - this._py) * a, this._pz + (this.z - this._pz) * a);
-      if (this.rest || this.stuck) m.rotation.set(this.weaponId === 'stickynote' ? 0 : Math.PI / 2, 0, 0.3);
+      if (this.rest || this.stuck) { var ww = WEAPONS[this.weaponId]; m.rotation.set(ww && ww.stick ? 0 : Math.PI / 2, 0, 0.3); }
       else { m.rotation.x = this.age * this.spin; m.rotation.z = this.age * this.spin * 0.4; }
     }
     land() {
@@ -1369,18 +1434,32 @@
     }
   }
   // the hottake's 5 m stun
+  var TAKE_TEXT = { flashbang: 'BREAKING NEWS', flare_gun: 'SIGNAL BOOST', merch_cannon: 'FREE SHIRT' };
+  var TAKE_FX = {
+    flashbang: { flash: 0xffffff, size: 5.5, life: 0.25, ring: 0xe8f0ff, bits: 'spark', bit: 0xffffff, bitSize: 0.3 },
+    flare_gun: { flash: 0xff3fa4, size: 2.6, life: 0.6, ring: 0xff6fb8, bits: 'spark', bit: 0xff9ad0, bitSize: 0.35 },
+    merch_cannon: { flash: 0xf4ecd8, size: 1.4, life: 0.3, ring: 0xff3fa4, bits: 'puff', bit: 0xf4ecd8, bitSize: 0.5 }
+  };
   function takeBlast(proj, owner) {
-    var w = WEAPONS.hottake, r = R();
+    var pw = WEAPONS[proj.weaponId], w = pw && pw.stun ? pw : WEAPONS.hottake, r = R(), pid = pw ? proj.weaponId : 'hottake';
     var x = proj.x, y = proj.y, z = proj.z, Wd = W();
     var gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
     var rad = w.stun || 5, i;
-    fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: 3.2, life: 0.5, color: 0xff8a30 });
-    fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.55, color: 0xff9a40 });
-    for (i = 0; i < 6; i++) fx({ type: 'fire', x: x + r.range(-0.5, 0.5), y: y + 0.3 + r.range(0, 0.6), z: z + r.range(-0.5, 0.5), vx: r.range(-2, 2), vy: r.range(1.5, 4), vz: r.range(-2, 2), size: r.range(0.8, 1.5), life: r.range(0.3, 0.6) });
-    for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: 0x553322 });
-    for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: 0xffb060 }); }
-    fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
-    textFx('RESPECTFULLY.', x, y + 1.6, z, '#ff7a20', 1.3);
+    var look = TAKE_FX[pid];
+    if (look) {
+      // a non-explosive stun: the merch cannon's shirts, the flare's pink light, the flashbang's white flash
+      fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: look.size, life: look.life, color: look.flash });
+      fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.5, color: look.ring });
+      for (i = 0; i < 8; i++) { var la = r.random() * Math.PI * 2, ls = r.range(2, 6); fx({ type: look.bits, x: x, y: y + 0.4, z: z, vx: Math.cos(la) * ls, vy: r.range(1.5, 4.5), vz: Math.sin(la) * ls, size: look.bitSize, life: r.range(0.4, 0.9), color: look.bit }); }
+    } else {
+      fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: 3.2, life: 0.5, color: 0xff8a30 });
+      fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.55, color: 0xff9a40 });
+      for (i = 0; i < 6; i++) fx({ type: 'fire', x: x + r.range(-0.5, 0.5), y: y + 0.3 + r.range(0, 0.6), z: z + r.range(-0.5, 0.5), vx: r.range(-2, 2), vy: r.range(1.5, 4), vz: r.range(-2, 2), size: r.range(0.8, 1.5), life: r.range(0.3, 0.6) });
+      for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: 0x553322 });
+      for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: 0xffb060 }); }
+      fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
+    }
+    textFx(TAKE_TEXT[pid] || 'RESPECTFULLY.', x, y + 1.6, z, '#ff7a20', 1.3);
     var list = E().hash.query(x, z, rad + 2.5, scratch);
     for (i = 0; i < list.length; i++) {
       var e = list[i]; if (e === proj || e.removed) continue;
@@ -1390,7 +1469,7 @@
       if (e.kind === 'ped' || e.kind === 'player') {
         if (!e.alive || e.inVehicle) continue;
         var dmg = proj.dmg * fall * (e === owner ? 0.5 : 1), was = e.alive;
-        e.knockDown(nx * 6 * fall, nz * 6 * fall, dmg, owner, 'hottake');
+        e.knockDown(nx * 6 * fall, nz * 6 * fall, dmg, owner, pid);
         e.lastHitBy = owner || e.lastHitBy;
         if (e.kind === 'player') { Combat.hurtFlash = 0.7; }
         blastCredit(owner, e, was, 'hottake', e.x, e.y + 1, e.z);
@@ -1404,7 +1483,7 @@
   }
   // the big ones: the hot mic's 6 m blast (+ a 5 m knockdown ring), the sticky note's 5 m, the confetti shell's 4 m, the firework's
   // 6 m and the rocket's 8 m blast that flips cars
-  var BLAST_COL = { ratio: [0xff9ad0, 0xff3fa4, 0x2a1a24], firework: [0xb0e8ff, 0x7a4aff, 0x221a2a], confetti: [0xfff0a0, 0xff3fa4, 0x2a2420], hotmic: [0xffb040, 0xff4a2a, 0x1e1a18], stickynote: [0xffe070, 0xff8a2a, 0x1e1a18] };
+  var BLAST_COL = { ratio: [0xff9ad0, 0xff3fa4, 0x2a1a24], firework: [0xb0e8ff, 0x7a4aff, 0x221a2a], confetti: [0xfff0a0, 0xff3fa4, 0x2a2420], hotmic: [0xffb040, 0xff4a2a, 0x1e1a18], stickynote: [0xffe070, 0xff8a2a, 0x1e1a18], sticky: [0xffe070, 0xff8a2a, 0x1e1a18], grenade_launcher: [0xffd0a0, 0xff6a2a, 0x1e1a18] };
   function areaBlast(proj, owner, kind) {
     var w = WEAPONS[kind] || WEAPONS.hotmic, r = R(), Wd = W();
     var x = proj.x, y = proj.y, z = proj.z, gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
@@ -1420,7 +1499,7 @@
     var confettiCols = [0xff3fa4, 0x2ee6ff, 0xffd84a, 0x9dff3c, 0xff7a20];
     for (i = 0; i < (kind === 'confetti' || kind === 'firework' ? 26 : 14); i++) { var a = r.random() * Math.PI * 2, sp = r.range(4, 13); fx({ type: 'spark', x: x, y: y + 0.6, z: z, vx: Math.cos(a) * sp, vy: r.range(3, 9), vz: Math.sin(a) * sp, size: 0.45, life: r.range(0.3, 0.9), color: kind === 'confetti' || kind === 'firework' ? confettiCols[i % 5] : (rocket ? 0xffb0e0 : 0xffc060) }); }
     fx({ type: 'decal', x: x, y: gy, z: z, size: rad * 0.7, size2: rad * 0.7, life: 60, color: 0x16120f });
-    textFx(kind === 'ratio' ? failText('wasted') : kind === 'confetti' ? 'CONGRATULATIONS' : kind === 'firework' ? 'TRENDING' : kind === 'stickynote' ? 'REMINDER' : 'HOT MIC', x, y + 2.2, z, kind === 'ratio' ? '#ff3fa4' : '#ff4a2a', 1.4);
+    textFx(kind === 'ratio' ? failText('wasted') : kind === 'confetti' ? 'CONGRATULATIONS' : kind === 'firework' ? 'TRENDING' : kind === 'stickynote' || kind === 'sticky' ? 'REMINDER' : kind === 'grenade_launcher' ? 'FOLLOW-UP' : 'HOT MIC', x, y + 2.2, z, kind === 'ratio' ? '#ff3fa4' : '#ff4a2a', 1.4);
     var list = E().hash.query(x, z, ring + 4, scratch), direct = proj._direct || null;
     for (i = 0; i < list.length; i++) {
       var e = list[i]; if (e === proj || e.removed) continue;
@@ -1666,6 +1745,12 @@
   function holeClear() { for (var i = 0; i < holes.list.length; i++) holeRelease(holes.list[i]); holes.list.length = 0; }
   var holeHandler = { add: holeAdd, update: holeUpdate, sync: function () { }, clear: holeClear, state: holes };
   var hooked = { rig: false };
+  function afterStep(dt) {
+    var B = GTP.Bosses, Sp = GTP.Specials, I = GTP.Interiors;
+    if (B && B.update) { try { B.update(dt); } catch (e) { U.reportError(e, 'bosses.tick'); } }
+    if (Sp && Sp.update) { try { Sp.update(dt); } catch (e2) { U.reportError(e2, 'specials.tick'); } }
+    if (I && I.update) { try { I.update(dt); } catch (e3) { U.reportError(e3, 'interiors.update'); } }
+  }
   function ensureHooks() {
     var Rd = GTP.Render, F = Rd && Rd.fx;
     if (F && F.register && F.extensions) {
@@ -1681,13 +1766,29 @@
         CAM.aimFov = adsFov(base);
         // the shoulder camera: closer and further right than the base rig, so the gun in the hands reads beside the crosshair
         CAM.aimDist = AIM_CAM.dist; CAM.aimSide = AIM_CAM.side; CAM.aimHeight = AIM_CAM.height; CAM.aimLookHeight = AIM_CAM.look;
-        try { return orig.call(this, dt, input); } finally { CAM.aimFov = base; CAM.aimDist = d0; CAM.aimSide = s0; CAM.aimHeight = h0; CAM.aimLookHeight = l0; }
+        try { var res = orig.call(this, dt, input); aimGuard(this); return res; } finally { CAM.aimFov = base; CAM.aimDist = d0; CAM.aimSide = s0; CAM.aimHeight = h0; CAM.aimLookHeight = l0; }
       };
       Rd.rig._combatAds = true; hooked.rig = true;
     }
     syncArsenal();
     registerSave();
     if (pendingSave && player() && GTP.SaveRegistry.combat) GTP.SaveRegistry.combat.set(pendingSave);
+  }
+
+  // The aim camera's wall guard (QA-A-CAM-01): Render's guard casts from the look-at point 8 m ahead, so with a wall or a counter in
+  // those 8 m (in a shop, facing a building) it threw the camera in front of the player at floor height. While aiming on foot the
+  // camera is kept on the line from the shoulder to the over-the-shoulder spot, pulled in to the first wall (at least 0.4 m).
+  function aimGuard(r) {
+    var t = r._target || player(), Wd = W(), CAM = C.CAMERA;
+    if (!t || !t.aiming || t.inVehicle || scope.active || (t.cameraMode || r.mode) === 'first' || !Wd || !Wd.raycastBuildings) return;
+    var d = U.yawToDir(r.yaw), rx = -d.z, rz = d.x, ox = t.x, oy = t.y + 1.5, oz = t.z, pad = CAM.collisionPad || 0.3;
+    var ahead = (r.pos.x - t.x) * d.x + (r.pos.z - t.z) * d.z > 0.05;
+    var cx = ahead ? t.x - d.x * AIM_CAM.dist + rx * AIM_CAM.side : r.pos.x, cy = ahead ? t.y + AIM_CAM.height + Math.sin(r.pitch) * 1.2 : r.pos.y, cz = ahead ? t.z - d.z * AIM_CAM.dist + rz * AIM_CAM.side : r.pos.z;
+    var gx = cx - ox, gy = cy - oy, gz = cz - oz, gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1;
+    var hit = Wd.raycastBuildings(ox, oy, oz, gx / gl, gy / gl, gz / gl, gl + pad);
+    if (!ahead && !hit) return;
+    var tt = hit ? Math.max(0.4, Math.min(gl, hit.t - pad)) : gl;
+    r.pos.x = ox + gx / gl * tt; r.pos.y = oy + gy / gl * tt; r.pos.z = oz + gz / gl * tt; r.pulled = !!hit;
   }
 
   // ----------------------------------------------------------- scope --
@@ -1723,6 +1824,7 @@
     if (p && ids.indexOf(p.weapon) >= 0) return p.weapon;
     if (pk && owns(p, pk)) return pk;
     for (var i = 0; i < ids.length; i++) if (owns(p, ids[i])) return ids[i];
+    for (i = 0; i < ids.length; i++) if (BASE_ORDER.indexOf(ids[i]) >= 0) return ids[i];
     return ids[0] || 'fist';
   }
   function openWheel(p, source) {
@@ -1743,11 +1845,14 @@
   function updateWheel(p, dt) {
     var In = GTP.Input, g = GTP.game;
     var tabDown = In.down('lockOn') || In.down('wheel');
+    // no wheel behind the shop page or while control is off: it is not drawn there, it slows the world and eats [ ] (QA-B-TCH-07)
+    var blocked = !p.controlEnabled || !!(GTP.UI && GTP.UI.state && GTP.UI.state.shopOpen);
     if (!wheel.open) {
-      if (tabDown && !p.aiming && p.alive && !p.knockedDown && g && g.state === 'playing') { wheel.hold += dt; if (wheel.hold >= 0.18) openWheel(p, 'key'); }
+      if (tabDown && !blocked && !p.aiming && p.alive && !p.knockedDown && g && g.state === 'playing') { wheel.hold += dt; if (wheel.hold >= 0.18) openWheel(p, 'key'); }
       else wheel.hold = 0;
       return;
     }
+    if (blocked) { closeWheel(p, false); return; }
     wheel.t += dt;
     var n = SLOTS.length, look = In.look, pad = In.gamepad;
     if (look && (look.dx || look.dy)) { wheel.vx += look.dx; wheel.vy += look.dy; var m = Math.sqrt(wheel.vx * wheel.vx + wheel.vy * wheel.vy); if (m > 60) { wheel.vx *= 60 / m; wheel.vy *= 60 / m; } look.dx = 0; look.dy = 0; }   // the wheel owns the mouse: the camera holds
@@ -1897,7 +2002,7 @@
   function placeWorld(obj, root, gx, gy, gz, X, Y, Z, s) {
     var v = vscratch();
     v.w.set(X[0] * s, Y[0] * s, Z[0] * s, gx, X[1] * s, Y[1] * s, Z[1] * s, gy, X[2] * s, Y[2] * s, Z[2] * s, gz, 0, 0, 0, 1);
-    v.inv.copy(root.matrixWorld).invert();
+    v.inv.copy((obj.parent || root).matrixWorld).invert();   // into the space of the object's actual parent (a bone, if re-parented)
     v.m.multiplyMatrices(v.inv, v.w);
     v.m.decompose(obj.position, obj.quaternion, obj.scale);
   }
@@ -1976,7 +2081,13 @@
     var raised = !e.knockedDown && !(e._melee) && !fit.melee && !fit.knuckle && (e.aiming || e.firePoseT > 0 || !!e._cook || (e.cover && (e.cover.peek || e.cover.blindT > 0)) || (e.kind !== 'player' && e.hostile && !w.melee));
     if (e.reloadT > 0 && !fit.upright) raised = false;
     var yaw = m.rotation.y;
-    if (raised) {
+    // a models-track rig: GTP.Anim re-parented the gun into the handR bone and posed it with both arms (06c applyHeld); Anim is the
+    // gun's only writer there. Publish the hand targets from the gun as drawn instead of placing it again.
+    if (anim && held.parent && held.parent !== m) {
+      var va = vscratch().a.set(0, 0, 0); held.localToWorld(va);
+      hands.right.x = va.x; hands.right.y = va.y; hands.right.z = va.z;
+      if (fit.support && (raised || holdOf(heldId) === 'two') && !fit.melee && !fit.upright) { held.localToWorld(V.b.set(fit.support[0], fit.support[1], fit.support[2])); hands.left.x = V.b.x; hands.left.y = V.b.y; hands.left.z = V.b.z; hands.leftOn = true; }
+    } else if (raised) {
       var fr = gunFrame(e, heldId, true, null, yaw, e._aimPitch || 0);
       fr.gx += m.position.x - e.x; fr.gy += bodyY - e.y; fr.gz += m.position.z - e.z;   // gunFrame crouches on its own   // the interpolated body
       placeWorld(held, m, fr.gx, fr.gy, fr.gz, fr.X, fr.Y, fr.Z, fr.s);
@@ -2041,7 +2152,7 @@
   // the holsters ride the body: the hip one on the right thigh (barrel down), the back one diagonal across the back (muzzle up over
   // the left shoulder), both in the root's frame so they follow the body's turn and lean
   function placeHolsters(e, m, parts) {
-    var sc = (e.look && e.look.scale) || 1, s = HOLD_SCALE * 0.95;
+    var sc = (e.look && e.look.scale) || 1, s = modelsRig() ? 1 : HOLD_SCALE * 0.95;   // the same size as the gun in the hand
     if (e._holH) {
       var hp = e._holH; hp.position.set(0.27, 0.86, 0.04); hp.scale.setScalar(s);
       vscratch().m.makeBasis(V.a.set(0, -1, 0), V.b.set(0, 0, -1), V.c.set(1, 0, 0)); hp.quaternion.setFromRotationMatrix(V.m);
@@ -2638,7 +2749,7 @@
   function moveScale(p) {
     if (!p || p.kind !== 'player') return 1;
     var w = WEAPONS[p.weapon]; if (!w) return 1;
-    var mob = MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.8;
+    var mob = w.mobility != null ? w.mobility : MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.8;
     if (w.spinUp) return p.aiming || p._spin > 0.2 ? 0.45 : 0.85;
     return p.aiming ? 0.7 + 0.3 * mob : 1;
   }
@@ -2711,7 +2822,13 @@
     var X = GTP.Content && GTP.Content.expansion && GTP.Content.expansion.shop, ext = X && X.items;
     if (ext && ext.length) for (i = 0; i < ext.length; i++) {
       var it = ext[i], found = false;
-      for (var k = 0; k < out.length; k++) if (out[k].id === it.id) { out[k] = Object.assign(out[k], it); found = true; break; }
+      for (var k = 0; k < out.length; k++) if (out[k].id === it.id) {
+        // the v0.2 expansion rows add pitch lines and art; a weapon from the parity table keeps its own unlock, name and price
+        // (the v0.3 story moved some unlocks: the pistol now comes with m01c_both_sides)
+        var keep = out[k].tab === 'weapons' && WEAPONS[it.id] && WEAPONS[it.id].parity ? { unlock: out[k].unlock, name: out[k].name, price: out[k].price } : null;
+        out[k] = Object.assign(out[k], it); if (keep) Object.assign(out[k], keep);
+        found = true; break;
+      }
       if (!found) out.push(Object.assign({}, it));
     }
     return out;
@@ -2735,7 +2852,7 @@
     var vol = w.pellets ? w.dmg : w.dmg, dps = w.melee ? w.dmg * w.rate : w.cone ? 0 : vol * Math.min(w.rate, 18);
     var acc = w.melee ? 1 : w.cone || w.lobbed && !w.rocket ? 0.45 : U.clamp(1 - ((w.aimSpread != null ? w.aimSpread : w.spread || 0) + (w.bloom ? w.bloom.max * 0.5 : 0)) / 0.12, 0.08, 1);
     if (w.scope) acc = Math.max(acc, 0.92);
-    var mob = MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.7;
+    var mob = w.mobility != null ? w.mobility : MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.7;
     if (p && modsOf(p, id) && modsOf(p, id).optic === 'scope') mob *= 0.95;
     return { damage: U.clamp(vol / 160, 0.04, 1), rate: U.clamp(w.rate / 14, 0.03, 1), range: U.clamp(w.range / 160, 0.02, 1), accuracy: acc, mobility: U.clamp(mob, 0.05, 1), volume: U.clamp((w.mag || w.reserve || 1) / 30, 0.05, 1), dps: dps };
   }
@@ -3058,7 +3175,12 @@
     counter: function (p) { return tryCounter(p || player()); },
     counterReady: function (p) { p = p || player(); return !!p && p.alive && !p.inVehicle && !p.cover && !p.knockedDown && !!counterCandidate(p); },
     setAimAssist: function (on) { settings.aimAssist = !!on; return settings.aimAssist; },
+    // the per-step tick (Game.step calls it in play, cutscenes, minigames and the death cards); after Combat's own work it runs the
+    // modules that hang off the combat step: the bosses and the specials (08b), then the interiors (13), in that order, every step
     update: function (dt) {
+      try { Combat._update(dt); } finally { afterStep(dt); }
+    },
+    _update: function (dt) {
       ensureHooks();
       var g = GTP.game, p = player(); if (!g || !p) return;
       var st = g.state;
@@ -3084,7 +3206,15 @@
     },
 
     // Fire the ped's weapon toward its target. Rate-limited per ped; the player spends ammo (and reloads an empty magazine).
+    // Inside a shop the interiors module decides whether the player may shoot at all (only on the range), and scores range shots.
     fire: function (ped, weaponId) {
+      var I = GTP.Interiors, me = !!ped && ped.kind === 'player';
+      if (me && I && I.active && I.canFire && !I.canFire(ped)) return false;
+      var r = Combat._fire(ped, weaponId);
+      if (r && me && I && I.onPlayerShot) { try { I.onPlayerShot(ped); } catch (e) { U.reportError(e, 'interiors.shot'); } }
+      return r;
+    },
+    _fire: function (ped, weaponId) {
       if (!ped || !ped.alive || ped.knockedDown || ped.entering || ped.swimming || ped._vault) return false;
       var id = weaponId || ped.weapon || 'fist', w0 = WEAPONS[id]; if (!w0) return false;
       var isPlayer = ped.kind === 'player', w = isPlayer ? eff(ped, id) : w0;
@@ -3277,6 +3407,8 @@
       arsenal: arsenal, normalize: normalize, findCover: findCover, probeCover: probeCover, gunFrame: gunFrame, puddles: puddles, steerCamera: steerCamera
     }
   };
+  // the hooks above are native: the bosses' and the interiors' load-time installers see these marks and leave the functions alone
+  Combat.update._bosses = true; Combat.update._interiors = true; Combat.fire._interiors = true;
 
   // ------------------------------------------------------------- events --
   GTP.Events.on('damage', function (e) {

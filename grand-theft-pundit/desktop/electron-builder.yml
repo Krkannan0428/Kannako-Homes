@@ -22,6 +22,31 @@ files:
 
 asar: true
 compression: normal
+
+# Electron fuses, flipped in the packaged binary right before signing (electron-builder runs
+# @electron/fuses). The packaged game cannot be started as a plain Node.js runtime
+# (ELECTRON_RUN_AS_NODE), take code through NODE_OPTIONS or --inspect, or load an app from outside
+# app.asar; app.asar is checked against the hash embedded at build time (macOS and Windows).
+# grantFileProtocolExtraPrivileges stays on: with it off, Electron cannot load app/index.html from
+# inside app.asar at all (ERR_FILE_NOT_FOUND, tested), and moving the game to a custom protocol
+# would change its storage origin and lose everyone's saves (localStorage is per origin; file:// is
+# one origin however the app path changes). Navigation away from the game page is blocked in
+# main.js instead. Cookie encryption stays off: the game sets no cookies, and turning it on makes
+# macOS and Linux ask the keychain/keyring, which can prompt for a password on every update of an
+# unsigned build. resetAdHocDarwinSignature re-signs the .app ad hoc after flipping (an unsigned
+# Apple Silicon app with a broken signature is killed at launch); it needs `codesign`, so building
+# the mac targets on Linux needs -c.electronFuses.resetAdHocDarwinSignature=false (and then the
+# arm64 app only runs after `codesign --force --deep -s - "Grand Theft Pundit.app"`).
+# test/check-fuses.js reads them back from a packaged app; CI runs it on every platform.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: true
+  enableCookieEncryption: false
+  resetAdHocDarwinSignature: true
 npmRebuild: false
 removePackageScripts: true
 beforePack: ./sync-game.js

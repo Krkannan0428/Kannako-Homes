@@ -167,7 +167,17 @@ function installPlayer(budget) {
     },
     // ---- driving: throttle + left / right keys (pulse steering), handbrake to stop ----
     drive(getRoute, stop, maxSec) {
-      const p = NP.p(); let route = getRoute(), i = 0, t = 0, lastProg = 0, best = 1e9, rev = 0, reroutes = 0;
+      const p = NP.p(); let t = 0;
+      // parked off the road (a bay, a kerb) with the road straight ahead: pull out onto it first, as a driver would, and take the
+      // GPS line from there (the line through a car park ran the van into a kerb tree)
+      { const v0 = p.inVehicle, Wd = GTP.World, T = Wd.T, roadAt = (x, z) => { const tt = Wd.tileAt(x, z); return tt === T.ROAD || tt === T.BRIDGE || tt === T.HIGHWAY; };
+        if (v0 && !roadAt(v0.x, v0.z)) {
+          const f = U.yawToDir(v0.yaw); let ahead = 0; for (let d = 3; d <= 12; d += 1) if (roadAt(v0.x + f.x * d, v0.z + f.z * d)) { ahead = d; break; }
+          // someone on the pavement in front (the giver, Kip, a passer-by): wait for them, a few seconds at most, never drive through
+          const inPath = (v) => { const fd = U.yawToDir(v.yaw); return GTP.Entities.near(v.x, v.z, 9).some((e) => e !== v && e !== p && !e.removed && ((e.kind === 'ped' && e.alive && !e.inVehicle) || e.kind === 'vehicle') && (() => { const dx = e.x - v.x, dz = e.z - v.z, al = dx * fd.x + dz * fd.z, sd = Math.abs(dx * -fd.z + dz * fd.x); return al > 1 && al < 6.5 && sd < 1.9; })()); };
+          if (ahead) { let waited = 0; for (let k = 0; k < 240 && p.inVehicle && !roadAt(p.inVehicle.x, p.inVehicle.z) && !stop(); k++) { const blocked = inPath(p.inVehicle); if (blocked) { waited += 1 / 30; if (waited > 4) break; } NP.hold('forward', !blocked && p.inVehicle.speed < 5); NP.hold('back', false); NP.hold('jump', blocked); NP.adv(1 / 30); t += 1 / 30; } NP.releaseAll(); NP.notes.pulledOut = (NP.notes.pulledOut || 0) + 1; if (waited) NP.notes.pullOutWaited = +((NP.notes.pullOutWaited || 0) + waited).toFixed(1); }
+        } }
+      let route = getRoute(), i = 0, lastProg = t, best = 1e9, rev = 0, reroutes = 0, aheadT = 0, passT = 0;
       while (t < maxSec && !NP.over()) {
         if (stop()) { NP.releaseAll(); NP.hold('jump', true); NP.adv(0.4); NP.releaseAll(); return { ok: true, t }; }
         if (NP.housekeeping()) { t += 0.2; continue; }
@@ -183,19 +193,27 @@ function installPlayer(budget) {
         let want = dEnd < 25 ? 7 : (Math.abs(err) > 0.6 || turn > 0.8 ? 8 : 16);
         // something in the lane ahead (a car, a pedestrian): ease off like a careful new driver
         const fwd = U.yawToDir(v.yaw);
+        let aheadCar = false;
         const ahead = GTP.Entities.near(v.x, v.z, 14).some((e) => {
           if (e === v || e === p || e.removed || !(e.kind === 'vehicle' || (e.kind === 'ped' && e.alive && !e.inVehicle))) return false;
           const dx = e.x - v.x, dz = e.z - v.z, along = dx * fwd.x + dz * fwd.z, side = Math.abs(dx * -fwd.z + dz * fwd.x);
-          return along > 1.5 && along < 4 + Math.max(0, v.speed) * 0.8 && side < (e.kind === 'vehicle' ? 2.2 : 1.6);
+          const hit = along > 1.5 && along < 4 + Math.max(0, v.speed) * 0.8 && side < (e.kind === 'vehicle' ? 2.2 : 1.6);
+          if (hit && e.kind === 'vehicle') aheadCar = true;
+          return hit;
         });
-        if (ahead) want = Math.min(want, 4);
+        // stuck behind it for 3 s (a car waiting at a light, a parked van): go round it on the left, as a driver would
+        aheadT = aheadCar && Math.abs(v.speed) < 2 ? aheadT + 1 / 30 : (aheadCar ? aheadT : 0);   // a car, never a person
+        if (ahead && aheadT < 3) want = Math.min(want, 4);
+        if (aheadT >= 3 && passT <= 0) { passT = 1.6; aheadT = 0; NP.notes.overtakes = (NP.notes.overtakes || 0) + 1; }
         if (rev > 0) {   // backing out of a wall: reverse with opposite lock
           NP.hold('forward', false); NP.hold('back', true); NP.hold(err > 0 ? 'right' : 'left', true); NP.hold(err > 0 ? 'left' : 'right', false); rev -= 1 / 30;
           if (rev <= 0) { NP.hold('back', false); NP.hold('left', false); NP.hold('right', false); }
         } else {
           const sp = v.speed;
           NP.hold('forward', sp < want); NP.hold('back', sp > want + 4);
-          const thr = 0.06; NP.hold('left', err > thr); NP.hold('right', err < -thr);
+          const thr = 0.06;
+          if (passT > 0) { passT -= 1 / 30; const sw = passT > 0.8 ? 1 : -1; NP.hold('left', sw > 0); NP.hold('right', sw < 0); NP.hold('forward', sp < 6); }   // out, then back in
+          else { NP.hold('left', err > thr); NP.hold('right', err < -thr); }
         }
         NP.adv(1 / 30); t += 1 / 30;
         const rem = dEnd + (pts.length - 1 - i) * 4;
@@ -207,7 +225,8 @@ function installPlayer(budget) {
         void d;
       }
       NP.releaseAll();
-      return { ok: stop(), t, why: NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s' };
+      const vv = p.inVehicle;
+      return { ok: stop(), t, why: (NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s') + (vv ? ' at ' + Math.round(vv.x) + ',' + Math.round(vv.z) + (aheadT > 0 ? ', blocked ahead' : '') + ', overtakes ' + (NP.notes.overtakes || 0) : '') };
     },
     // the nearest objective blip on the minimap (pickups show one blip each), else the HUD arrow's point
     objectivePoint() {
@@ -245,8 +264,9 @@ function installPlayer(budget) {
     // ---- one objective's worth of play, chosen from the objective text and what the HUD points at ----
     // returns {ok, why} once the objective text changes or the mission ends
     playObjective(maxSec) {
-      const text0 = NP.objectiveText(), mid = NP.hud().active, p = NP.p();
-      const changed = () => NP.hud().active !== mid || NP.objectiveText() !== text0 || NP.hud().phase !== 'play';
+      const text0 = NP.objectiveText(), mid = NP.hud().active, p = NP.p(), prog = () => { const pr = NP.hud().progress; return pr && pr.n != null ? pr.n + '/' + pr.total : ''; }, prog0 = prog();
+      // the objective panel moved on: new text, or its count (drawn at the right edge, e.g. 2/5) went up
+      const changed = () => NP.hud().active !== mid || NP.objectiveText() !== text0 || prog() !== prog0 || NP.hud().phase !== 'play';
       const t0 = NP.now(); let tries = 0;
       while (!changed() && NP.now() - t0 < maxSec && !NP.over()) {
         if (NP.housekeeping()) continue;
@@ -272,6 +292,7 @@ function installPlayer(budget) {
         if (p.inVehicle) {
           NP.myCar = p.inVehicle;
           const r = NP.drive(() => NP.routeTo(pt, 'car', 'objective'), () => changed() || U.dist2d(p.inVehicle ? p.inVehicle.x : p.x, p.inVehicle ? p.inVehicle.z : p.z, pt.x, pt.z) < 3.5, 40);
+          if (!r.ok) NP.say('  drive to ' + pt.src + ' ' + Math.round(pt.x) + ',' + Math.round(pt.z) + ': ' + (r.why || '') + ' (left ' + Math.round(U.dist2d(p.x, p.z, pt.x, pt.z)) + ' m)');
           if (!r.ok && r.why === 'not in a vehicle') continue;
           if (!changed()) {
             // parked beside the blip but it did not count (a kerb, a bench, a lamp in the way): roll forward a touch, then hop out for it
@@ -291,12 +312,13 @@ function installPlayer(budget) {
           // stuck on one blip: every other attempt walks the player's own way there instead of the GPS line
           tries++;
           const rt = tries % 2 === 0 ? () => { NP.usedFallback.objective_retry = true; return NP.ownRoute(pt.x, pt.z, 'ped'); } : () => NP.routeTo(pt, 'ped', 'objective');
-          NP.walk(rt, () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 25);
+          const wr = NP.walk(rt, () => changed() || U.dist2d(p.x, p.z, pt.x, pt.z) < 1.0, 25);
+          if (!wr.ok) NP.say('  walk to ' + pt.src + ' ' + Math.round(pt.x) + ',' + Math.round(pt.z) + ': ' + (wr.why || '') + ' (left ' + Math.round(U.dist2d(p.x, p.z, pt.x, pt.z)) + ' m)');
           if (!changed() && NP.inArmory() && U.dist2d(p.x, p.z, pt.x, pt.z) < 2) { NP.press('action'); NP.adv(1); }
         }
       }
       NP.releaseAll();
-      return { ok: changed(), text: text0, t: NP.now() - t0 };
+      return { ok: changed(), text: text0 + (prog0 ? ' (' + prog0 + ')' : ''), t: NP.now() - t0 };
     },
     // play the running mission until it completes or fails; returns {ok, why}
     playMission(id, maxSec) {
@@ -362,11 +384,12 @@ function installPlayer(budget) {
     rangeActive() { const e = NP.events; return e.rangeStart != null && e.rangeStart >= (e.range.length ? e.range[e.range.length - 1].t : -1); },
     rangeTargets() {
       const I = GTP.Interiors, out = [];
-      const lists = I ? [I.range && I.range.targets, I.current && I.current.targets, I.current && I.current.range && I.current.range.targets, I.targets] : [];
+      const room = I && I.current && I.current.room;
+      const lists = I ? [I.range && I.range.targets, I.current && I.current.targets, I.current && I.current.range && I.current.range.targets, room && room.range && room.range.targets, I.targets] : [];
       for (const L of lists) if (Array.isArray(L)) for (const tg of L) {
-        if (!tg || tg.down || tg.hit || tg.dead || tg.up === false || tg.active === false) continue;
-        const m = tg.mesh || tg.obj || tg; const wp = new THREE.Vector3();
-        if (m && m.getWorldPosition) { if (m.visible === false) continue; m.getWorldPosition(wp); } else if (typeof tg.x === 'number') wp.set(tg.x, tg.y || 1.2, tg.z); else continue;
+        if (!tg || tg.down || tg.hit || tg.dead || tg.up === false || tg.active === false || (typeof tg.state === 'string' && tg.state !== 'up')) continue;
+        const m = tg.mesh || tg.obj || tg.board || tg.pivot || tg; const wp = new THREE.Vector3();
+        if (m && m.getWorldPosition) { if (m.visible === false || (tg.pivot && tg.pivot.visible === false)) continue; m.getWorldPosition(wp); if (tg.board) wp.y += 1.2; } else if (typeof tg.x === 'number') wp.set(tg.x, tg.y || 1.2, tg.z); else continue;   // a cardboard board: its origin is at the feet, aim at the chest
         out.push({ x: wp.x, y: wp.y, z: wp.z, ref: tg });
       }
       if (!out.length && GTP.Render && GTP.Render.scene) GTP.Render.scene.traverse((o) => {   // a mesh tagged as a range target
@@ -399,13 +422,38 @@ function installPlayer(budget) {
       return { shots, end: last && last.t >= t0 ? { score: last.score, medal: last.medal } : null, targetsSeen: NP.rangeTargets().length };
     },
     // ---- the counter: open it with E at Merle, pick the row the objective names, buy it ----
-    shopUiOpen() { const ui = GTP.UI.state; return !!(ui.shopOpen || (ui.armory && (ui.armory.open || ui.armory.active))); },
+    shopUiOpen() { const ui = GTP.UI.state; return !!(ui.shopOpen || (ui.armory && (ui.armory.open || ui.armory.active)) || (ui.modal && ui.modal.kind === 'armory')); },
+    // the v0.3 armory counter (a modal): weapon rows on the left, tabs PURCHASE / AMMO / ... and their items on the right, as drawn
+    // (GTP.UI._v3.armoryState is the state the panel draws from). W / S move, D / Enter go right, Enter buys
+    buyFromArmory(txt) {
+      const ui = GTP.UI.state, m = ui.modal, st = () => GTP.UI._v3.armoryState();
+      if (!m || m.kind !== 'armory' || !GTP.UI._v3 || !GTP.UI._v3.armoryState) return null;
+      const wantAmmo = /ammo|rounds|box|bullets/.test(txt), wantWeapon = /pistol/.test(txt) ? /pistol/i : null;
+      const rowName = (r) => String(r && (r.name || r.label || r.weaponId || r.id) || '');
+      let S2 = st();
+      if (wantWeapon) for (let i = 0; i < S2.rows.length + 1; i++) { if (wantWeapon.test(rowName(S2.row)) || (S2.row && S2.row.weaponId === 'pistol')) break; if (m.focus !== 0) NP.press('cancel'); NP.press('back'); S2 = st(); }
+      if (m.focus === 0) NP.press('confirm');
+      S2 = st();
+      if (wantAmmo) for (let i = 0; i < 6 && S2.tabs[m.tab] !== 'AMMO'; i++) { NP.press('right'); S2 = st(); }
+      const itemOk = (it) => it && !it.locked && !it.owned && (wantAmmo ? (it.kind === 'ammo' || /ammo|rounds|box/i.test(String(it.name || ''))) : true);
+      for (let i = 0; i < S2.items.length + 1 && !itemOk(S2.item); i++) { NP.press('back'); S2 = st(); }
+      const pick = S2.item ? { name: S2.item.name, kind: S2.item.kind, price: S2.item.price } : null;
+      if (itemOk(S2.item)) { NP.press('confirm'); NP.adv(0.4); }
+      return { row: rowName(S2.row), tab: S2.tabs[m.tab], item: pick };
+    },
     tryOpenCounter() {
       const p = NP.p(), a = NP.arrow(); if (a && U.dist2d(p.x, p.z, a.x, a.z) > 2.5) return false;
       NP.press('action'); NP.adv(0.6); return NP.shopUiOpen();
     },
     buyFromUi(txt) {
       const ui = GTP.UI.state, n0 = NP.events.buy.length;
+      const arm = NP.buyFromArmory(txt);
+      if (arm) {
+        const ok = NP.events.buy.length > n0;
+        if (!ok) NP.warn('m01c buy: the armory counter did not sell ' + JSON.stringify(arm));
+        for (let i = 0; i < 4 && NP.shopUiOpen(); i++) { NP.press('cancel'); NP.adv(0.3); }
+        if (ok) return { bought: true, how: 'armory counter: ' + JSON.stringify(arm) };
+      }
       const want = /ammo/.test(txt) ? /ammo|rounds|box/i : /armor|vest/.test(txt) ? /armor|vest/i : null;
       // the UI's list as it is drawn: armory.items or the v0.2 shop rows; walk it with S / Down until the highlighted row matches
       const rows = () => { const A = ui.armory; if (A && Array.isArray(A.items)) return { items: A.items, sel: () => A.sel }; const S = ui.shop; if (S && Array.isArray(S.items)) return { items: S.items, sel: () => S.sel }; return null; };
@@ -678,14 +726,23 @@ if (require.main === module) H.run('newplayer', async (t) => {
       let guard = 0; while ((g.state !== 'playing' || NP.talking() || NP.cutscene()) && guard++ < 200) { if (!NP.housekeeping()) NP.adv(0.25); }
       NP.press('pause'); NP.adv(0.2);
       if (g.state !== 'paused') return { ok: false, why: 'Esc did not open the pause menu (state ' + g.state + ')' };
-      // walk the menu down to the SAVE item by its label
+      // walk the menu down to the SAVE item: by its label when the UI lists its items, else by what confirming it opens (the slot
+      // page in save mode; anything else is backed out of with Esc, as a player reading the menu would)
       const items = () => (GTP.UI.pauseItems ? GTP.UI.pauseItems() : null);
-      for (let i = 0; i < 12; i++) {
-        const lbl = (window.__npPauseLabel = (function () { try { const it = items(); return it ? it[ui.pause.sel] && it[ui.pause.sel].label : null; } catch (e) { return null; } })());
-        if (lbl ? /^SAVE/.test(lbl) : ui.pause.sel === 1) break;
-        NP.press('back');   // S / Down steps the selection
+      const label = () => { try { const it = items(); return it ? it[ui.pause.sel] && it[ui.pause.sel].label : null; } catch (e) { return null; } };
+      const onSaveSlots = () => ui.pause.page === 'slots' && ui.pause.slotMode === 'save';
+      for (let i = 0; i < 12 && !onSaveSlots(); i++) {
+        const lbl = label();
+        if (lbl) { if (/^SAVE/.test(lbl)) { NP.press('confirm'); NP.adv(0.2); break; } NP.press('back'); continue; }   // S / Down steps the selection
+        const sel = ui.pause.sel;
+        if (sel === 0) { NP.press('back'); continue; }   // RESUME would close the menu
+        NP.press('confirm'); NP.adv(0.2);
+        if (onSaveSlots()) break;
+        for (let k = 0; k < 3 && g.state === 'paused' && ui.pause.page !== 'pause'; k++) { NP.press('cancel'); NP.adv(0.15); }
+        if (g.state !== 'paused') { NP.press('pause'); NP.adv(0.2); }
+        while (ui.pause.sel !== sel + 1 && ui.pause.sel < 20) { NP.press('back'); if (ui.pause.sel === 0) break; }
       }
-      NP.press('confirm'); NP.adv(0.2);
+      if (!onSaveSlots()) { NP.press('confirm'); NP.adv(0.2); }
       for (let i = 0; i < 4 && NP.events.saved.filter((s) => !s.auto).length === n0; i++) { NP.press('confirm'); NP.adv(0.3); }
       const ok = NP.events.saved.filter((s) => !s.auto).length > n0;
       // back to play

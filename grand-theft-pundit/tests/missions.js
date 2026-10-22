@@ -67,10 +67,15 @@ H.run('missions', async (t) => {
     });
     const endings = GTP.Content.endingMissions;
     endings.forEach((id) => { if (!byId[id] || byId[id].requires.indexOf('m14_grift') < 0) errs.push('ending ' + id + ' must require m14_grift'); });
-    return { count: M.length, errs, chainLen: Object.keys(byId).filter((id) => byId[id].requires.length).length, base: GTP.Content.missions.length };
+    const story = GTP.Story.order(), side = M.filter((m) => story.indexOf(m.id) < 0).map((m) => m.id);
+    const parity = ((GTP.Content.parity || {}).missions || []).filter((m) => Array.isArray(m.objectives)).length;
+    return { count: M.length, story: story.length, side: side.length, sideNotStranger: side.filter((id) => !/^st_/.test(id) && !(GTP.Content.strangers && (GTP.Content.strangers.missions || []).some((m) => m.id === id))), parity, errs, chainLen: Object.keys(byId).filter((id) => byId[id].requires.length).length, base: GTP.Content.missions.length };
   });
   console.log('  data: ' + JSON.stringify(data));
-  t.assert(data.base === 17 && (data.count === 17 || data.count === 25), '17 base missions (25 with the expansion), got ' + data.base + ' / ' + data.count);
+  // the story: 17 base + 8 expansion + the v0.3 parity missions (m01c, six bosses, three heist missions) = 35; the strangers'
+  // side missions are listed by allMissions() but never join the story
+  t.assert(data.base === 17 && data.story === 25 + data.parity && (data.parity === 0 || data.story === 35), '17 base missions, 35 story missions with the expansion and the v0.3 missions, got ' + data.base + ' / ' + data.story + ' (parity ' + data.parity + ')');
+  t.assert(data.count === data.story + data.side && data.sideNotStranger.length === 0, 'everything outside the story is a strangers side mission: ' + data.sideNotStranger.join(','));
   t.assert(data.errs.length === 0, 'mission data problems:\n' + data.errs.join('\n'));
 
   // ---- 5a. a new game: the first marker is at the quad, the giver and Kip stand beside it ----
@@ -188,13 +193,17 @@ H.run('missions', async (t) => {
     const c = T_.ctx(), d = T_.door('dorm_studio');
     const pks = c.pickups.map((p) => ({ x: +p.x.toFixed(1), z: +p.z.toFixed(1), label: p.label, type: p.pickupType, dist: +Math.hypot(p.x - d.x, p.z - d.z).toFixed(1), tile: GTP.World.tileAt(p.x, p.z) }));
     const texts = [];
-    for (const p of c.pickups) { T_.tp(p.x, p.z); GTP.game.advance(0.3); texts.push(GTP.Missions.state.objectiveText); }
+    const prog = [], marks = [GTP.Missions.markers().filter((k) => k.kind === 'objective').length];
+    for (const p of c.pickups) { T_.tp(p.x, p.z); GTP.game.advance(0.3); texts.push(GTP.Missions.state.objectiveText); prog.push(GTP.Missions.state.progress ? GTP.Missions.state.progress.n + '/' + GTP.Missions.state.progress.total : null); marks.push(GTP.Missions.markers().filter((k) => k.kind === 'objective').length); }
     const s = T_.until(T_.done, 3);
-    return { pks, texts, s, completed: GTP.Missions.state.completed.has('t_pickup'), left: GTP.Entities.list.filter((e) => e.kind === 'pickup' && e.pickupType === 'mission' && !e.removed).length, fxTexts: GTP.Render.fx.texts.length };
+    return { pks, texts, prog, marks, s, completed: GTP.Missions.state.completed.has('t_pickup'), left: GTP.Entities.list.filter((e) => e.kind === 'pickup' && e.pickupType === 'mission' && !e.removed).length, fxTexts: GTP.Render.fx.texts.length };
   });
   console.log('  pickup: ' + JSON.stringify(r));
   t.assert(r.pks.length === 3 && r.pks.every((p) => p.type === 'mission' && p.dist <= 22 && p.tile !== 3 && p.tile !== 5), 'three mission crates within 20 m of the dorm on open ground');
-  t.assert(r.texts[0].indexOf('(1/3)') > 0 && r.texts[1].indexOf('(2/3)') > 0, 'objective text carries the progress: ' + r.texts.join(' | '));
+  // the count lives in state.progress (the panel draws it at its right edge), not twice in the text too (QA-B-NP-05)
+  t.assert(r.prog[0] === '1/3' && r.prog[1] === '2/3' && r.texts.every((x) => !/\(\d+\/\d+\)/.test(x)), 'progress counts 1/3, 2/3 and the text carries no second count: ' + JSON.stringify({ prog: r.prog, texts: r.texts }));
+  // one minimap blip per open crate, dropped as each is collected (QA-B-NP-03)
+  t.assert(r.marks[0] === 3 && r.marks[1] === 2 && r.marks[2] === 1, 'a blip per open crate: ' + JSON.stringify(r.marks));
   t.assert(r.s > 0 && r.completed && r.left === 0, 'pickup completes after the third crate');
 
   // defeat: two goons, punched out with Combat.damage; no heat for self-defence
@@ -537,15 +546,16 @@ H.run('missions', async (t) => {
     const m = T_.base('t_any', [{ type: 'collect_any', spawn: { pickupType: 'mission', count: 4, around: { landmark: 'campus_quad' }, radius: 100 }, need: 2, text: 'Grab two' }]);
     T_.start(m);
     const c = T_.ctx(), pks = c.pickups.slice();
-    const text0 = GTP.Missions.state.objectiveText;
+    const pr = () => { const q = GTP.Missions.state.progress; return q ? q.n + '/' + q.total : null; };
+    const text0 = pr();
     T_.tp(pks[0].x, pks[0].z); GTP.game.advance(0.3);
-    const text1 = GTP.Missions.state.objectiveText;
+    const text1 = pr();
     T_.tp(pks[1].x, pks[1].z); GTP.game.advance(0.3);
     const s = T_.until(T_.done, 3);
     return { count: pks.length, text0, text1, s, completed: GTP.Missions.state.completed.has('t_any'), left: pks.filter((k) => !k.removed).length };
   });
   console.log('  collect_any: ' + JSON.stringify(r));
-  t.assert(r.count === 4 && /\(0\/2\)/.test(r.text0) && /\(1\/2\)/.test(r.text1) && r.s > 0 && r.completed && r.left === 0, 'collect_any completes at two of four and removes the rest');
+  t.assert(r.count === 4 && r.text0 === '0/2' && r.text1 === '1/2' && r.s > 0 && r.completed && r.left === 0, 'collect_any completes at two of four and removes the rest (progress ' + r.text0 + ', ' + r.text1 + ')');
 
   // shop: the objective completes when Both Sides Arms opens at that landmark
   r = await page.evaluate(() => {
@@ -692,7 +702,7 @@ H.run('missions', async (t) => {
   t.assert(r.timer && ((r.timer.total === 90 && r.subs === 6) || (r.timer.total === 150 && r.subs === 5)) && r.collectedFromVan === r.subs && r.timerCleared, 'every subscriber collected from the van under the battery timer: ' + JSON.stringify({ timer: r.timer, subs: r.subs, collected: r.collectedFromVan }));
   t.assert(r.steps.every((s) => s > 0) && r.result.completed.indexOf('m01_van') >= 0 && r.result.flags.has_van === true && r.result.money === 200 && r.result.state === 'playing', 'm01 completed with its flag and $200: ' + JSON.stringify(r.result));
   // with the expansion the next light after m01 is m01b_airport at the garage; on the base chain it is m02_read at the depot
-  t.assert(r.result.stillInVan && !r.result.vanPersistent && /^mission:(m02_read|m01b_airport)$/.test(r.result.markers[0]), 'the van stays with the player and the next mission opens: ' + r.result.markers.join(','));
+  t.assert(r.result.stillInVan && !r.result.vanPersistent && /^mission:(m02_read|m01b_airport|m01c_both_sides)$/.test(r.result.markers[0]), 'the van stays with the player and the next mission opens: ' + r.result.markers.join(','));
   errs = await t.errors(c1);
   t.assert(errs.length === 0, 'errors on the m01 page:\n' + errs.join('\n'));
   await c1.page.close();

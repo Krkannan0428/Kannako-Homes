@@ -279,7 +279,8 @@
       gx = 0.13 - 0.07 * aimW; gy = -0.02 + 0.33 * aimW; gz = -0.18 - 0.06 * aimW; gp = -0.9 * (1 - aimW);
     } else if (two) {
       // rifle-likes: stock in the shoulder pocket aiming, a low ready otherwise
-      gx = 0.1 + 0.04 * (1 - aimW); gy = 0.1 * aimW - 0.08 * (1 - aimW) + walk * 0.01; gz = -0.22 - 0.02 * (1 - aimW); gp = -0.55 * (1 - aimW); gyaw = 0.35 * (1 - aimW);
+      // (the grip 0.32 m ahead of the spine when aiming: the stock's butt then sits in the shoulder, not through the back of the shirt)
+      gx = 0.1 + 0.04 * (1 - aimW); gy = 0.1 * aimW - 0.08 * (1 - aimW) + walk * 0.01; gz = -0.22 - 0.1 * aimW - 0.02 * (1 - aimW); gp = -0.55 * (1 - aimW); gyaw = 0.35 * (1 - aimW);
       gpy = 0.03 * rk; gz += 0.05 * rk;
     } else {
       // pistols: both arms out aiming, the gun down by the thigh otherwise
@@ -302,7 +303,7 @@
     var support = two || (!wi.upright && !wi.thrown && aimW > 0.3) || (wi.melee && (aimW > 0.3 || (P.melee && P.melee.t >= 0)));
     if (support || rl != null) {
       var bx = _v.set(1, 0, 0).applyQuaternion(_qGun);   // the barrel direction in R
-      var fore = two ? clamp(wi.len * 0.4, 0.16, 0.3) : wi.melee ? -0.09 : 0.0;
+      var fore = two ? clamp(wi.len * 0.4, 0.16, 0.3) - 0.1 * aimW : wi.melee ? -0.09 : 0.0;   // aimed, the grip is further out: the left hand keeps its reach
       supC.copy(gripC).addScaledVector(bx, fore);
       if (!two && !wi.melee) { tmpR.set(-0.03, -0.035, 0.02).applyQuaternion(_qChest); supC.add(tmpR); }
       else if (two) { tmpR.set(0, -0.03, 0).applyQuaternion(_qGun); supC.add(tmpR); }
