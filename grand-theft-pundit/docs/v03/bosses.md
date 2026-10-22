@@ -19,11 +19,17 @@ arms limp), a RATIO'D sign over the head, a ticker line and a walk-off ("LOGGED 
 | `b03_warbanner` | Runway 10/10, `airport_runway` door + (0, 26) | the PM narrates behind a PRESS PASS while **Defense Scooters** run; wreck them (shoot, ram, or lure them under the jets, which wreck scooters too); phase 2 he rides one himself (wreck it, hit him while he is down); phase 3 on foot | Bravadian guards on scooters, then on foot | SCOOTER CHARGE lines, INCOMING: THE JETS (PROBABLY) strips (crossing in phase 3) with the jet streaking over |
 | `b04_redacted` | Weather Balloon Repair Depot lot, `balloon_depot` door + (50, 10) | only the black **[REDACTED] patch** on the balloon takes damage; it orbits the envelope and goes [CLASSIFIED] (grey) on a beat it flashes before; each pop deflates a stage (3 / 4 / 4 pops) | OVA vans lap the lot and drop agents (wreck a van to stop it for 25 s) | [REDACTED] bars (rectangles) on the player |
 | `b05_dunk` | Founders' Quad, `campus_quad` door + (0, -20) | **counter his cards**: DIDN'T READ (a charge down a flashing line: step out or jump, he trips: STUNNED), RATIO (a ring: jump it as it passes: LEFT ON READ), QUOTE POST (two reply guys: drop both in 10 s: NO REPLIES, else he heals), BLOCKED (guard up: hitting him bounces you; hold off and he is OVERCOMMITTED). Hits outside a stun do a quarter; a stun takes full damage capped at 55 a window | reply guys | the charge strip, the ratio ring |
-| `b06_panel` | outdoor set by `protest_plaza` door + (100, 40) | **debate rounds** (the UI's debate minigame via `GTP.UI.startMinigame('debate', params, done)`: a loss costs 18 hp and the round restarts) alternate with **combat waves** of the subscribers' security; each won round ratios its panelists; the last is ONE MEMO against all five. Without `UI.startMinigame` the round is an in-world "take duel" (break four orbiting talking points in 30 s) | security waves (two pushes each) | MONDAY MEMO page circles |
+| `b06_panel` | outdoor panel set beside the stadium, `stadium` door + (-40, -20) | **debate rounds** (the UI's debate minigame via `GTP.UI.startMinigame('debate', params, done)`: a loss costs 18 hp and the round restarts) alternate with **combat waves** of the subscribers' security; each won round ratios its panelists; the last is ONE MEMO against all five. Without `UI.startMinigame` the round is an in-world "take duel" (break four orbiting talking points in 30 s) | security waves (two pushes each) | MONDAY MEMO page circles |
 
 Arena centres were chosen with a probe: open, walkable, off the Loop decks and at least 30 m from mission and
 strand markers (a rampage bubble's light washed out the first Goldplate arena). `opts.at` or the objective's
 `at` overrides them.
+
+**Travel stage.** A boss objective that starts with the player more than 70 m from its arena waits in state
+`travel`: the set is already up (the gold helicopter circles its golf course), the HUD arrow and the hint
+(`defs[id].travel`, e.g. "Follow the gold helicopter to Goldplate Links") point at the arena, there is no leash and
+no crime suppression, and the intro opens when the player comes within 45 m. The content track's approaches end at
+the landmark doors (`b01` under Goldplate Tower, 208 m from the Links; the others within 14 to 51 m).
 
 Every phase start leaves a health crate, an ammo crate for the gun in hand (a pistol otherwise) and, from
 phase 2, an armor crate beside the arena. While a fight runs (intro, fight, the beat between phases) the
@@ -103,6 +109,11 @@ rig.shake`, `GTP.GeoBuilder`, `GTP.Assets.propMaterial`.
 
 ## Wrappers installed on other modules (fold these in at integration)
 
+**Integration round 1 status (merged build):** wrapper 2 does not install (the story track's
+`registerObjectiveType` exists; the boss type also sits in `GTP.ObjectiveTypes.boss` for `Missions.init`); the
+fallback HUD in wrapper 4 stands down (the ui track's state carries `boss` and `specials`); wrapper 5 stands down
+(`02_input.js` binds `special` to Shift + right mouse, X and L3). Wrappers 1, 3 and 6 remain.
+
 1. **`GTP.Combat.update`** is wrapped at load time (Combat loads first): after the original it runs
    `Bosses.update(dt)` and `Specials.update(dt)`, both of which only act in state `playing`. Integration:
    call both from `Game.step` after `Combat.update` and drop the wrapper.
@@ -123,11 +134,11 @@ rig.shake`, `GTP.GeoBuilder`, `GTP.Assets.propMaterial`.
 
 ### Asks for the other tracks
 
-- **ui**: label boss weak points by `entity.label` (kind `'heli'` with `entity.bossPart` set: `spool`,
-  `speaker`, `patch`, `scooter`, `talkingpoint`) instead of WEATHER BALLOON, and skip them on the minimap's
-  helicopter X; draw the boss bar from `boss:phase` and set `UI.drawsBossBar = true`; the meters from
-  `special:state` and set `UI.drawsSpecials = true`; bind `special` (Shift + right mouse / L3) in `02_input.js`.
-  The debate params carry `boss: 'b06_panel'` and `vs: [castIds]` for the portraits.
+- **ui** (still open on the merged build): the lock reticle labels boss weak points WEATHER BALLOON
+  (`11_ui.js` around lines 1041 and 3849: `tg.kind === 'heli' ? 'WEATHER BALLOON'`); use `tg.label` when
+  `tg.bossPart` is set (`spool`, `speaker`, `patch`, `scooter`, `talkingpoint`), and skip `bossPart` entities in the
+  minimap's helicopter crosses (around line 567). Done: the boss bar from `boss:phase`, the meters from
+  `special:state`, the `special` binding. The debate params carry `boss: 'b06_panel'` and `vs: [castIds]`.
 - **vehicles (audio)**: stingers on `boss:start`, `boss:phase` (a new phase), `boss:defeated`; special sounds
   on `special:focus {on}`, `special:shout`, `special:chatmob`, `special:boost {on}`; `boss:hit` is a good thud.
 - **content**: the six boss missions (`objectives:[..., {type:'boss', bossId}]`); the table above has the
@@ -157,18 +168,24 @@ rig.shake`, `GTP.GeoBuilder`, `GTP.Assets.propMaterial`.
   scene objects, owned geometries and label materials). Boss vehicles brake between phases and after the fight.
   The defeat's 0.45x slow motion (not in headless) plays before the defeat lines, never under them.
 
+- Scooters stay the `bike` class: the game's own Defense Scooter (`m08_scooters`, `22_content_missions.js`) is a
+  `bike`, so the boss's scooters match it; the vehicles track's `moto` is the Hot Take 600 motorbike.
+- Attacks aimed at the player (rating runs, gold rain, toasts, redaction bars, memo pages, the jets) wait while the
+  player is knocked down, so a knockdown never chains into the next volley; the redaction bars stagger (no knockdown).
+
 ## Tests
 
 ```
 cd grand-theft-pundit
 NODE_PATH=/opt/node-tools/node_modules node tests/bosses.js            # ~80 s
-ONLY=b05_dunk NODE_PATH=/opt/node-tools/node_modules node tests/bosses.js   # one boss (or: checkpoint, specials)
+ONLY=b05_dunk NODE_PATH=/opt/node-tools/node_modules node tests/bosses.js   # one boss (or: content, checkpoint, specials, lifecycle)
 node tests/content_audit.js
 ```
 
 `tests/bosses.js` registers a test mission per boss (`{type:'boss'}` through the real objective path) and
-plays it with a bot on real inputs: the camera turns to the boss's current target and the lock-on takes it
-(`aim` + `shoot`), the move keys step out of armed circles and strips, `jump` clears incoming rings, it fights
+plays it with a bot on real inputs: it faces the boss's current target and presses aim (the shooting track's assist
+grabs a target within 20 degrees on the press, then steers the camera in yaw and pitch, so the bot leaves the
+camera alone while the lock holds), switches to a gun when it holds fists or a thrown weapon, the move keys step out of armed circles and strips, `jump` clears incoming rings, it fights
 adds within 8 m, picks up crates when hurt, counters Dunk's cards with fists, wins the debate minigame after
 2.7 s, and takes RETRY when it dies. It asserts every phase is reported by `boss:phase`, `boss:defeated`, the
 mission completes within 6 minutes of play, no errors, and the boss is humiliated, not dead. Then the
@@ -178,11 +195,13 @@ time and toggles off, boost outruns plain throttle 33.7 vs 13.8 m/s in 1.5 s, th
 shape), and the lifecycle regressions an adversarial review turned up (spools cut while the helicopter takes off,
 a fight outside a mission ending on death, wrecks cleared, vehicles parked between phases, a new game clearing a
 running fight down to zero boss entities and scene objects, Focus stopped by a minigame, the X key ignored while
-paused). Screenshots: `tests/out/boss_<id>_p1.png` (the set piece from a free camera) and `_p2.png` (a later
+paused), a far start waiting in `travel`, and the content track's six boss missions end to end (`Missions.prep`,
+the approach objectives forced through, the walk to the arena as a teleport, the fight by the bot, the mission's
+own dialogue and outro, MISSION PASSED). Screenshots: `tests/out/boss_<id>_p1.png` (the set piece from a free camera) and `_p2.png` (a later
 phase from the chase camera).
 
-Last run (seed 7): all six beaten in 55 to 155 s of simulated play each (up to 230 s on other runs), the bot
-losing 2 to 150 hp per fight with 0 or 1 retries. `tests/all.js` passed (20 of 20 files) with this branch. The bot aims perfectly through the lock-on and dodges every armed telegraph, so a first-time player
+Last run on the merged build (seed 7): all six test fights and all six content missions passed, each boss in 60 to
+215 s of simulated play with 0 or 1 retries. See `docs/v03/triage_bosses.md` for the full-suite run. The bot aims perfectly through the lock-on and dodges every armed telegraph, so a first-time player
 will take longer and take more hits; each phase hands out health (and armor from phase 2) and RETRY resumes at
 the phase.
 
@@ -194,5 +213,4 @@ the phase.
   grazes a spool's neighbour counts for the neighbour.
 - `focus` only slows the wall-clock loop (`game.timeScale`); `advance()` in headless ignores it, so tests check
   the flag and the drain.
-- The scooters are the `bike` class; the vehicles track's `moto` would suit them better once it lands.
 - Headless timing, not real timing: the debate rounds are resolved by the test after 2.7 s.
