@@ -1882,15 +1882,23 @@
     if (!m || registry[m.id] || sideIds[m.id]) return false;
     if (m.story === true) return true;
     if (m.story === false || m.side || m.stranger || m.strand || SIDE_KINDS[m.kind] || SIDE_KINDS[m.category]) return false;
-    var X = expansion(), chain = X.chain || [];
-    if (chain.length && chain.indexOf(m.id) < 0 && (X.missions || []).indexOf(m) >= 0) return false;
+    // an expansion-list mission outside every chain (24_'s, and parity's which adds m01c, the bosses and the heist) is a
+    // side mission registered the expansion's way; parity.register() appends its story missions to expansion.missions
+    var X = expansion(), chain = storyChain();
+    if (chain.length && chain.indexOf(m.id) < 0 && (X.missions || []).indexOf(m) >= 0 && parityMissions().indexOf(m) < 0) return false;
     return true;
+  }
+  // the content's story order: parity.chain (35, v0.3) when present, else expansion.chain (25), else nothing
+  function storyChain() {
+    var P = parity().chain, X = expansion().chain || [];
+    if (Array.isArray(P) && P.length) { if (!X.length) return P; var out = P.slice(); for (var i = 0; i < X.length; i++) if (out.indexOf(X[i]) < 0) out.push(X[i]); return out; }
+    return X;
   }
   var _order = null, _orderKey = null;
   // the story missions in play order: a topological sort over `requires`, ranked by the content's chain (new missions without
   // a rank slot in wherever their prerequisites put them)
   function storyOrder() {
-    var all = allMissions(), chain = expansion().chain || [], key = _allKey + '|' + chain.length;
+    var all = allMissions(), chain = storyChain(), key = _allKey + '|' + chain.length;
     if (_order && _orderKey === key) return _order;
     var list = all.filter(storyMission), ids = {}, i;
     for (i = 0; i < list.length; i++) ids[list[i].id] = list[i];
@@ -1910,12 +1918,25 @@
     return out;
   }
   // chapters: GTP.Content.parity.chapters as [{act, title, from?}] or {act: title}; the GDD's three acts otherwise
+  // chapters: parity.chapters [{id, act, title, subtitle, first}] (a card when its `first` mission starts; the heist interlude
+  // and the finale are cards inside act 3), parity.actTitles {act: title}; also [{act, title, from}] or {act: title}
+  var _chT = null, _chKey = null;
   function chapterTable() {
-    var T = parity().chapters, out = { titles: {}, starts: {} };
-    if (Array.isArray(T)) T.forEach(function (c) { if (!c) return; var a = c.act | 0; if (a) { if (c.title) out.titles[a] = c.title; if (c.from || c.start) out.starts[c.from || c.start] = a; } });
-    else if (T && typeof T === 'object') for (var k in T) { var a2 = parseInt(String(k).replace(/\D/g, ''), 10); if (a2) out.titles[a2] = typeof T[k] === 'string' ? T[k] : (T[k] && T[k].title) || null; }
+    var P = parity(), T = P.chapters;
+    if (_chT && _chKey === T && _chT._at === P.actTitles) return _chT;
+    var out = { titles: {}, starts: {}, cards: {}, _at: P.actTitles };
+    _chT = out; _chKey = T;
+    if (Array.isArray(T)) T.forEach(function (c) {
+      if (!c) return; var a = c.act | 0, first = c.first || c.from || c.start;
+      if (first) out.cards[first] = c;
+      if (a && first && !out.starts[first] && !(out.titles[a])) { out.starts[first] = a; if (c.title) out.titles[a] = stripAct(c.title); }
+    });
+    else if (T && typeof T === 'object') for (var k in T) { var a2 = parseInt(String(k).replace(/\D/g, ''), 10); if (a2) out.titles[a2] = stripAct(typeof T[k] === 'string' ? T[k] : (T[k] && T[k].title) || ''); }
+    if (P.actTitles) for (var at in P.actTitles) if (P.actTitles[at]) out.titles[at] = P.actTitles[at];
+    if (P.acts) for (var an in P.acts) if (Array.isArray(P.acts[an]) && P.acts[an][0] && !out.starts[P.acts[an][0]]) out.starts[P.acts[an][0]] = an | 0;
     return out;
   }
+  function stripAct(t) { return String(t || '').replace(/^\s*act\s+[ivx0-9]+\s*[:.\-]\s*/i, ''); }
   function chapterTitle(act) { var t = chapterTable().titles[act]; return t || ACT_TITLES[act] || ('Act ' + act); }
   function actOf(m) {
     if (!m) return 1;
@@ -2012,15 +2033,19 @@
       if (!busy) { pendingCall.t -= dt; if (pendingCall.t <= 0) { var pc = pendingCall; pendingCall = null; placeCall(pc.missionId); } }
     }
   }
+  // a chapter card: on an act change, or when a content card's `first` mission starts (once per save: flags.chapter_<id>)
   function maybeChapter(m) {
     if (!storyMission(m)) return null;
-    var act = actOf(m);
-    if (act <= (state.flags.story_act | 0)) return null;
-    state.flags.story_act = act;
-    var c = { act: act, title: chapterTitle(act), roman: ROMAN[act] || String(act), missionId: m.id };
-    Story.chapter = { act: act, title: c.title };
+    var act = actOf(m), T = chapterTable(), card = T.cards[m.id] || null, newAct = act > (state.flags.story_act | 0);
+    var cardKey = card ? 'chapter_' + (card.id || m.id) : null;
+    if (!newAct && !(card && !state.flags[cardKey])) return null;
+    if (newAct) state.flags.story_act = act;
+    if (cardKey) state.flags[cardKey] = true;
+    var title = card && card.title ? stripAct(card.title) : chapterTitle(act);
+    var c = { act: act, title: title, subtitle: card ? card.subtitle || null : null, id: card ? card.id || null : 'act' + act, roman: ROMAN[act] || String(act), missionId: m.id, interlude: !newAct };
+    Story.chapter = { act: act, title: chapterTitle(act) };
     GTP.Events.emit('chapter', c);
-    if (!hasListener('chapter') && !callUI('chapter', c)) toast('ACT ' + c.roman + ': ' + c.title.toUpperCase());
+    if (!hasListener('chapter') && !callUI('chapter', c)) toast((c.interlude ? '' : 'ACT ' + c.roman + ': ') + c.title.toUpperCase());
     return c;
   }
   // after a story mission: the GPS to the next one, its giver's call once the cards clear
