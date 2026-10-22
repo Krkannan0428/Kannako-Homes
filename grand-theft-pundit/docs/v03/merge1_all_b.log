@@ -1,0 +1,343 @@
+
+=== perf.js ===
+  boot: {"generateMs":130,"profile":{"render":3631,"newGame":754,"generate":130,"ui":1,"loading":122,"first":3237,"atBoot":7870},"chunks":54,"entities":232,"tiles":"224x224","landmarks":50,"props":3272,"buildings":735,"wallMs":8022}
+  sim: {"ms":3526,"stepsPerSec":510,"x":111,"z":224,"entities":248,"errors":0}
+FAIL perf: Error: ASSERT: simulation keeps up (>600 steps/s headless): 510
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/perf.js:30:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== radio.js ===
+  stations:
+    wail_101       6 songs   72 bars 173 s  distinct bars 36  drum bars 12  longest repeat 3  chords 6  pitch classes 7  strong-beat chord tones 89%  key shifts 0  fills 0
+    pennant_fm     4 songs  164 bars 351 s  distinct bars 93  drum bars 22  longest repeat 2  chords 6  pitch classes 7  strong-beat chord tones 94%  key shifts 7  fills 12
+    velvetine_888  4 songs  175 bars 344 s  distinct bars 87  drum bars 24  longest repeat 1  chords 6  pitch classes 7  strong-beat chord tones 93%  key shifts 4  fills 7
+    quiet_signal   4 songs   76 bars 304 s  distinct bars 50  drum bars 3  longest repeat 2  chords 5  pitch classes 7  strong-beat chord tones 87%  key shifts 2  fills 0
+    office_hours   4 songs  122 bars 287 s  distinct bars 64  drum bars 16  longest repeat 1  chords 7  pitch classes 7  strong-beat chord tones 98%  key shifts 3  fills 5
+    loop_174       4 songs  192 bars 265 s  distinct bars 95  drum bars 24  longest repeat 2  chords 6  pitch classes 7  strong-beat chord tones 96%  key shifts 8  fills 10
+  audit on 941 runtime strings: content audit OK: 1 files scanned, 0 hits
+  headless: {"inCar":true,"cycle":["wail_101","pennant_fm","velvetine_888","quiet_signal","office_hours","loop_174","wail_101"],"shown":["A BULLETIN HAS BEEN ISSUED. THE FOLLOWING HAS BEEN REPORTED: FOUNDERS' COLLEGE REPORTS RECORD TABLE ATTENDANCE; CLASSROOMS EMPTY · GOLDPLATE RATES THIS MORNING A TEN; MORNING DISPUTES IT · THINK TANK FINDS THINKING OVERRATED; TANK RATED A TEN"],"events":[{"station":"quiet_signal","stage":null,"n":3}],"onFoot":true,"shownTotal":1}
+  live: {"ctx":"running","game":"playing"} inCar=true
+  live play:
+    {"id":"wail_101","scheduled":47,"sections":["bump"],"bars":3,"song":"yell_theme","onAir":true,"maxVoices":0,"off":[]}
+    {"id":"pennant_fm","scheduled":53,"sections":["I","A"],"bars":4,"song":"ten_theme","onAir":true,"maxVoices":1,"off":[]}
+    {"id":"velvetine_888","scheduled":57,"sections":["In"],"bars":4,"song":"eleven_minutes","onAir":true,"maxVoices":1,"off":[]}
+    {"id":"quiet_signal","scheduled":41,"sections":["A"],"bars":3,"song":"hold_music","onAir":true,"maxVoices":1,"off":[]}
+    {"id":"office_hours","scheduled":49,"sections":["In","A"],"bars":3,"song":"didnt_read","onAir":true,"maxVoices":1,"off":[]}
+    {"id":"loop_174","scheduled":87,"sections":["In"],"bars":6,"song":"legally_a_party","onAir":true,"maxVoices":1,"off":[]}
+  renders:
+    wail_101       yell_theme         peak 0.964 (opening 0.964)  rms 0.0975  cv 0.63
+    wail_101       hotline            peak 0.965 (opening 0.921)  rms 0.0971  cv 0.63
+    wail_101       breaking           peak 0.914 (opening 0.917)  rms 0.088  cv 0.80
+    wail_101       top_of_hour        peak 0.97 (opening 0.969)  rms 0.0795  cv 0.82
+    wail_101       weather            peak 0.845 (opening 0.847)  rms 0.094  cv 0.68
+    wail_101       one_side           peak 0.917 (opening 0.93)  rms 0.0981  cv 0.70
+    pennant_fm     ten_theme          peak 0.823 (opening 0.815)  rms 0.101  cv 0.73
+    pennant_fm     gold_escalator     peak 0.892 (opening 0.903)  rms 0.1067  cv 0.76
+    pennant_fm     rated_slow         peak 0.748 (opening 0.714)  rms 0.0903  cv 0.70
+    pennant_fm     both_tens          peak 0.888 (opening 0.731)  rms 0.0878  cv 0.72
+    velvetine_888  eleven_minutes     peak 0.759 (opening 0.726)  rms 0.113  cv 0.65
+    velvetine_888  session_nine       peak 0.791 (opening 0.753)  rms 0.117  cv 0.65
+    velvetine_888  drop_is_coming     peak 0.778 (opening 0.712)  rms 0.1136  cv 0.65
+    velvetine_888  spreadsheet_dub    peak 0.907 (opening 0.767)  rms 0.1129  cv 0.72
+    quiet_signal   hold_music         peak 0.496 (opening 0.484)  rms 0.1077  cv 0.35
+    quiet_signal   beige              peak 0.647 (opening 0.584)  rms 0.1287  cv 0.41
+    quiet_signal   balloon_repaired   peak 0.684 (opening 0.679)  rms 0.1141  cv 0.36
+    quiet_signal   briefing           peak 0.614 (opening 0.584)  rms 0.1049  cv 0.43
+    office_hours   didnt_read         peak 0.937 (opening 0.64)  rms 0.102  cv 0.51
+    office_hours   raccoon            peak 0.859 (opening 0.654)  rms 0.1071  cv 0.53
+    office_hours   nobody_came        peak 0.984 (opening 0.757)  rms 0.0973  cv 0.52
+    office_hours   finals_week        peak 0.922 (opening 0.789)  rms 0.1077  cv 0.56
+    loop_174       legally_a_party    peak 0.568 (opening 0.517)  rms 0.1049  cv 0.30
+    loop_174       speed_limit        peak 1.047 (opening 0.423)  rms 0.1249  cv 0.59
+    loop_174       lower_loop         peak 0.997 (opening 0.796)  rms 0.123  cv 0.42
+    loop_174       four_stars         peak 0.822 (opening 0.438)  rms 0.1046  cv 0.45
+PASS radio (100411 ms)
+
+=== render.js ===
+  render api: {"renderer":true,"scene":true,"camera":true,"fov":60,"chunks":54,"fog":true,"sky":true,"lights":true,"water":true,"fx":true,"w2s":{"sx":623.999999999996,"sy":392.8749564775447,"visible":true,"depth":0.8658610392992125},"styles":["downtown","goldplate","campus","suburbs","barn","mansion","industrial","marina","capitol","police","hospital","strip","stadium","brownstone","airport","port"],"atlasCells":41,"shadow":false,"night":0,"fogStart":120,"fogFar":260,"drawDistance":260}
+  runway cells: {"thresh":"runway_thresh","threshE":"runway_thresh","digit":"runway_1","centre":"runway_center","centre2":"runway_center","edge":"runway_edge","plain":"runway","apron":"apron"}
+  prebuild: {"before":54,"after":70,"n":16,"again":0,"doneN":16,"fr":[0.19,0.38,0.56,0.75,0.94,1],"ev":[0.19,0.38,0.56,0.75,0.94,1],"last":1,"monotonic":true}
+  render_campus_quad: {"w":1248,"h":720,"colors":1753,"mean":[117,134,133],"blue":0.223,"green":0.219,"warm":0.026,"dark":0.009,"bright":0,"chunks":73,"tris":298125,"calls":412,"ms":26,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_campus_quad.png
+  render_downtown_avenue: {"w":1248,"h":720,"colors":986,"mean":[75,91,109],"blue":0.515,"green":0.003,"warm":0.012,"dark":0.055,"bright":0,"chunks":100,"tris":235757,"calls":328,"ms":14,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_downtown_avenue.png
+  render_loop_deck: {"w":1248,"h":720,"colors":961,"mean":[104,118,134],"blue":0.445,"green":0,"warm":0.017,"dark":0,"bright":0,"chunks":101,"tris":311418,"calls":458,"ms":13,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_loop_deck.png
+  render_marina_piers: {"w":1248,"h":720,"colors":1673,"mean":[145,146,157],"blue":0.333,"green":0.002,"warm":0.214,"dark":0.002,"bright":0.002,"chunks":121,"tris":146258,"calls":237,"ms":9,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_marina_piers.png
+  render_capitol_dome: {"w":1248,"h":720,"colors":931,"mean":[134,149,161],"blue":0.415,"green":0.052,"warm":0.005,"dark":0.002,"bright":0,"chunks":129,"tris":83300,"calls":94,"ms":7,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_capitol_dome.png
+  render_stadium: {"w":1248,"h":720,"colors":1298,"mean":[142,174,159],"blue":0.413,"green":0.394,"warm":0.008,"dark":0.013,"bright":0.008,"chunks":147,"tris":207784,"calls":148,"ms":8,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_stadium.png
+  render_downtown_night: {"w":1248,"h":720,"colors":1240,"mean":[46,53,69],"blue":0.447,"green":0,"warm":0.031,"dark":0.532,"bright":0.001,"chunks":147,"tris":236027,"calls":380,"ms":11,"night":1} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_downtown_night.png
+  render_strip_night: {"w":1248,"h":720,"colors":1622,"mean":[53,50,70],"blue":0.438,"green":0,"warm":0.096,"dark":0.47,"bright":0.004,"chunks":147,"tris":230332,"calls":395,"ms":12,"night":1} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_strip_night.png
+  render_sunset: {"w":1248,"h":720,"colors":1151,"mean":[173,140,152],"blue":0.01,"green":0.001,"warm":0.324,"dark":0.048,"bright":0.033,"chunks":147,"tris":76650,"calls":222,"ms":7,"night":0.15} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_sunset.png
+  render_ramp: {"w":1248,"h":720,"colors":1326,"mean":[105,117,131],"blue":0.403,"green":0.01,"warm":0.053,"dark":0.036,"bright":0.001,"chunks":147,"tris":287292,"calls":437,"ms":19,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_ramp.png
+  render_bridge: {"w":1248,"h":720,"colors":1316,"mean":[130,145,155],"blue":0.419,"green":0.063,"warm":0.006,"dark":0.001,"bright":0.001,"chunks":149,"tris":268530,"calls":214,"ms":12,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_bridge.png
+  render_airport_runway: {"w":1248,"h":720,"colors":971,"mean":[134,148,161],"blue":0.441,"green":0.007,"warm":0.001,"dark":0,"bright":0,"chunks":153,"tris":62022,"calls":149,"ms":7,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_airport_runway.png
+  render_control_tower: {"w":1248,"h":720,"colors":639,"mean":[151,178,206],"blue":0.817,"green":0.001,"warm":0.001,"dark":0.014,"bright":0.011,"chunks":159,"tris":157606,"calls":170,"ms":8,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_control_tower.png
+  render_airport_terminal: {"w":1248,"h":720,"colors":945,"mean":[145,159,175],"blue":0.476,"green":0.002,"warm":0.003,"dark":0.004,"bright":0.005,"chunks":160,"tris":89646,"calls":194,"ms":12,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_airport_terminal.png
+  render_port_maze: {"w":1248,"h":720,"colors":511,"mean":[133,144,150],"blue":0.378,"green":0.055,"warm":0.093,"dark":0,"bright":0.001,"chunks":182,"tris":230094,"calls":194,"ms":14,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_port_maze.png
+  render_port_quay: {"w":1248,"h":720,"colors":358,"mean":[174,176,187],"blue":0.428,"green":0.003,"warm":0.103,"dark":0.002,"bright":0,"chunks":184,"tris":22468,"calls":72,"ms":6,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_port_quay.png
+  render_uptown_brownstones: {"w":1248,"h":720,"colors":1200,"mean":[120,128,138],"blue":0.376,"green":0.031,"warm":0.105,"dark":0.003,"bright":0,"chunks":194,"tris":290214,"calls":219,"ms":12,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_uptown_brownstones.png
+  render_uptown_museum: {"w":1248,"h":720,"colors":944,"mean":[130,143,152],"blue":0.381,"green":0.065,"warm":0.071,"dark":0.037,"bright":0.002,"chunks":196,"tris":190530,"calls":139,"ms":7,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_uptown_museum.png
+  render_bridge_south: {"w":1248,"h":720,"colors":931,"mean":[137,170,193],"blue":0.742,"green":0.001,"warm":0.004,"dark":0.003,"bright":0.001,"chunks":196,"tris":154628,"calls":182,"ms":10,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_bridge_south.png
+  render_lower_loop: {"w":1248,"h":720,"colors":698,"mean":[131,143,157],"blue":0.408,"green":0,"warm":0.003,"dark":0.001,"bright":0,"chunks":196,"tris":91988,"calls":200,"ms":8,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_lower_loop.png
+  render_viaduct: {"w":1248,"h":720,"colors":775,"mean":[149,181,204],"blue":0.771,"green":0,"warm":0,"dark":0.01,"bright":0,"chunks":196,"tris":54009,"calls":122,"ms":14,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_viaduct.png
+  render_airport_night: {"w":1248,"h":720,"colors":977,"mean":[26,33,56],"blue":0.513,"green":0.001,"warm":0.01,"dark":0.693,"bright":0,"chunks":196,"tris":86216,"calls":243,"ms":16,"night":1} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_airport_night.png
+  render_overview: {"w":1248,"h":720,"colors":1275,"mean":[162,177,193],"blue":0.651,"green":0.002,"warm":0.002,"dark":0,"bright":0,"chunks":196,"tris":206349,"calls":287,"ms":11,"night":0} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_overview.png
+  low preset: {"preset":"low","q":"low","post":false,"shadows":false,"maps":false,"env":true,"auto":false,"list":["low","medium","high","ultra"],"weather":"clear","setWeather":"function"}
+  high preset: {"preset":"high","post":true,"supported":true,"ssao":true,"bloom":true,"fxaa":true,"shadows":true,"soft":true,"shadowMap":2048,"points":8,"spots":4,"maps":true,"env":true,"toneMapping":0,"weather":"overcast","overcast":1,"cycle":false,"clearcoat":true,"mapsMs":4962}
+  render_hq_downtown_noon: {"w":1248,"h":720,"colors":1312,"mean":[64,84,111],"blue":0.839,"green":0.002,"warm":0.003,"dark":0.032,"bright":0.001,"calls":433,"tris":310821,"ms":71,"passes":14,"night":0,"wet":0,"rain":0,"lodNear":30,"lodFar":51,"rainVisible":false,"puddles":false,"lamps":0,"envRefreshes":2} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_hq_downtown_noon.png
+  render_hq_marina_sunset: {"w":1248,"h":720,"colors":2296,"mean":[138,97,117],"blue":0.157,"green":0,"warm":0.533,"dark":0.001,"bright":0,"calls":454,"tris":245441,"ms":17,"passes":14,"night":0.15,"wet":0,"rain":0,"lodNear":27,"lodFar":54,"rainVisible":false,"puddles":false,"lamps":8,"envRefreshes":3} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_hq_marina_sunset.png
+  render_hq_downtown_rain_night: {"w":1248,"h":720,"colors":1502,"mean":[100,92,92],"blue":0.09,"green":0.002,"warm":0.192,"dark":0.012,"bright":0.013,"calls":490,"tris":315135,"ms":20,"passes":14,"night":1,"wet":0.82,"rain":1,"lodNear":28,"lodFar":55,"rainVisible":true,"puddles":true,"lamps":8,"envRefreshes":4} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_hq_downtown_rain_night.png
+  render_hq_loop_dusk: {"w":1248,"h":720,"colors":1220,"mean":[93,64,92],"blue":0.077,"green":0,"warm":0.157,"dark":0.013,"bright":0,"calls":683,"tris":426873,"ms":17,"passes":14,"night":0.41,"wet":0.82,"rain":0,"lodNear":28,"lodFar":41,"rainVisible":false,"puddles":true,"lamps":8,"envRefreshes":5} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_hq_loop_dusk.png
+  render_hq_car_paint: {"w":1248,"h":720,"colors":2420,"mean":[80,97,130],"blue":0.853,"green":0.003,"warm":0.036,"dark":0.01,"bright":0.007,"calls":343,"tris":322684,"ms":16,"passes":14,"night":0,"wet":0.82,"rain":0,"lodNear":25,"lodFar":58,"rainVisible":false,"puddles":true,"lamps":0,"envRefreshes":6} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_hq_car_paint.png
+  render_hq_ped: {"w":1248,"h":720,"colors":1657,"mean":[87,108,140],"blue":0.808,"green":0,"warm":0.001,"dark":0.006,"bright":0,"calls":365,"tris":214683,"ms":20,"passes":14,"night":0,"wet":0.81,"rain":0,"lodNear":26,"lodFar":57,"rainVisible":false,"puddles":true,"lamps":0,"envRefreshes":6} -> /home/user/Kannako-Homes/grand-theft-pundit/tests/out/render_hq_ped.png
+  quality switches: {"low":{"preset":"low","post":false,"shadows":false,"points":0,"tone":4,"normal":false,"errors":0},"medium":{"preset":"medium","post":true,"ssao":false,"bloom":true,"shadows":true,"shadowMap":1024,"errors":0},"auto":{"preset":"medium","auto":true,"current":"medium"},"ultra":{"preset":"ultra","shadowMap":4096,"points":12,"samples":16,"errors":0},"bad":false,"weatherBad":false,"weatherOk":true,"weatherState":"overcast"}
+PASS render (107352 ms)
+
+=== saves.js ===
+  saved: {"ok":true,"slots":[{"slot":1,"empty":false,"corrupt":false,"meta":{"missions":2,"missionsTotal":61,"lastMission":"Loud & Correct","district":"Founders' College","landmark":"Founders' Quad","wanted":0,"money":7777,"playTime":0,"savedAt":1792524932141,"seed":7,"clock":17.500185185185185,"day":1},"version":4},{"slot":2,"empty":false,"corrupt":false,"meta":{"missions":2,"missionsTotal":61,"lastMission":"Loud & Correct","district":"Velvetine Docks","landmark":"Fresh Takes Fish Shack","wanted":0,"money":7777,"playTime":321,"savedAt":1792524932203,"seed":7,"clock":3.2511111111111104,"day":2},"version":4},{"slot":3,"empty":true,"corrupt":false,"meta":null,"version":null}],"latest":2,"active":2,"x":257,"z":494,"memos":["mm_01","mm_02"],"events":["saved:1:strand","saved:2:manual"],"hasSave":true,"errors":0}
+  loaded: {"ok":true,"state":"playing","x":257,"z":494,"yaw":0.7,"money":7777,"subs":12345,"weapons":{"fist":"inf","pistol":24,"smg":60},"weapon":"smg","ammo":{"mag":12,"reserve":12,"total":24},"completed":["m00_intro","m01_van"],"flags":{"has_table":true,"has_van":true,"heist_planned":true,"heist_loud":true,"story_act":1},"best":{"m00_intro":61.5},"fares":3,"hoa":4,"stunts":["sj_01"],"memos":["mm_01","mm_02"],"memoPickupsLeft":48,"clock":3.26,"day":2,"playTime":321,"markers":["m01c_both_sides"],"tier":1,"events":["saved:1:strand","saved:2:manual","loaded:2"],"errors":0,"version":4,"rawRegistry":{"combat":{"v":1,"mods":{},"owned":{},"aimAssist":true,"holsters":true},"story":{"v":1,"heist":{"approach":"loud","crew":["kip"],"missionId":"h01_casing"}},"interiors":{"rangeBest":0,"medals":{}},"sys_properties":{"owned":{"safe_dorm":{"day":1,"price":0}},"bought":0,"income":0,"lastDay":2,"log":[]},"sys_stocks":{"prices":{"NAPZ":42.6,"GPLT":110.29,"VLTW":230.52,"VELV":17.47,"BDSC":26.49,"PNDT":0.43,"TYNX":63.58,"BSAR":75.61},"history":{"NAPZ":[42,42.37,42.51,42.64,42.74,42.57,42.3,42.49,42.51,42.61,42.6],"GPLT":[110,109.92,109.96,109.16,110.16,110.08,110.47,110.02,110.12,110.34,110.29],"VLTW":[230,230.99,230.76,230.65,230.4,229.67,229.72,229.78,229.44,230.35,230.52],"VELV":[18,17.85,18.08,17.8,17.41,17.39,17.53,17.45,17.43,17.43,17.47],"BDSC":[27,26.84,26.84,26.89,27.11,26.95,27.11,27.3,27.12,26.59,26.49],"PNDT":[0.42,0.45,0.45,0.44,0.45,0.45,0.43,0.42,0.42,0.42,0.43],"TYNX":[64,63.17,63.52,63.38,62.8,62.62,63.01,63.13,63.65,63.3,63.58],"BSAR":[75,75.02,75.09,75.26,74.92,75.01,74.51,74.98,75.39,75.54,75.61]},"holdings":{},"trades":0,"realized":0,"lastHour":51,"news":[],"reacted":{}},"sys_golf":{"rounds":0,"best":null,"bestToPar":null,"birdies":0,"aces":0,"eagles":0,"holesPlayed":0,"underPar":0,"lastCard":null},"sys_achievements":{"unlocked":{}},"sys_cheats":{"found":{},"used":0,"on":{}},"sys_jobs":{"best":{},"clients":0,"fires":0,"earned":0,"done":{},"runs":0},"sys_wardrobe":{"owned":{},"equipped":{},"hair":null,"hairColor":null,"bought":0,"haircuts":0,"spent":0},"sys_stats":{"moneyPeak":7777,"systemsEarned":0,"rng":1157756239},"vehicles":{"v":1,"garages":{},"current":null,"controls":{"invertPitch":false}},"specials":{"meters":{"focus":1,"shout":1,"chatmob":1,"boost":1}},"t_module":{"n":41,"list":["a"],"inf":"inf"}},"regSet":{"n":41,"list":["a"],"inf":null},"heist":{"approach":"loud","crew":["kip"],"missionId":"h01_casing"},"gps":null}
+FAIL saves: Error: ASSERT: missions, flags, best times and the next light come back: m01c_both_sides
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/saves.js:78:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== smoke.js ===
+  boot snapshot: {"state":"playing","t":0,"clock":17.5,"day":1,"fps":0,"steps":0,"frames":0,"playTime":0,"slot":1,"loading":false,"player":{"x":110,"y":0.12,"z":270,"yaw":0,"hp":100,"armor":0,"money":250,"subs":0,"wanted":0,"weapon":"fist","vehicle":null,"speed":0,"state":"idle","onGround":true,"swimming":false,"cameraMode":"chase"},"district":"campus","street":"Goldplate Avenue","mission":null,"strand":null,"cutscene":false,"entities":232,"errors":0,"render":{"chunks":54,"tris":251802,"calls":344,"frameMs":2705.9,"night":0}}
+  walk: {"walked":7.647431494552961,"ran":12.771147241827833,"camDist":4.120823777590118,"yawDelta":0.9600000000000001,"airY":1.1259193797592761,"groundY":0.12,"landedY":0.12,"onGround":true,"solid":false,"steps":441}
+  states: ["paused","playing","close",0.1,300,true,true,true,300]
+  chase shot: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/smoke_chase.png {"w":1248,"h":720,"colors":1352,"mean":[173,180,183],"blue":0.14,"green":0.113,"warm":0.131,"dark":0.002,"bright":0.287}
+PASS smoke (17191 ms)
+
+=== story.js ===
+  opening: {"state":"cutscene","active":true,"title":"Table Stakes","pending":true,"mission":null,"next":{"missionId":"m00_intro","title":"Table Stakes","giver":"gus","giverName":"Gus Pemberton","landmark":"campus_quad","landmarkName":"Founders' Quad","x":110,"z":270,"y":0.12,"act":1,"chapter":"Act I: Folding Table"}}
+  first objective: {"s":52.25,"active":"m00_intro","phase":"play","objective":"Get to Dorm 4B","state":"playing","moved":8.2,"target":{"type":"goto","dist":36},"chapter":[{"n":"chapter","t":31.4,"state":"playing","mid":"m00_intro","act":1,"title":"Act I: Folding Table"}],"gps":{"n":"gps:set","t":53,"state":"playing","kind":"objective","mid":"m00_intro","x":142,"z":254},"begin":[{"n":"story:begin","t":31.4,"state":"cutscene","mid":"m00_intro"}],"order":["cutscene:start","cutscene:end","chapter","mission:start","cutscene:start","story:begin","cutscene:end","gps:set","mission:objective"],"errors":0}
+  after m00: {"completed":true,"next":{"missionId":"m01_van","title":"Loud & Correct","giver":"sloane","giverName":"Sloane Vexley","landmark":"pod_garage","landmarkName":"Gus's Garage","x":62,"z":322,"y":0.12,"act":1,"chapter":"Act I: Folding Table"},"gps":[{"n":"gps:set","t":53.87,"state":"playing","kind":"story","mid":"m01_van","x":62,"z":322}],"call":[{"n":"phone:call","t":57.37,"state":"playing","mid":"m01_van","title":"Loud & Correct","from":"sloane","lines":3}],"callAfter":3.25,"lastCall":{"from":"sloane","name":"Sloane Vexley","lines":[{"who":"sloane","name":"Sloane Vexley","color":"#27c9c2","text":"Sloane Vexley. Producer. Yours, as of now. Gus's Garage has a van with your face on it."},{"who":"player","name":"Bryce Takesworth","color":"#ff3fa4","text":"My face?"},{"who":"sloane","name":"Sloane Vexley","color":"#27c9c2","text":"Twice. Four minutes. Three."}],"missionId":"m01_van","title":"Loud & Correct","landmark":"pod_garage","landmarkName":"Gus's Garage"},"marker":{"id":"m01_van","kind":"mission","x":62,"z":322,"y":0.12,"missionId":"m01_van","title":"Loud & Correct","giver":"sloane","landmark":"pod_garage","color":3108095,"story":true,"beacon":true,"labelRange":400,"dist":69.86730279608624,"act":1},"beacon":true,"state":"playing","errors":0}
+  beacon from afar: {"ok":true,"dist":200,"opacity":0.396,"visible":true}
+  chain: {"out":[{"id":"m01_van","done":true,"next":null,"gps":null,"call":null,"chapter":[]}],"act":{"act":3,"title":"Finale: Primetime or the Table"},"errors":0}
+FAIL story: Error: ASSERT: m01_van: the GPS and the call go to the next story mission: {"id":"m01_van","done":true,"next":null,"gps":null,"call":null,"chapter":[]}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/story.js:132:7
+    at Array.forEach (<anonymous>)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/story.js:130:13
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== strands.js ===
+  loud_cab: {"inCab":true,"active":"loud_cab","hud0":"Waiting for a hail","fare":{"s":1.5,"id":"fare_juice","dist":137,"wave":"wave","dest":"Clarity Pellet Wellness Barn","timer":35},"markers":1,"boarded":{"s":1.3,"inCab":true,"seat":1,"line":"The wellness barn. My doctor won't tell me where it is."},"paid":{"s":0.1,"money":82,"subs":150,"fares":1,"out":true,"alive":true,"events":1},"ended":{"active":null,"events":1}}
+  hoa_patrol: {"inCar":true,"active":"hoa_patrol","flag":{"s":2,"violation":"LAWN LENGTH","dist":173,"chauffeur":true,"mode":"flee","driver":true,"timer":120},"fled":24.6,"marker":1,"stop":{"s":3.25,"level":2,"money":200,"stops":1,"best":1,"events":1}}
+  sponsor_runs: {"s0":2,"van":{"type":"van","dist":3,"keep":true,"persistent":true},"start":{"inVan":true,"active":"sponsor_runs","run":{"lm":"char_charter","timer":59},"hud":"SPONSOR RUN 1/8: Char & Charter"},"run1":{"s":0.1,"money":411,"runs":1,"next":"heirloom_club","events":1},"ended":{"s":15,"events":1}}
+  ratio_rampages: {"marker":{"weapon":"tableleg","visible":true},"weaponBefore":"fist","start":{"s":0.6,"countdown":2.9,"weapon":"tableleg","hecklers":12},"wave":{"s":3,"n":4,"signs":["SOURCE?","SOURCE?","L","L"],"hostile":true},"wrong":{"wrong":1,"kills":0},"done":{"active":null,"kills":12,"done":1,"best":1.9,"money":400,"weapon":"fist","tableleg":true,"cooldown":true,"visible":false,"events":1}}
+  monday_memos: {"total":50,"placed":50,"onGround":50,"meshes":50,"after":{"collected":10,"events":10,"money":500,"tableleg":true,"left":40,"byDistrict":12},"shotMemo":{"x":424,"z":328,"id":"mm_11","visible":false}}
+  shot: /home/user/Kannako-Homes/grand-theft-pundit/tests/out/strands_memo.png
+  race start: {"marker":{"visible":true,"y":7,"unlocked":"lr_01:true,lr_02:false,lr_03:false"},"start":{"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}},"racersOnDeck":[]}
+FAIL strands: Error: ASSERT: braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/strands.js:198:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== strangers.js ===
+  schema: {"errs":0,"strands":10,"missions":26,"homes":["campus","downtown","strip","capitol","hills","suburbs","industrial","marina","airport","uptown"],"districts":["airport","campus","capitol","downtown","hills","industrial","marina","port","strip","suburbs","uptown"],"allDistricts":["airport","campus","capitol","downtown","hills","industrial","marina","port","strip","suburbs","uptown"],"types":["collect_any","defeat","deliver_passenger","destroy","dialogue","drive_to","enter_vehicle","equip","escape_wanted","follow","goto","minigame","pickup","race","stop_vehicle","stunt","survive","timer_wrap"],"total":61,"story":35,"rewards":33000,"api":"list,strand,missions,status,summary,homes,epilogue,strandOf,flagged"}
+  new game: {"markers":["m00_intro"],"states":["heckle_union:locked","ghostwriter:locked","reaction_face:locked","daylight:locked","caddie:locked","hoa_appeals:locked","proofreader:locked","fresh_takes:locked","standby:locked","apology:locked"],"avail":0}
+  st_heckle_1 OK [walk@7, giver {"castId":"moira","d":2.4}, first line moira] $400 / reward $400, subs +1200
+      defeat: 4 with pistol
+      dialogue: lines skipped in 0.15s
+      minigame: ratio vs Scab Heckler: won LIKES 1400 - 132 · DUNKS 5 · NOTED 0 · RATIO 10.6 (4 inputs)
+  st_heckle_2 OK [walk@7, giver {"castId":"moira","d":2.4}, first line moira] $700 / reward $700, subs +2240
+      goto: walked to Impression Alley
+      survive: held 50s, max 4 live, 22 swings
+      destroy: 1 bus(s) wrecked
+      escape_wanted: 1 star(s) waited out in 8.5s
+  st_heckle_3 OK [walk@7, giver {"castId":"moira","d":2.4}, first line moira] $1200 / reward $1200, subs +5600
+      enter_vehicle: in the sedan (unioncar)
+      deliver_passenger: kip boarded, dropped at The Yell Network
+      minigame: debate vs Prudence Clause: won ROUNDS 2-0 · PERFECT HITS 4 · SHOUTS 0 · MINDS CHANGED 0 (4 inputs)
+  strand heckle_union: done 3/3, epilogue "AMALGAMATED HECKLERS LOCAL 404 WINS 31-SECOND PROTECTED INTERRUPTION; MANAGEMENT DID NOT FINISH ITS STATEMENT"
+  st_ghost_1 OK [direct, giver {"castId":"marisol","d":2.8}, first line marisol] $600 / reward $600, subs +1800
+      pickup: 6/6 SCRIPT PAGE on foot
+      drive_to: drove the sedan to The Yell Network
+  st_ghost_2 OK [walk@7, giver {"castId":"marisol","d":2.4}, first line marisol] $915 / reward $900, subs +3100
+      follow: tailed listener for 63s at 8.1..12.5 m
+      dialogue: lines skipped in 0.44999999999999996s
+      defeat: 3 with tableleg
+  st_ghost_3 OK [walk@7, giver {"castId":"marisol","d":2.4}, first line marisol] $1500 / reward $1500, subs +7000
+      enter_vehicle: in the sports (ghostcar)
+      race: race through 4 checkpoints x1, field 3
+  strand ghostwriter: done 3/3, epilogue "GHOSTWRITER'S FORTY UNRELEASED PODCASTS SWEEP AWARDS; ACCEPTANCE SPEECH ALSO UNRELEASED"
+  st_gasp_1 OK [walk@7, giver {"castId":"gasp","d":2.4}, first line gasp] $500 / reward $500, subs +1500
+      enter_vehicle: in the sports (gaspcar)
+      drive_to: drove the sports to Goldplate Tower
+      drive_to: drove the sports to Impression Alley
+      drive_to: drove the sports to Nap Dynasty Mattress Depot
+      dialogue: lines skipped in 0.44999999999999996s
+  st_gasp_2 OK [walk@7, giver {"castId":"gasp","d":2.4}, first line gasp] $1000 / reward $1000, subs +3000
+      enter_vehicle: in the sports (jumpcar)
+      stunt: sj_02 after 1 run(s): launch 31.2, land 1.18s ok
+      escape_wanted: 2 star(s) waited out in 10.5s
+  st_gasp_3 OK [walk@7, giver {"castId":"gasp","d":2.4}, first line gasp] $1400 / reward $1400, subs +6870
+      destroy: 3 van(s) wrecked
+      minigame: ratio vs Rex Smirkwell: won LIKES 1800 - 150 · DUNKS 6 · NOTED 0 · RATIO 12.0 (6 inputs)
+  strand reaction_face: done 3/3, epilogue "THUMBNAIL FACE GENUINELY SURPRISED FOR FIRST TIME IN DECADES; SURPRISE WAS "WINNING"; EYEBROWS RE-INSURED"
+  st_day_1 OK [walk@7, giver {"castId":"thaddeus","d":2.4}, first line thaddeus] $700 / reward $700, subs +2100
+      enter_vehicle: in the van (blackout)
+      deliver_passenger: thaddeus boarded, dropped at Goldplate Links
+      dialogue: lines skipped in 0.6s
+  st_day_2 OK [walk@7, giver {"castId":"thaddeus","d":2.4}, first line thaddeus] $917 / reward $900, subs +2700
+      collect_any: 5/5 GRASS SAMPLE on foot
+      drive_to: drove the sedan to Fulcrum Foundation
+      defeat: 4 with tableleg
+  st_day_3 OK [walk@7, giver {"castId":"thaddeus","d":2.4}, first line thaddeus] $1300 / reward $1300, subs +6990
+      drive_to: drove the sedan to Runway 10/10
+      dialogue: lines skipped in 0.6s
+      destroy: 2 suv(s) wrecked
+  strand daylight: done 3/3, epilogue "FULCRUM INTERN SEES SUN, CITES IT; SUN DECLINES TO COMMENT; SUNBURN RATED "PRELIMINARY""
+  st_caddie_1 OK [walk@7, giver {"castId":"lyle","d":2.4}, first line lyle] $800 / reward $800, subs +2400
+      follow: tailed scorer for 54s at 10.5..17.2 m
+      pickup: 1/1 THE SIX on foot
+  st_caddie_2 OK [walk@7, giver {"castId":"lyle","d":2.4}, first line lyle] $1200 / reward $1200, subs +3600
+      enter_vehicle: in the bike (cart)
+      race: race through 4 checkpoints x1, field 3
+  st_caddie_3 OK [walk@7, giver {"castId":"lyle","d":2.4}, first line lyle] $1800 / reward $1800, subs +8400
+      goto: walked to Vaultwright Manor
+      defeat: 5 with revolver
+      pickup: 1/1 THE BALL on foot
+      drive_to: drove the sedan to Goldplate Links
+  strand caddie: done 3/3, epilogue "GOLDPLATE LINKS RECORDS HOLE-IN-ONE FROM PARKING LOT; SCORECARD READS TEN; CADDIE PUT DOWN FOR A TEN"
+  st_hoa_1 OK [walk@7, giver {"castId":"dewey","d":2.4}, first line dewey] $900 / reward $900, subs +2700
+      pickup: 5/5 EXHIBIT on foot
+      goto: walked to Culdesac HOA Hall
+      escape_wanted: 1 star(s) waited out in 8.5s
+  st_hoa_2 OK [walk@7, giver {"castId":"dewey","d":2.4}, first line dewey] $1300 / reward $1300, subs +3900
+      enter_vehicle: in the sedan (deweycar)
+      stop_vehicle: the suv ran 18 m, boxed in for 3.1s
+      pickup: 1/1 APPEAL (LAMINATED) from the sedan
+      deliver_passenger: dewey boarded, dropped at The Capitol
+  st_hoa_3 OK [walk@7, giver {"castId":"dewey","d":2.4}, first line dewey] $2000 / reward $2000, subs +10100
+      minigame: debate vs The Culdesac Board: won ROUNDS 2-0 · PERFECT HITS 4 · SHOUTS 0 · MINDS CHANGED 0 (4 inputs)
+      survive: held 45s, max 6 live, 64 swings
+  strand hoa_appeals: done 3/3, epilogue "HOA APPEAL WON LIVE AFTER 31-HOUR STREAM; WINNER IMMEDIATELY APPEALS WIN; MAILBOX LEGAL, STILL ADJACENT"
+  st_proof_1 OK [direct, giver {"castId":"ottoline","d":2.4}, first line ottoline] $1500 / reward $1500, subs +4500
+      enter_vehicle: in the truck (ltruck)
+      pickup: 4/4 THE LETTER L from the truck
+      drive_to: drove the truck to Monday Memo Print Works
+  st_proof_2 OK [walk@7, giver {"castId":"ottoline","d":2.4}, first line ottoline] $1950 / reward $2200, subs +10925
+      destroy: 4 van(s) wrecked
+      minigame: ratio vs House Style: won LIKES 1800 - 151 · DUNKS 6 · NOTED 0 · RATIO 12.0 (6 inputs)
+      escape_wanted: 3 stars resprayed at pod_garage for $150
+  strand proofreader: done 2/2, epilogue "MONDAY MEMO PRINTS ERRATUM WITH TWO L'S; NOBODY READS IT; PROOFREADER RATES IT "CORRECT""
+  st_brine_1 OK [walk@7, giver {"castId":"brine","d":2.4}, first line brine] $1000 / reward $1000, subs +3000
+      enter_vehicle: in the van (fishvan)
+      pickup: 5/5 FRESH TAKE from the van
+      drive_to: drove the van to Fresh Takes Fish Shack
+  st_brine_2 OK [walk@7, giver {"castId":"brine","d":2.4}, first line brine] $1600 / reward $1600, subs +7970
+      destroy: 3 truck(s) wrecked
+      escape_wanted: 2 star(s) waited out in 12s
+  strand fresh_takes: done 2/2, epilogue "FRESH TAKES FISH SHACK SERVES FIRST FRESH TAKE; CUSTOMERS SEND IT BACK TO BE REHEATED"
+  st_standby_1 OK [walk@7, giver {"castId":"rutherford","d":2.4}, first line rutherford] $1100 / reward $1100, subs +3300
+      enter_vehicle: in the taxi (standbycab)
+      drive_to: drove the taxi to Hangar Row
+      drive_to: drove the taxi to Goldplate Control
+      drive_to: drove the taxi to Runway 10/10
+      dialogue: lines skipped in 0.6s
+  st_standby_2 OK [walk@7, giver {"castId":"rutherford","d":2.4}, first line rutherford] $1700 / reward $1700, subs +8100
+      enter_vehicle: in the taxi (flighttaxi)
+      stunt: sj_09 after 1 run(s): launch 24.3, land 0.95s short
+      deliver_passenger: rutherford boarded, dropped at Ferry to Elsewhere
+  strand standby: done 2/2, epilogue "STANDBY PASSENGER FINALLY DEPARTS, BY FERRY; FERRY HAS NOT LEFT; PASSENGER CALLS IT "BOARDED""
+  st_apology_1 OK [walk@7, giver {"castId":"cornelius","d":2.4}, first line cornelius] $1850 / reward $2000, subs +6000
+      enter_vehicle: in the sports (heirloomcar)
+      stop_vehicle: the sedan ran 12 m, boxed in for 3.1s
+      pickup: 1/1 THE APOLOGY (DRAFT) from the sports
+      escape_wanted: 3 stars resprayed at strip_garage for $150
+  st_apology_2 OK [walk@7, giver {"castId":"cornelius","d":2.4}, first line cornelius] $2800 / reward $2800, subs +13400
+      enter_vehicle: in the sedan (apologycar)
+      deliver_passenger: cornelius boarded, dropped at Museum of Takes
+      defeat: 5 with revolver, 4 forced
+      minigame: debate vs Ledger, Ledger & Ledger: won ROUNDS 2-0 · PERFECT HITS 4 · SHOUTS 0 · MINDS CHANGED 0 (4 inputs)
+  strand apology: done 2/2, epilogue "HEIRLOOM FAMILY ISSUES FIRST APOLOGY IN 200 YEARS; MUSEUM OF TAKES PUTS IT UNDER GLASS; FAMILY "NOTES" IT"
+  after: {"missing":[],"replayState":{"ok":true,"active":"st_heckle_1","hud":true},"moneyAfterReplay":0,"savedMissing":[],"savedFlags":[],"errors":[],"summary":["heckle_union:done","ghostwriter:done","reaction_face:done","daylight:done","caddie:done","hoa_appeals:done","proofreader:done","fresh_takes:done","standby:done","apology:done"],"events":[],"forced":[]}
+FAIL strangers: Error: ASSERT: strand run problems:
+st_ghost_1: not started by walking into the marker (direct)
+st_proof_1: not started by walking into the marker (direct)
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/strangers.js:656:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== systems.js ===
+  surface: {"tickers":8,"holes":9,"ach":26,"cheats":8,"jobs":2,"props":11,"safes":5,"wrapped":true,"reg":8,"hook":true,"marks":7,"minimap":7,"untouched":true,"holeLens":[42,46,38,43,26,54,46,40,23],"course":{"x0":516,"z0":92,"x1":556,"z1":272,"lm":{"id":"goldplate_links","name":"Goldplate Links","kind":"park","label":"Goldplate Links","lot":{"x":129,"z":23,"w":10,"d":45},"building":null,"district":"hills","x":536,"z":182,"y":0.12,"w":40,"d":180,"door":{"x":554,"z":178,"y":0.12,"tx":138,"tz":44},"sign":"PAR 10","gag":null,"def":{"id":"goldplate_links","name":"Goldplate Links","kind":"park","district":"hills","lot":{"bx":129,"bz":23,"w":10,"d":45},"label":"Goldplate Links","ground":"lawn","door":"e","sign":"PAR 10"},"points":{},"npcs":[]},"name":"Goldplate Links"}}
+FAIL systems: Error: ASSERT: tables: {"tickers":8,"holes":9,"ach":26,"cheats":8,"jobs":2,"props":11,"safes":5,"wrapped":true,"reg":8,"hook":true,"marks":7,"minimap":7,"untouched":true,"holeLens":[42,46,38,43,26,54,46,40,23],"course":{"x0":516,"z0":92,"x1":556,"z1":272,"lm":{"id":"goldplate_links","name":"Goldplate Links","kind":"park","label":"Goldplate Links","lot":{"x":129,"z":23,"w":10,"d":45},"building":null,"district":"hills","x":536,"z":182,"y":0.12,"w":40,"d":180,"door":{"x":554,"z":178,"y":0.12,"tx":138,"tz":44},"sign":"PAR 10","gag":null,"def":{"id":"goldplate_links","name":"Goldplate Links","kind":"park","district":"hills","lot":{"bx":129,"bz":23,"w":10,"d":45},"label":"Goldplate Links","ground":"lawn","door":"e","sign":"PAR 10"},"points":{},"npcs":[]},"name":"Goldplate Links"}}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/systems.js:49:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== tune.js ===
+  heat: {"shots":10,"hits":10,"heat":2,"civHp":897,"wanted":1,"ramHeat":1}
+  lamp: {"inCar":true,"fallen":true,"solid":false,"speedAt":14.5,"minAfter":11.6,"ev":{"kind":"lamp","by":"sedan"},"changed":true,"hp":96,"kinds":["lamp"],"errors":0}
+  tree: {"fallen":false,"solid":true,"dist":2.7}
+  drive-by: {"fistShots":0,"fistPunch":0,"aim":{"active":true,"target":true,"screen":true,"camDist":7.2},"shots":5,"pedHp":90,"carHp":0,"inCar":true,"state":"playing","errors":0}
+  heli: {"hp0":400,"maxHp":400,"hit":{"hp":0,"down":true,"locked":true,"fired":216,"shoved":5,"ammo":404,"state":"playing"},"down":{"src":true},"removed":true,"fallT":2.25,"policeHeli":null,"heliT":45,"wanted":5,"errors":0,"state":"playing"}
+  aim cam: {"dy":1.72,"dist":1.74,"fov":50,"cfg":1.85,"aiming":true,"alive":true,"state":"playing","pstate":"aim","control":true,"kd":false,"entering":false,"swimming":false,"weapon":"smg","hp":99}
+PASS tune (25504 ms)
+
+=== ui.js ===
+  loading at boot: {"active":true,"fraction":0.95,"stage":"chunks","tips":20}
+  title: {"state":"title","free":true,"frames":4,"cam":60,"attract":true,"items":["play","load","settings","controls","credits"]}
+  after Enter: {"state":"playing","free":false,"d":4.116279626933192,"slot":1,"loading":true}
+  foot: {"state":"playing","mission":"t_ui","timer":119,"street":"Goldplate Avenue","district":"campus","map":false,"mag":12,"reserve":12,"subs":1500,"hint":"h_arrow"}
+  car: {"inCar":true,"ticker":"WAIL 101 NEWS. EVERYTHING IS BREAKING. HERE IS WHAT BROKE: FULCRUM ANNOUNCES STUDY OF UPCOMING STUDY; RESULTS ALREADY KNOWN · RACCOON SPOTTED IN LOT C; DECLINES COMMENT, UNLIKE EVERYONE ELSE · PM WARBANNER ADDRESSES COUNCIL; NEEDS JETS","tag":"BREAKING","station":"WAIL 101 \"The Yell\"","night":1}
+  nap ads: [true,true,true,true,true,true]
+FAIL ui: Error: ASSERT: the mattress ad runs at minute 20 on every station
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/ui.js:126:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== ui_v03.js ===
+  gps: {"set":true,"route":10,"len":352,"dist":246,"turn":"right","chip":true,"arrow":true}
+  labels: {"n":1,"title":"Table Stakes"}
+  call: [{"phase":"ring"},{"phase":"talk","i":0,"log":1},{"done":true,"log":3}]
+  story: [{"state":"paused","tab":"STORY","rows":["gps"]},{"gps":true,"kind":"story","label":"Loud & Correct","ev":true}]
+  armory: {"armory":{"interior":"armory"},"insp":{"modal":"armory","row":"pistol","rows":8,"ctl":false},"att":{"tab":2,"items":["pistol_sup","pistol_ext","pistol_light","pistol_red_dot"],"money0":9000,"buy":["pistol_sup",{"storeId":"strip","weaponId":"pistol","equip":true}],"money1":8100,"msg":"SOLD: Mute Button Suppressor  -$900"},"tint":{"tab":3},"ammo":{"items":["ammo_pistol"]},"locked":{"msg":"LOCKED. Unlocks after: The Jets Arrive"},"closed":{"modal":false,"ctl":true},"legacy":{"rows":40,"legacy":true,"gear":true}}
+  modshop: [{"modal":"modshop","free":true},{"focus":1,"previews":1,"preview":"#d7262e","money0":20000,"money1":20000,"applied":null,"ev":null,"engPreview":1},{"modal":false,"free":false,"engine":0,"primary":"#2a64d8","ctl":true}]
+FAIL ui_v03: Error: ASSERT: a paint previews through Vehicles.mod, BUY pays and emits shop:buy: {"focus":1,"previews":1,"preview":"#d7262e","money0":20000,"money1":20000,"applied":null,"ev":null,"engPreview":1}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/ui_v03.js:213:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== vehicles.js ===
+  registration: {"types":[{"ty":"moto","fam":"moto","mesh":true},{"ty":"heli","fam":"heli","mesh":true},{"ty":"plane","fam":"plane","mesh":true},{"ty":"jet","fam":"plane","mesh":true},{"ty":"speedboat","fam":"boat","mesh":true},{"ty":"jetski","fam":"boat","mesh":true},{"ty":"parachute","fam":"chute","mesh":true}],"fleet":["plane@104,820","jet@104,834","heli@312,700","heli@354,110","speedboat@286,524","jetski@261,523","moto@391,430","moto@142,500"],"state":{"installed":true,"render":true,"saves":true}}
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_lineup_air.png
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_lineup_sea.png
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_heli_flight.png
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_parachute.png
+  heli: {"heli":{"boarded":true,"rotor":1,"engine":{"on":false,"cls":"heli","kind":null,"level":0.8,"rpm":0.12,"throttle":0},"climb":{"sp":9,"alt":28.7,"p":0,"r":0,"hd":270,"thr":1,"gear":"skids","og":false,"wreck":false,"x":242,"z":826},"hoverDrift":0,"hover":{"sp":0,"alt":31.9,"p":0,"r":0,"hd":270,"thr":0.5,"gear":"skids","og":false,"wreck":false,"x":242,"z":826},"forward":{"sp":31.81,"alt":31.9,"p":-0.38,"r":0,"hd":270,"thr":0.5,"gear":"skids","og":false,"wreck":false,"x":171,"z":826}},"hd0":270,"hd1":176,"bail":{"high":{"sp":10.42,"alt":65.1,"p":0,"r":0,"hd":167,"thr":1,"gear":"skids","og":false,"wreck":false,"x":80,"z":829},"chute":"parachute","free":{"alt":48.4,"vs":-23.65,"prompt":"Open the parachute"},"open":{"vs":-5.21,"chute":"open"}},"land":{"landed":{"t":6.5,"inV":false,"hp":100,"alive":true,"swim":true},"heli":{"wreck":true,"sinking":false,"removed":false,"rotor":0},"stats":{"skydives":1}}}
+  rotor strike: {"rotorSound":{"on":true,"active":false,"gain":0,"x":366,"z":154},"wreck":true,"cause":["rotor"],"t":2.75,"alt":57}
+  gamepad: {"climb":{"sp":9,"alt":24.2,"p":0,"r":0,"hd":0,"thr":1,"gear":"skids","og":false,"wreck":false,"x":282,"z":826},"yaw":[0,66],"fwd":{"sp":19.37,"alt":27.4,"p":-0.379,"r":0,"hd":86,"thr":0.5,"gear":"skids","og":false,"wreck":false,"x":301,"z":824},"down":{"sp":14.25,"alt":15.5,"p":-0.001,"r":0,"hd":86,"thr":0,"gear":"skids","og":false,"wreck":false,"x":334,"z":821},"landed":true,"out":true}
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_plane_flight.png
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_jet_flight.png
+  plane: {"plane":{"boarded":true,"roll":{"sp":29.22,"alt":0,"p":0,"r":0,"hd":90,"thr":1,"gear":"down","og":true,"wreck":false,"x":180,"z":826},"rollDist":76,"air":{"sp":32.81,"alt":37.7,"p":0.372,"r":0,"hd":90,"thr":1,"gear":"down","og":false,"wreck":false,"x":287,"z":826},"bank":{"sp":33.66,"alt":63.1,"p":0.372,"r":-0.327,"hd":131,"thr":1,"gear":"down","og":false,"wreck":false,"x":345,"z":851}},"plane2":{"touch":{"sp":33.96,"alt":0,"p":0,"r":0,"hd":90,"thr":0.3,"gear":"down","og":true,"wreck":false,"x":342,"z":826},"stopped":{"sp":0,"alt":0,"p":0,"r":0,"hd":90,"thr":0,"gear":"down","og":true,"wreck":false,"x":397,"z":826},"stopX":315,"out":true,"crash":{"wreck":true,"causes":["ground"]}},"jet":{"boarded":true,"roll":{"sp":49.83,"alt":0,"p":0,"r":0,"hd":90,"thr":1,"gear":"down","og":true,"wreck":false,"x":194,"z":826},"air":{"sp":71.19,"alt":66.3,"p":0.402,"r":0,"hd":90,"thr":1,"gear":"up","og":false,"wreck":false,"x":366,"z":826},"engine":{"on":false,"cls":"jet","kind":null,"level":1,"rpm":0.12,"throttle":0}},"edge":{"z":291,"limit":1156,"wreck":false,"heading":333}}
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_speedboat.png
+  /home/user/Kannako-Homes/grand-theft-pundit/tests/out/veh_jetski.png
+  boats: {"boat":{"spot":{"x":262,"z":562},"swim":true,"boarded":true,"fast":{"sp":29.41,"alt":0.1,"p":0.057,"r":0.005,"hd":270,"thr":1,"gear":"F","og":true,"wreck":false,"x":172,"z":562},"fx":30,"y":-1.1},"boat2":{"turn":{"sp":22.87,"alt":0.1,"p":0.048,"r":0.263,"hd":192,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":121,"z":576},"shore":{"sp":0.24,"alt":0.1,"p":0.04,"r":0.06,"hd":50,"thr":1,"gear":"F","og":true,"wreck":false,"x":208,"z":517},"wet":true,"swimOut":true,"ski":{"sp":12.92,"alt":0.2,"p":0.147,"r":-0.42,"hd":309,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":174,"z":533},"skiRider":false}}
+FAIL vehicles: Error: ASSERT: the jet ski leans into the turn with the rider on it: {"sp":12.92,"alt":0.2,"p":0.147,"r":-0.42,"hd":309,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":174,"z":533}
+    at Object.assert (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:92:47)
+    at /home/user/Kannako-Homes/grand-theft-pundit/tests/vehicles.js:306:5
+    at async Object.run (/home/user/Kannako-Homes/grand-theft-pundit/tests/_harness.js:99:5)
+
+=== world.js ===
+  world: {"missing":[],"wrongDistrict":[],"wrongKind":[],"doorBad":[],"overlaps":[],"unreachable":[],"districts":[],"streetsMissing":[],"rampsMissing":[],"deckUnreached":0,"deckTiles":1760,"size":{"w":224,"h":224,"cw":224,"ch":224},"landmarkCount":50,"points":{"runwayEast":[101,206],"runwayWest":[20,206],"range":[73,99],"island":[154,67]},"rangePointTile":7,"badBuildingIndex":0,"buildingsUnderDeck":0,"roadTiles":8864,"roadUnreached":0,"loopName":"The Loop","lowerLoopName":"The Lower Loop","streetsByDistrict":{"uptown":16,"airport":10,"port":6},"chipLower":"The Loop","chipUpper":"The Loop","chipUptown":"Trust Fund Terrace","loopAt":["lower","upper",null,"lower"],"hStreet":0,"hDeck":7,"hUnderDeck":0.12,"hRampMid":3.5,"hRampQuarter":1.75,"hWater":-1.2,"hOff":-1.2,"hSidewalk":0.12,"hViaduct":7,"hUnderViaduct":-1.2,"viaductGround":5,"viaductPylons":12,"hSouthLeg":7,"southLegUnder":0.12,"hArrivalsTop":6.805555555555555,"hArrivalsFoot":0.19444444444444442,"hManifestTop":6.805555555555555,"hManifestFoot":0.19444444444444442,"lowerRamps":["Arrivals Ramp","Manifest Ramp"],"bridgeSouth":{"tile":9,"h":0,"lane":true,"walk":2,"under":5},"causeway":{"tile":9,"h":0,"lane":true,"walk":2,"under":5},"gantries":2,"runway":{"tiles":528,"lane":0,"laneField":0,"notParking":0,"h":0,"rows":[204,205,206,207,208,209]},"runwayParkable":0,"stunts":["sj_01","sj_02","sj_03","sj_04","sj_05","sj_06","sj_07","sj_08","sj_09","sj_10"],"wedge":{"back":0.021666666666665436,"front":1.2783333333333347,"base":0,"beside":0},"wedgeDeck":{"base":7,"top":7.65,"ground":0.12},"solidIn":true,"solidAbove":false,"solidDoor":false,"solidRoad":false,"pushOut":true,"planeSolid":true,"carPath":5,"carPathBridge":true,"carPathEnd":0,"carLen":600,"carPathAirport":5,"carPathAirportEnd":0,"carPathAirportBay":true,"carPathMuseum":5,"carPathMuseumEnd":0,"pedPath":6,"roadDir":true,"billboardPairs":8,"strollPairs":8,"playerSpawn":"campus_quad","spawnOk":true,"spawnDistricts":true,"lookPool":1,"districtAtSpawn":"campus","npcs":{"club":["doorman"],"shop":["clerk"]},"maze":true,"range":true,"generateMs":136,"near":{"road":1746,"sidewalk":1500,"allRoad":true,"allWalk":true,"within":true,"total":7878},"deterministic":true,"progress":{"stages":["tiles","roads","landmarks","props","done"],"fracs":[0,0.12,0.3,0.7,1],"labels":["Paving Grievance City","Painting lanes, elevating the Loop","Renaming things after the President","Setting up folding tables","City generated"],"monotonic":true}}
+  props: {"table":9,"sign":105,"tree":787,"dish":3,"billboard":33,"bench":141,"canopy":3,"pump":4,"flag":12,"antenna":16,"kiosk":3,"mast":4,"hedge":6,"pool":1,"crate":105,"stack":1,"boat":13,"bollard":71,"palm":9,"yacht":1,"awning":4,"podium":4,"fence":9,"cutout":6,"jetbridge":4,"beacon":2,"luggage":6,"edgelight":44,"windsock":3,"plane":10,"jet":1,"cab":1,"rolldoor":1,"pallet":2,"container":202,"crane":5,"craneleg":24,"ship":6,"ferryboat":4,"column":6,"steps":1,"statue_table":1,"stanchion":6,"gazebo":1,"fountain":1,"statue":1,"gantry":2,"lamp":816,"bin":34,"hydrant":170,"signal":340,"pillar":158,"railing":60,"ramp_prop":10}
+PASS world (8342 ms)
+
+FAIL perf.js (16250 ms)
+ok   radio.js (100950 ms)
+ok   render.js (116825 ms)
+FAIL saves.js (12598 ms)
+ok   smoke.js (17735 ms)
+FAIL story.js (35681 ms)
+FAIL strands.js (22074 ms)
+FAIL strangers.js (125699 ms)
+FAIL systems.js (11362 ms)
+ok   tune.js (25951 ms)
+FAIL ui.js (54417 ms)
+FAIL ui_v03.js (61001 ms)
+FAIL vehicles.js (38469 ms)
+ok   world.js (12927 ms)
+
+9 of 14 test file(s) failed
