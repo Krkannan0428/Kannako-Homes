@@ -2143,7 +2143,7 @@
     hit(clx + clw / 2 - tw2 / 2, cly - px(20), tw2, px(46), phoneClose, 'phone-close');
     var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(92);   // the list stops above the help line (QA-B-TCH-09)
     ctx.save(); ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
-    var tid = tabId();
+    var tid = tabId(); ui.pause.maxScroll = null;   // a list tab sets its own
     if (tid === 'MAP') drawBigMap(ctx, cx, cy, cw, ch);
     else if (tid === 'STORY') drawPhoneStory(ctx, cx, cy, cw, ch);
     else if (tid === 'MISSIONS') drawPhoneMissions(ctx, cx, cy, cw, ch);
@@ -2340,6 +2340,7 @@
       ry += rh;
     }
     ui.pause.rows = rows;
+    ui.pause.maxScroll = Math.max(0, rows.length * rh + px(36) - h);   // a swipe stops at the last row
   }
   function missionRowActivate(r) {
     var Ms = GTP.Missions; if (!Ms || !r) return;
@@ -3219,7 +3220,7 @@
           if (In._markLook) In._markLook();
         } else if (rec.kind === 'scroll') {
           var sdy = p2.y - rec.y; rec.moved += Math.abs(sdy); rec.y = p2.y;
-          ui.pause.scroll = Math.max(0, Math.min(ui.pause.contentH || 4000, ui.pause.scroll - sdy));
+          ui.pause.scroll = Math.max(0, Math.min(ui.pause.maxScroll != null ? ui.pause.maxScroll : (ui.pause.contentH || 4000), ui.pause.scroll - sdy));
         } else if (rec.kind === 'button' && rec.hold && GTP.Combat && GTP.Combat.wheel && GTP.Combat.wheel.open) {
           // the finger holding WPN drags the wheel's selection (QA-B-TCH-12)
           In.touch.look.dx += (p2.x - (rec.lx == null ? p2.x : rec.lx)) * 1.6; In.touch.look.dy += (p2.y - (rec.ly == null ? p2.y : rec.ly)) * 1.6; rec.lx = p2.x; rec.ly = p2.y;
@@ -3378,9 +3379,11 @@
           if (In.pressed('left') || In.pressed('weaponPrev')) { pg.tab = (pg.tab + PHONE_TABS.length - 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
           if (In.pressed('right') || In.pressed('weaponNext')) { pg.tab = (pg.tab + 1) % PHONE_TABS.length; pg.scroll = 0; pg.row = 0; if (pg.tab === 0) mapCenterOnPlayer(); }
           var rows = pg.rows || [];
+          var row0 = pg.row;
           if (In.pressed('forward')) { if (rows.length) pg.row = (pg.row - 1 + rows.length) % rows.length; else pg.scroll = Math.max(0, pg.scroll - px(24)); }
           if (menuDown(In)) { if (rows.length) pg.row = (pg.row + 1) % rows.length; else pg.scroll += px(24); }
-          if (rows.length && tabId() !== 'STORY') pg.scroll = Math.max(0, pg.row * px(44) - px(200));
+          // the keys bring the selected row into view; a swipe or the wheel scrolls freely (QA-B-TCH-09: this ran every step)
+          if (rows.length && tabId() !== 'STORY' && pg.row !== row0) pg.scroll = Math.max(0, pg.row * px(44) - px(200));
           if (In.wheelDelta) pg.scroll = Math.max(0, pg.scroll + In.wheelDelta * 0.5);
           if (In.pressed('confirm') && rows[pg.row]) missionRowActivate(rows[pg.row]);
           if (In.pressed('secondary') && tabId() === 'MISSIONS' && GTP.Missions && GTP.Missions.state && GTP.Missions.state.active) abortMission();
