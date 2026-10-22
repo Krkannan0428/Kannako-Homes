@@ -1116,7 +1116,7 @@
         return;
       }
       if (cur && !cur._sysReleased) { cur.persistent = false; cur.sysJob = null; cur._sysReleased = true; }   // a wreck: the normal wreck timer clears it
-      if (cur && GTP.Entities.list.indexOf(cur) >= 0) return;   // the replacement waits until the wreck is gone
+      if (cur && GTP.Entities.list.indexOf(cur) >= 0) return;   // a new one waits until the wreck is gone
       if (dd > CAR_NEAR) return;
       if (cur && dd < 120) return;   // and comes back out of sight
       var v = null, o = { color: d.vehicle.color, tag: 'sys_job:' + d.id };

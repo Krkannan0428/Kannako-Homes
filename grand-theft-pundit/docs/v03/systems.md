@@ -113,7 +113,7 @@ Fixed in `14_systems.js`:
 - **CODETAKESTWENTY:** with no road in reach (interiors, the sea) it shows a toast instead of throwing.
 - **Job vehicles:**
   - A job counts only in its own van or truck (`jobs.start(id, {anyVehicle: true})` lifts that, for tools).
-  - A wrecked one is released to the normal wreck timer, and its replacement waits until the wreck is gone.
+  - A wrecked one is released to the normal wreck timer, and a new one is not spawned until the wreck is gone.
   - After a load, the job vehicle the player sat in is adopted again from its `sys_job:<id>` tag.
 - **Golf on reset or load:** a round in progress ends with `golf:end` (reason `reset`), so the UI's panel closes.
 - **Throws in job vehicles:** spraying or pressing E never throws the equipped mic out of the window. While the player sits in a job vehicle the module holds Combat's `_cookLock`.
