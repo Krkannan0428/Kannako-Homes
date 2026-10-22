@@ -2138,8 +2138,9 @@
     var clw = px(30), clx = x + pw - clw - px(8), cly = y + px(6);
     panel(ctx, clx, cly, clw, px(22), px(6), hovering(clx, cly, clw, px(22)) ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)');
     txt(ctx, '✕', clx + clw / 2, cly + px(16), { font: F(12, 'bold'), color: COL.ink, align: 'center', outline: false });
-    var tw2 = Math.max(clw + px(12), px(48)), th2 = Math.max(px(30), px(44));   // a finger-sized target (QA-B-TCH-01)
-    hit(clx + clw / 2 - tw2 / 2, cly + px(11) - th2 / 2, tw2, th2, phoneClose, 'phone-close');
+    // a finger-sized target (~42 x 30 px on a phone; QA-B-TCH-01), above the tab row so it never takes a tab's tap
+    var tw2 = Math.max(clw + px(12), px(64));
+    hit(clx + clw / 2 - tw2 / 2, cly - px(20), tw2, px(46), phoneClose, 'phone-close');
     var cx = x + px(12), cy = ty + px(36), cw = pw - px(24), ch = ph - px(92);   // the list stops above the help line (QA-B-TCH-09)
     ctx.save(); ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
     var tid = tabId();
