@@ -466,6 +466,9 @@ H.run('ai', async (t) => {
     clear();
     // TRF-02: two sedans northbound in lane x 234; the lead waits at the red light of (57..58, 45..46), the follower waits behind it
     g.debug.teleport(246, 214); g.advance(0.1);
+    // the systems track parks its Hot Take Brigade truck in this lane (14_systems ensureJobCars roadSpot, ~(234, 206)): a
+    // stationary obstacle any car rightly steers round; let it spawn, then clear it (it stays away while the player is near)
+    g.advance(1.1); clear();
     let guard = 0; while (!(W.signalPhase(58, 45, g.time.t) === 'ew' && W.signalPhase(58, 45, g.time.t - 0.1) === 'ns') && guard++ < 2000) g.advance(1 / 60);
     const mk = (x, z, type, axis, dir, laneC) => S.placeTraffic({ x, z, y: 0, tx: Math.floor(x / 4), tz: Math.floor(z / 4), axis, dir, laneC, deck: false }, type);
     const a = mk(234, 199, 'sedan', 'v', -1, 234), b = mk(234, 208, 'sedan', 'v', -1, 234);
