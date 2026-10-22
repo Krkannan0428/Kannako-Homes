@@ -446,6 +446,80 @@ H.run('world', async (t) => {
     await t.shot(page, 'world_' + v.name);
   }
   console.log('  screenshots: ' + views.map((v) => 'tests/out/world_' + v.name + '.png').join(' '));
+
+  // ---- envw2 layout: generation regressions (QA-A-GEO-01, GEO-02, TRF-08, TRF-09, GEO-06, VIS-04, QAC-45) ----
+  const lay = await page.evaluate(() => {
+    const W = GTP.World, T = W.T, M = W.M, N = W.w * W.h, out = {};
+    // GEO-01: no building stands on a tile of the lane field (a road stamped first, a footprint over it later)
+    out.buildingOnLane = [];
+    for (let i = 0; i < N; i++) if (W.tiles[i] === T.BUILDING && (W.laneH[i] || W.laneV[i] || W.roadId[i])) out.buildingOnLane.push((i % W.w) + ',' + ((i / W.w) | 0));
+    // GEO-01: a ground lane never ends against a building or a ramp's deck end: the tile past the last lane tile of each
+    // axis run is road, ramp foot, sidewalk or open ground (never BUILDING, never a RAMP tile above kerb height)
+    out.laneIntoWall = [];
+    for (let z = 0; z < W.h; z++) for (let x = 0; x < W.w; x++) {
+      const i = z * W.w + x; if (W.tiles[i] !== T.ROAD) continue;
+      [['h', 1, 0], ['h', -1, 0], ['v', 0, 1], ['v', 0, -1]].forEach(([ax, dx, dz]) => {
+        if (!(ax === 'h' ? W.laneH[i] : W.laneV[i])) return;
+        const nx = x + dx, nz = z + dz; if (!W.inBounds(nx, nz)) return;
+        const j = nz * W.w + nx, tj = W.tiles[j];
+        if (tj === T.BUILDING || (tj === T.RAMP && W.rampY[j] > 0.6)) out.laneIntoWall.push(x + ',' + z + '>' + nx + ',' + nz + ' ' + (tj === T.RAMP ? 'ramp ' + W.rampY[j].toFixed(1) : 'building'));
+      });
+    }
+    // TRF-09: every junction box (the crossing of an h band and a v band, sized from the lane bytes) carries both axes
+    out.halfBox = []; const seen = new Set();
+    for (let z = 0; z < W.h; z++) for (let x = 0; x < W.w; x++) {
+      const i = z * W.w + x; if (W.tiles[i] !== T.ROAD || !W.laneH[i] || !W.laneV[i]) continue;
+      const hz0 = z - (W.laneH[i] >> 4), hw = W.laneH[i] & 15, vx0 = x - (W.laneV[i] >> 4), vw = W.laneV[i] & 15;
+      for (let bz = hz0; bz < hz0 + hw; bz++) for (let bx = vx0; bx < vx0 + vw; bx++) {
+        const j = bz * W.w + bx; if (seen.has(j)) continue; seen.add(j);
+        if (!W.laneH[j] || !W.laneV[j]) out.halfBox.push(bx + ',' + bz);
+      }
+    }
+    out.rampPosts = W.props.filter((p) => p.rampEnd).length;
+    // VIS-04: no tree canopy (05_assets tree 2.34 m, palm 2.6 m, x scale) reaches more than 0.6 m into a building
+    const TILE = GTP.C.TILE; out.treesInWalls = [];
+    W.props.forEach((p) => {
+      if (p.kind !== 'tree' && p.kind !== 'palm') return;
+      let g = 1e9; const tx0 = Math.floor(p.x / TILE), tz0 = Math.floor(p.z / TILE);
+      for (let tz = tz0 - 2; tz <= tz0 + 2; tz++) for (let tx = tx0 - 2; tx <= tx0 + 2; tx++) if (W.tile(tx, tz) === T.BUILDING) g = Math.min(g, Math.hypot(Math.max(tx * TILE - p.x, 0, p.x - (tx + 1) * TILE), Math.max(tz * TILE - p.z, 0, p.z - (tz + 1) * TILE)));
+      if ((p.kind === 'palm' ? 2.6 : 2.34) * (p.scale || 1) - g > 0.6) out.treesInWalls.push(p.x.toFixed(1) + ',' + p.z.toFixed(1));
+    });
+    out.trees = W.props.filter((p) => p.kind === 'tree' || p.kind === 'palm').length;
+    // QAC-45: pole billboards are wider than tall (a duplicate h key made them 9 x 9 m)
+    out.squareBoards = W.props.filter((p) => p.kind === 'billboard' && p.pole && !(p.h < p.w)).length;
+    // GEO-06: every land tile (the ferry pier included) belongs to a district
+    out.noDistrict = 0; for (let i = 0; i < N; i++) if (W.tiles[i] !== T.WATER && !W.zone[i]) out.noDistrict++;
+    out.ferryPier = (W.districtAt(770, 870) || {}).id || null;
+    const ccc = W.landmark('memo_press');
+    out.memo = ccc && ccc.building ? [ccc.building.tx, ccc.building.tz, ccc.building.tw, ccc.building.td] : null;
+    out.coupon = W.streetAt ? [W.streetAt(30 * 4, 122 * 4), W.streetAt(60 * 4, 122 * 4)] : null;
+    return out;
+  });
+  console.log('  envw2 layout: ' + JSON.stringify(lay).slice(0, 600));
+  t.assert(lay.buildingOnLane.length === 0, 'no building tile carries lane bytes or a road id (QA-A-GEO-01): ' + lay.buildingOnLane.slice(0, 10).join(' '));
+  t.assert(lay.laneIntoWall.length === 0, 'no ground lane runs into a building wall or a ramp deck end (QA-A-GEO-01/02, TRF-08): ' + lay.laneIntoWall.slice(0, 10).join(' '));
+  t.assert(lay.halfBox.length === 0, 'every junction box carries both lane axes (QA-A-TRF-09): ' + lay.halfBox.join(' '));
+  t.assert(lay.treesInWalls.length === 0 && lay.trees > 600, 'tree canopies stay out of the facades (QA-A-VIS-04): ' + lay.trees + ' trees, in walls ' + lay.treesInWalls.slice(0, 8).join(' '));
+  t.assert(lay.noDistrict === 0 && lay.ferryPier === 'port', 'every land tile has a district, the ferry pier reads Manifest Harbor (QA-A-GEO-06): ' + lay.noDistrict + ' ' + lay.ferryPier);
+  t.assert(lay.squareBoards === 0,'pole billboards are 9 x 3.4 m panels, not 9 x 9 (QAC-45): ' + lay.squareBoards);
+  t.assert(lay.rampPosts >= 30,'bollards stand in front of the ramps\' deck-end faces on the plaza under the Loop: ' + lay.rampPosts);
+  // TRF-08 / GEO-02: an AI car climbing the Manifest Ramp westbound comes out on the Lower Loop deck (it used to keep
+  // the ground street's lane and hit the deck's far barrier, or a street car rammed the ramp's 7 m end)
+  const manifest = await page.evaluate(() => {
+    const W = GTP.World, E = GTP.Entities, g = GTP.game, A = GTP.AI;
+    if (!A || !A.spawner || !A.spawner.placeTraffic) return null;
+    E.list.forEach((e) => { if (!e.removed && e !== g.player && e.kind === 'vehicle' && !e.persistent && Math.hypot(e.x - 440, e.z - 632) < 120) e.destroy(); });
+    g.debug.teleport(470, 600); g.advance(0.2);
+    const v = A.spawner.placeTraffic({ x: 464, z: 630, y: 0, axis: 'h', dir: -1, laneC: 630 }, 'sedan');
+    if (!v) return { placed: false };
+    let maxY = 0, minX = 1e9;
+    for (let i = 0; i < 14 * 10; i++) { g.advance(0.1); if (v.removed) break; maxY = Math.max(maxY, v.y); minX = Math.min(minX, v.x); }
+    const out = { placed: true, maxY: +maxY.toFixed(2), minX: Math.round(minX), at: [Math.round(v.x), Math.round(v.z), +v.y.toFixed(1)], removed: !!v.removed };
+    if (!v.removed) v.destroy();
+    return out;
+  });
+  console.log('  Manifest Ramp climb: ' + JSON.stringify(manifest));
+  if (manifest && manifest.placed) t.assert(manifest.maxY > 6 && !(manifest.at[2] > 6 && manifest.at[0] > 400 && manifest.at[0] < 420 && Math.abs(manifest.at[1] - 632) < 6), 'an AI car climbing the Manifest Ramp reaches the Lower Loop deck and drives on (QA-A-TRF-08): ' + JSON.stringify(manifest));
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));
 });

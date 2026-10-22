@@ -17,6 +17,24 @@
   var TAU = Math.PI * 2;
 
   var ATLAS = 2048, CELL = 256, S = 240, GUT = 8;   // atlas: cell pitch 256, content 240, gutter 8
+  var EDGE_CLAMP = { runway_center: 'bottom' };      // cells whose gutter repeats their own edge row instead of wrapping
+  // Far LOD (QA-A-VIS-05): the near MeshStandardMaterials get the sky PMREM (scene.environment) as extra ambient, scaled by
+  // their envMapIntensity; the far Lambert twins do not, so a block crossing lodDistance turned 20-30% darker. The far
+  // materials scale their ambient + hemisphere irradiance by 1 + FAR_ENV_K * envMapIntensity of the near twin: it follows
+  // the scene's sky light through the day (dark at night) and costs one multiply per fragment.
+  // (measured on low at noon, downtown and suburbs: far/near brightness 0.85 at k 0, 0.90 at 1, 0.93 at 1.4; the near
+  // twin's env specular follows the sky too, so k is larger than the irradiance share alone)
+  var FAR_ENV_K = 2.6, farAmb = [];
+  function farAmbient(m, envI) {
+    var u = { value: 1 + FAR_ENV_K * envI };
+    farAmb.push({ u: u, envI: envI });
+    m.userData.farAmb = u;
+    m.onBeforeCompile = function (sh) {
+      sh.uniforms.uFarAmb = u;
+      sh.fragmentShader = 'uniform float uFarAmb;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>', 'irradiance *= uFarAmb;\n#include <lights_fragment_end>');
+    };
+    m.customProgramCacheKey = function () { return 'gtp-farAmb'; };
+  }
   var FW = 512, FH = 1280, BAND = 160;              // facade texture
   var cells = {};                                   // name -> {col,row}
   var rngTex = GTP.makeRng(0xA55E7);
@@ -191,6 +209,12 @@
       setMaps(Assets._mats.ground, Assets.atlasNormal, Assets.atlasRough);
       for (k in Assets._facadeMats) { m = Assets._facadeMats[k]; var f = Assets._facades[k]; if (f) setMaps(m, f.normal, f.rough); }
       if (Assets._mats.water && nm) { Assets.waterUniforms.tGtpRip.value = Assets.waterNormal; Assets._mats.water.needsUpdate = true; }
+      // QAC-33: without normal maps no material samples these any more: free their GPU copies (the DataTextures keep their
+      // image, so three uploads one again when a higher preset puts it back on a material). The water keeps its ripples.
+      if (!nm) {
+        [Assets.atlasNormal, Assets.atlasRough].forEach(function (t) { if (t) t.dispose(); });
+        for (k in Assets._facades) { var fd = Assets._facades[k]; if (fd.normal) fd.normal.dispose(); if (fd.rough) fd.rough.dispose(); }
+      }
       var aniso = q.anisotropy || 4;
       [Assets.atlas, Assets.atlasNormal, Assets.atlasRough, Assets.water].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } });
       for (k in Assets._facades) { var ff = Assets._facades[k]; [ff.day, ff.night, ff.normal, ff.rough].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } }); }
@@ -236,6 +260,8 @@
         ctx.save(); ctx.beginPath(); ctx.rect(px, py, CELL, CELL); ctx.clip();
         // the gutter wraps the tile's own edges so mipmaps and filtering never bleed a neighbor in
         for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) ctx.drawImage(tile, px + GUT + dx * S, py + GUT + dy * S);
+        // a cell whose paint continues into the next row's cell (a line split along its edge) clamps that gutter instead
+        if (EDGE_CLAMP[name] === 'bottom') for (dx = -1; dx <= 1; dx++) ctx.drawImage(tile, 0, S - 1, S, 1, px + GUT + dx * S, py + GUT + S, S, GUT);
         ctx.restore();
       });
       var tex = Assets.atlas = new THREE.CanvasTexture(cv);
@@ -394,7 +420,7 @@
     },
     groundMaterialFar: function () {
       var M = Assets._mats;
-      if (!M.groundFar) { M.groundFar = new THREE.MeshLambertMaterial({ map: Assets.atlas }); M.groundFar.name = 'groundFar'; }
+      if (!M.groundFar) { M.groundFar = new THREE.MeshLambertMaterial({ map: Assets.atlas }); M.groundFar.name = 'groundFar'; farAmbient(M.groundFar, 0.5); }
       return M.groundFar;
     },
     waterMaterial: function () {
@@ -585,7 +611,7 @@
       if (m) return m;
       var f = Assets.facade(style);
       m = new THREE.MeshLambertMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true });
-      m.userData.style = style; m.name = 'facadeFar:' + style;
+      m.userData.style = style; m.name = 'facadeFar:' + style; farAmbient(m, 0.7);
       Assets._facadeMatsFar[style] = m;
       return m;
     },
@@ -702,9 +728,11 @@
       return Assets._mats.prop;
     },
     propMaterialFar: function () {
-      if (!Assets._mats.propFar) { Assets._mats.propFar = new THREE.MeshLambertMaterial({ vertexColors: true }); Assets._mats.propFar.name = 'propFar'; }
+      if (!Assets._mats.propFar) { Assets._mats.propFar = new THREE.MeshLambertMaterial({ vertexColors: true }); Assets._mats.propFar.name = 'propFar'; farAmbient(Assets._mats.propFar, 0.45); }
       return Assets._mats.propFar;
     },
+    // the far LOD materials' sky-ambient factor (QA-A-VIS-05): 1 + k * the near twin's envMapIntensity
+    setFarAmbientK: function (k) { FAR_ENV_K = k; farAmb.forEach(function (f) { f.u.value = 1 + k * f.envI; }); },
     setPropGlow: function (k) { var m = Assets.propMaterial(); if (m.userData.glow) m.userData.glow.value = k; },
     prop: function (kind) {
       if (Assets._props[kind]) return Assets._props[kind];
@@ -722,7 +750,7 @@
         g._glow.forEach(function (rg) { for (var i = rg[0]; i < rg[1]; i++) arr[i] = rg[2]; });
         geo.setAttribute('glow', new THREE.BufferAttribute(arr, 1));
       }
-      var rec = Assets._props[kind] = { geometry: geo, material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' && kind !== 'edgelight' && kind !== 'beacon' };
+      var rec = Assets._props[kind] = { geometry: geo, material: Assets.propMaterial(), castShadow: kind !== 'pool' && kind !== 'canopy' && kind !== 'edgelight' && kind !== 'beacon' && kind !== 'helipad' && kind !== 'teebox' };
       return rec;
     },
     // Foliage: leaf cards cut out of a leaf-cluster canvas (alpha tested, so the shadow map cuts the same holes), the
@@ -1493,7 +1521,10 @@
     // the bottom edge (the row above the axis uses it at rotation 0, the row below at 2, so the dashes meet); the
     // edge tile a solid line on its top edge; the threshold tile the piano keys; the digits paint the "10".
     runway: function (ctx, S, R) { runwayBase(ctx, S, R); },
-    runway_center: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; ctx.fillRect(20, S - 7, 90, 7); ctx.fillRect(150, S - 7, 70, 7); ctx.globalAlpha = 1; },
+    // half the centreline along the bottom edge: the row below shows this cell turned 180 degrees (10_render _runwayCell),
+    // so the two equal dashes sit symmetric about the cell centre and both halves line up (QA-A-VIS-02); the atlas
+    // clamps this cell's bottom gutter (EDGE_CLAMP) so filtering at the seam does not mix in the wrapped top edge
+    runway_center: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; var L = Math.round(S / 3); ctx.fillRect(Math.round(S / 4 - L / 2), S - 7, L, 7); ctx.fillRect(Math.round(S * 3 / 4 - L / 2), S - 7, L, 7); ctx.globalAlpha = 1; },
     runway_edge: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.8; ctx.fillRect(0, 6, S, 8); ctx.globalAlpha = 1; worn(ctx, 0, 6, S, 8, R, 5); ctx.fillStyle = PAL.runway; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; },
     runway_thresh: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; for (var k = 0; k < 3; k++) ctx.fillRect(14 + k * 80, 0, 36, S); ctx.globalAlpha = 1; for (k = 0; k < 3; k++) worn(ctx, 14 + k * 80, 0, 36, S, R, 10); ctx.fillStyle = PAL.runway; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; },
     runway_1: function (ctx, S, R) { runwayBase(ctx, S, R); runwayDigit(ctx, S, '1'); },
@@ -2197,10 +2228,12 @@
     lamp: function (g) {
       g.cylinder(0, 0, 0, 0.16, 0.1, 6.2, 8, METAL, null, false);
       g.cylinder(0, 0, 0, 0.2, 0.17, 0.5, 8, METAL, null, false);                // the base collar
-      g.box(-0.06, 6.0, -0.06, 0.12, 0.12, 1.6, GB.UV0, METAL);   // arm reaching over the road (+z = toward the road at rot 0)
-      g.box(-0.05, 5.5, -0.05, 0.1, 0.1, 0.1, GB.UV0, METAL); g.quad([-0.025, 5.55, 0.05], [0.025, 5.55, 0.05], [0.025, 6.0, 1.2], [-0.025, 6.0, 1.2], GB.UV0, METAL); g.quad([-0.025, 6.0, 1.2], [0.025, 6.0, 1.2], [0.025, 5.55, 0.05], [-0.025, 5.55, 0.05], GB.UV0, METAL);   // the stay (a two-sided strip; never coincide a quad's first two corners: a zero normal is NaN lighting)
-      g.box(-0.24, 5.85, 1.05, 0.48, 0.22, 0.8, GB.UV0, LAMP);      // head
-      glowing(g, 1.3, function () { g.box(-0.17, 5.82, 1.15, 0.34, 0.04, 0.55, GB.UV0, c(PAL.lampGlow)); });   // the lens, lit
+      // the arm reaches over the road along local -z: the instance turns it by rot about +y, which sends -z to
+      // U.yawToDir(rot), the direction world gen points at the road and the glow, light pool and point light use (QA-A-NGT-01)
+      g.box(-0.06, 6.0, -1.54, 0.12, 0.12, 1.6, GB.UV0, METAL);
+      g.box(-0.05, 5.5, -0.05, 0.1, 0.1, 0.1, GB.UV0, METAL); g.quad([-0.025, 5.55, -0.05], [0.025, 5.55, -0.05], [0.025, 6.0, -1.2], [-0.025, 6.0, -1.2], GB.UV0, METAL); g.quad([-0.025, 6.0, -1.2], [0.025, 6.0, -1.2], [0.025, 5.55, -0.05], [-0.025, 5.55, -0.05], GB.UV0, METAL);   // the stay (a two-sided strip; never coincide a quad's first two corners: a zero normal is NaN lighting)
+      g.box(-0.24, 5.85, -1.85, 0.48, 0.22, 0.8, GB.UV0, LAMP);      // head
+      glowing(g, 1.3, function () { g.box(-0.17, 5.82, -1.70, 0.34, 0.04, 0.55, GB.UV0, c(PAL.lampGlow)); });   // the lens, lit
       g.box(-0.25, 0, -0.25, 0.5, 0.25, 0.5, GB.UV0, CONCD);
     },
     signal: function (g) {
@@ -2559,6 +2592,46 @@
       for (var k = 0; k < 8; k += 2) g.box(-2 + k * 0.5, 0.15, -2, 0.5, 0.03, 2, GB.UV0, [0.35, 0.35, 0.38]);
       g.box(-2.05, -0.3, -2.05, 4.1, 0.3, 0.1, GB.UV0, white);
       g.box(-1.9, -2.6, -0.06, 0.08, 2.6, 0.08, GB.UV0, METAL); g.box(1.82, -2.6, -0.06, 0.08, 2.6, 0.08, GB.UV0, METAL);
+    },
+    // ---- v0.3 places (moved here from the js/20_content_world.js wrapper on Assets.prop) ----
+    // a 12 m concrete pad with a yellow ring and a white H (flush with the ground: y is the surface; casts no shadow)
+    helipad: function (g) {
+      var conc = c('#8d9096'), yel = c('#f2c230'), wht = [0.95, 0.95, 0.95];
+      g.cylinder(0, 0, 0, 6, 6, 0.06, 28, conc);
+      for (var i = 0; i < 28; i++) { var a = i / 28 * TAU, b = (i + 0.6) / 28 * TAU; g.quad([Math.cos(a) * 5.1, 0.075, Math.sin(a) * 5.1], [Math.cos(b) * 5.1, 0.075, Math.sin(b) * 5.1], [Math.cos(b) * 5.5, 0.075, Math.sin(b) * 5.5], [Math.cos(a) * 5.5, 0.075, Math.sin(a) * 5.5], GB.UV0, yel); }
+      g.box(-2, 0.06, -2.6, 0.8, 0.02, 5.2, GB.UV0, wht); g.box(1.2, 0.06, -2.6, 0.8, 0.02, 5.2, GB.UV0, wht); g.box(-1.2, 0.06, -0.4, 2.4, 0.02, 0.8, GB.UV0, wht);
+      for (var k = 0; k < 4; k++) { var q = k / 4 * TAU + Math.PI / 4; g.box(Math.cos(q) * 5.9 - 0.15, 0, Math.sin(q) * 5.9 - 0.15, 0.3, 0.3, 0.3, GB.UV0, yel); }
+    },
+    // a tee box: two gold tee markers on a mown square (casts no shadow)
+    teebox: function (g) {
+      g.box(-1.6, 0, -1.6, 3.2, 0.03, 3.2, GB.UV0, c('#4f9a3c'));
+      g.box(-1.2, 0, -0.2, 0.35, 0.3, 0.35, GB.UV0, c('#e8b53a')); g.box(0.85, 0, -0.2, 0.35, 0.3, 0.35, GB.UV0, c('#e8b53a'));
+    },
+    // the barber's pole: a striped cylinder on a bracket (instance scale 1, 2.4 m tall)
+    barberpole: function (g) {
+      var red = c('#d33a3a'), wht = [0.95, 0.95, 0.95], blu = c('#2f56b0');
+      g.cylinder(0, 0, 0, 0.12, 0.12, 0.9, 8, c('#3a3d44'));
+      for (var i = 0; i < 8; i++) g.cylinder(0, 0.9 + i * 0.15, 0, 0.16, 0.16, 0.15, 10, i % 3 === 0 ? red : i % 3 === 1 ? wht : blu);
+      g.sphere(0, 2.15, 0, 0.18, 8, 5, c('#e8b53a'));
+    },
+    // a shop-window mannequin in a blazer
+    mannequin: function (g) {
+      g.box(-0.3, 0, -0.3, 0.6, 0.06, 0.6, GB.UV0, c('#2a2a2e'));
+      g.cylinder(0, 0.06, 0, 0.03, 0.03, 0.8, 5, c('#2a2a2e'));
+      g.box(-0.22, 0.86, -0.13, 0.44, 0.62, 0.26, GB.UV0, c('#2c3e7a'));
+      g.box(-0.05, 1.3, -0.14, 0.1, 0.18, 0.02, GB.UV0, c('#e8b53a'));   // the lanyard tag
+      g.sphere(0, 1.65, 0, 0.13, 8, 5, c('#e6e1d8'));
+    },
+    // a floating pontoon slip: planks on drums with two cleats (sits at the water line)
+    pontoon: function (g) {
+      var wood = c('#8a6a44');
+      for (var i = 0; i < 8; i++) g.box(-0.9, 0.3, -4 + i * 1.0, 1.8, 0.12, 0.9, GB.UV0, i % 2 ? wood : c('#7a5c3a'));
+      for (var k = 0; k < 4; k++) g.cylinder(k % 2 ? 0.55 : -0.55, 0, -3 + (k >> 1) * 6, 0.3, 0.3, 0.3, 8, c('#d8d8d8'));
+      g.box(0.6, 0.42, -3.6, 0.2, 0.15, 0.4, GB.UV0, c('#3a3d44')); g.box(0.6, 0.42, 3.2, 0.2, 0.15, 0.4, GB.UV0, c('#3a3d44'));
+    },
+    // a stack of tyres outside the mod shop
+    tirestack: function (g) {
+      for (var i = 0; i < 4; i++) { g.cylinder(0, i * 0.24, 0, 0.42, 0.42, 0.24, 12, c('#1d1d20')); g.cylinder(0, i * 0.24 + 0.005, 0, 0.2, 0.2, 0.235, 10, c('#4a4a50')); }
     }
   };
   function CONCL() { return c(PAL.concreteLight); }
