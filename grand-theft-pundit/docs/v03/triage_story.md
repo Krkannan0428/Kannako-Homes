@@ -51,7 +51,9 @@ typewriter is the UI's (see UI below).
 My files pass on the merged code: `missions.js`, `cutscenes.js`, `saves.js`, `campaign.js` (the 35-mission story, both endings,
 every strand), `story.js`, `strands.js`, `feel.js`, `smoke.js`, `newplayer.js` (441 s); `content_audit.js` and `artifact.js` pass.
 The latest base needed three test updates in my files: the heist payout check takes Gus's cut from the content (it changed),
-m05_peer's unlock comes from the content's retune (now the Op-Ed Compact), and the newplayer bot aims along the camera's own
+m05_peer's unlock comes from the content's retune (now the Op-Ed Compact), `strands.js` closes a property screen a for-sale
+marker can open under the player as the Sponsor Run ends (docs/v03/triage_strangers.md; the game-side fix is the systems track's
+`disarmNear()` on `strand:end`), and the newplayer bot aims along the camera's own
 forward line (the shoulder camera no longer looks exactly along `rig.yaw`) and steps off the range line to go again.
 In the full suite run before that merge, every other failing file was in another track's area and failed the same way on a
 clean worktree of the base (or with the merge-round log's message): `actors`, `bosses`, `characters`, `combat`, `events`,

@@ -24,7 +24,9 @@ H.run('strands', async (t) => {
       enter(v) { const d = v.doorWorld(0); T_.tp(d.x, d.z, v.y); GTP.game.advance(0.1); T_.press('enter'); GTP.game.advance(0.7); return GTP.game.player.inVehicle === v; },
       leave() { const p = GTP.game.player; if (p.inVehicle) p.exitVehicle(); GTP.game.advance(0.2); },
       lookAt(x, z) { const p = GTP.game.player; GTP.Render.rig.yaw = GTP.util.dirToYaw(x - p.x, z - p.z); GTP.Render.rig.pitch = 0.15; GTP.Render.rig.snap(); GTP.game.advance(0.2); },
-      reset() { if (GTP.Strands.active()) GTP.Strands.end('test'); T_.leave(); GTP.AI.wanted.clear(); GTP.game.debug.godMode(false); GTP.game.advance(0.2); }
+      // a for-sale marker under the player (the Fish Shack drop) can open the property screen as a strand ends: close it, it
+      // disables the player's controls (docs/v03/triage_strangers.md)
+      reset() { if (GTP.Strands.active()) GTP.Strands.end('test'); T_.leave(); if (GTP.UI.modal && GTP.UI.modal() && GTP.UI.closeModal) GTP.UI.closeModal(); GTP.AI.wanted.clear(); GTP.game.debug.godMode(false); GTP.game.advance(0.2); }
     };
     ['strand:start', 'strand:cycle', 'strand:end', 'race:start', 'race:finish', 'stunt:launch', 'stunt:land', 'memo', 'subs:tier'].forEach((ev) => GTP.Events.on(ev, (e) => T_.events.push(ev + ':' + (e.id || e.ramp || e.race || '') + (e.level != null ? '@' + e.level : '') + (e.place != null ? ' p' + e.place : ''))));
   });

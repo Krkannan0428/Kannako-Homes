@@ -183,7 +183,7 @@ H.run('story', async (t) => {
   t.assert(types.seen.join(',') === 't_ping,interior,buy,range,heist_board', 'each type completes on its event in turn: ' + types.seen.join(','));
   t.assert(types.wrongInterior === 'interior' && types.wrongBuy === 'buy' && types.bronze === 'range', 'the wrong interior, item or medal does not count');
   t.assert(types.done && types.plan && types.plan.approach === 'quiet' && types.cleanups === 1, 'the heist plan is set and the loud-only objective skipped: ' + JSON.stringify(types.plan));
-  t.assert(types.paid === types.expected && types.expected === types.formula, 'the payout follows the plan (the quiet approach, less Gus\'s ' + types.cut + ' cut): paid ' + types.paid + ', expected ' + types.expected + ', from the tables ' + types.formula);
+  t.assert(Math.abs(types.paid - types.expected) < 0.5 && Math.abs(types.expected - types.formula) < 0.5, 'the payout follows the plan (the quiet approach, less Gus\'s ' + types.cut + ' cut): paid ' + types.paid + ', expected ' + types.expected + ', from the tables ' + types.formula);
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

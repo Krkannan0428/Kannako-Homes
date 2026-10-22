@@ -43,5 +43,8 @@ Details, the per-bug table and the patches other tracks still need: `docs/v03/tr
 ## Test results (this branch merged with game/grand-theft-pundit a94bf77)
 - My files: `missions`, `cutscenes`, `saves`, `campaign`, `story`, `strands`, `feel`, `smoke` and `newplayer` all pass, as do
   `content_audit` and `artifact`.
+- The coordinator's four findings on a94bf77 (campaign's m05 unlock, newplayer, story's payout check, strands' race start) are
+  fixed in the tests and pass on the merged build; strands.js now closes a property screen a for-sale marker can open under the
+  player (the systems track's `disarmNear()` on `strand:end` is the game-side fix).
 - Other tracks' failing files fail the same way on a clean base worktree, with two exceptions noted in triage_story.md:
   `audio.js` is flaky, and `world.js` is the stunt-test fragility above.
