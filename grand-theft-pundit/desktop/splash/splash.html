@@ -5,7 +5,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <title>Grand Theft Pundit</title>
 <style>
-  /* the boot splash: shown by main.js while the game window loads, closed once the game has booted */
+  /* the boot splash: shown by main.js while the game loads; it takes over the game's loading screen
+     (window.gtpSplash below) and closes once the game is on the title */
   html, body { margin: 0; height: 100%; overflow: hidden; background: #06070d; color: #f2e6c9;
     font: 13px/1.4 -apple-system, "Segoe UI", Ubuntu, Roboto, sans-serif; user-select: none; cursor: default; }
   body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
@@ -18,6 +19,8 @@
   .bar i { display: block; width: 35%; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #f5c542, #ff7a2f);
     animation: slide 1.1s ease-in-out infinite alternate; }
   @keyframes slide { from { transform: translateX(-10%); } to { transform: translateX(195%); } }
+  /* determinate once the game reports its loading progress */
+  .bar.real i { animation: none; transform: none; width: 0; transition: width .18s linear; }
   #status { color: #9a917c; font-size: 12px; min-height: 1.4em; }
   #ver { position: absolute; bottom: 10px; right: 14px; color: #5d5747; font-size: 11px; }
 </style>
@@ -34,9 +37,20 @@
     var q = new URLSearchParams(location.hash.slice(1));
     if (q.get('v')) document.getElementById('ver').textContent = 'v' + q.get('v');
     if (q.get('s')) document.getElementById('status').textContent = q.get('s');
+    var status = document.getElementById('status'), bar = document.querySelector('.bar'), fill = bar.firstElementChild;
     var lines = ['Booting the city...', 'Warming up the hot takes...', 'Polishing the folding table...', 'Counting the ratio...'];
     var i = 0;
-    setInterval(function () { i = (i + 1) % lines.length; document.getElementById('status').textContent = lines[i]; }, 1600);
+    // jokes while the game's scripts load; the game's own stage labels once it reports progress
+    var jokes = setInterval(function () { i = (i + 1) % lines.length; status.textContent = lines[i]; }, 1600);
+    var shown = 0;
+    // main.js calls this with {booted, fraction 0..1, label} until the game is ready
+    window.gtpSplash = function (p) {
+      if (!p || !p.booted) return;
+      if (jokes) { clearInterval(jokes); jokes = null; bar.classList.add('real'); }
+      shown = Math.max(shown, Math.min(1, +p.fraction || 0));   // never runs backwards
+      fill.style.width = (shown * 100).toFixed(1) + '%';
+      if (p.label) status.textContent = p.label;
+    };
   })();
 </script>
 </body>

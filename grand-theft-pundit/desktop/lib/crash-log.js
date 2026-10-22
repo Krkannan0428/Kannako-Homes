@@ -8,7 +8,10 @@
  * GPU process that died, uncaught errors and console.error lines from the game page, failed update
  * checks, and one "started" line per launch (version, platform) so a report always has context.
  * Native minidumps from Electron's crash reporter go to the Crashpad folder next to it (never
- * uploaded). The log is capped: past MAX_BYTES it is renamed to crash.old.log and a new one starts.
+ * uploaded). The log is capped: past MAX_BYTES it is renamed to crash.old.log and a new one starts,
+ * at startup and while the game runs. Page errors are throttled: the same message repeated back to
+ * back is written once with a count, and after PAGE_MAX_LINES page lines in one session the rest
+ * are dropped with a note, so a game error firing every frame cannot fill the disk or stall it.
  */
 'use strict';
 const { app, crashReporter } = require('electron');
@@ -17,8 +20,13 @@ const fs = require('fs');
 const os = require('os');
 
 const MAX_BYTES = 1024 * 1024;
+const PAGE_MAX_LINES = 500;
 
 let file = null;
+let size = 0;              // bytes in the current file
+let pageLines = 0;         // page lines written this session
+let lastPage = null;       // the previous page message, to fold repeats
+let pageRepeats = 0;
 
 function logDir() {
   return path.join(app.getPath('userData'), 'logs');
@@ -32,14 +40,36 @@ function rotate() {
   try {
     if (fs.statSync(file).size > MAX_BYTES) fs.renameSync(file, path.join(logDir(), 'crash.old.log'));
   } catch (_err) { /* no file yet */ }
+  try { size = fs.statSync(file).size; } catch (_err) { size = 0; }
 }
 
 function write(kind, message) {
   if (!file) return;
   const line = new Date().toISOString() + ' [' + kind + '] ' + String(message).replace(/\r?\n/g, '\n    ') + '\n';
   try {
+    if (size + Buffer.byteLength(line) > MAX_BYTES) {
+      fs.renameSync(file, path.join(logDir(), 'crash.old.log'));
+      size = 0;
+    }
     fs.appendFileSync(file, line);
+    size += Buffer.byteLength(line);
   } catch (_err) { /* a read-only disk must never take the game down */ }
+}
+
+/* Page errors: fold back-to-back repeats into one line with a count, stop after PAGE_MAX_LINES. */
+function flushRepeats() {
+  if (pageRepeats > 0) write('page', '(the previous message repeated ' + pageRepeats + ' more time' + (pageRepeats === 1 ? '' : 's') + ')');
+  pageRepeats = 0;
+}
+
+function writePage(message) {
+  if (message === lastPage) { pageRepeats++; return; }
+  flushRepeats();
+  lastPage = message;
+  pageLines++;
+  if (pageLines === PAGE_MAX_LINES + 1) write('page', 'more than ' + PAGE_MAX_LINES + ' page errors this session; the rest are not logged');
+  if (pageLines > PAGE_MAX_LINES) return;
+  write('page', message);
 }
 
 function errText(err) {
@@ -59,6 +89,7 @@ function init() {
   write('start', app.getName() + ' ' + app.getVersion() + ' on ' + process.platform + ' ' + os.release() + ' ' + process.arch +
     ' (electron ' + process.versions.electron + ', packaged ' + app.isPackaged + ')');
 
+  app.on('will-quit', flushRepeats);
   process.on('uncaughtException', (err) => write('main', errText(err)));
   process.on('unhandledRejection', (reason) => write('main', 'unhandled rejection: ' + errText(reason)));
   app.on('child-process-gone', (_event, details) => {
@@ -82,7 +113,7 @@ function watch(wc) {
   wc.on('console-message', (event) => {
     if (event.level !== 'error') return;
     const where = event.sourceId ? ' (' + path.basename(event.sourceId) + ':' + event.lineNumber + ')' : '';
-    write('page', event.message + where);
+    writePage(event.message + where);
   });
 }
 

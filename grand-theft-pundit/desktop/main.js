@@ -5,15 +5,22 @@
  * the default hardening (context isolation on, node integration off, sandbox on, web security on).
  *
  * Window-level behaviour:
- *   - a small splash window (splash/splash.html) while the game boots; the game window appears once
- *     the game reports GTP.game.booted (or after BOOT_TIMEOUT_MS, whichever is first)
+ *   - a small splash window (splash/splash.html) while the game boots. It shows "Loading the game"
+ *     while the ~2.5 MB of scripts load, then mirrors the game's own loading screen (GTP.game.loading
+ *     fraction and label), and the game window appears only once that loading is done and the title
+ *     has drawn, so the player sees one loading UI and never the game's half-built loading screen
+ *     (BOOT_TIMEOUT_MS caps the wait)
  *   - size, position, maximized and full screen state remembered between runs (lib/window-state.js);
  *     1280x800 the first time, minimum 960x600, dark background so there is no white flash
  *   - macOS: a small app menu. Windows/Linux: a hidden menu bar that Alt shows (Game and Help menus)
- *   - F11 and Cmd/Ctrl+F toggle full screen; Esc is left alone for the game
- *   - Ctrl+Shift+M (Cmd+Shift+M) opens the mods folder, Ctrl+Shift+I (Cmd+Option+I) the developer tools
+ *   - F11 toggles full screen (and Cmd+F on macOS); Esc is left alone for the game
+ *   - Cmd+Shift+M opens the mods folder on macOS (Alt menu > Game on Windows/Linux), Ctrl+Shift+I
+ *     (Cmd+Option+I) the developer tools. Windows/Linux get no Ctrl+F or Ctrl+Shift+M: the game uses
+ *     Ctrl to shoot, Shift to run, F to leave a vehicle and M for the map (js/02_input.js), so those
+ *     combinations happen in play
  *   - pointer lock and fullscreen permission requests are granted, everything else is denied
- *   - links that leave the app open in the system browser; new windows are never created
+ *   - the window only ever shows app/index.html: any other navigation (a dropped file, a link, a
+ *     script) is cancelled, and http(s) links open in the system browser; new windows are never created
  *   - a single instance: launching the game twice focuses the running window
  *   - a mods folder (see MODS below): *.js and *.css files there are loaded into the game after
  *     every page load, and images there are handed to those scripts as data URLs
@@ -27,6 +34,8 @@
 const { app, BrowserWindow, Menu, shell, dialog, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const vm = require('vm');
+const { fileURLToPath } = require('url');
 
 const PRODUCT = 'Grand Theft Pundit';
 const BG = '#06070d'; // --bg in index.html
@@ -35,10 +44,16 @@ const SPLASH = path.join(__dirname, 'splash', 'splash.html');
 const ICON = path.join(__dirname, 'splash', 'icon.png');
 const IS_MAC = process.platform === 'darwin';
 const WINDOW_DEFAULTS = { width: 1280, height: 800, minWidth: 960, minHeight: 600 };
-const BOOT_TIMEOUT_MS = 30 * 1000;
-const BOOT_POLL_MS = 150;
+const BOOT_TIMEOUT_MS = 60 * 1000;
+const BOOT_POLL_MS = 120;
 
 app.name = PRODUCT;
+// Linux: X11 shows the GTK theme's window background (light grey on Adwaita) for as long as the page
+// has not painted, which after the splash is the length of the game's first heavy frame: a white
+// flash between the splash and the title. A dark GTK theme for this app makes that background dark
+// (dialogs follow nativeTheme 'dark' anyway). Must be set before GTK starts; a user's own GTK_THEME wins.
+const SET_GTK_THEME = process.platform === 'linux' && !process.env.GTK_THEME;
+if (SET_GTK_THEME) process.env.GTK_THEME = 'Adwaita:dark';
 if (process.env.GTP_USER_DATA_DIR) app.setPath('userData', path.resolve(process.env.GTP_USER_DATA_DIR));
 
 // required after the userData path is final: both write there
@@ -55,6 +70,11 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     const win = gameWindow();
     if (!win) return;
+    // still booting: bring the splash forward, never the half-built game window
+    if (!win.gtpRevealed) {
+      if (win.gtpSplash && !win.gtpSplash.isDestroyed()) win.gtpSplash.focus();
+      return;
+    }
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
@@ -62,16 +82,21 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(start);
 }
 
+let quitting = false;
+app.on('before-quit', () => { quitting = true; });
+
 function gameWindow() {
   return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.gtpMain) || null;
 }
 
 function start() {
+  // GTK has read it by now; programs we launch (file manager, browser) keep the user's own theme
+  if (SET_GTK_THEME) delete process.env.GTK_THEME;
   nativeTheme.themeSource = 'dark';
   app.setAboutPanelOptions({
     applicationName: PRODUCT,
     applicationVersion: app.getVersion(),
-    version: 'Electron ' + process.versions.electron,
+    version: 'Electron ' + process.versions.electron + ', Chromium ' + process.versions.chrome,
     copyright: 'A parody. No real pundits were harmed.',
     iconPath: ICON
   });
@@ -150,14 +175,15 @@ function createWindow() {
   // Window shortcuts. Esc is deliberately not handled here so the game keeps it (pause menu,
   // exiting pointer lock). The menus show these accelerators but do not register them, so the
   // only keys taken from the game are exactly these combinations.
+  // On Windows/Linux only F11 and Ctrl+Shift+I: Ctrl (shoot), Shift (run), F (leave a vehicle) and
+  // M (map) are game keys, so Ctrl+F or Ctrl+Shift+M would fire in the middle of play.
   wc.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return;
-    const mod = IS_MAC ? input.meta : input.control;
     const key = String(input.key || '').toLowerCase();
-    if (input.key === 'F11' || (mod && key === 'f' && !input.alt && !input.shift)) {
+    if (input.key === 'F11' || (IS_MAC && input.meta && key === 'f' && !input.alt && !input.shift)) {
       event.preventDefault();
       win.setFullScreen(!win.isFullScreen());
-    } else if (mod && input.shift && !input.alt && key === 'm') {
+    } else if (IS_MAC && input.meta && input.shift && !input.alt && key === 'm') {
       event.preventDefault();
       openModsFolder();
     } else if ((IS_MAC ? (input.meta && input.alt && !input.shift) : (input.control && input.shift && !input.alt)) && key === 'i') {
@@ -174,15 +200,25 @@ function createWindow() {
     openExternal(url);
     return { action: 'deny' };
   });
+  // The only page this window may show is the game. Dropping a file on the window, a link or a
+  // script would otherwise navigate away (losing unsaved progress, and a dropped .html would share
+  // the game's file:// storage), so everything else is cancelled; web links go to the browser.
   wc.on('will-navigate', (event, url) => {
-    if (!isLocal(url)) {
-      event.preventDefault();
-      openExternal(url);
-    }
+    if (isAppPage(url)) return;
+    event.preventDefault();
+    openExternal(url);
+  });
+  wc.on('will-redirect', (event, url) => {
+    if (!isAppPage(url)) event.preventDefault();
   });
 
+  // 'killed' is also what Linux reports when the out-of-memory killer takes the renderer, so it is
+  // ignored only while the window is closing or the app quitting
+  let closing = false;
+  win.on('close', () => { closing = true; });
   wc.on('render-process-gone', (_event, details) => {
-    if (details.reason === 'clean-exit' || details.reason === 'killed') return;
+    if (details.reason === 'clean-exit') return;
+    if (details.reason === 'killed' && (closing || quitting)) return;
     if (!splash.isDestroyed()) splash.destroy();
     const choice = dialog.showMessageBoxSync({
       type: 'error',
@@ -194,6 +230,8 @@ function createWindow() {
       cancelId: 2
     });
     if (choice === 0) {
+      // the splash is gone; if the game died while booting, show its window for the reload
+      if (!revealed) reveal();
       wc.reload();
     } else {
       if (choice === 1) openCrashLog();
@@ -202,26 +240,35 @@ function createWindow() {
   });
 
   wc.on('did-finish-load', () => {
+    // mods and the boot wait belong to the game page only
+    if (!isAppPage(wc.getURL())) {
+      crashLog.write('main', 'unexpected page finished loading: ' + wc.getURL());
+      return;
+    }
     loadMods(wc);
-    waitForBoot(wc).then(reveal);
+    waitForGame(wc, (p) => splashProgress(splash, p)).then(reveal);
   });
 
   // Show the game window once the game has booted, close the splash, and restore maximized or
   // full screen state. ready-to-show alone is too early: it fires before the game scripts run.
   let revealed = false;
+  win.gtpSplash = splash;
   function reveal() {
     if (revealed || win.isDestroyed()) return;
     revealed = true;
+    win.gtpRevealed = true;
     if (state.maximized) win.maximize();
     win.show();
     if (state.fullscreen) win.setFullScreen(true);
     win.focus();
     if (!splash.isDestroyed()) splash.destroy();
+    // track only from here: quitting during the splash must not overwrite the saved maximized or
+    // full screen state with the hidden window's plain one
+    windowState.track(win);
   }
   // a page that never loads must not leave the player staring at the splash
   setTimeout(reveal, BOOT_TIMEOUT_MS + 5000);
 
-  windowState.track(win);
   win.on('closed', () => {
     if (!splash.isDestroyed()) splash.destroy();
     if (!gameWindow()) app.quit();
@@ -229,25 +276,40 @@ function createWindow() {
   win.loadFile(APP_INDEX).catch((err) => crashLog.write('main', 'loadFile failed: ' + (err && err.message || err)));
 }
 
-/* Resolves once window.GTP.game.booted is true, or after BOOT_TIMEOUT_MS. */
-function waitForBoot(wc) {
+/* Resolves once the game has booted, its loading screen is done and it has drawn its first real
+ * frame (GTP.game.frames does not count loading-screen frames), or after BOOT_TIMEOUT_MS. Waiting
+ * for that frame matters: the first title frame compiles the scene's shaders and can take seconds
+ * on slow GPUs, and the page cannot answer (or paint) until it is done, so showing the window
+ * earlier would show a dark, frozen window while the splash, its own process, keeps animating.
+ * onProgress({booted, fraction, label}) is called on every poll for the splash. */
+const GAME_STATUS = '(() => { const g = window.GTP && GTP.game; if (!g) return null; const L = g.loading || {};' +
+  ' return { booted: !!g.booted, loading: !!L.active, fraction: +L.fraction || 0, label: String(L.label || ""), frames: g.frames | 0, state: g.state }; })()';
+
+function waitForGame(wc, onProgress) {
   const t0 = Date.now();
   return new Promise((resolve) => {
     const poll = () => {
       if (wc.isDestroyed()) return resolve(false);
-      wc.executeJavaScript('!!(window.GTP && GTP.game && GTP.game.booted)', true)
-        .then((booted) => {
-          if (booted) return resolve(true);
+      wc.executeJavaScript(GAME_STATUS, true)
+        .then((st) => {
+          if (st && st.booted && !st.loading && st.frames >= 1) return resolve(true);
           if (Date.now() - t0 > BOOT_TIMEOUT_MS) {
-            crashLog.write('main', 'the game did not report booted within ' + BOOT_TIMEOUT_MS / 1000 + ' s; showing the window anyway');
+            crashLog.write('main', 'the game was not ready within ' + BOOT_TIMEOUT_MS / 1000 + ' s (' + JSON.stringify(st) + '); showing the window anyway');
             return resolve(false);
           }
+          onProgress(st ? { booted: st.booted, fraction: st.booted ? st.fraction : 0, label: st.booted ? st.label : '' } : { booted: false, fraction: 0, label: '' });
           setTimeout(poll, BOOT_POLL_MS);
         })
         .catch(() => resolve(false));
     };
     poll();
   });
+}
+
+/* Hand the game's loading progress to the splash page (window.gtpSplash in splash/splash.html). */
+function splashProgress(splash, p) {
+  if (!splash || splash.isDestroyed()) return;
+  splash.webContents.executeJavaScript('window.gtpSplash && window.gtpSplash(' + JSON.stringify(p) + ')', true).catch(() => {});
 }
 
 /* MODS
@@ -276,7 +338,8 @@ const MODS_README = [
   '  images (png, jpg, webp, gif, up to 8 MB each) become data URLs in',
   '         window.GTP_MODS.images["your-file.png"] for your scripts to use',
   '',
-  'Script errors are collected in window.GTP_MODS.errors and shown in the developer console',
+  'Script errors (syntax errors too, with their line number) are collected in window.GTP_MODS.errors,',
+  'written to logs/crash.log next to this folder and shown in the developer console',
   '(press Ctrl+Shift+I, or Cmd+Option+I on a Mac).',
   'Delete or rename a file (for example to .js.off) to turn it off. Restart the game after changes.',
   ''
@@ -346,12 +409,31 @@ async function loadMods(wc) {
     const wrapped = '(function(){try{' + source + '\n;window.GTP_MODS.loaded.push(' + JSON.stringify(name) + ');}catch(e){' +
       'window.GTP_MODS.errors.push({file:' + JSON.stringify(name) + ',message:String(e&&e.message||e)});' +
       'console.error("mod " + ' + JSON.stringify(name) + ' + ": ", e);}})();';
+    // A syntax error stops the whole wrapper from parsing, so its try/catch never runs. Compile it
+    // here first (vm.Script only parses; nothing runs in the main process) and report the error to
+    // the page instead. The wrapper starts on the mod's first line, so line numbers match the file.
+    try {
+      new vm.Script(wrapped, { filename: name });
+    } catch (err) {
+      const where = /:(\d+)\s*$/.exec(String(err.stack || '').split('\n')[0] || '');
+      await reportModError(wc, name, (err && err.name || 'Error') + ': ' + (err && err.message || err) + (where ? ' (line ' + where[1] + ')' : ''));
+      continue;
+    }
     try {
       await wc.executeJavaScript(wrapped, true);
     } catch (err) {
-      console.warn('mods: ' + name + ' did not run: ' + err.message);
+      await reportModError(wc, name, String(err && err.message || err));
     }
   }
+}
+
+/* A mod that could not run: GTP_MODS.errors and the console in the page, and the crash log. */
+async function reportModError(wc, name, message) {
+  crashLog.write('mods', name + ': ' + message);
+  const entry = JSON.stringify({ file: name, message });
+  try {
+    await wc.executeJavaScript('window.GTP_MODS.errors.push(' + entry + '); console.error("mod " + ' + JSON.stringify(name) + ' + " did not run: " + ' + JSON.stringify(message) + ');', true);
+  } catch (_err) { /* the page is gone */ }
 }
 
 function openModsFolder() {
@@ -372,8 +454,17 @@ function openCrashLog() {
   }).catch(() => shell.showItemInFolder(file));
 }
 
-function isLocal(url) {
-  return /^(file|about|devtools):/i.test(url);
+/* Is this URL the game page (app/index.html, any query or hash)? Compared as file paths so
+ * percent-encoding (spaces in "Grand Theft Pundit.app") and drive-letter case cannot mismatch. */
+function isAppPage(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'file:') return false;
+    const p = path.normalize(fileURLToPath(u));
+    return process.platform === 'win32' ? p.toLowerCase() === APP_INDEX.toLowerCase() : p === APP_INDEX;
+  } catch (_err) {
+    return false;
+  }
 }
 
 function openExternal(url) {
@@ -420,7 +511,7 @@ function installMenu() {
     { label: 'Check for Updates...', click: () => updater.checkNow() },
     { label: 'Release Notes', click: openReleasePage },
     { type: 'separator' },
-    { label: 'Open Mods Folder', ...accel('CmdOrCtrl+Shift+M'), click: openModsFolder },
+    { label: 'Open Mods Folder', ...(IS_MAC ? accel('Cmd+Shift+M') : {}), click: openModsFolder },
     { label: 'Open Crash Log', click: openCrashLog },
     { label: 'Toggle Developer Tools', ...accel(IS_MAC ? 'Alt+Cmd+I' : 'Ctrl+Shift+I'), click: toggleDevTools }
   ];
@@ -431,7 +522,7 @@ function installMenu() {
         label: 'Game',
         submenu: [
           { label: 'Toggle Full Screen', ...accel('F11'), click: toggleFullScreen },
-          { label: 'Open Mods Folder', ...accel('Ctrl+Shift+M'), click: openModsFolder },
+          { label: 'Open Mods Folder', click: openModsFolder },
           { type: 'separator' },
           { label: 'Quit', click: () => app.quit() }
         ]

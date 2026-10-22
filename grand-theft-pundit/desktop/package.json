@@ -27,9 +27,11 @@
     "dist:win": "npm run sync && electron-builder --win nsis portable --x64 --publish never",
     "dist:linux": "npm run sync && electron-builder --linux AppImage --x64 --publish never",
     "dmg-background": "node build/make-dmg-background.js",
-    "smoke": "node test/smoke.js"
+    "smoke": "node test/smoke.js",
+    "check-fuses": "node test/check-fuses.js"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "electron": "44.9.0",
     "electron-builder": "26.17.0"
   },

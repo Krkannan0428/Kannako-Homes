@@ -15,9 +15,14 @@
 #
 # Every build also writes the electron-updater metadata (latest.yml, latest-mac.yml, latest-linux.yml
 # and the *.blockmap files) and attaches it to the release; installed games read it to update
-# themselves (desktop/lib/updater.js). The `smoke` job launches the packaged Linux app under xvfb and
-# checks the title screen renders with no errors; the release job waits for it, so a build that does
-# not boot never ships.
+# themselves (desktop/lib/updater.js). Every build job reads the Electron fuses back from the packaged
+# app (desktop/test/check-fuses.js) and launches it (desktop/test/smoke.js: the macOS arm64 app and
+# the Windows app boot to the title; the `smoke` job runs the Linux AppImage under xvfb through the
+# title and into a new game). The release job waits for all of them, so a build that does not boot
+# never ships.
+#
+# Permissions: the token is read-only everywhere except the release job, and checkouts do not keep
+# it in .git/config, so dependency install scripts never hold a write-capable token (QAC-06).
 # See grand-theft-pundit/desktop/README.md.
 
 name: Desktop release
@@ -30,6 +35,9 @@ on:
     # whose message contains [release] also publishes a GitHub Release tagged v<desktop/package.json version>
     branches:
       - game/grand-theft-pundit
+      # the desktop track's branch, so changes to this workflow and desktop/ are built and smoke-tested
+      # on every platform before they reach the game branch; it never publishes (see the release job)
+      - v03/desktop
     paths:
       - "grand-theft-pundit/index.html"
       - "grand-theft-pundit/js/**"
@@ -44,12 +52,14 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
-  # a newer push to the branch supersedes an older build; tag builds always finish
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
+  # A newer push to a branch supersedes an older plain build. A run that publishes (a tag, a manual run
+  # with release_tag, or a [release] commit) gets a group of its own, so a later push can never cancel
+  # it halfway through uploading the release.
+  group: desktop-release-${{ github.ref }}-${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')) && github.sha || 'build' }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[release]') }}
 
 env:
   NODE_VERSION: "22"
@@ -66,6 +76,7 @@ jobs:
   mac:
     name: macOS (arm64 + x64, dmg + zip)
     runs-on: macos-14
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -73,6 +84,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node (with the npm download cache)
         uses: actions/setup-node@v4
@@ -146,6 +159,52 @@ jobs:
           test -s dist/latest-mac.yml || { echo "::error::electron-builder did not write dist/latest-mac.yml (auto-update metadata)"; exit 1; }
           cat dist/latest-mac.yml
 
+      - name: Check the DMG window artwork
+        # mount each disk image and make sure the background (build/background.png, @2x merged into
+        # .background.tiff by electron-builder) and the Finder layout (.DS_Store) made it in
+        run: |
+          for dmg in dist/*.dmg; do
+            mnt="$(mktemp -d)"
+            hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$dmg" > /dev/null
+            echo "$dmg:"; ls -la "$mnt" "$mnt/.background" || true
+            ok=true
+            # electron-builder 26 stores it as .background.tiff at the volume root (older versions used
+            # .background/); test each candidate file, no ls | grep pipeline (it fails under pipefail
+            # when some of the patterns match nothing)
+            bg=false
+            for f in "$mnt"/.background.tiff "$mnt"/.background.png "$mnt"/.background/*.tiff "$mnt"/.background/*.png; do
+              if [ -f "$f" ]; then bg=true; echo "background: $f"; fi
+            done
+            $bg || { echo "::error::$dmg has no background image"; ok=false; }
+            test -f "$mnt/.DS_Store" || { echo "::error::$dmg has no Finder layout (.DS_Store)"; ok=false; }
+            hdiutil detach "$mnt" > /dev/null || hdiutil detach -force "$mnt" > /dev/null
+            $ok || exit 1
+          done
+
+      - name: Check the fuses and the code signature
+        # an unsigned Apple Silicon app whose signature no longer matches (fuses are flipped after
+        # packaging) is killed at launch, so verify both architectures' bundles
+        run: |
+          node test/check-fuses.js "dist/mac-arm64/Grand Theft Pundit.app" "dist/mac/Grand Theft Pundit.app"
+          for app in "dist/mac-arm64/Grand Theft Pundit.app" "dist/mac/Grand Theft Pundit.app"; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+
+      - name: Launch the Apple Silicon app (title screen, mods, window state)
+        # the runner VM has no GPU and may have no WebGL at all; --webgl-optional then skips only the
+        # picture checks and the errors caused by the missing context (Linux and Windows keep them)
+        run: >-
+          node test/smoke.js "dist/mac-arm64/Grand Theft Pundit.app/Contents/MacOS/Grand Theft Pundit"
+          --no-new-game --webgl-optional --out smoke-out --timeout 240
+
+      - name: Upload the macOS smoke screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-mac
+          path: grand-theft-pundit/desktop/smoke-out/
+          if-no-files-found: ignore
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -160,6 +219,7 @@ jobs:
   windows:
     name: Windows (x64, installer + portable)
     runs-on: windows-latest
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -167,6 +227,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node (with the npm download cache)
         uses: actions/setup-node@v4
@@ -205,6 +267,22 @@ jobs:
           test -s dist/latest.yml || { echo "::error::electron-builder did not write dist/latest.yml (auto-update metadata)"; exit 1; }
           cat dist/latest.yml
 
+      - name: Check the fuses
+        run: node test/check-fuses.js "dist/win-unpacked/Grand Theft Pundit.exe"
+
+      - name: Launch the Windows app (title screen, mods, window state)
+        run: >-
+          node test/smoke.js "dist/win-unpacked/Grand Theft Pundit.exe"
+          --no-new-game --out smoke-out --timeout 240
+
+      - name: Upload the Windows smoke screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-windows
+          path: grand-theft-pundit/desktop/smoke-out/
+          if-no-files-found: ignore
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -225,6 +303,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node (with the npm download cache)
         uses: actions/setup-node@v4
@@ -260,6 +340,9 @@ jobs:
           test -s dist/latest-linux.yml || { echo "::error::electron-builder did not write dist/latest-linux.yml (auto-update metadata)"; exit 1; }
           cat dist/latest-linux.yml
 
+      - name: Check the fuses
+        run: node test/check-fuses.js dist/linux-unpacked/grand-theft-pundit
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -280,6 +363,7 @@ jobs:
         with:
           sparse-checkout: grand-theft-pundit/desktop/test
           sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Set up Node (22+ for the built-in WebSocket)
         uses: actions/setup-node@v4
@@ -305,7 +389,7 @@ jobs:
           ./*.AppImage --appimage-extract > /dev/null
           ls squashfs-root
 
-      - name: Launch the game and check the title screen
+      - name: Launch the game, check the title screen and play into a new game
         run: >-
           xvfb-run -a -s "-screen 0 1280x800x24"
           node grand-theft-pundit/desktop/test/smoke.js linux-build/squashfs-root/grand-theft-pundit
@@ -316,34 +400,62 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke
+          # smoke-title.png, smoke-cutscene.png, smoke-objective.png, smoke-crash.log
           path: smoke-out/
           if-no-files-found: ignore
 
   release:
     name: GitHub Release
     needs: [mac, windows, linux, smoke]
+    # [release] publishes only from the game branch; other branches in `on.push` only build and test
     if: >-
       github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+      (github.event_name == 'push' && github.ref == 'refs/heads/game/grand-theft-pundit' && contains(github.event.head_commit.message, '[release]'))
     runs-on: ubuntu-latest
+    # the only job that may write: it creates the tag and the release
+    permissions:
+      contents: write
+    # two publishing runs (a [release] commit and its tag pushed together) never upload at once
+    concurrency:
+      group: desktop-publish
+      cancel-in-progress: false
     steps:
       - name: Check out (for the version number)
         uses: actions/checkout@v4
         with:
           sparse-checkout: grand-theft-pundit/desktop/package.json
           sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Decide the release tag
+        # every value arrives through the environment, never pasted into the script (QAC-30)
         env:
           INPUT_TAG: ${{ inputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            tag="${{ github.ref_name }}"
+          if [ "$REF_TYPE" = "tag" ]; then
+            tag="$REF_NAME"
           elif [ -n "$INPUT_TAG" ]; then
             tag="$INPUT_TAG"
           else
             tag="v$(node -p "require('./grand-theft-pundit/desktop/package.json').version")"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$tag' is not a release tag like v1.2.3 or v1.2.3-beta.1"
+            exit 1
+          fi
+          # the file names and latest*.yml carry package.json's version; a tag that disagrees would
+          # publish files no installed game is ever offered
+          version="v$(node -p "require('./grand-theft-pundit/desktop/package.json').version")"
+          if [ "$REF_TYPE" = "tag" ] && [ "$tag" != "$version" ]; then
+            echo "::error::tag $tag does not match desktop/package.json ($version); bump the version and tag again"
+            exit 1
+          fi
+          existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" "refs/tags/$tag" 2>/dev/null | head -n1 | cut -f1)"
+          if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::warning::$tag already exists (at $existing); this run replaces that release's files with builds of $GITHUB_SHA. Bump the version in desktop/package.json for a new release."
           fi
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "Release tag: $tag"
