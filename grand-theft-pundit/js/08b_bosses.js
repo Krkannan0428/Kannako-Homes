@@ -1,7 +1,7 @@
 /* Grand Theft Pundit: 08b_bosses.js (the v0.3 bosses track)
  * GTP.Bosses: six set-piece boss encounters against the invented villains of GDD.md, each with phases, readable telegraphs
  * (a ground decal that flashes before it strikes), adds and a mechanic beyond raw damage:
- *   b01_goldplate  the gold helicopter: shoot the ribbon spools under it to ground it, then hit the President
+ *   b01_goldplate  the gold helicopter: shoot the ribbon spools under it to ground it, then wreck his gold teleprompter
  *   b02_velvetine  the silent yacht party: wreck the speakers (their silent drops are rings to jump) to expose the Baron
  *   b03_warbanner  the runway: wreck the Defense Scooters, dodge the jet flyover strips (they wreck scooters too)
  *   b04_redacted   the weather balloon: pop the [REDACTED] patch phase by phase while OVA vans circle and drop agents
@@ -36,6 +36,8 @@
     hitCap: 0.08,          // one hit takes at most this share of a boss's max hp (a rocket is a big hit, not a phase)
     leash: 150,            // metres from the arena centre; beyond it for leashTime the encounter fails (a mission) or ends
     leashTime: 10,
+    arrive: 70,            // a mission's fight waits (state 'approach': the set is up, the arrow points at it) until the player
+                           // is this close to the arena centre; the intro lines and the leash start on arrival
     breakTime: 1.4,        // the beat between phases (attacks cleared) before the next phase's lines
     supplyHp: 40,          // a health crate at every phase start beside the arena
     supplyAmmo: 36,
@@ -268,6 +270,20 @@
       grp.userData = { env: env, basket: basket, agent: agent };
       return grp;
     },
+    // b01's gold teleprompter on a stand: the glass faces the President, the back is a gold plate with his rating on it
+    prompter: function () {
+      var grp = new THREE.Group(), gold = mat(0xdba428, { metal: 0.7, rough: 0.3 });
+      grp.add(part('cyl', gold, 0, 0.7, 0, 0.05, 1.4, 0.05)); grp.add(part('cyl', gold, 0, 0.03, 0, 0.32, 0.06, 0.32));
+      var head = new THREE.Group(); head.position.set(0, 1.45, 0); head.rotation.x = -0.5;
+      head.add(part('box', gold, 0, 0, 0, 0.95, 0.66, 0.06));
+      var glass = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture('YOU ARE\nA TEN', '#0d1a26', '#7fd8ff', 256, 160) })));
+      glass.scale.set(0.85, 0.56, 1); glass.position.z = -0.035; glass.rotation.y = Math.PI; head.add(glass);
+      var back = new THREE.Mesh(geo('plane'), own(new THREE.MeshBasicMaterial({ map: labelTexture('10/10', '#dba428', '#2b1d05', 256, 160) })));
+      back.scale.set(0.85, 0.56, 1); back.position.z = 0.035; head.add(back);
+      grp.add(head);
+      grp.userData = { head: head };
+      return grp;
+    },
     tether: function () { return part('box', mat(0x25272b, { rough: 0.7 }), 0, 0, 0, 0.08, 1, 0.08); },
     patch: function () {
       var grp = new THREE.Group();
@@ -346,7 +362,11 @@
     if (Math.abs((v ? v.y : p.y) - this.y) > 4) return false;
     if (!this.inside(v ? v.x : p.x, v ? v.z : p.z)) return false;
     if (this.jumpable && airborne(p)) { this.dodged = true; if (this.onDodge) this.onDodge(this); textFx('DODGED', p.x, p.y + 2.1, p.z, '#9dff3c', 0.8); return false; }
-    var src = this.enc && this.enc.ped && !this.enc.ped.removed ? this.enc.ped : null;
+    // a player a telegraph floored gets up before the next one counts (getUp plus a beat): stacked bars, rain and charges
+    // chained knockdowns into a death on the combined build
+    var enc = this.enc, now = simT();
+    if (!v && (p.knockedDown || (enc && now < (enc._graceUntil || 0)))) return false;
+    var src = enc && enc.ped && !enc.ped.removed ? enc.ped : null;
     if (v) v.applyDamage(this.dmg * 1.6, src, 'boss');
     else if (this.knock > 0) {
       var nx, nz;
@@ -356,6 +376,7 @@
         nx = rx * side; nz = rz * side;
       } else { nx = p.x - this.x; nz = p.z - this.z; var l = Math.sqrt(nx * nx + nz * nz) || 1; nx /= l; nz /= l; }
       p.knockDown(nx * this.knock, nz * this.knock, this.dmg, src, 'boss');
+      if (enc) enc._graceUntil = now + ((C.PED && C.PED.getUp) || 2.5) + 0.8;
     } else p.applyDamage(this.dmg, src, 'boss');
     this.hit = true;
     emit('boss:hit', { id: this.enc ? this.enc.id : null, dmg: this.dmg, shape: this.shape });
@@ -594,6 +615,8 @@
     p.maxHp = p.hp = 100000; p.hostile = true; p.boss = enc; p.bossId = enc.id;
     p.applyDamage = function (n, src, type) {
       if (!this.alive || !(n > 0)) return 0;
+      // a boss the fight never hits directly (def.pedProof): the hit is a note pointing at what does take damage
+      if (enc.def.pedProof) { if (enc.state === 'fight' && simT() - enc.shieldNoteT > 0.8) { enc.shieldNoteT = simT(); textFx(enc.def.pedProof, this.x, this.y + 2.3, this.z, '#d0d0d0', 0.9); } return 0; }
       this.lastHitBy = src || null; this.lastHitType = type || null; this.hurtT = 0.25;
       var d = enc.damageBoss(n, src, type, this);
       GTP.Events.emit('damage', { target: this, amount: d, src: src || null, type: type || null, boss: enc.id });
@@ -683,8 +706,14 @@
     emit('boss:start', { id: this.id, name: this.name, phases: this.phases, resumed: this.resumed || 0 });
     sfx('mission', this.center.x, this.center.z, 0.8);
     var intro = from > 1 ? (this.def.lines['p' + from] || []) : (this.def.lines.intro || []);
-    this.state = 'intro';
-    this.say(intro, function () { self.beginPhase(from); });
+    this._intro = function () { self.state = 'intro'; self.stateT = 0; self.hint = ''; self.say(intro, function () { self.beginPhase(from); }); };
+    var p = player();
+    // a mission can hand over the fight before the player is there (an approach objective that ends at a door, or none):
+    // the set waits for them instead of failing the leash on the way in
+    if (this.mission && p && U.dist2d(p.x, p.z, this.center.x, this.center.z) > K.arrive) {
+      this.state = 'approach'; this.stateT = 0;
+      this.hint = 'Get to ' + (this.def.place || 'the fight') + ': ' + this.name + ' is waiting';
+    } else { var f = this._intro; this._intro = null; f(); }
   };
   EP.beginPhase = function (n) {
     if (this.state === 'ended' || this.state === 'defeated' || this.state === 'done') return;
@@ -750,6 +779,7 @@
   };
   EP.target = function () {
     var p = player(); if (!p) return null;
+    if (this.state === 'approach') return { x: this.center.x, y: this.center.y, z: this.center.z, entity: null };
     var t = this.def.target ? this.def.target(this) : null;
     if (!t && this.ped && !this.ped.removed) t = this.ped;
     if (!t) return null;
@@ -765,6 +795,7 @@
     if (this.state === 'ended') return;
     for (i = this.parts.length - 1; i >= 0; i--) if (this.parts[i].removed) this.parts.splice(i, 1);
     var p = player();
+    if (this.def.noGuns && p && (this.state === 'intro' || this.state === 'fight' || this.state === 'break')) holster(this, p);
     if (this.state === 'fight' || this.state === 'break') this.tickAdds(dt);
     if (this.state === 'fight') {
       this.phaseT += dt;
@@ -776,6 +807,8 @@
         if (this.leashT > 2 && Math.floor(this.leashT) !== Math.floor(this.leashT - dt)) toast('Get back to the fight');
         if (this.leashT >= K.leashTime) { this.failReason = this.def.escapeText || 'You left the fight. The fight posted about it.'; this.state = 'failed'; }
       } else this.leashT = 0;
+    } else if (this.state === 'approach') {
+      if (p && U.dist2d(p.x, p.z, this.center.x, this.center.z) <= K.arrive && this._intro) { var go = this._intro; this._intro = null; go(); }
     } else if (this.state === 'break') {
       if (this.stateT >= K.breakTime && this._next) { var nx = this._next; this._next = null; nx(); }
     } else if (this.state === 'defeated' || this.state === 'done') {
@@ -899,7 +932,8 @@
       if (a.speed < 0.3) { ai.stuckT += dt; if (ai.stuckT > 0.8) { ai.stuckT = 0; ai.side = -ai.side; ai.sideT = 0.5; } } else ai.stuckT = 0;
     } else {
       a.stop(); a.yaw = U.angleDamp(a.yaw, face, 8, dt);
-      if (ai.cool <= 0 && !p.inVehicle) { ai.swingT = 0.45; a.punchT = 0.45; a.aimYaw = face; }
+      // nobody swings at a player on the floor (a knockdown is a beat to get up, not a pile-on)
+      if (ai.cool <= 0 && !p.inVehicle && !p.knockedDown) { ai.swingT = 0.45; a.punchT = 0.45; a.aimYaw = face; }
     }
     ai.barkT -= dt;
     if (ai.barkT <= 0) {
@@ -916,6 +950,13 @@
     var tx = cx + Math.cos(d.circA) * r, tz = cz + Math.sin(d.circA) * r;
     if (!p.knockedDown) p.moveTo(tx, tz, !!run);
     var pl = player(); return pl ? U.dist2d(p.x, p.z, pl.x, pl.z) : 99;
+  }
+  // a fists-only fight (def.noGuns): a gun in hand goes back in the holster, with a note now and then
+  function holster(enc, p) {
+    var WP = GTP.Combat && GTP.Combat.WEAPONS, w = WP && WP[p.weapon];
+    if (!w || w.melee || p.weapon === 'fist') return;
+    p.weapon = 'fist'; p.aiming = false;
+    if (simT() - (enc._holsterT || -9) > 4) { enc._holsterT = simT(); toast(typeof enc.def.noGuns === 'string' ? enc.def.noGuns : 'Fists only'); }
   }
   function bossShoot(enc, p, weapon, every, dt, maxRange) {
     var pl = player(), CB = GTP.Combat; if (!pl || !pl.alive || !p || p.knockedDown || p.inVehicle || !CB || !CB.fire) return;
@@ -937,6 +978,9 @@
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.45, windowCap: 56, shieldText: 'IN THE HELICOPTER (TEN OUT OF TEN)',
     spools: [3, 4, 5], orbit: [0.22, 0.28, 0.34], attackEvery: [4.6, 3.8, 3.0], window: 14,
     hints: ['Aim (right mouse) at the gold ribbon spools under the helicopter and shoot them', 'Cut the spools again; his interns are on the field', 'Last ribbon. The helicopter is a ten. Make it a two'],
+    // the President is never the target: on the ground he reads his ratings off a gold teleprompter, and the prompter takes the
+    // hits (CONTENT_RULES 2 and 4: no shots at a head-of-state stand-in)
+    pedProof: 'NOT THE SUIT. THE TELEPROMPTER.', place: 'the lot by the stadium',
     ticker: 'BREAKING: PRESIDENT RATES OWN HELICOPTER LANDING A TEN; HELICOPTER DISAGREES',
     lines: {
       intro: [
@@ -945,7 +989,7 @@
         { who: 'player', text: 'He is trailing ribbon spools. If those go, the ribbon goes in the rotor.' }
       ],
       p2: [{ who: 'goldplate', text: 'That was a rehearsal landing. A ten. Interns! Film the empty seats!' }],
-      p3: [{ who: 'goldplate', text: 'Fresh ribbon. Five spools. Nobody has ever had five spools. Many people are saying.' }],
+      p3: [{ who: 'goldplate', text: 'Fresh ribbon. Five spools. The ribbon people called me personally. Crying.' }],
       defeat: [
         { who: 'goldplate', text: 'I rate this... a two. Nobody rates a two. I am the first.' },
         { who: 'player', text: 'Ratio, sir. The helicopter got more likes than the speech.' },
@@ -954,7 +998,7 @@
     },
     barks: {
       fight: ['Rating run! Everything under me is a ten!', 'Gold rain. Very expensive rain.', 'This ribbon is the best ribbon.', 'I named the sky after myself. Twice.'],
-      ground: ['You hit a President. I rate it a four.', 'Interns! Get my good side!', 'Nobody lands like me. Nobody.'],
+      ground: ['My teleprompter! It had my best adjectives!', 'Interns! Get my good side!', 'That landing was a ten. The ground was a six.'],
       takeoff: ['Back to the sky. The sky is a ten.']
     },
     setup: function (enc) {
@@ -970,6 +1014,7 @@
       var d = enc.data, def = enc.def;
       d.window = 0;
       if (enc.ped && !enc.ped.removed) { removeEntity(enc.ped); enc.ped = null; }
+      DEFS.b01_goldplate._dropPrompter(enc);
       if (d.mode !== 'air') { d.mode = 'takeoff'; enc.bark(def.barks.takeoff[0]); }
       DEFS.b01_goldplate._spools(enc, def.spools[n - 1]);
       enc.shield = true;
@@ -997,6 +1042,27 @@
           d.spoolList.push(pt);
         })(i);
       }
+    },
+    // the stand goes up beside the helicopter's door, facing the arena centre; its hits go into the boss pool (the window cap
+    // and the damage scale apply as they did to the man himself)
+    _prompter: function (enc) {
+      var d = enc.data, h = enc.heli, c = enc.center;
+      DEFS.b01_goldplate._dropPrompter(enc);
+      var yaw = U.dirToYaw(c.x - (h.x + 4), c.z - h.z), at = { x: h.x + 4, z: h.z + 1.5 };
+      var pr = enc.addPart({ kind: 'prompter', label: 'GOLD TELEPROMPTER', x: at.x, y: groundY(at.x, at.z, c.y) + 1.4, z: at.z, hp: 1e6, mesh: Meshes.prompter(),
+        onHit: function (self, n, src, type) {
+          self.hp = 1e6;
+          var dd = enc.damageBoss(n, src, type);
+          if (dd > 0 && simT() - (self.data.noteT || -9) > 1.3) { self.data.noteT = simT(); var w = ['LOST HIS PLACE', 'AD-LIB!', 'UHHH... TREMENDOUS', 'SKIPPED A PAGE'][Math.floor(simT() * 7) % 4]; textFx(w, self.x, self.y + 1.5, self.z, '#ffd45a', 1); }
+          if (dd <= 0 && enc.windowDmg >= (enc.def.windowCap || 1e9) - 1e-6 && simT() - (self.data.capT || -9) > 1.5) { self.data.capT = simT(); textFx('HE MEMORISED THE REST', self.x, self.y + 1.5, self.z, '#d0d0d0', 1); }
+        } });
+      pr.yaw = yaw; pr.data.x = at.x; pr.data.z = at.z; pr.data.yaw = yaw;
+      pr.sync = function (self, m) { m.rotation.y = self.data.yaw; m.position.y = self.y - 1.4; var hd = m.userData.head; hd.rotation.z = self.flashT > 0 ? 0.12 : 0; };
+      d.prompter = pr;
+    },
+    _dropPrompter: function (enc) {
+      var pr = enc.data.prompter; enc.data.prompter = null;
+      if (pr && !pr.removed) { fx({ type: 'spark', x: pr.x, y: pr.y + 0.5, z: pr.z, vx: 0, vy: 3, vz: 0, size: 0.4, life: 0.5, color: 0xffd45a }); E().remove(pr); disposeOwn(pr.mesh); }
     },
     partBroken: function (enc) {
       textFx('SNIP', enc.heli.x, enc.heli.y - 3, enc.heli.z, '#ffd45a', 1);
@@ -1041,30 +1107,38 @@
         if (Math.abs(h.y - ly) < 0.25) {
           d.mode = 'ground'; d.window = def.window; h.data.bank = 0; shake(0.5); sfx('crash', h.x, h.z, 0.7);
           var door = { x: h.x + 2.6, z: h.z };
-          var gp = enc.addPed('goldplate', door.x, door.z, { boss: true, weapon: 'pistol' });
+          var gp = enc.addPed('goldplate', door.x, door.z, { boss: true });
           enc.peds.splice(enc.peds.indexOf(gp), 1); enc.ped = gp;
+          DEFS.b01_goldplate._prompter(enc);
           enc.shield = false; enc.windowDmg = 0; enc.emitPhase(true);
-          enc.hint = 'Goldplate is out of the helicopter: hit him before it takes off';
+          enc.hint = 'Goldplate is out of the helicopter reading his ratings: wreck the gold teleprompter before it takes off';
           enc.randomBark('ground');
         }
       } else if (d.mode === 'ground') {
         d.window -= dt; h.data.rotor += dt * 4;
-        var gpd = enc.ped;
-        if (gpd && !gpd.removed) {
-          circleAround(enc, gpd, h.x, h.z, 6, 0.32, dt, false);
-          bossShoot(enc, gpd, 'pistol', 2.6, dt, 22);
+        var gpd = enc.ped, pr = d.prompter;
+        if (gpd && !gpd.removed && pr && !pr.removed) {
+          // he walks to the stand and reads to the cameras; the gold keeps raining on whoever is near
+          var sx = pr.data.x - Math.sin(pr.data.yaw) * 1.3, sz = pr.data.z - Math.cos(pr.data.yaw) * 1.3;
+          if (!gpd.knockedDown) { if (U.dist2d(gpd.x, gpd.z, sx, sz) > 0.5) gpd.moveTo(sx, sz, false); else { gpd.stop(); gpd.yaw = pr.data.yaw; } }
           enc.every('gbark', 6, dt, function () { enc.randomBark('ground'); });
+          if (p) enc.every('grain', 3.2, dt, function () {
+            enc.addTele({ shape: 'circle', x: p.x + (p.vx || 0) * 0.5, z: p.z + (p.vz || 0) * 0.5, r: 2.6, warn: 1.45, dmg: 12, knock: 4, color: 0xffd45a, label: 'GOLD RAIN',
+              onStrike: function (t) { for (var q = 0; q < 6; q++) fx({ type: 'spark', x: t.x + Math.cos(q) * 1.2, y: t.y + 3, z: t.z + Math.sin(q) * 1.2, vx: 0, vy: -6, vz: 0, size: 0.4, life: 0.5, color: 0xffd45a }); sfx('cash', t.x, t.z, 0.5); } });
+          });
         }
         if (d.window <= 3 && d.window + dt > 3) { textFx('ROTOR SPINNING UP', h.x, h.y + 3, h.z, '#ff3b30', 1.6); enc.bark('Back in the helicopter! Helicopter time!'); }
         if (d.window <= 0) {
           // the window closed before the phase did: back up with fresh ribbon
           if (enc.ped) { removeEntity(enc.ped); enc.ped = null; }
+          DEFS.b01_goldplate._dropPrompter(enc);
           d.mode = 'takeoff'; enc.shield = true; enc.hint = def.hints[n - 1]; enc.emitPhase(true);
           DEFS.b01_goldplate._spools(enc, def.spools[n - 1]);
         }
       }
     },
     phaseEnd: function (enc, n) {
+      if (n >= enc.phases) DEFS.b01_goldplate._dropPrompter(enc);
       if (n < enc.phases) return;
       // the last ribbon: the helicopter stays down, its rotor coasting to a stop
       enc.data.mode = 'dead';
@@ -1073,6 +1147,7 @@
     defeat: function (enc) { if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(false, enc.center.x, enc.center.z); } catch (e) { /* optional */ } } },
     target: function (enc) {
       var d = enc.data, p = player(), best = null, bd = 1e9;
+      if (d.mode === 'ground' && d.prompter && !d.prompter.removed) return d.prompter;
       if (d.mode === 'ground' && enc.ped && !enc.ped.removed) return enc.ped;
       for (var i = 0; i < enc.parts.length; i++) { var s = enc.parts[i]; if (s.down || s.removed) continue; var dd = U.dist2d(p.x, p.z, s.x, s.z); if (dd < bd) { bd = dd; best = s; } }
       return best || enc.heli;
@@ -1086,7 +1161,7 @@
   // exposed, toasting champagne (circles) at you, until the roadies rebuild.
   DEFS.b02_velvetine = {
     id: 'b02_velvetine', name: 'Baron Velvetine', cast: 'velvetine', title: 'The Silent Yacht',
-    arena: { landmark: 'afterparty_yacht', offset: { x: -10, z: 10 } },
+    arena: { landmark: 'afterparty_yacht', offset: { x: -10, z: 10 } }, place: 'the Afterparty pier',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.42, windowCap: 60, shieldText: 'SHHH. THE BARON IS LISTENING',
     speakers: [4, 4, 3], pulse: [6.2, 5.2, 4.4], window: 16, toastEvery: [2.8, 2.4, 2.0],
     hints: ['Wreck the speaker stacks (aim and shoot). Jump over the silent drops', 'The roadies rebuilt it. Speakers first, then the Baron', 'The speakers are on carts now. Jump the drops, wreck the stacks'],
@@ -1193,11 +1268,11 @@
   // the press release lands on everything in the strip, scooters included. Lure them in.
   DEFS.b03_warbanner = {
     id: 'b03_warbanner', name: 'PM Hollis Warbanner', cast: 'warbanner', title: 'The Jets Arrive (Probably)',
-    arena: { landmark: 'airport_runway', offset: { x: 0, z: 26 } },
+    arena: { landmark: 'airport_runway', offset: { x: 0, z: 26 } }, place: 'the runway',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 0.42, windowCap: 50, capPhases: [2], shieldText: 'PRESS PASS (WRECK THE SCOOTERS)', leash: 170,
     scooters: [3, 2, 0], jetEvery: [9, 7.5, 5.5], window: 12,
     hints: ['Wreck the Defense Scooters (shoot them, or lure them under the jets). Stay out of the flashing strips', 'He is on a scooter now: wreck his ride, then hit him while he is down', 'On foot at the podium. Dodge the crossing jets and hit him'],
-    ticker: 'BREAKING: BRAVADIA\'S JETS ARRIVE, BOMB OWN PRIME MINISTER WITH PRESS RELEASES; BRAVADIA CALLS IT A SUCCESS',
+    ticker: 'BREAKING: BRAVADIA\'S JETS ARRIVE, PAPER OWN PRIME MINISTER IN PRESS RELEASES; BRAVADIA CALLS IT A SUCCESS',
     lines: {
       intro: [
         { who: 'warbanner', text: 'Mr. Takesworth. You billed my scooters to your show. I billed them back. And that\'s why we need the jets.' },
@@ -1209,7 +1284,7 @@
       defeat: [
         { who: 'warbanner', text: 'And that\'s why we need... a moment. Condolences. To me.' },
         { who: 'player', text: 'The jets came. They just did not read the memo about whose side they were on.' },
-        { who: 'chyron', text: 'BREAKING. Bravadia\'s air force bombs own PM with press releases. Bravadia: "a triumph."', ticker: true }
+        { who: 'chyron', text: 'BREAKING. Bravadia\'s air force buries own PM in press releases. Bravadia: "a triumph."', ticker: true }
       ]
     },
     barks: {
@@ -1372,7 +1447,7 @@
   // agents; Redacted drops redaction bars (rectangles) on you.
   DEFS.b04_redacted = {
     id: 'b04_redacted', name: 'Agent Pat Redacted', cast: 'redacted', title: 'Weather Balloon',
-    arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } },
+    arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } }, place: 'the balloon depot lot',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 1, shieldText: '[REDACTED]',
     patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, barEvery: [4.8, 4.0, 3.4], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
     hints: ['Shoot the black [REDACTED] patch on the balloon. Grey means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
@@ -1567,10 +1642,12 @@
   };
   DEFS.b05_dunk = {
     id: 'b05_dunk', name: 'Ptolemy Dunk', cast: 'dunk', title: 'Table to Table',
-    arena: { landmark: 'campus_quad', offset: { x: 0, z: -20 } },
+    arena: { landmark: 'campus_quad', offset: { x: 0, z: -20 } }, place: 'the quad',
     maxHp: 240, thresholds: [160, 80, 0], dmgScale: 1, shieldText: 'BLOCKED', windowCap: 55,
     deck: [['didntread', 'ratio', 'blocked'], ['didntread', 'ratio', 'blocked', 'quote'], ['didntread', 'ratio', 'blocked', 'quote']],
-    tell: [1.45, 1.2, 1.0], stun: [3.2, 2.9, 2.6], chain: [1, 1, 2], noGuns: false,
+    // fists and counters only: a gun at a campus folding-table debate reads as a real event (CONTENT_RULES 2); guns stay
+    // holstered from the intro to the walk-off and no weapon crate drops
+    tell: [1.45, 1.2, 1.0], stun: [3.2, 2.9, 2.6], chain: [1, 1, 2], noGuns: 'No guns at the debate tables. Fists and counters.',
     hints: ['Read the card over Dunk\'s head and counter it. Hit him while he is STUNNED', 'He quote-posts now. Clear the replies, then hit him', 'Two cards in a row. Read both'],
     ticker: 'BREAKING: DUNK DESTROYS TAKESWORTH, ACCORDING TO THE CALENDAR; FOOTAGE DISAGREES',
     lines: {
@@ -1751,7 +1828,7 @@
   // round ratios two panelists; the last is ONE MEMO against all five.
   DEFS.b06_panel = {
     id: 'b06_panel', name: 'The Panel', cast: 'chyron', title: 'Five Guests, One Memo',
-    arena: { landmark: 'protest_plaza', offset: { x: 100, z: 40 } },
+    arena: { landmark: 'protest_plaza', offset: { x: 100, z: 40 } }, place: 'the outdoor set west of the stadium',
     maxHp: 500, thresholds: [400, 300, 200, 100, 0], dmgScale: 1, shieldText: 'WAIT FOR YOUR SEGMENT',
     kinds: ['debate', 'wave', 'debate', 'wave', 'debate'],
     rounds: [{ vs: ['goldplate', 'warbanner'], params: { rounds: 2, points: 3, timer: 4, bluff: 0.3, opponent: 'panel' } }, null,
@@ -1779,7 +1856,7 @@
       lost: [{ who: 'chyron', text: 'The panel talks over you. Again. Take two.' }]
     },
     barks: {
-      fight: ['Mattress. Jets. Pellets.', 'Respectfuly.', 'Per the memo.', 'Rate it a ten.'],
+      fight: ['Mattress. Jets. Pellets.', 'Respectfully.', 'Per the memo.', 'Rate it a ten.'],
       wave: ['Security to the floor!', 'Cut to commercial! Physically!']
     },
     setup: function (enc) {
@@ -2063,7 +2140,7 @@
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
       if (e.kind !== 'ped' || !e.alive || e.removed || e.inVehicle || e.knockedDown || e.humiliated || !(e.hostile || e.boss)) continue;
-      if (e.boss && e.boss.shield) continue;
+      if (e.boss && (e.boss.shield || e.boss.def.pedProof)) continue;
       var d = U.dist2d(a.x, a.z, e.x, e.z); if (d < bd) { bd = d; best = e; }
     }
     if (best) {
