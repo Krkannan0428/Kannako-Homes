@@ -4191,7 +4191,7 @@
     var CB = GTP.Combat, cv = CB && CB.cover, ch = coverHud();
     if (ch && ch.active) return null;
     if (ch && ch.near) return { high: ch.nearHigh };
-    if (p && p._coverNear) return p._coverNear;
+    if (!ch && p && p._coverNear) return p._coverNear;   // hud().cover is built from _coverNear: trust it when it exists
     if (p && p.coverHint) return p.coverHint;
     if (!cv) return null;
     if (typeof cv.available === 'function') return call(cv.available, cv, [p], null);
