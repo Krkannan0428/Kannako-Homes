@@ -84,3 +84,13 @@ Evidence: the merged run log (copied in the final report). None are in my files:
 - `perf`: 347 steps/s (target 600). A profile shows `World.resolveCapsule` (1.2 s per 1800 steps) and vehicle world collision dominating. Combat's share is 0.3 s, `fillPose` 0.36 s. The QAC-48 allocation fix helps on the margin.
 - `vehicles`: "the jet ski leans into the turn with the rider on it" (vehicles; it fails the same way with the original `06_entities.js`).
 - `bosses` b03: see above (test bot / balance).
+- `saves`: "missions, flags, best times and the next light come back: m01c_both_sides" (story/saves).
+- `story`: "m01_van: the GPS and the call go to the next story mission" with `next: null` (story chain).
+- `strands`: "braking on the start line for a second starts the race" with `inCar: false` and no racers (strands).
+- `strangers`: "strand run problems" (strangers).
+- `systems`: the `tables` assertion on the golf course and tickers (systems).
+- `ui`: "the mattress ad runs at minute 20 on every station" (ui / radio).
+- `ui_v03`: "a paint previews through Vehicles.mod, BUY pays and emits shop:buy" with `money1` unchanged (ui / vehicles mod shop).
+
+That run was the merged build before this round's fixes: 13 of 32 files passed, 19 failed. `actors` and `combat`, which
+were mine, pass now. `bosses` b01 and b02 pass now.
