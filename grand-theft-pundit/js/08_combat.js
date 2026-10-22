@@ -349,8 +349,15 @@
     // the aim basis: a (forward with pitch), u (up with pitch), r (right)
     var ax = fx_ * cp, ay = sp, az = fz_ * cp, ux = -fx_ * sp, uy = cp, uz = -fz_ * sp;
     var shY = y + (1.38 * ck + (ck < 1 ? 0.06 : 0)) * sc, sx = x + rx * 0.3 * sc, sz = z + rz * 0.3 * sc;
-    var gx, gy, gz, X, Y;
-    if (raised) {
+    var gx, gy, gz, X, Y, rig3 = modelsRig();
+    if (raised && rig3 && !fit.upright && !fit.melee && !fit.knuckle) {
+      // the models-track rig (06c holdPose): the grip in the chest frame, rifle-likes (and launchers, the minigun) in the shoulder
+      // pocket at (0.1 right, 0.1 up, 0.22 ahead), handguns out in front at (0.04, 0.18, 0.51); drawn at scale 1, so the shot leaves
+      // the barrel the player sees
+      var two = hold === 'two', ox = two ? 0.1 : 0.04, oy = two ? 0.1 : 0.18, oz = two ? 0.22 : 0.51, cy = y + MODEL_CHEST * ck * sc;
+      gx = x + (rx * ox + ux * oy + ax * oz) * sc; gy = cy + (uy * oy + ay * oz) * sc; gz = z + (rz * ox + uz * oy + az * oz) * sc;
+      X = [ax, ay, az]; Y = [ux, uy, uz];
+    } else if (raised) {
       if (fit.spinBarrels) { gx = x + rx * 0.1 * sc + fx_ * 0.3 * sc; gy = y + 1.0 * ck * sc; gz = z + rz * 0.1 * sc + fz_ * 0.3 * sc; X = [ax, ay * 0.5, az]; Y = [ux, uy, uz]; }
       else if (fit.shoulder) { gx = sx + ax * 0.12 * sc - ux * 0.16 * sc; gy = shY + ay * 0.12 * sc - uy * 0.16 * sc; gz = sz + az * 0.12 * sc - uz * 0.16 * sc; X = [ax, ay, az]; Y = [ux, uy, uz]; }
       else if (fit.upright) { gx = sx + ax * 0.1 * sc + fx_ * 0.08 * sc; gy = shY + 0.12 * sc; gz = sz + az * 0.1 * sc + fz_ * 0.08 * sc; X = [rx, 0, rz]; Y = id === 'megaphone' ? [ax, ay, az] : [ux * 0.3 + fx_ * 0.2, 0.95, uz * 0.3 + fz_ * 0.2]; }
@@ -375,9 +382,12 @@
     var yl = Math.sqrt(Y[0] * Y[0] + Y[1] * Y[1] + Y[2] * Y[2]) || 1; Y[0] /= yl; Y[1] /= yl; Y[2] /= yl;
     out.X[0] = X[0]; out.X[1] = X[1]; out.X[2] = X[2]; out.Y[0] = Y[0]; out.Y[1] = Y[1]; out.Y[2] = Y[2];
     out.Z[0] = X[1] * Y[2] - X[2] * Y[1]; out.Z[1] = X[2] * Y[0] - X[0] * Y[2]; out.Z[2] = X[0] * Y[1] - X[1] * Y[0];
-    out.gx = gx; out.gy = gy; out.gz = gz; out.s = holdScale(id) * sc; out.raised = !!raised;
+    out.gx = gx; out.gy = gy; out.gz = gz; out.s = (rig3 ? 1 : holdScale(id)) * sc; out.raised = !!raised;
     return out;
   }
+  // the models-track rig (05d + 06c): GTP.Anim draws the gun in the hand at scale 1; the chest frame's origin sits 1.243 m up
+  var MODEL_CHEST = 1.243;
+  function modelsRig() { return !!(GTP.Anim && GTP.Models); }
   // handguns read small in a fist the size of the fallback rig's: they are drawn a little larger than the long guns
   function holdScale(id) { var f = fitOf(id); return f && f.hold === 'one' && !f.melee && !f.upright && !f.knuckle ? HOLD_SCALE * 1.22 : HOLD_SCALE; }
   function framePoint(fr, p, out) {
@@ -1973,7 +1983,7 @@
   function placeWorld(obj, root, gx, gy, gz, X, Y, Z, s) {
     var v = vscratch();
     v.w.set(X[0] * s, Y[0] * s, Z[0] * s, gx, X[1] * s, Y[1] * s, Z[1] * s, gy, X[2] * s, Y[2] * s, Z[2] * s, gz, 0, 0, 0, 1);
-    v.inv.copy(root.matrixWorld).invert();
+    v.inv.copy((obj.parent || root).matrixWorld).invert();   // into the space of the object's actual parent (a bone, if re-parented)
     v.m.multiplyMatrices(v.inv, v.w);
     v.m.decompose(obj.position, obj.quaternion, obj.scale);
   }
@@ -2052,7 +2062,13 @@
     var raised = !e.knockedDown && !(e._melee) && !fit.melee && !fit.knuckle && (e.aiming || e.firePoseT > 0 || !!e._cook || (e.cover && (e.cover.peek || e.cover.blindT > 0)) || (e.kind !== 'player' && e.hostile && !w.melee));
     if (e.reloadT > 0 && !fit.upright) raised = false;
     var yaw = m.rotation.y;
-    if (raised) {
+    // a models-track rig: GTP.Anim re-parented the gun into the handR bone and posed it with both arms (06c applyHeld); Anim is the
+    // gun's only writer there. Publish the hand targets from the gun as drawn instead of placing it again.
+    if (anim && held.parent && held.parent !== m) {
+      var va = vscratch().a.set(0, 0, 0); held.localToWorld(va);
+      hands.right.x = va.x; hands.right.y = va.y; hands.right.z = va.z;
+      if (fit.support && (raised || holdOf(heldId) === 'two') && !fit.melee && !fit.upright) { held.localToWorld(V.b.set(fit.support[0], fit.support[1], fit.support[2])); hands.left.x = V.b.x; hands.left.y = V.b.y; hands.left.z = V.b.z; hands.leftOn = true; }
+    } else if (raised) {
       var fr = gunFrame(e, heldId, true, null, yaw, e._aimPitch || 0);
       fr.gx += m.position.x - e.x; fr.gy += bodyY - e.y; fr.gz += m.position.z - e.z;   // gunFrame crouches on its own   // the interpolated body
       placeWorld(held, m, fr.gx, fr.gy, fr.gz, fr.X, fr.Y, fr.Z, fr.s);
@@ -2117,7 +2133,7 @@
   // the holsters ride the body: the hip one on the right thigh (barrel down), the back one diagonal across the back (muzzle up over
   // the left shoulder), both in the root's frame so they follow the body's turn and lean
   function placeHolsters(e, m, parts) {
-    var sc = (e.look && e.look.scale) || 1, s = HOLD_SCALE * 0.95;
+    var sc = (e.look && e.look.scale) || 1, s = modelsRig() ? 1 : HOLD_SCALE * 0.95;   // the same size as the gun in the hand
     if (e._holH) {
       var hp = e._holH; hp.position.set(0.27, 0.86, 0.04); hp.scale.setScalar(s);
       vscratch().m.makeBasis(V.a.set(0, -1, 0), V.b.set(0, 0, -1), V.c.set(1, 0, 0)); hp.quaternion.setFromRotationMatrix(V.m);
