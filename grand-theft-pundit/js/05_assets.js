@@ -17,6 +17,24 @@
   var TAU = Math.PI * 2;
 
   var ATLAS = 2048, CELL = 256, S = 240, GUT = 8;   // atlas: cell pitch 256, content 240, gutter 8
+  var EDGE_CLAMP = { runway_center: 'bottom' };      // cells whose gutter repeats their own edge row instead of wrapping
+  // Far LOD (QA-A-VIS-05): the near MeshStandardMaterials get the sky PMREM (scene.environment) as extra ambient, scaled by
+  // their envMapIntensity; the far Lambert twins do not, so a block crossing lodDistance turned 20-30% darker. The far
+  // materials scale their ambient + hemisphere irradiance by 1 + FAR_ENV_K * envMapIntensity of the near twin: it follows
+  // the scene's sky light through the day (dark at night) and costs one multiply per fragment.
+  // (measured on low at noon, downtown and suburbs: far/near brightness 0.85 at k 0, 0.90 at 1, 0.93 at 1.4; the near
+  // twin's env specular follows the sky too, so k is larger than the irradiance share alone)
+  var FAR_ENV_K = 2.6, farAmb = [];
+  function farAmbient(m, envI) {
+    var u = { value: 1 + FAR_ENV_K * envI };
+    farAmb.push({ u: u, envI: envI });
+    m.userData.farAmb = u;
+    m.onBeforeCompile = function (sh) {
+      sh.uniforms.uFarAmb = u;
+      sh.fragmentShader = 'uniform float uFarAmb;\n' + sh.fragmentShader.replace('#include <lights_fragment_end>', 'irradiance *= uFarAmb;\n#include <lights_fragment_end>');
+    };
+    m.customProgramCacheKey = function () { return 'gtp-farAmb'; };
+  }
   var FW = 512, FH = 1280, BAND = 160;              // facade texture
   var cells = {};                                   // name -> {col,row}
   var rngTex = GTP.makeRng(0xA55E7);
@@ -191,6 +209,12 @@
       setMaps(Assets._mats.ground, Assets.atlasNormal, Assets.atlasRough);
       for (k in Assets._facadeMats) { m = Assets._facadeMats[k]; var f = Assets._facades[k]; if (f) setMaps(m, f.normal, f.rough); }
       if (Assets._mats.water && nm) { Assets.waterUniforms.tGtpRip.value = Assets.waterNormal; Assets._mats.water.needsUpdate = true; }
+      // QAC-33: without normal maps no material samples these any more: free their GPU copies (the DataTextures keep their
+      // image, so three uploads one again when a higher preset puts it back on a material). The water keeps its ripples.
+      if (!nm) {
+        [Assets.atlasNormal, Assets.atlasRough].forEach(function (t) { if (t) t.dispose(); });
+        for (k in Assets._facades) { var fd = Assets._facades[k]; if (fd.normal) fd.normal.dispose(); if (fd.rough) fd.rough.dispose(); }
+      }
       var aniso = q.anisotropy || 4;
       [Assets.atlas, Assets.atlasNormal, Assets.atlasRough, Assets.water].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } });
       for (k in Assets._facades) { var ff = Assets._facades[k]; [ff.day, ff.night, ff.normal, ff.rough].forEach(function (t) { if (t && t.anisotropy !== aniso) { t.anisotropy = aniso; t.needsUpdate = true; } }); }
@@ -236,6 +260,8 @@
         ctx.save(); ctx.beginPath(); ctx.rect(px, py, CELL, CELL); ctx.clip();
         // the gutter wraps the tile's own edges so mipmaps and filtering never bleed a neighbor in
         for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) ctx.drawImage(tile, px + GUT + dx * S, py + GUT + dy * S);
+        // a cell whose paint continues into the next row's cell (a line split along its edge) clamps that gutter instead
+        if (EDGE_CLAMP[name] === 'bottom') for (dx = -1; dx <= 1; dx++) ctx.drawImage(tile, 0, S - 1, S, 1, px + GUT + dx * S, py + GUT + S, S, GUT);
         ctx.restore();
       });
       var tex = Assets.atlas = new THREE.CanvasTexture(cv);
@@ -394,7 +420,7 @@
     },
     groundMaterialFar: function () {
       var M = Assets._mats;
-      if (!M.groundFar) { M.groundFar = new THREE.MeshLambertMaterial({ map: Assets.atlas }); M.groundFar.name = 'groundFar'; }
+      if (!M.groundFar) { M.groundFar = new THREE.MeshLambertMaterial({ map: Assets.atlas }); M.groundFar.name = 'groundFar'; farAmbient(M.groundFar, 0.5); }
       return M.groundFar;
     },
     waterMaterial: function () {
@@ -585,7 +611,7 @@
       if (m) return m;
       var f = Assets.facade(style);
       m = new THREE.MeshLambertMaterial({ map: f.day, emissiveMap: f.night, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true });
-      m.userData.style = style; m.name = 'facadeFar:' + style;
+      m.userData.style = style; m.name = 'facadeFar:' + style; farAmbient(m, 0.7);
       Assets._facadeMatsFar[style] = m;
       return m;
     },
@@ -702,9 +728,11 @@
       return Assets._mats.prop;
     },
     propMaterialFar: function () {
-      if (!Assets._mats.propFar) { Assets._mats.propFar = new THREE.MeshLambertMaterial({ vertexColors: true }); Assets._mats.propFar.name = 'propFar'; }
+      if (!Assets._mats.propFar) { Assets._mats.propFar = new THREE.MeshLambertMaterial({ vertexColors: true }); Assets._mats.propFar.name = 'propFar'; farAmbient(Assets._mats.propFar, 0.45); }
       return Assets._mats.propFar;
     },
+    // the far LOD materials' sky-ambient factor (QA-A-VIS-05): 1 + k * the near twin's envMapIntensity
+    setFarAmbientK: function (k) { FAR_ENV_K = k; farAmb.forEach(function (f) { f.u.value = 1 + k * f.envI; }); },
     setPropGlow: function (k) { var m = Assets.propMaterial(); if (m.userData.glow) m.userData.glow.value = k; },
     prop: function (kind) {
       if (Assets._props[kind]) return Assets._props[kind];
@@ -1493,7 +1521,10 @@
     // the bottom edge (the row above the axis uses it at rotation 0, the row below at 2, so the dashes meet); the
     // edge tile a solid line on its top edge; the threshold tile the piano keys; the digits paint the "10".
     runway: function (ctx, S, R) { runwayBase(ctx, S, R); },
-    runway_center: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; ctx.fillRect(20, S - 7, 90, 7); ctx.fillRect(150, S - 7, 70, 7); ctx.globalAlpha = 1; },
+    // half the centreline along the bottom edge: the row below shows this cell turned 180 degrees (10_render _runwayCell),
+    // so the two equal dashes sit symmetric about the cell centre and both halves line up (QA-A-VIS-02); the atlas
+    // clamps this cell's bottom gutter (EDGE_CLAMP) so filtering at the seam does not mix in the wrapped top edge
+    runway_center: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; var L = Math.round(S / 3); ctx.fillRect(Math.round(S / 4 - L / 2), S - 7, L, 7); ctx.fillRect(Math.round(S * 3 / 4 - L / 2), S - 7, L, 7); ctx.globalAlpha = 1; },
     runway_edge: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.8; ctx.fillRect(0, 6, S, 8); ctx.globalAlpha = 1; worn(ctx, 0, 6, S, 8, R, 5); ctx.fillStyle = PAL.runway; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; },
     runway_thresh: function (ctx, S, R) { runwayBase(ctx, S, R); ctx.fillStyle = PAL.runwayLine; ctx.globalAlpha = 0.85; for (var k = 0; k < 3; k++) ctx.fillRect(14 + k * 80, 0, 36, S); ctx.globalAlpha = 1; for (k = 0; k < 3; k++) worn(ctx, 14 + k * 80, 0, 36, S, R, 10); ctx.fillStyle = PAL.runway; ctx.globalCompositeOperation = 'destination-over'; ctx.fillRect(0, 0, S, S); ctx.globalCompositeOperation = 'source-over'; },
     runway_1: function (ctx, S, R) { runwayBase(ctx, S, R); runwayDigit(ctx, S, '1'); },

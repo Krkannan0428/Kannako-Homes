@@ -337,11 +337,23 @@ H.run('render', async (t) => {
     const crate = A.prop('crate').geometry.attributes.position.count;
     out.folded = ['helipad', 'teebox', 'barberpole', 'mannequin', 'pontoon', 'tirestack'].map((k) => { const r = A.prop(k); return { k, verts: r.geometry.attributes.position.count, crate: r.geometry.attributes.position.count === crate, wrapped: !!r._world, shadow: r.castShadow }; });
     out.wrapper = !!A.prop._worldProps;
+    // VIS-05: the far LOD Lambert materials carry the sky-ambient factor of their near twins
+    out.farAmb = [A.groundMaterialFar(), A.propMaterialFar(), A.facadeMaterialFar ? A.facadeMaterialFar('downtown') : null].map((m) => m && m.userData.farAmb ? +m.userData.farAmb.value.toFixed(2) : 0);
     return out;
   });
   console.log('  envw2 assets: ' + JSON.stringify(as2));
   t.assert(as2.lampWorst < 0.3, 'every lamp head sits over its glow, pool and light (QA-A-NGT-01): worst ' + as2.lampWorst.toFixed(2) + ' m');
   t.assert(!as2.wrapper && as2.folded.every((f) => !f.crate && !f.wrapped && f.verts > 30), 'the helipad, teebox, barber pole, mannequin, pontoon and tyre stack are 05_assets builders: ' + JSON.stringify(as2.folded));
+  // QAC-33: stepping down to low frees the normal / roughness maps' GPU copies (they stayed resident)
+  const q33 = await vp.evaluate(() => {
+    const R = GTP.Render, info = R.renderer.info.memory; GTP.game.render();
+    const before = info.textures; R.quality.set('low'); GTP.game.advance(0.2); GTP.game.render();
+    const low = info.textures; R.quality.set('medium'); GTP.game.advance(0.2); GTP.game.render();
+    return { before, low, back: info.textures };
+  });
+  console.log('  QAC-33 textures: ' + JSON.stringify(q33));
+  t.assert(q33.low < q33.before, 'going down to low frees the surface maps on the GPU (QAC-33): ' + JSON.stringify(q33));
+  t.assert(as2.farAmb.every((k) => k > 1.5),'the far LOD materials make up the near ones\' sky ambient (QA-A-VIS-05): ' + as2.farAmb);
   t.assert(as2.folded.filter((f) => !f.shadow).map((f) => f.k).join() === 'helipad,teebox', 'the flush helipad and teebox cast no shadow: ' + JSON.stringify(as2.folded));
   const v3e = await t.errors(v3);
   t.assert(v3e.length === 0, 'v0.3 errors:\n' + v3e.join('\n'));
