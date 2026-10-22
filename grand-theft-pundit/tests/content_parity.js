@@ -439,10 +439,12 @@ const before = X.missions.length; P.register(); ok(X.missions.length === before,
 const SRC = fs.readFileSync(path.join(ROOT, 'js', '25_content_parity.js'), 'utf8');
 ok(!/Math\.random/.test(SRC), 'no Math.random in 25_');
 ok(!/\b(alert|confirm|prompt)\s*\(/.test(SRC), 'no alert/confirm/prompt in 25_');
-const diff22 = spawnSync('git', ['diff', 'ea6a035', '--', 'js/22_content_missions.js', 'js/24_content_expansion.js'], { cwd: ROOT, encoding: 'utf8' });
+// the base is the content-rules pass (9f7c65c), the last deliberate text edit of 22_ and 24_; the content track's own
+// changes there were the requires arrays (since ea6a035), everything else goes through the retune patches
+const diff22 = spawnSync('git', ['diff', '9f7c65c', '--', 'js/22_content_missions.js', 'js/24_content_expansion.js'], { cwd: ROOT, encoding: 'utf8' });
 if (diff22.status === 0 && diff22.stdout) {
   const changed = diff22.stdout.split('\n').filter((l) => /^[+-][^+-]/.test(l));
-  ok(changed.every((l) => /requires: \[/.test(l)), 'only requires arrays changed in 22_ and 24_ since ea6a035');
+  ok(changed.every((l) => /requires: \[/.test(l)), 'only requires arrays changed in 22_ and 24_ since 9f7c65c');
 }
 const audit = spawnSync(process.execPath, [path.join(__dirname, 'content_audit.js')], { cwd: ROOT, encoding: 'utf8' });
 ok(audit.status === 0, 'content_audit.js passes: ' + (audit.stdout + audit.stderr).trim().split('\n').slice(0, 6).join(' | '));
