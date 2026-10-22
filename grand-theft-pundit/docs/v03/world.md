@@ -163,9 +163,9 @@ barber pole (barber), a facade sign (safehouse). The meshes for the new prop kin
 
 ## Wrappers on other modules
 
-- `GTP.Assets.prop` (05_assets, environment): serves the six new prop kinds, from 20_content_world at load time.
+- ~~`GTP.Assets.prop`~~: folded in integration round 1. The six prop builders live in 05_assets now.
 - `GTP.Strands.drivers.take` (09_missions, story): the race route fix, from 07_ai on the first AI update.
-- `GTP.Ped.prototype.syncMesh` (06_entities / 06c): the cowering pose, from 07_ai at load; inert once `GTP.Anim` exists.
+- `GTP.Ped.prototype.syncMesh` (06_entities / 06c): the cowering pose, from 07_ai at load, installed only when `GTP.Anim` is missing (06c should pose `ped.cowering`, see triage_envworld.md C8).
 
 ## Interfaces consumed (feature-detected)
 

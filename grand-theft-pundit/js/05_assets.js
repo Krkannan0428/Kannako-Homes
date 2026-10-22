@@ -400,8 +400,10 @@
             'float gN1 = texture2D( tGtpNoise, gWp / 97.0 ).r, gN2 = texture2D( tGtpNoise, gWp / 23.0 + 0.37 ).r;',
             'diffuseColor.rgb *= 1.0 + ( gN1 - 0.5 ) * 0.24 + ( gN2 - 0.5 ) * 0.12;',
             'float gFlat = smoothstep( 0.9, 0.99, vGtpUp );',
-            'float gPn = texture2D( tGtpNoise, gWp / 11.0 + 0.71 ).r * 0.65 + gN2 * 0.35;',
-            'float gtpPuddle = smoothstep( 0.6 - 0.1 * uGtpWet, 0.66 - 0.1 * uGtpWet, gPn ) * gFlat * smoothstep( 0.12, 0.55, uGtpWet );',
+            // puddles in the top ~15% of the field at full wet (the noise median is ~0.54: the old 0.5..0.56 band covered half the
+            // ground in a speckle), on a 15 m scale so they read as pools, not grain; 10b_postfx's SSR uses the same field
+            'float gPn = texture2D( tGtpNoise, gWp / 15.0 + 0.71 ).r * 0.65 + gN2 * 0.35;',
+            'float gtpPuddle = smoothstep( 0.68 - 0.05 * uGtpWet, 0.71 - 0.05 * uGtpWet, gPn ) * gFlat * smoothstep( 0.12, 0.55, uGtpWet );',
             'float gtpWetK = uGtpWet * ( 0.55 + 0.45 * gFlat );',
             'diffuseColor.rgb *= mix( 1.0, 0.6, gtpWetK );',
             'diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 0.45, gtpPuddle );'

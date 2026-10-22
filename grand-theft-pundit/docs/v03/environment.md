@@ -138,8 +138,40 @@ NODE_PATH=/opt/node-tools/node_modules node tests/perf.js
 NODE_PATH=/opt/node-tools/node_modules node tests/content_audit.js
 ```
 
-## Performance
-(filled in below from `tests/perf.js`)
+## Performance (integration round 1, `v03r1/envworld`, measured on a quiet machine)
+Simulation: `tests/perf.js` 742 steps/s headless (bar 600; v0.2 726). The 427-510 seen during integration came from
+several test files sharing 4 cores. On a loaded machine World's collision fast path and the cheaper AI step are worth
+about +10% (see `triage_envworld.md`); the rest of the per-step growth since v0.2 is in 06b, 08, 13 and 14
+(cross-track requests C1, C4, C5, C10).
+
+Whole frame per preset, SwiftShader (a CPU rasteriser: compare the ratios, not the milliseconds), 1248 x 720, chase
+camera at the campus, median of 8 frames, same method as `tests/perf.js measure()`:
+
+| preset | v0.2 (ea6a035) ms | v0.3 ms | v0.3 / v0.2 | v0.3 draw calls (v0.2) | v0.3 triangles (v0.2) |
+|---|---|---|---|---|---|
+| low | 495 | 1023 | 2.07 | 395 (493) | 315k (269k) |
+| medium | 1113 | 1660 | 1.49 | 572 (1148) | 495k (521k) |
+| high | 1432 | 2207 | 1.54 | 552 (1058) | 525k (476k) |
+| ultra | 1684 | 2918 | 1.73 | 527 (974) | 614k (425k) |
+| medium @ 1920 x 1080 | 2069 | 3359 | 1.62 | 492 (1076) | 456k (523k) |
+
+What medium's frame is made of (SwiftShader, 720p, each knob switched off alone, about +-10% noise): post (bloom, FXAA,
+cutscene DoF) about 30%, the two shadow cascades about 25% (the far cascade alone about 14%), normal maps about 20%,
+the two lamp point lights about 13%. Interior-mapped windows and the grass cost almost nothing at medium. The draw
+calls halved since v0.2 (merged chunk meshes, the cascade split). The extra cost is fragment work: the new ground,
+glass, ocean and tree shaders and the models track's characters and cars. That is why low, which has no post and no
+shadows, doubled.
+
+Medium and the 60 fps target: the ratio to v0.2 is 1.5x at 720p and 1.6x at 1080p. On an integrated GPU that held
+v0.2's medium with about 35% headroom, v0.3's medium holds 60. Below that it does not, and no machine here can measure
+it. If a real iGPU misses the budget, the cheapest trims in order of look lost per ms gained are: `cascades: 1` (-14%,
+no shadows past 44 m), `pointLights: 0` by day (-13%), `normalMaps: false` (-20%). The presets were left as they are,
+because each trim visibly cheapens the city.
 
 ## Known issues
-(filled in below)
+- `QUALITY.pedFog / vehicleFog` (camera fix CAM-08) draw peds and cars to 204 / 225 m on medium (was 110 / 200). The
+  draw-call bounds in tests/perf.js hold.
+- The far LOD ambient factor (VIS-05) is 2.6, extrapolated from two measured points. The far and near brightness
+  should be compared once on a real GPU.
+- The mission marker fades near the camera (`Render.markerFade`) instead of being culled; anything added to a marker
+  group later fades too.

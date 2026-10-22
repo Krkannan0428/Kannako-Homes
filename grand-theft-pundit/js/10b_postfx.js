@@ -185,8 +185,8 @@
     '  if ( sea < 0.5 && wet < 0.02 ) { gl_FragColor = vec4( 0.0 ); return; }',
     // the ground shader's puddle field (same noise, same scales)
     '  float n2 = texture2D( tNoise, W.xz / 23.0 + 0.37 ).r;',
-    '  float pn = texture2D( tNoise, W.xz / 11.0 + 0.71 ).r * 0.65 + n2 * 0.35;',
-    '  float puddle = smoothstep( 0.6 - 0.1 * wet, 0.66 - 0.1 * wet, pn ) * smoothstep( 0.12, 0.55, wet );',
+    '  float pn = texture2D( tNoise, W.xz / 15.0 + 0.71 ).r * 0.65 + n2 * 0.35;',
+    '  float puddle = smoothstep( 0.68 - 0.05 * wet, 0.71 - 0.05 * wet, pn ) * smoothstep( 0.12, 0.55, wet );',
     '  vec3 V = normalize( P ), R = normalize( reflect( V, N ) );',
     '  if ( sea > 0.5 ) { vec2 wn = texture2D( tNoise, W.xz / 6.0 ).rg - 0.5; R = normalize( R + vec3( wn.x, 0.0, wn.y ) * 0.06 ); }',
     '  if ( R.z > 0.2 ) { gl_FragColor = vec4( 0.0 ); return; }',
