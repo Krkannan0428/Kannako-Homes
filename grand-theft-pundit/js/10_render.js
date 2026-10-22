@@ -993,37 +993,66 @@
       return total;
     },
     _disposeChunk: function (ch) {
-      ch.group.traverse(function (o) { if (o.geometry && o.userData.own) o.geometry.dispose(); });
+      ch.group.traverse(function (o) {
+        if (o.geometry && o.userData.own) o.geometry.dispose();
+        if (o.isInstancedMesh) o.dispose();   // its instanceMatrix / instanceColor buffers (geometry and material are shared)
+      });
+      // the per-chunk glow point materials (lamp heads, runway edge lights); every other material is shared and stays
+      if (ch.glowPts && ch.glowPts.material !== Render._beaconM) ch.glowPts.material.dispose();
+      if (ch.glowPts2 && ch.glowPts2.material !== Render._beaconM) ch.glowPts2.material.dispose();
       if (ch.group.parent) ch.group.parent.remove(ch.group);
+    },
+    _unbuildChunk: function (ch) {
+      Render._disposeChunk(ch);
+      Render.chunks.delete(ch.cx + ',' + ch.cz);
+      Render.stats.chunkUnbuilds = (Render.stats.chunkUnbuilds || 0) + 1;
     },
 
     // ------------------------------------------------------------- chunks --
-    // Build chunks near the camera (all needed ones at once in headless, a few per frame live).
+    // Build chunks near the camera (all needed ones at once in headless, a few per frame live, except that every chunk
+    // reaching inside the fog start is built at once: after a teleport, respawn or load the first frame has no hole where
+    // the street belongs, QA-A-CAM-07). Chunks beyond drawDistance + 140 m are unbuilt, two a frame (built inside
+    // drawDistance + 60: 80 m of hysteresis), so the resident set is the ring around the camera, not the whole city (QAC-10).
+    _want: [], _evict: [],
+    _byD: function (a, b) { return a.d - b.d; },
     ensureChunks: function () {
       var W = Render._World; if (!W.tiles) return;
-      var cam = Render.camera, cx = Math.floor(cam.position.x / (TILE * CH)), cz = Math.floor(cam.position.z / (TILE * CH));
+      var Q = C.QUALITY, cam = Render.camera, px = cam.position.x, pz = cam.position.z, S = TILE * CH;
+      // the entity draw ranges follow the fog actually drawn (preset, draw-distance setting, weather): peds are culled where
+      // the fog is pedFog thick, vehicles at vehicleFog, instead of popping in clear air (QA-A-CAM-08)
+      var fog = Render.scene && Render.scene.fog;
+      if (fog && fog.far > fog.near) { Q.pedDraw = Math.round(fog.near + (fog.far - fog.near) * (Q.pedFog || 0.6)); Q.vehicleDraw = Math.round(fog.near + (fog.far - fog.near) * (Q.vehicleFog || 0.75)); }
+      var cx = Math.floor(px / S), cz = Math.floor(pz / S);
       var nx = Math.ceil(W.w / CH), nz = Math.ceil(W.h / CH);
-      var reach = Math.ceil((C.QUALITY.drawDistance + 40) / (TILE * CH));
-      var budget = Render.headless ? 1e9 : (Render.chunks.size < 8 ? 1e9 : 3);
-      var want = [];
+      var reach = Math.ceil((Q.drawDistance + 40) / S), buildR = Q.drawDistance + 60, must = Q.fogStart || 120;
+      var budget = Render.headless || Render.chunks.size < 8 ? 1e9 : 3;
+      var want = Render._want; want.length = 0;
       for (var z = Math.max(0, cz - reach); z < Math.min(nz, cz + reach + 1); z++) for (var x = Math.max(0, cx - reach); x < Math.min(nx, cx + reach + 1); x++) {
-        var key = x + ',' + z, ch = Render.chunks.get(key);
-        var dx = (x + 0.5) * TILE * CH - cam.position.x, dz = (z + 0.5) * TILE * CH - cam.position.z, d = Math.sqrt(dx * dx + dz * dz);
-        if (!ch) { if (d < C.QUALITY.drawDistance + 60) want.push({ x: x, z: z, d: d }); }
-        else ch.group.visible = d < C.QUALITY.drawDistance + 70;
+        if (Render.chunks.has(x + ',' + z)) continue;
+        var dx = (x + 0.5) * S - px, dz = (z + 0.5) * S - pz, d = Math.sqrt(dx * dx + dz * dz);
+        if (d >= buildR) continue;
+        var ex = Math.max(x * S - px, 0, px - (x + 1) * S), ez = Math.max(z * S - pz, 0, pz - (z + 1) * S);   // to the chunk's nearest point
+        want.push({ x: x, z: z, d: d, must: ex * ex + ez * ez < must * must });
       }
-      want.sort(function (a, b) { return a.d - b.d; });
-      for (var i = 0; i < want.length && i < budget; i++) Render.buildChunk(want[i].x, want[i].z);
-      // hide chunks far from the camera; swap the LOD materials with a little hysteresis around QUALITY.lodDistance
-      var lod = C.QUALITY.lodDistance || 120, near = 0, farN = 0;
+      if (want.length) {
+        want.sort(Render._byD);
+        for (var i = 0, built = 0; i < want.length; i++) if (want[i].must || built < budget) { Render.buildChunk(want[i].x, want[i].z); built++; }
+      }
+      // hide chunks far from the camera; swap the LOD materials with a little hysteresis around QUALITY.lodDistance; unbuild
+      // the far ones (not while the camera is off the map: an interior room, a cutscene camera far out)
+      var lod = Q.lodDistance || 120, near = 0, farN = 0, show = Q.drawDistance + 70, drop = Q.drawDistance + 140;
+      var onMap = px >= 0 && pz >= 0 && px <= W.w * TILE && pz <= W.h * TILE, evict = Render._evict; evict.length = 0;
       Render.chunks.forEach(function (ch) {
-        var dx = (ch.cx + 0.5) * TILE * CH - cam.position.x, dz = (ch.cz + 0.5) * TILE * CH - cam.position.z, dd = Math.sqrt(dx * dx + dz * dz);
-        ch.group.visible = dd < C.QUALITY.drawDistance + 70;
+        var dx = (ch.cx + 0.5) * S - px, dz = (ch.cz + 0.5) * S - pz, dd = Math.sqrt(dx * dx + dz * dz);
+        ch.group.visible = dd < show;
+        if (onMap && dd > drop && evict.length < 2) evict.push(ch);
         if (!ch.group.visible) return;
         var wantFar = ch.far ? dd > lod + 24 : dd > lod + 48;
         if (wantFar !== ch.far) Render._setChunkLod(ch, wantFar);
         if (ch.far) farN++; else near++;
       });
+      for (var j = 0; j < evict.length; j++) Render._unbuildChunk(evict[j]);
+      evict.length = 0;
       Render.stats.lodNear = near; Render.stats.lodFar = farN;
     },
     _setChunkLod: function (ch, far) {
@@ -2361,7 +2390,7 @@
           } else {
             desired.x = t.x + dx * 0.15; desired.y = ty + C.PLAYER.eye; desired.z = t.z + dz * 0.15;
             // the eye is about 0.25 m from a wall the player faces: a 0.3 m near plane cut into the wall (QA-A-CAM-02)
-            r.near = CAM.nearFirst || 0.1;
+            r.near = CAM.nearFirst || 0.15;
           }
           // a real yaw / pitch direction (the old 6 m flat + 3 m drop capped the look-up near 10 degrees)
           var cp = Math.cos(r.pitch), spn = Math.sin(r.pitch);
