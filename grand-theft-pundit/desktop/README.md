@@ -8,6 +8,8 @@ and electron-builder wraps the result into installers. Around the game the deskt
 boot splash, remembered window size and full screen, automatic updates from GitHub Releases, a
 crash log, a mods folder and native menus.
 
+The current release is **v0.3.0** (the version in `package.json`).
+
 ## Download and install (for players)
 
 Grand Theft Pundit is free and made for friends; it is not from a big studio, so your computer may
