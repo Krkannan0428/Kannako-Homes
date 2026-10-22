@@ -442,7 +442,8 @@
   // Arms stopped a player 1.95 m from the 1.9 m light) and of the shops' door rings, off the road, 3 m or more out from the facade (a shop's walk-in door
   // stays its own trigger; never nearer than the door point already is) and not on another light. The door point first, then toward the building, then along the sidewalk
   function lightSpot(pt, landmarkId) {
-    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [], doors = Wd.doors || [];
+    var Wd = W(), T = Wd.T, lm = Wd.landmark ? Wd.landmark(landmarkId) : null, b = lm && lm.building, props = Wd.props || [], doors = Wd.doors || [], stores = [];
+    try { var CS = GTP.Combat && GTP.Combat.shop; stores = CS && typeof CS.stores === 'function' ? CS.stores() || [] : []; } catch (e) { stores = []; }
     var ix = 0, iz = 0;   // toward the building
     if (b) { var cx = U.clamp(pt.x, b.x, b.x + b.w), cz = U.clamp(pt.z, b.z, b.z + b.d), dl = U.dist2d(pt.x, pt.z, cx, cz); if (dl > 0.01) { ix = (cx - pt.x) / dl; iz = (cz - pt.z) / dl; } }
     else if (lm) { var ll = U.dist2d(pt.x, pt.z, lm.x, lm.z); if (ll > 0.01) { ix = (lm.x - pt.x) / ll; iz = (lm.z - pt.z) / ll; } }
@@ -458,6 +459,9 @@
       // a shop or safehouse door ring (World.doors, run by GTP.AI): stepping into it walks into the interior, so the light keeps
       // clear of it (the m01c light on the armory's own ring took the player inside before the mission could start)
       for (var q = 0; q < doors.length; q++) if (U.dist2d(doors[q].x, doors[q].z, x, z) < (doors[q].r || 1.4) + K.markerRadius + 0.6) return false;
+      // nor on Combat's green store light (3.2 m along the wall from a gun shop's door): the two 0.5 s holds raced, and the old
+      // shop page could open instead of m01c
+      for (var q2 = 0; q2 < stores.length; q2++) if (U.dist2d(stores[q2].x, stores[q2].z, x, z) < 2 * K.markerRadius + 0.8) return false;
       for (var k = 0; k < props.length; k++) { var pr = props[k]; if (pr.solid && Math.abs(pr.x - x) < 4 && Math.abs(pr.z - z) < 4 && U.dist2d(pr.x, pr.z, x, z) - (pr.r || 0.3) < clear) return false; }
       return true;
     }

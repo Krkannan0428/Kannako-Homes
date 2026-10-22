@@ -184,7 +184,9 @@ function installPlayer(budget) {
         const v = p.inVehicle; if (!v) { NP.releaseAll(); return { ok: false, why: 'not in a vehicle' }; }
         const pts = route.pts;
         while (i < pts.length - 1 && U.dist2d(v.x, v.z, pts[i].x, pts[i].z) < 6) i++;
-        let k = i; while (k < pts.length - 1 && U.dist2d(v.x, v.z, pts[k].x, pts[k].z) < 9) k++;
+        // look ahead along the line only as far as the straight way there is clear (a building corner, a kerb tree, a lamp):
+        // cutting the corner of the GPS line put the van against a kerb tree for a minute
+        let k = i; while (k < pts.length - 1 && U.dist2d(v.x, v.z, pts[k].x, pts[k].z) < 9 && NP.clearSeg(v, pts[k + 1])) k++;
         const tg = pts[k], d = U.dist2d(v.x, v.z, tg.x, tg.z), last = pts[pts.length - 1];
         const dEnd = U.dist2d(v.x, v.z, last.x, last.z);
         const err = U.wrapAngle(U.dirToYaw(tg.x - v.x, tg.z - v.z) - v.yaw);
@@ -227,6 +229,19 @@ function installPlayer(budget) {
       NP.releaseAll();
       const vv = p.inVehicle;
       return { ok: stop(), t, why: (NP.over() ? 'out of time' : 'gave up after ' + maxSec + ' s') + (vv ? ' at ' + Math.round(vv.x) + ',' + Math.round(vv.z) + (aheadT > 0 ? ', blocked ahead' : '') + ', overtakes ' + (NP.notes.overtakes || 0) : '') };
+    },
+    // a straight drive from a to b passes no building and no solid prop (a van is about 2 m wide)
+    clearSeg(a, b) {
+      const W = GTP.World;
+      if (W.segmentClear && !W.segmentClear(a.x, a.z, b.x, b.z, a.y || 0)) return false;
+      const props = W.props || [], minX = Math.min(a.x, b.x) - 2, maxX = Math.max(a.x, b.x) + 2, minZ = Math.min(a.z, b.z) - 2, maxZ = Math.max(a.z, b.z) + 2;
+      const dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1;
+      for (const pr of props) {
+        if (!pr.solid || pr.x < minX || pr.x > maxX || pr.z < minZ || pr.z > maxZ) continue;
+        const tt = Math.max(0, Math.min(1, ((pr.x - a.x) * dx + (pr.z - a.z) * dz) / L2)), qx = a.x + dx * tt - pr.x, qz = a.z + dz * tt - pr.z;
+        if (qx * qx + qz * qz < Math.pow(1.3 + (pr.r || 0.3), 2)) return false;
+      }
+      return true;
     },
     // the nearest objective blip on the minimap (pickups show one blip each), else the HUD arrow's point
     objectivePoint() {
