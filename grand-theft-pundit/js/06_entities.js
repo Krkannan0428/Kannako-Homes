@@ -40,12 +40,27 @@
   function shake(a) { if (GTP.Render && GTP.Render.rig) GTP.Render.rig.shake(a); }
   function player() { return GTP.game ? GTP.game.player : null; }
   function isWaterTile(x, z) { var Wd = W(), t = Wd.tileAt(x, z); return t === Wd.T.WATER || t === Wd.T.VOID; }
+  // in the sea at (x, z) for a body at height y: a water tile AND the surface under that height is the sea (a Loop viaduct
+  // deck over the bay is a water tile too, but its surface is the deck at DECK_Y)
+  function inWaterAt(x, z, y) { return isWaterTile(x, z) && W().heightAt(x, z, y) <= WATER_Y + 0.05; }
+  // entity draw range: never closer than where the scene fog already hides an entity (fog near + 85% of the fog band),
+  // so a ped / car is culled inside the fog, not in clear air; the quality setting is the floor and DRAW_CAP the ceiling
+  var DRAW_CAP = 320;
+  function drawLimit(base) {
+    var R = GTP.Render, fog = R && R.scene && R.scene.fog;
+    if (!fog || !(fog.far > fog.near)) return base;
+    return Math.max(base || 0, Math.min(DRAW_CAP, fog.near + 0.85 * (fog.far - fog.near)));
+  }
   // mesh distance cull against the camera (fog hides the pop; keeps draw calls bounded in a full city)
   function tooFar(e, limit) {
     var cam = GTP.Render && GTP.Render.camera; if (!cam || !limit) return false;
+    limit = drawLimit(limit);
     var dx = e.x - cam.position.x, dz = e.z - cam.position.z;
     return dx * dx + dz * dz > limit * limit;
   }
+  // hot-path scratch (QAC-48): vehicle / ped physics reuse these instead of allocating per step
+  var WHEEL_SIGN = [[-1, 1], [1, 1], [-1, -1], [1, -1]];   // wheel sample corners (right sign, forward sign)
+  var pushPed = { px: 0, pz: 0, nx: 0, nz: 0, depth: 0 }, pushVeh = { px: 0, pz: 0, nx: 0, nz: 0, depth: 0 }, pushDoor = { px: 0, pz: 0, nx: 0, nz: 0, depth: 0 };
 
   // ================================================================== Entity ==
   class Entity {
@@ -316,9 +331,12 @@
       var r = Wd.resolveCapsule(nx, nz, this.y, this.radius);
       this.x = r.x; this.z = r.z;
       var ground = Wd.heightAt(this.x, this.z, this.y + 0.5);
+      // slid off a ledge (a deck edge): fall instead of snapping down to the ground below
+      if (this.onGround && ground < this.y - 0.6) { this.onGround = false; this.vy = Math.min(this.vy, 0); }
       if (!this.onGround) { this.y += this.vy * dt; if (this.vy <= 0 && this.y <= ground) { this.y = ground; this.vy = 0; this.onGround = true; } }
-      else { this.y = ground; if (ground < this.y - 0.6) this.onGround = false; }
-      if (isWaterTile(this.x, this.z) && this.y <= WATER_Y + 0.45) { this.knockedDown = false; this.downT = 0; this._startSwim(); return; }
+      else this.y = ground;
+      // the sea only when the body is down at the water surface (a viaduct deck over the bay is a water tile too)
+      if (this.y <= WATER_Y + 0.45 && inWaterAt(this.x, this.z, this.y + 0.5)) { this.knockedDown = false; this.downT = 0; this._startSwim(); return; }
       this.animTime += dt;
       if (this.downT <= 0 && this.onGround) { this.knockedDown = false; this.state = 'idle'; this.animPhase = 0; }
       this.speed = this.speed2d();
@@ -342,7 +360,7 @@
         var v = list[i];
         if (v.kind !== 'vehicle' || v.removed) continue;
         if (Math.abs(v.y - this.y) > 2.5) continue;
-        var p = v.pushCircle(this.x, this.z, this.radius);
+        var p = v._pushCircleInto(this.x, this.z, this.radius, pushPed);
         if (!p) continue;
         this.x += p.px; this.z += p.pz;
         var vn = this.vx * p.nx + this.vz * p.nz;
@@ -443,9 +461,9 @@
         torso: m.getObjectByName('torso'), head: m.getObjectByName('head'), body: m.getObjectByName('body') || m
       });
       var vx = v._px + (v.x - v._px) * a, vy = v._py + (v.y - v._py) * a, vz = v._pz + (v.z - v._pz) * a;
-      var yaw = v._pyaw + U.wrapAngle(v.yaw - v._pyaw) * a, f = U.yawToDir(yaw);
+      var yaw = v._pyaw + U.wrapAngle(v.yaw - v._pyaw) * a, fx0 = -Math.sin(yaw), fz0 = -Math.cos(yaw);
       // the saddle sits 0.86 m up and 0.3 m behind the bike's centre; the hips are 0.84 m above the feet
-      m.position.set(vx - f.x * 0.3, vy + 0.03, vz - f.z * 0.3);
+      m.position.set(vx - fx0 * 0.3, vy + 0.03, vz - fz0 * 0.3);
       m.rotation.set(0, yaw, 0, 'YXZ');
       if (parts.legL) {
         parts.legL.rotation.x = 1.0; parts.legR.rotation.x = 1.0;
@@ -502,8 +520,8 @@
     get hw() { return this.cls.width / 2; }
     forward() { return U.yawToDir(this.yaw); }
     // local (right, forward) -> world
-    localToWorld(lr, lf) { var f = U.yawToDir(this.yaw); return { x: this.x + (-f.z) * lr + f.x * lf, z: this.z + f.x * lr + f.z * lf }; }
-    worldToLocal(x, z) { var f = U.yawToDir(this.yaw), dx = x - this.x, dz = z - this.z; return { r: dx * (-f.z) + dz * f.x, f: dx * f.x + dz * f.z }; }
+    localToWorld(lr, lf) { var fX = -Math.sin(this.yaw), fZ = -Math.cos(this.yaw); return { x: this.x + (-fZ) * lr + fX * lf, z: this.z + fX * lr + fZ * lf }; }
+    worldToLocal(x, z) { var fX = -Math.sin(this.yaw), fZ = -Math.cos(this.yaw), dx = x - this.x, dz = z - this.z; return { r: dx * (-fZ) + dz * fX, f: dx * fX + dz * fZ }; }
     occupants() { var o = []; if (this.driver) o.push(this.driver); for (var i = 0; i < this.passengers.length; i++) o.push(this.passengers[i]); return o; }
     hasPlayer() { var p = player(); return !!p && p.inVehicle === this; }
     setControls(throttle, steer, handbrake, brake) { this.throttle = throttle || 0; this.steer = steer || 0; this.handbrake = !!handbrake; this.brake = brake || 0; }
@@ -521,17 +539,26 @@
       return Math.min(U.dist2d(px, pz, a.x, a.z), U.dist2d(px, pz, b.x, b.z), this.edgeDistance(px, pz) + 0.4);
     }
     edgeDistance(px, pz) {
-      var l = this.worldToLocal(px, pz), dr = Math.max(0, Math.abs(l.r) - this.hw), df = Math.max(0, Math.abs(l.f) - this.hl);
+      var fx0 = -Math.sin(this.yaw), fz0 = -Math.cos(this.yaw), dx = px - this.x, dz = pz - this.z;
+      var lr = dx * (-fz0) + dz * fx0, lf = dx * fx0 + dz * fz0;
+      var dr = Math.max(0, Math.abs(lr) - this.hw), df = Math.max(0, Math.abs(lf) - this.hl);
       return Math.sqrt(dr * dr + df * df);
     }
-    // circle vs this oriented box: {px, pz, nx, nz, depth} push-out for the circle or null
+    // circle vs this oriented box: {px, pz, nx, nz, depth} push-out for the circle or null (a fresh object: callers may keep it)
     pushCircle(cx, cz, r) {
-      var l = this.worldToLocal(cx, cz), hw = this.hw + r, hl = this.hl + r;
-      if (Math.abs(l.r) >= hw || Math.abs(l.f) >= hl) return null;
-      var dr = hw - Math.abs(l.r), df = hl - Math.abs(l.f), f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x, nx, nz, depth;
-      if (dr < df) { var s = l.r < 0 ? -1 : 1; nx = rx * s; nz = rz * s; depth = dr; }
-      else { var s2 = l.f < 0 ? -1 : 1; nx = f.x * s2; nz = f.z * s2; depth = df; }
-      return { px: nx * (depth + 0.01), pz: nz * (depth + 0.01), nx: nx, nz: nz, depth: depth };
+      return this._pushCircleInto(cx, cz, r, null);
+    }
+    // the same test writing into `out` (no allocation; a miss allocates nothing); out == null -> a fresh object on a hit
+    _pushCircleInto(cx, cz, r, out) {
+      var hw = this.hw + r, hl = this.hl + r, fx0 = -Math.sin(this.yaw), fz0 = -Math.cos(this.yaw), rx = -fz0, rz = fx0;
+      var dx = cx - this.x, dz = cz - this.z, lr = dx * rx + dz * rz, lf = dx * fx0 + dz * fz0;
+      if (Math.abs(lr) >= hw || Math.abs(lf) >= hl) return null;
+      var dr = hw - Math.abs(lr), df = hl - Math.abs(lf), nx, nz, depth;
+      if (dr < df) { var s = lr < 0 ? -1 : 1; nx = rx * s; nz = rz * s; depth = dr; }
+      else { var s2 = lf < 0 ? -1 : 1; nx = fx0 * s2; nz = fz0 * s2; depth = df; }
+      if (!out) return { px: nx * (depth + 0.01), pz: nz * (depth + 0.01), nx: nx, nz: nz, depth: depth };
+      out.px = nx * (depth + 0.01); out.pz = nz * (depth + 0.01); out.nx = nx; out.nz = nz; out.depth = depth;
+      return out;
     }
 
     enter(ped, seat) {
@@ -553,7 +580,8 @@
       if (ped.kind === 'player') ped.vehicle = null;
       var spot = this.doorSpot(ped);
       ped.x = spot.x; ped.z = spot.z; ped.y = W().heightAt(spot.x, spot.z, this.y + 0.5);
-      if (this.sinking || isWaterTile(ped.x, ped.z)) { ped.y = WATER_Y + 0.25; ped.swimming = true; ped.onGround = false; }
+      // the sea only when the surface under the door is the water (not a viaduct deck over a water tile)
+      if (this.sinking || (ped.y <= WATER_Y + 0.45 && isWaterTile(ped.x, ped.z))) { ped.y = WATER_Y + 0.25; ped.swimming = true; ped.onGround = false; }
       else { ped.onGround = true; ped.swimming = false; }
       ped.yaw = this.yaw; ped.vx = ped.vz = ped.vy = 0; ped.state = 'idle'; ped.snap();
       if (ped._sh) GTP.Entities.hash.update(ped);
@@ -563,7 +591,8 @@
       GTP.Events.emit('vehicle:exit', { vehicle: this, ped: ped });
       return true;
     }
-    // a free spot beside a door: driver side first, then the other side, then the rear
+    // a free spot beside a door: driver side first, then the other side, then the rear, then the front. A spot whose
+    // surface is more than 1 m below the car (past a Loop deck edge, off a ramp side) is not a door spot.
     doorSpot(ped) {
       var Wd = W(), r = ped ? ped.radius : C.PED.radius, y = this.y + 0.5;
       var cands = [this.doorWorld(0), this.doorWorld(1), this.doorWorld(2), this.localToWorld(0, this.hl + 0.8)];
@@ -572,9 +601,10 @@
         if (Wd.solidAt(c.x, c.z, y)) continue;
         var res = Wd.resolveCapsule(c.x, c.z, y, r), rx = res.x, rz = res.z;
         if (Wd.solidAt(rx, rz, y)) continue;
+        if (Wd.heightAt(rx, rz, y) < this.y - 1) continue;
         // never leave the ped inside another vehicle
         var list = GTP.Entities.hash.query(rx, rz, r + 6, scratch2), blocked = false;
-        for (var k = 0; k < list.length; k++) if (list[k] !== this && list[k].kind === 'vehicle' && list[k].pushCircle(rx, rz, r)) { blocked = true; break; }
+        for (var k = 0; k < list.length; k++) if (list[k] !== this && list[k].kind === 'vehicle' && list[k]._pushCircleInto(rx, rz, r, pushDoor)) { blocked = true; break; }
         if (blocked) continue;
         return { x: rx, z: rz, side: i };
       }
@@ -678,9 +708,9 @@
         if (this.wreck) { this.wreckT += dt; if (this.wreckT > PH.wreckSeconds && !this.persistent) this.destroy(); }
         return;
       }
-      // frame
-      var f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x;
-      var vf = this.vx * f.x + this.vz * f.z, vl = this.vx * rx + this.vz * rz;
+      // frame (forward f = yawToDir(yaw), inlined: this runs for every moving vehicle every step)
+      var fX = -Math.sin(this.yaw), fZ = -Math.cos(this.yaw), rx = -fZ, rz = fX;
+      var vf = this.vx * fX + this.vz * fZ, vl = this.vx * rx + this.vz * rz;
       var tile = Wd.tileAt(this.x, this.z), T = Wd.T;
       this.offroad = tile === T.GRASS || tile === T.SAND;
       var maxSpeed = cls.maxSpeed * (this.offroad ? PH.offroadSpeed : 1);
@@ -712,11 +742,14 @@
       this.yaw = U.wrapAngle(this.yaw + this.yawRate * dt);
       this.wheelSteer = U.damp(this.wheelSteer, -delta, 14, dt);
       // recompose in the old frame: the heading rotated, so the next step sees lateral slip
-      this.vx = vf * f.x + vl * rx; this.vz = vf * f.z + vl * rz;
+      this.vx = vf * fX + vl * rx; this.vz = vf * fZ + vl * rz;
       var x0 = this.x, z0 = this.z;
       this.x += this.vx * dt; this.z += this.vz * dt;
       // vertical: four wheel samples
       var g = this._sampleWheels();
+      // a vertical face (a stunt wedge's 1.3 m front or sides): a wheel that rose more than 0.5 m this step is a wall, not a step
+      if (this.onGround && this._wallStep(g, x0, z0, dt)) g = this._sampleWheels();
+      this._keepWheels();
       if (this.onGround) {
         if (g.c < this.y - 0.35) { this.onGround = false; this.vy = 0; }
         else { this.y = Math.abs(g.c - this.y) > 0.4 ? g.c : U.damp(this.y, g.c, 40, dt); if (Math.abs(this.y - g.c) < 0.01) this.y = g.c; }
@@ -740,8 +773,8 @@
       this._collideVehicles(near);
       this._collidePeds(near);
       // re-derive the decomposition
-      f = U.yawToDir(this.yaw); rx = -f.z; rz = f.x;
-      this.speed = this.vx * f.x + this.vz * f.z; this.lateral = this.vx * rx + this.vz * rz;
+      fX = -Math.sin(this.yaw); fZ = -Math.cos(this.yaw); rx = -fZ; rz = fX;
+      this.speed = this.vx * fX + this.vz * fZ; this.lateral = this.vx * rx + this.vz * rz;
       if (Math.abs(this.speed) < 0.15 && Math.abs(this.lateral) < 0.15 && !throttle && this.onGround) { this.vx = this.vz = 0; this.speed = 0; this.lateral = 0; }
       this.reversing = this.speed < -0.8;
       this.reverseTime = this.reversing ? this.reverseTime + dt : 0;
@@ -758,11 +791,15 @@
       if (this._restOk) { this._restX = this.x; this._restY = this.y; this._restZ = this.z; this._restYaw = this.yaw; }
       void x0; void z0;
     }
+    // the four wheel heights (this.wheelY) and their world points (this._wheelX / _wheelZ); returns this vehicle's reused
+    // {c, pitch, roll} (one object per vehicle, rewritten every call)
     _sampleWheels() {
-      var Wd = W(), hw = this.hw * 0.9, hl = this.hl * 0.75, f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x, y = this.y;
-      var pts = [[-hw, hl], [hw, hl], [-hw, -hl], [hw, -hl]], h = this.wheelY, mx = -1e9;
+      var Wd = W(), hw = this.hw * 0.9, hl = this.hl * 0.75, fx0 = -Math.sin(this.yaw), fz0 = -Math.cos(this.yaw), rx = -fz0, rz = fx0, y = this.y;
+      var h = this.wheelY, wx = this._wheelX || (this._wheelX = [0, 0, 0, 0]), wz = this._wheelZ || (this._wheelZ = [0, 0, 0, 0]), mx = -1e9;
       for (var i = 0; i < 4; i++) {
-        var px = this.x + rx * pts[i][0] + f.x * pts[i][1], pz = this.z + rz * pts[i][0] + f.z * pts[i][1];
+        var sr = WHEEL_SIGN[i][0] * hw, sf = WHEEL_SIGN[i][1] * hl;
+        var px = this.x + rx * sr + fx0 * sf, pz = this.z + rz * sr + fz0 * sf;
+        wx[i] = px; wz[i] = pz;
         h[i] = Wd.heightAt(px, pz, y);
         if (h[i] > mx) mx = h[i];
       }
@@ -772,25 +809,71 @@
       var c = n ? sum / n : mx;
       var hf = (Math.max(h[0], mx - 1.6) + Math.max(h[1], mx - 1.6)) / 2, hr = (Math.max(h[2], mx - 1.6) + Math.max(h[3], mx - 1.6)) / 2;
       var hL = (Math.max(h[0], mx - 1.6) + Math.max(h[2], mx - 1.6)) / 2, hR = (Math.max(h[1], mx - 1.6) + Math.max(h[3], mx - 1.6)) / 2;
-      return { c: c, pitch: Math.atan2(hf - hr, 2 * hl), roll: Math.atan2(hR - hL, 2 * hw) };
+      var o = this._wheelOut || (this._wheelOut = { c: 0, pitch: 0, roll: 0 });
+      o.c = c; o.pitch = Math.atan2(hf - hr, 2 * hl); o.roll = Math.atan2(hR - hL, 2 * hw);
+      return o;
     }
+    // remember this step's wheel points / heights for the next step's wall test
+    _keepWheels() {
+      var px = this._wheelPX || (this._wheelPX = [0, 0, 0, 0]), pz = this._wheelPZ || (this._wheelPZ = [0, 0, 0, 0]), ph = this._wheelPY || (this._wheelPY = [0, 0, 0, 0]);
+      for (var i = 0; i < 4; i++) { px[i] = this._wheelX[i]; pz[i] = this._wheelZ[i]; ph[i] = this.wheelY[i]; }
+      this._wheelPrevOk = true;
+    }
+    // QA-A-DRV-08: a wheel whose ground rose more than 0.5 m since the last step drove into a vertical face (a stunt wedge's
+    // tall front or its sides; the Loop ramps and the wedge's own slope rise a few cm per step). The car goes back to where
+    // the step started, loses its speed into the face and takes the normal wall impact. Returns true when it hit.
+    // The rise is confirmed by sampling the wheel's previous point again at the current height hint (a wheel moving from a
+    // ramp onto the deck reads the ground at one hint and the deck at another), and a wheel that was hanging (over the sea,
+    // off an edge) may come back up.
+    _wallStep(g, x0, z0, dt) {
+      if (!this._wheelPrevOk) return false;
+      var Wd = W(), h = this.wheelY, px = this._wheelPX, pz = this._wheelPZ, ph = this._wheelPY;
+      var maxMove = Math.max(1.5, this.speed2d() * dt * 2 + 0.5), nx = 0, nz = 0, hits = 0, hx = 0, hz = 0;
+      for (var i = 0; i < 4; i++) {
+        if (h[i] - ph[i] <= 0.5) continue;
+        var dx = this._wheelX[i] - px[i], dz = this._wheelZ[i] - pz[i];
+        if (dx * dx + dz * dz > maxMove * maxMove) continue;   // teleported / respawned: no previous point to compare
+        var before = Wd.heightAt(px[i], pz[i], this.y);
+        if (before <= WATER_Y + 0.05 || before < this.y - 0.9) continue;   // a hanging wheel coming back up
+        if (h[i] - before <= 0.5) continue;
+        nx -= this._wheelX[i] - this.x; nz -= this._wheelZ[i] - this.z; hx += this._wheelX[i]; hz += this._wheelZ[i]; hits++;
+      }
+      if (!hits) return false;
+      var nl = Math.sqrt(nx * nx + nz * nz);
+      if (nl < 1e-6) { nx = -this.vx; nz = -this.vz; nl = Math.sqrt(nx * nx + nz * nz) || 1; }
+      nx /= nl; nz /= nl;
+      this.x = x0; this.z = z0;
+      var PH = C.PHYS, vn = this.vx * nx + this.vz * nz;
+      this.lastCollision = this.age;
+      if (vn < 0) {
+        var impact = -vn;
+        this.vx -= (1 + PH.restitution) * vn * nx; this.vz -= (1 + PH.restitution) * vn * nz;
+        this.vx *= PH.scrape; this.vz *= PH.scrape;
+        hx /= hits; hz /= hits;
+        if (impact > PH.damageSpeed) this._impact(impact, hx, hz, nx, nz, 'wall');
+        else if (impact > 1.5 && this.age - this._sparkT > 0.2) { this._sparkT = this.age; fx({ type: 'spark', x: hx, y: this.y + 0.4, z: hz, vx: nx * 2, vy: 1.5, vz: nz * 2, size: 0.4, life: 0.25 }); }
+      }
+      return true;
+    }
+    // the driver and passengers ride with the car (iterated in place: no occupants() array per step)
     _syncOccupants() {
-      var occ = this.occupants();
-      for (var i = 0; i < occ.length; i++) {
-        var o = occ[i];
+      var d = this.driver, n = this.passengers.length, sp = -1;
+      for (var i = -1; i < n; i++) {
+        var o = i < 0 ? d : this.passengers[i];
+        if (!o) continue;
         o.x = this.x; o.y = this.y; o.z = this.z; o.yaw = this.yaw; o.vx = this.vx; o.vz = this.vz; o.vy = this.vy;
-        if (o.kind === 'player') o.stats.distanceDriven = (o.stats.distanceDriven || 0) + this.speed2d() * C.STEP;
+        if (o.kind === 'player') { if (sp < 0) sp = this.speed2d(); o.stats.distanceDriven = (o.stats.distanceDriven || 0) + sp * C.STEP; }
         if (o._sh) GTP.Entities.hash.update(o);
       }
     }
 
     // --- buildings, props, barriers, map edge: oriented box points vs the world ---
     _collideWorld(dt) {
-      var Wd = W(), PH = C.PHYS, pts = this._coll.pts, f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x;
+      var Wd = W(), PH = C.PHYS, pts = this._coll.pts, fX = -Math.sin(this.yaw), fZ = -Math.cos(this.yaw), rx = -fZ, rz = fX;
       var I = (this.cls.length * this.cls.length + this.cls.width * this.cls.width) / 12;
       var impactMax = 0, ix = 0, iz = 0, inx = 0, inz = 0, hit = false;
       for (var i = 0; i < pts.length; i++) {
-        var p = pts[i], ox = rx * p.r + f.x * p.f, oz = rz * p.r + f.z * p.f;
+        var p = pts[i], ox = rx * p.r + fX * p.f, oz = rz * p.r + fZ * p.f;
         var px = this.x + ox, pz = this.z + oz;
         var gy = Math.max(this.y, Wd.heightAt(px, pz, this.y)) + 0.1;
         var res = Wd.resolveCapsule(px, pz, gy, p.rad);
@@ -873,17 +956,17 @@
     }
     _collidePair(o) {
       var PH = C.PHYS, A = this._coll.circles, B = o._coll.circles;
-      var fa = U.yawToDir(this.yaw), fb = U.yawToDir(o.yaw);
+      var faX = -Math.sin(this.yaw), faZ = -Math.cos(this.yaw), fbX = -Math.sin(o.yaw), fbZ = -Math.cos(o.yaw);
       var ma = this.wreck ? this.mass * 3 : this.mass, mb = o.wreck ? o.mass * 3 : o.mass, inv = 1 / (ma + mb);
       var best = 0, bx = 0, bz = 0, bnx = 0, bnz = 0;
       for (var i = 0; i < A.length; i++) {
-        var ax = this.x + fa.x * A[i].f, az = this.z + fa.z * A[i].f;
+        var ax = this.x + faX * A[i].f, az = this.z + faZ * A[i].f;
         for (var j = 0; j < B.length; j++) {
-          var ox = o.x + fb.x * B[j].f, oz = o.z + fb.z * B[j].f;
+          var ox = o.x + fbX * B[j].f, oz = o.z + fbZ * B[j].f;
           var dx = ox - ax, dz = oz - az, rr = A[i].rad + B[j].rad, d2 = dx * dx + dz * dz;
           if (d2 >= rr * rr) continue;
           var d = Math.sqrt(d2) || 0.001, nx = dx / d, nz = dz / d, pen = rr - d + 0.01;
-          if (d2 < 1e-6) { nx = fa.x; nz = fa.z; }
+          if (d2 < 1e-6) { nx = faX; nz = faZ; }
           this.x -= nx * pen * mb * inv; this.z -= nz * pen * mb * inv;
           o.x += nx * pen * ma * inv; o.z += nz * pen * ma * inv;
           var vrel = (o.vx - this.vx) * nx + (o.vz - this.vz) * nz;
@@ -913,7 +996,7 @@
         var p = list[i];
         if ((p.kind !== 'ped' && p.kind !== 'player') || p.inVehicle || p.removed) continue;
         if (p.y > this.y + this.cls.height || p.y < this.y - 1.5) continue;
-        var push = this.pushCircle(p.x, p.z, p.radius);
+        var push = this._pushCircleInto(p.x, p.z, p.radius, pushVeh);
         if (!push) continue;
         var vn = this.vx * push.nx + this.vz * push.nz;   // vehicle speed toward the ped
         if (sp > C.PED.knockdownSpeed && vn > 1 && p.alive && !p.knockedDown) {
@@ -943,11 +1026,12 @@
         this._skidT += sp * dt;
         if (this._skidT > 0.7) {
           this._skidT = 0;
-          var f = U.yawToDir(this.yaw), rx = -f.z, rz = f.x, hw = this.hw * 0.78, hl = this.hl * 0.62;
+          var fX = -Math.sin(this.yaw), fZ = -Math.cos(this.yaw), rx = -fZ, rz = fX, hw = this.hw * 0.78, hl = this.hl * 0.62, Wd = W();
           var ang = U.dirToYaw(this.vx, this.vz);
           for (var s = -1; s <= 1; s += 2) {
-            var wx = this.x + rx * hw * s - f.x * hl, wz = this.z + rz * hw * s - f.z * hl;
-            fx({ type: 'skid', x: wx, y: this.y, z: wz, size: 0.26, size2: 0.9, rot: ang, life: 14 });
+            var wx = this.x + rx * hw * s - fX * hl, wz = this.z + rz * hw * s - fZ * hl;
+            // the mark lies on the surface under the rear wheel itself (on a ramp it is up to 0.3 m off the car centre's height)
+            fx({ type: 'skid', x: wx, y: Wd.heightAt(wx, wz, this.y + 0.5), z: wz, size: 0.26, size2: 0.9, rot: ang, life: 14 });
           }
           if (this.hasPlayer() && R.chance(0.5)) sfx('skid', this.x, this.z, 0.4);
         }
@@ -979,7 +1063,9 @@
       m.rotation.set(this.pitch, this._pyaw + U.wrapAngle(this.yaw - this._pyaw) * a, this.roll, 'YXZ');
       var pl = player(), hidden = pl && pl.inVehicle === this && pl.cameraMode === 'first';
       m.visible = !hidden && !tooFar(this, C.QUALITY.vehicleDraw);
-      if (m.visible && GTP.Render && GTP.Render.syncVehicle) GTP.Render.syncVehicle(this);
+      // the player's car keeps its headlight spot / light states placed while its body is hidden (first person):
+      // Render.syncVehicle poses the wheels, the light materials and Render.lights.headlight, and never shows the mesh
+      if ((m.visible || (pl && pl.inVehicle === this)) && GTP.Render && GTP.Render.syncVehicle) GTP.Render.syncVehicle(this);
     }
   }
 
@@ -1121,7 +1207,7 @@
         var e = list[i];
         if (e === this.owner || e.removed || (e.kind !== 'ped' && e.kind !== 'player' && e.kind !== 'vehicle')) continue;
         if (e.inVehicle) continue;
-        if (e.kind === 'vehicle') { if (e.pushCircle(this.x, this.z, this.radius) && this.y < e.y + e.cls.height + 0.3 && this.y > e.y - 0.3) { this.hit(e); return; } }
+        if (e.kind === 'vehicle') { if (e._pushCircleInto(this.x, this.z, this.radius, pushDoor) && this.y < e.y + e.cls.height + 0.3 && this.y > e.y - 0.3) { this.hit(e); return; } }
         else if (U.dist2d(e.x, e.z, this.x, this.z) < e.radius + this.radius && this.y > e.y - 0.2 && this.y < e.y + e.height + 0.2) { this.hit(e); return; }
       }
     }
@@ -1187,6 +1273,8 @@
     list: [],
     hash: new GTP.SpatialHash(16),
     _despawnT: 0,
+    // the entity cull range for a quality draw setting under the current scene fog (QA-A-CAM-08); ped / rider mesh syncs in other modules should cull with it too
+    drawLimit: drawLimit,
     add: function (e) {
       if (e._inList) return e;
       e._inList = true; e.removed = false;

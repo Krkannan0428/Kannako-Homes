@@ -151,7 +151,7 @@ H.run('actors', async (t) => {
     GTP.game.advance(0.05);
     const hp0 = v.hp;
     let peak = 0, shake = 0, inside = 0, minSpeedAfterPeak = 1e9, hitAt = -1, imp = null, sparks = 0;
-    GTP.Events.on('vehicle:impact', (e) => { if (!imp) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });
+    GTP.Events.on('vehicle:impact', (e) => { if (!imp && e.vehicle === v) imp = { impact: +e.impact.toFixed(1), kind: e.kind }; });   // this car's, not a bump elsewhere in the city
     GTP.Input.set('forward', true);
     for (let i = 0; i < 240; i++) {
       GTP.game.advance(1 / 60);
@@ -417,6 +417,31 @@ H.run('actors', async (t) => {
   });
   console.log('  beam: ' + JSON.stringify(beam));
   t.assert(beam.on > beam.off + 6, 'the headlight spot lights the road ahead: ' + JSON.stringify(beam));
+
+  // v0.3 QA fixes in 06_entities: viaduct / barrier exits stay on the deck (QA-A-DRV-01/02), a wedge's tall face is a wall
+  // (QA-A-DRV-08), the first-person headlight follows the car (QA-A-ENT-10), wheel sampling reuses its result (QAC-48)
+  const qa = await page.evaluate(() => {
+    const g = GTP.game, p = g.player, U = GTP.util, W = GTP.World, In = GTP.Input, out = {};
+    if (p.inVehicle) { const o = p.inVehicle; o.vx = o.vz = 0; p.exitVehicle(); g.advance(0.1); o.destroy(); }
+    const exitAt = (x, z, yaw) => { const v = g.debug.spawnVehicle(x, z, 'sedan', { yaw, y: 7 }); v.y = 7; g.debug.teleport(x, z, 7); v.enter(p, 0); g.advance(0.2); p.exitVehicle(); g.advance(0.3); const r = { y: +p.y.toFixed(2), swim: !!p.swimming }; v.destroy(); g.debug.teleport(300, 300); g.advance(0.1); return r; };
+    out.viaduct = exitAt(424, 540, Math.PI); out.barrier = exitAt(177.2, 300, 0);
+    const s = W.stuntRamps.find((q) => q.id === 'sj_01'), f = U.yawToDir(s.yaw);
+    const v = g.debug.spawnVehicle(s.x + f.x * 14, s.z + f.z * 14, 'sedan', { yaw: U.dirToYaw(-f.x, -f.z) }); g.debug.teleport(v.x, v.z); v.enter(p, 0); g.advance(0.1);
+    let hits = 0; const on = (e) => { if (e.vehicle === v && e.kind === 'wall') hits++; }; GTP.Events.on('vehicle:impact', on);
+    p.cameraMode = 'first'; In.set('forward', true); let maxY = 0; for (let i = 0; i < 75; i++) { g.advance(1 / 30); maxY = Math.max(maxY, v.y); } In.set('forward', false);
+    if (GTP.Events.off) GTP.Events.off('vehicle:impact', on);
+    g.render(); const L = GTP.Render.lights.headlight;
+    out.wedge = { maxY: +(maxY - s.y).toFixed(2), hits };
+    out.fpHead = +Math.hypot(L.position.x - v.x, L.position.z - v.z).toFixed(1); out.bodyHidden = !v.mesh.visible;
+    out.wheelReuse = v._sampleWheels() === v._sampleWheels();
+    p.cameraMode = 'chase'; v.vx = v.vz = 0; g.advance(0.1); p.exitVehicle(); g.advance(0.1); v.destroy();
+    return out;
+  });
+  console.log('  qa fixes: ' + JSON.stringify(qa));
+  t.assert(qa.viaduct.y > 6 && !qa.viaduct.swim && qa.barrier.y > 6, 'stepping out on the Loop deck (viaduct, against a barrier) stays on the deck: ' + JSON.stringify(qa));
+  t.assert(qa.wedge.maxY < 0.5 && qa.wedge.hits > 0, 'a stunt wedge\'s tall face stops a car with a wall impact: ' + JSON.stringify(qa.wedge));
+  t.assert(qa.bodyHidden && qa.fpHead < 4, 'first-person headlight stays at the car nose with the body hidden: ' + JSON.stringify(qa));
+  t.assert(qa.wheelReuse, 'Vehicle._sampleWheels reuses its result object');
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

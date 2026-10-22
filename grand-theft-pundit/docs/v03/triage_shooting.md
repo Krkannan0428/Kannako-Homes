@@ -35,13 +35,13 @@ All of these were fixed in the first shooting round. Their regressions are `test
 
 | id | status | where / what |
 |---|---|---|
-| QA-A-DRV-01 exit on the viaduct drops you into the sea | see below | `06_entities.js` |
-| QA-A-DRV-02 exit at the deck barrier lands on the street | see below | `06_entities.js` |
-| QA-A-DRV-08 cars climb the 1.3 m wedge face | see below | `06_entities.js` |
-| QA-A-CAM-08 peds and cars pop in clear air | see below | `06_entities.js` `tooFar` |
-| QA-A-ENT-04 skid marks float or bury on slopes | see below | `06_entities.js` |
+| QA-A-DRV-01 exit on the viaduct drops you into the sea | **fixed** | `Vehicle.exit` and `Ped._down` test whether the surface under the ped is the sea, not the ground tile. `_down` also fixes a line-order bug: a downed ped never fell off a ledge. Player now ends at y 7 on the deck (was -0.9, swimming) |
+| QA-A-DRV-02 exit at the deck barrier lands on the street | **fixed** | `Vehicle.doorSpot` skips spots whose surface is more than 1 m below the car (3/3 cases on the deck) |
+| QA-A-DRV-08 cars climb the 1.3 m wedge face | **fixed** | `Vehicle._wallStep` / `_keepWheels`: a wheel that rises more than 0.5 m in one step is a wall impact (unless it was over the sea or an edge). Wedge ramp faces, Loop ramps and kerbs are unchanged |
+| QA-A-CAM-08 peds and cars pop in clear air | **fixed for cars**, not-mine for peds | `GTP.Entities.drawLimit(base)`: never cull before fog near + 85% of the band (cap 320 m); cars are drawn to about 240 m. **Models / vehicles ask:** `06c_animation.js` and `06b` replace `Ped.syncMesh` with their own 110 m cull. Have both call `GTP.Entities.drawLimit(C.QUALITY.pedDraw)` |
+| QA-A-ENT-04 skid marks float or bury on slopes | **fixed** | `_surfaceFx` takes each mark's height from the ground under it (0 m off the ramp, was up to ±0.3 m). The decal is still flat (Render) |
 | QA-A-ENT-09 swimmers lie on the water | not-mine | the swim body pose is drawn by the models track (`06c_animation.js` / `Ped.syncMesh`). The physics height is unchanged |
-| QA-A-ENT-10 first-person headlights stay behind | see below | `06_entities.js` `Vehicle.syncMesh` |
+| QA-A-ENT-10 first-person headlights stay behind | **fixed** | `Vehicle.syncMesh` runs `Render.syncVehicle` for the player's hidden car. The body stays hidden; the spot sits 2 m ahead (was 42 m behind) |
 | QA-A-ENT-02 | not-mine | `Ped.syncMesh` (models track) |
 | QA-A-CAM-03 | not-mine | render |
 | QA-B-FE-03 / QA-D SAVE-03 Enter that closes a menu also exits the car | not-mine | the root is that Enter is bound to both `enter` and `confirm` (`02_input.js`), and `30_game.js` runs `player.control` in the same step as the UI's confirm. The fix belongs in Input/Game (consume the confirm's paired actions), not in `Player.control` |
@@ -56,7 +56,7 @@ All of these were fixed in the first shooting round. Their regressions are `test
 | QAC-17 | not-mine | render camera interpolation |
 | QAC-22 | not-mine | world props |
 | QAC-34 | not-mine | missions / strands |
-| QAC-48 physics allocations | see below | `06_entities.js` |
+| QAC-48 physics allocations | **fixed** | the hot loops use scratch objects and `_pushCircleInto`. Per step: `occupants()` 65 → 0, `pushCircle` 31 → 0, `yawToDir` 194 → 11 (the rest is other modules). Public `pushCircle` / `worldToLocal` / `occupants` keep returning fresh objects |
 
 ## Integration items from the coordinator
 
@@ -70,3 +70,17 @@ All of these were fixed in the first shooting round. Their regressions are `test
 | actors `crash damage: 0` | **fixed** (test) | the test took the first `vehicle:impact` in the city (another car's) and lifted the throttle. It now filters to its own car |
 | combat scope shot `dmg: 0` | **fixed** (test) | the merged world has water 40 m east of the arena, so the target was swimming. The test picks dry ground |
 | combat shop `pistol rounds` | **fixed** | rounds (and attachments) for a gun the player owns are never mission-locked. The content tables give the pistol two different unlock missions (`parity` m01c, `expansion.shop` m03b) |
+
+## Other tracks' failures in the merged full run (`tests/all.js`)
+
+Evidence: the merged run log (copied in the final report). None are in my files:
+- `audio`: "every SFX name makes a voice; failed: phoneRing" (vehicles/audio).
+- `campaign`: "no marker for m01b_airport: m01c_both_sides" (story/content chain).
+- `events`: the mod shop opens twice, as `spin_doctor_strip` and `spin_strip` (systems / vehicles).
+- `feel`: the save lists `m01b_airport` as completed, which the test does not expect (story). It fails the same way with the original `06_entities.js`.
+- `interiors`: "without an armory UI the prompt asks to confirm the purchase" (interiors).
+- `missions`: "17 base missions (25 with the expansion), got 17 / 61" (content/story).
+- `newplayer`: the m00/m01 chain and the armory entry are missed by the bot (story / interiors). The `pistol` / `aim` steps follow from those.
+- `perf`: 347 steps/s (target 600). A profile shows `World.resolveCapsule` (1.2 s per 1800 steps) and vehicle world collision dominating. Combat's share is 0.3 s, `fillPose` 0.36 s. The QAC-48 allocation fix helps on the margin.
+- `vehicles`: "the jet ski leans into the turn with the rider on it" (vehicles; it fails the same way with the original `06_entities.js`).
+- `bosses` b03: see above (test bot / balance).
