@@ -242,6 +242,7 @@
     addHeat: function (n, src) {
       if (!(n > 0)) return;
       var p = player(); if (!p || !p.alive) return;
+      if (bossSet()) return 0;   // a boss fight is a set piece: no heat while one runs (folded from 08b_bosses installCrime)
       wanted.heat = Math.min(wanted.heat + n, C.WANTED.thresholds[C.WANTED.thresholds.length - 1] + 10);
       wanted.lastSeen = simT(); wanted.lastKnown.x = p.x; wanted.lastKnown.z = p.z; wanted.graceUntil = simT() + K.wantedGrace;
       wanted.sync();
@@ -287,22 +288,37 @@
       wanted.seenThisTick = false;
     }
   };
+  // the per-crime throttle stamps (sim time of the last hitPed / attackCop / hitCopCar). AI.reset clears them: New Game and
+  // Load restart the clock at 0, and a stamp from the old session must not hold back the new one's heat (QAC-02). A stamp
+  // ahead of the clock (a load to an earlier time) counts as expired.
   var heatT = { ped: -9, cop: -9, car: -9 };
+  function heatReady(key, every) {
+    var now = simT(), last = heatT[key];
+    if (now >= last && now - last < every) return false;
+    heatT[key] = now; return true;
+  }
+  function resetHeatStamps() { heatT.ped = heatT.cop = heatT.car = -9; }
+  // a boss encounter in its intro, fight or break (GTP.Bosses.fighting() when the bosses module exposes it)
+  function bossSet() {
+    var B = GTP.Bosses; if (!B) return false;
+    if (typeof B.fighting === 'function') return !!B.fighting();
+    var l = typeof B.list === 'function' ? B.list() : null; if (!l) return false;
+    for (var i = 0; i < l.length; i++) { var s = l[i] && l[i].state; if (s === 'intro' || s === 'fight' || s === 'break') return true; }
+    return false;
+  }
   function hookHeat() {
     var Ev = GTP.Events;
     // a car into a crowd or a roadblock: one crime per burst of contact, a cop knocked over is ramCop (3), not attackCop (5)
     Ev.on('vehicle:hitPed', function (e) {
       if (!(e.vehicle && e.vehicle.hasPlayer && e.vehicle.hasPlayer() && e.ped && e.ped.alive) || e.ped.hostile) return;
-      var now = simT();
-      if (isCop(e.ped)) { if (now - heatT.cop >= K.heatEvery) { heatT.cop = now; wanted.crime('ramCop', 'vehicle'); } }
-      else if (now - heatT.ped >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', 'vehicle'); }
+      if (isCop(e.ped)) { if (heatReady('cop', K.heatEvery)) wanted.crime('ramCop', 'vehicle'); }
+      else if (heatReady('ped', K.heatEvery)) wanted.crime('hitPed', 'vehicle');
     });
     // denting a cruiser (ramming a roadblock, a bump in a chase): one heat per ram, not per contact step
     Ev.on('vehicle:damage', function (e) {
       var p = player(), v = e && e.vehicle; if (!p || !v || !v.isPolice) return;
       var src = e.src; if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
-      var now = simT();
-      if (now - heatT.car >= K.heatEveryCar) { heatT.car = now; wanted.addHeat(1, 'hitCopCar'); }
+      if (heatReady('car', K.heatEveryCar)) wanted.addHeat(1, 'hitCopCar');
     });
     Ev.on('damage', function (e) {
       var p = player(); if (!p || !e || !e.target || e.target === p) return;
@@ -310,11 +326,10 @@
       if (src !== p && !(src && src.driver === p) && !(src && src.owner === p)) return;
       // self-defence: a ped flagged hostile (mission goons that attack the player) earns no heat.
       // Heat per hit is rate-limited: an SMG burst or a ram is one crime, not eleven (kills still count in full).
-      var now = simT();
       if (e.target.kind === 'ped') {
         if (e.target.hostile) { /* no crime */ }
-        else if (isCop(e.target)) { if (now - (heatT.cop || -9) >= K.heatEvery) { heatT.cop = now; wanted.crime('attackCop', 'attackCop'); } }
-        else if (e.type !== 'vehicle') { if (now - (heatT.ped || -9) >= K.heatEvery) { heatT.ped = now; wanted.crime('hitPed', e.type || 'hit'); } }
+        else if (isCop(e.target)) { if (heatReady('cop', K.heatEvery)) wanted.crime('attackCop', 'attackCop'); }
+        else if (e.type !== 'vehicle') { if (heatReady('ped', K.heatEvery)) wanted.crime('hitPed', e.type || 'hit'); }
       }
       // gunfire scares the street
       if (e.type && /pistol|smg|shotgun|hottake|megaphone/.test(String(e.type))) AI.alarm(e.target.x, e.target.z, 26, p);
@@ -325,6 +340,8 @@
     // v0.3: the shooting track's cover events, and the interior's door latch (step out of a shop without walking back in)
     Ev.on('cover:enter', function (e) { var p = player(); if (!p || wanted.level === 0) return; AI.coverAlert(e && e.x != null ? e.x : p.x, e && e.z != null ? e.z : p.z); });
     Ev.on('cover:exit', function () { cover.active = false; });
+    // the stars are gone: every police car nobody drives (released roadblocks, unloaded cruisers) stands down (stab-QA-D-03)
+    Ev.on('wanted', function (e) { if (e && e.level === 0) policeStandDown(); });
     Ev.on('interior:exit', function () { doors.wasInside = true; });
     Ev.on('honk', function (e) { var v = e.vehicle; if (v && v.hasPlayer && v.hasPlayer()) AI.alarm(v.x, v.z, 7, v, true); });
     Ev.on('vehicle:enter', function (e) {
@@ -350,11 +367,13 @@
 
   // -------------------------------------------------------------- spawner --
   var DIRS4 = [{ dx: 1, dz: 0 }, { dx: -1, dz: 0 }, { dx: 0, dz: 1 }, { dx: 0, dz: -1 }];
+  function allGone(list) { for (var i = 0; i < list.length; i++) if (list[i] && !list[i].removed) return false; return true; }
   var spawner = {
     t: 0, warm: false, parked: new Map(), parkTiles: [], deckTiles: [], lotOf: new Map(), protestHome: null, protestT: 0, raccoon: null, raccoonAct: 0, hqDone: false, stats: { peds: 0, cars: 0, parked: 0 },
+    protestPeds: [], hqPeds: [],   // the marchers and the precinct door guards of the current spawn (their latches wait for them to go)
     reset: function () {
       spawner.t = 0; spawner.warm = false; spawner.parked.clear(); spawner.parkTiles = []; spawner.deckTiles = []; spawner.lotOf.clear(); spawner._near = {};
-      spawner.protestHome = null; spawner.protestT = 0; spawner.raccoon = null; spawner.raccoonAct = 0; spawner.hqDone = false;
+      spawner.protestHome = null; spawner.protestT = 0; spawner.raccoon = null; spawner.raccoonAct = 0; spawner.hqDone = false; spawner.protestPeds = []; spawner.hqPeds = [];
       var Wd = W(); if (!Wd.tiles) return;
       ensureT();
       var N = Wd.w * Wd.h, i;
@@ -574,18 +593,20 @@
         made++;
       }
     },
-    // precinct cops and cruisers, HOA patrols, the protest, the raccoon
+    // precinct cops and cruisers, HOA patrols, the protest, the raccoon. The precinct guards and the marchers despawn like any
+    // ped past C.ACTIVE_RADIUS; each latch re-arms once the peds it spawned are all gone and the player is out of its spawn
+    // radius (a distance-only latch at 260 / 280 m left them missing for good after a trip to 220-280 m: QAC-36)
     specials: function () {
       var Wd = W(), p = player(); if (!p) return;
       var hq = Wd.landmark('police_hq');
       if (hq && hq.door) {
         var dh = U.dist2d(p.x, p.z, hq.door.x, hq.door.z);
         if (dh < 170 && !spawner.hqDone) {
-          spawner.hqDone = true;
+          spawner.hqDone = true; spawner.hqPeds = [];
           for (var i = 0; i < 2; i++) {
             var gx = hq.door.x + R().range(-3, 3), gz = hq.door.z + R().range(-1.5, 1.5);
             var cop = spawner.spawnPed(gx, gz, 'cop', { mode: 'guard', home: { x: hq.door.x, z: hq.door.z }, radius: 10 });
-            cop.ai.ambient = false;
+            cop.ai.ambient = false; spawner.hqPeds.push(cop);
           }
           // two cruisers in the precinct lot, ready to go
           var lotTiles = spawner.parkTiles.filter(function (ti) { var tx = ti % Wd.w, tz = (ti / Wd.w) | 0; return tx >= hq.lot.x && tx < hq.lot.x + hq.lot.w && tz >= hq.lot.z && tz < hq.lot.z + hq.lot.d && !spawner.parked.has(ti); });
@@ -597,7 +618,7 @@
             var cv = spawner.spawnVehicle(cx, cz, 'cop', { yaw: 0, kind: 'parked' });
             spawner.parked.set(ti, cv);
           }
-        } else if (dh > 260) spawner.hqDone = false;
+        } else if (spawner.hqDone && dh > 190 && allGone(spawner.hqPeds)) spawner.hqDone = false;
       }
       // HOA patrol SUVs in Culdesac Heights
       var d = Wd.districtAt(p.x, p.z);
@@ -615,15 +636,15 @@
       if (pp) {
         var dp = U.dist2d(p.x, p.z, pp.x, pp.z);
         if (dp < 160 && !spawner.protestHome) {
-          spawner.protestHome = { x: pp.x, z: pp.z };
+          spawner.protestHome = { x: pp.x, z: pp.z }; spawner.protestPeds = [];
           for (i = 0; i < 7; i++) {
             var a = R().random() * U.TAU, r = R().range(3, 9);
             var px = pp.x + Math.cos(a) * r, pz = pp.z + Math.sin(a) * r;
             if (Wd.solidAt(px, pz, 0.5)) continue;
             var m = spawner.spawnPed(px, pz, 'protester', { mode: 'protest', home: { x: pp.x, z: pp.z }, radius: 11 });
-            m.ai.ambient = true;
+            m.ai.ambient = true; spawner.protestPeds.push(m);
           }
-        } else if (dp > 280) spawner.protestHome = null;
+        } else if (spawner.protestHome && dp > 180 && allGone(spawner.protestPeds)) spawner.protestHome = null;
       }
       // the Lot C raccoon (GDD 9): near pod_garage in Act I, nap_depot in Act II, tyn_tower in Act III
       var F = flags(), act = F.knows_memo || F.survived_thursday ? 3 : (F.show_renamed ? 2 : 1);
@@ -873,11 +894,11 @@
     if (shot || ai.cowerT <= 0) { p.cowering = false; ai.mode = 'wander'; startFlee(p, ai, shot || pl, K.cower.fleeAfter); ai.fleeT0 = ai.fleeT; }
   }
 
-  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load
-  // (06c_animation loads before this file); once the animation track's GTP.Anim is in, it poses ped.cowering itself and
-  // this wrapper stands aside.
+  // the cowering pose for v0.2's figures: hands up, head down, a little lower. Wraps GTP.Ped.prototype.syncMesh at load,
+  // only when the animation module (06c_animation, loaded before this file) is missing: with GTP.Anim the wrapper did
+  // nothing but cost a call per ped per frame, and posing ped.cowering is the animation module's job.
   (function () {
-    var P = GTP.Ped && GTP.Ped.prototype; if (!P || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
+    var P = GTP.Ped && GTP.Ped.prototype; if (!P || GTP.Anim || typeof P.syncMesh !== 'function' || P.syncMesh._cower) return;
     var base = P.syncMesh;
     P.syncMesh = function (alpha) {
       base.call(this, alpha);
@@ -1269,9 +1290,30 @@
 
   // ---------------------------------------------------------------- police --
   var police = {
-    footT: 0, cruiserT: 0, swatT: 0, roadblockT: 0, tickT: 0, roadblocks: [], heli: null, bustT: 0, busted: false, bustedT: 0, bustCop: null, garageT: 0, garageToastT: 0, pathBudget: 0,
-    reset: function () { police.footT = police.cruiserT = police.swatT = police.roadblockT = police.tickT = 0; police.roadblocks = []; police.heli = null; police.bustT = 0; police.busted = false; police.bustedT = 0; police.bustCop = null; police.garageT = 0; police.garageToastT = 0; }
+    footT: 0, cruiserT: 0, swatT: 0, roadblockT: 0, tickT: 0, roadblocks: [], heli: null, heliT: 0, bustT: 0, busted: false, bustedT: 0, bustCop: null, bustLevel: 0, garageT: 0, garageToastT: 0, pathBudget: 0,
+    // New Game / Load: the helicopter's respawn wait and the last bust's level go too (QAC-37), and the resident spotlight goes dark
+    reset: function () {
+      police.footT = police.cruiserT = police.swatT = police.roadblockT = police.tickT = 0; police.roadblocks = []; police.heli = null; police.heliT = 0;
+      police.bustT = 0; police.busted = false; police.bustedT = 0; police.bustCop = null; police.bustLevel = 0; police.garageT = 0; police.garageToastT = 0;
+      heliLamp.ensure(); heliLamp.off();
+    }
   };
+  // no live AI driver at the wheel
+  function unmanned(v) { return !v.driver || !v.driver.alive || v.hasPlayer(); }
+  // siren and lightbar off on the police cars nobody drives once the stars are gone: released roadblock cruisers, cruisers
+  // and SWAT vans whose crews got out (copsExit parks them), a cruiser whose cop never made it back in. The driven ones turn
+  // theirs off in copCarTick; the player's own car, mission and event cars (persistent) are left alone
+  function policeStandDown() {
+    var list = E().list;
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i];
+      if (v.kind !== 'vehicle' || v.removed || v.persistent || !v.ai || v.hasPlayer() || !(v.siren || v.isPolice || v.tag === 'swat')) continue;
+      var off = unmanned(v);
+      if (!off && v.ai.mode !== 'parked' && v.ai.mode !== 'roadblock') continue;
+      v.siren = false;
+      if (off) v.lights = false;
+    }
+  }
   var DIRN = { x: 0, z: -1 };
   function faceToward(p, x, z, dt) { p.yaw = U.angleDamp(p.yaw, U.dirToYaw(x - p.x, z - p.z), 8, dt); }
   function shakeAt(x, z) { var pl = player(); if (pl && GTP.Render && GTP.Render.rig) GTP.Render.rig.shake(U.clamp(1 - U.dist2d(pl.x, pl.z, x, z) / 40, 0.1, 1)); }
@@ -1511,17 +1553,20 @@
     }
     return null;
   }
+  // the response on the street: foot cops on the case, cruisers a cop is driving (a released roadblock car, an unloaded
+  // cruiser or one whose cop never got back in is no pursuit: QAC-35), SWAT vans
   function copCounts() {
     var list = E().list, foot = 0, cars = 0, vans = 0;
     for (var i = 0; i < list.length; i++) {
       var e = list[i]; if (e.removed) continue;
       if (e.kind === 'ped' && e.alive && (e.role === 'cop' || e.role === 'swat') && !e.inVehicle && e.ai && (e.ai.mode === 'chase' || e.ai.mode === 'alert' || e.ai.mode === 'roadblock')) foot++;
-      else if (e.kind === 'vehicle' && e.ai && !e.wreck && !e.sinking) { if (e.tag === 'swat') vans++; else if (e.type === 'cop' && e.ai.kind !== 'parked' && e.ai.mode !== 'roadblock') cars++; }
+      else if (e.kind === 'vehicle' && e.ai && !e.wreck && !e.sinking) { if (e.tag === 'swat') vans++; else if (e.type === 'cop' && e.ai.kind !== 'parked' && e.ai.mode !== 'roadblock' && e.ai.mode !== 'parked' && !unmanned(e)) cars++; }
     }
     return { foot: foot, cars: cars, vans: vans };
   }
   function spawnResponders(dt) {
     var lvl = wanted.level, pl = player();
+    police.heliT = Math.max(0, (police.heliT || 0) - dt);   // the wait after a shoot-down runs with or without stars (QAC-37)
     if (!lvl || !pl || !pl.alive) { if (police.heli && !police.heli.leaving) police.heli.leave(); return; }
     var q = K.response, ix = lvl - 1, cnt = copCounts();
     police.footT -= dt; police.cruiserT -= dt; police.swatT -= dt; police.roadblockT -= dt;
@@ -1546,7 +1591,6 @@
         for (i = occ.length; i < 3; i++) { var sw = spawner.spawnPed(ss.x, ss.z, 'swat'); sw.ai.ambient = false; sw.ai.driver = true; if (!van.enter(sw, i)) sw.destroy(); }
       }
     }
-    police.heliT = Math.max(0, (police.heliT || 0) - dt);
     if (q.heli[ix] && !police.heli && police.heliT <= 0) { police.heli = new Heli(); E().add(police.heli); }
     else if (!q.heli[ix] && police.heli && !police.heli.leaving && !police.heli.down) police.heli.leave();
     // roadblocks ahead of a driving player
@@ -1602,13 +1646,34 @@
       var passed = pl && ((pl.x - rb.x) * (rb.axis === 'h' ? rb.dir : 0) + (pl.z - rb.z) * (rb.axis === 'v' ? rb.dir : 0)) > 12;
       if (!rb.released && (passed || rb.t > K.roadblock.life || wanted.level === 0)) {
         rb.released = true;
-        for (var j = 0; j < rb.cars.length; j++) { var car = rb.cars[j]; if (!car.removed) { car.ai.kind = 'cop'; car.ai.mode = 'parked'; } }
+        // the cars are left parked for their cops to take back; with no stars left they go quiet (stab-QA-D-03; a later
+        // drop to zero stars reaches them through policeStandDown)
+        for (var j = 0; j < rb.cars.length; j++) { var car = rb.cars[j]; if (!car.removed) { car.ai.kind = 'cop'; car.ai.mode = 'parked'; if (!wanted.level) { car.siren = false; car.lights = false; } } }
         for (j = 0; j < rb.cops.length; j++) { var cop = rb.cops[j]; if (cop.ai) { cop.ai.mode = wanted.level ? 'chase' : 'wander'; cop.ai.block = null; cop.ai.lostT = 0; } }
       }
       if (rb.released && rb.t > K.roadblock.life + 10) police.roadblocks.splice(i, 1);
     }
   }
   // ------------------------------------------------------------ helicopter --
+  // The searchlight is one SpotLight resident in the scene from the first New Game (police.reset, before the first frame)
+  // at intensity 0, driven by the police helicopter that is up. A light that came and went with the helicopter changed the
+  // scene's light count and recompiled every lit material: a 0.7-3.5 s freeze at five stars (QAC-23, stab-QA-D-04). It is
+  // never toggled: dark is intensity 0 (the way Render keeps Render.muzzleLight). A slot of Render's own
+  // (GTP.Render.lights.heli) wins when the render module has one.
+  var heliLamp = {
+    light: null, scene: null, owner: null,
+    ensure: function () {
+      var Rd = GTP.Render; if (!Rd || !Rd.scene || typeof THREE === 'undefined') return null;
+      var own = Rd.lights && Rd.lights.heli;
+      if (own) { heliLamp.light = own; heliLamp.scene = Rd.scene; return own; }
+      if (heliLamp.light && heliLamp.scene === Rd.scene && heliLamp.light.parent) return heliLamp.light;
+      var l = new THREE.SpotLight(0xfff0c8, 0, 90, 0.2, 0.55, 1); l.castShadow = false; l.name = 'heliSpot'; l.target.name = 'heliSpotTarget';
+      Rd.scene.add(l); Rd.scene.add(l.target);
+      heliLamp.light = l; heliLamp.scene = Rd.scene;
+      return l;
+    },
+    off: function () { if (heliLamp.light) heliLamp.light.intensity = 0; heliLamp.owner = null; }
+  };
   // Circles above the player at five stars with a spotlight cone; sees the player by raycast.
   class Heli extends GTP.Entity {
     constructor() {
@@ -1620,7 +1685,10 @@
       GTP.Events.emit('heli', { on: true });
       if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(true, this.x, this.z); } catch (e) { /* optional */ } }
     }
-    leave() { if (this.leaving) return; this.leaving = true; this.leaveT = 0; var a = R().random() * U.TAU; this.leaveDir = { x: Math.cos(a), z: Math.sin(a) }; GTP.Events.emit('heli', { on: false }); if (GTP.Audio && GTP.Audio.heli) { try { GTP.Audio.heli(false, this.x, this.z); } catch (e) { /* optional */ } } }
+    // the rotor keeps sounding while it flies off (Audio.heli fades it with distance; update() keeps it fed, easing it
+    // out over the last 3 s before the helicopter is gone): stab-QA-D-09
+    leave() { if (this.leaving) return; this.leaving = true; this.leaveT = 0; var a = R().random() * U.TAU; this.leaveDir = { x: Math.cos(a), z: Math.sin(a) }; GTP.Events.emit('heli', { on: false }); }
+    destroy() { if (heliLamp.owner === this) heliLamp.off(); return super.destroy(); }
     // it can be shot down: 400 hp, smoke under half, then a spin to the ground and a blast
     applyDamage(n, src, type) {
       if (this.down || !(n > 0)) return 0;
@@ -1684,7 +1752,7 @@
       this.seeT -= dt;
       if (this.seeT <= 0) { this.seeT = 0.25; this.sees = !this.leaving && wanted.level > 0 && U.dist2d(this.x, this.z, pl.x, pl.z) < K.heliSight && losClear(this.x, this.y - 1, this.z, pl.x, pl.y + 1.2, pl.z); if (this.sees) wanted.see(this); }
       if (this.sees && !this.leaving && wanted.level >= 4 && pl.alive) this.gunner(pl, dt);
-      if (GTP.Audio && GTP.Audio.heli && this.age % 0.5 < dt) { try { GTP.Audio.heli(!this.leaving, this.x, this.z); } catch (e) { /* optional */ } }
+      if (GTP.Audio && GTP.Audio.heli && this.age % 0.5 < dt) { try { GTP.Audio.heli(this.leaving ? U.clamp((9 - this.leaveT) / 3, 0.05, 1) : 1, this.x, this.z); } catch (e) { /* optional */ } }
     }
     // CMB-09 (GDD §2.3): the door gunner's SMG. Bursts of five at a player it can see within 60 m, AI damage scale, worse
     // against a moving target or a car; the misses kick up the ground beside the player
@@ -1717,22 +1785,28 @@
       m.position.set(this._px + (this.x - this._px) * a, this._py + (this.y - this._py) * a, this._pz + (this.z - this._pz) * a);
       ud.body.rotation.set(0, this._pyaw + U.wrapAngle(this.yaw - this._pyaw) * a, this.bank, 'YXZ');
       ud.rotor.rotation.y = this.rotor; ud.tailRotor.rotation.x = this.rotor * 1.7;
-      // light + cone from the belly to the ground spot (group space: no rotation)
+      // the cone from the belly to the ground spot (group space: no rotation) and the resident searchlight (world space)
       var lx = this.spot.x - m.position.x, ly = this.spotY - m.position.y, lz = this.spot.z - m.position.z;
-      ud.target.position.set(lx, ly, lz);
       var len = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
       ud.cone.position.set(lx * 0.5, -0.8 + ly * 0.5, lz * 0.5);
       ud.cone.scale.set(7, len, 7);
       ud.cone.quaternion.setFromUnitVectors(ud.up, ud.dirV.set(-lx / len, -ly / len, -lz / len));
       ud.pool.position.set(lx, ly + 0.06, lz);
-      var night = GTP.Render ? GTP.Render.night || 0 : 0, on = !this.leaving && !this.down;
-      ud.light.visible = on; ud.light.intensity = 3 + 6 * night;
+      var night = GTP.Render ? GTP.Render.night || 0 : 0, on = !this.leaving && !this.down && !this.removed;
+      var L = heliLamp.ensure();
+      if (L) {
+        if (on) { heliLamp.owner = this; L.position.set(m.position.x, m.position.y - 0.9, m.position.z); L.target.position.set(this.spot.x, this.spotY, this.spot.z); L.intensity = 3 + 6 * night; }
+        else if (heliLamp.owner === this) heliLamp.off();
+      }
       ud.cone.visible = on; ud.cone.material.opacity = 0.05 + 0.1 * night;
       ud.pool.visible = on; ud.pool.material.opacity = 0.25 + 0.45 * night;
       m.visible = !this.removed;
     }
-    static buildMesh() {
-      var A = GTP.Assets, G = GTP.GeoBuilder, grp = new THREE.Group(), body = new THREE.Group();
+    // the GPU resources are built once and shared by every helicopter (one is up at a time): a helicopter comes at every
+    // five-star episode and 45 s after a shoot-down, and Render.detach disposes nothing of an entity's mesh (QAC-32)
+    static resources() {
+      if (Heli._res) return Heli._res;
+      var A = GTP.Assets, G = GTP.GeoBuilder;
       var navy = [0.10, 0.12, 0.18], white = [0.92, 0.93, 0.95], glass = [0.45, 0.6, 0.75], dark = [0.08, 0.08, 0.1];
       var g = new G({ color: true });
       g.box(-0.85, -0.2, -1.9, 1.7, 1.5, 3.9, G.UV0, navy);                 // cabin (forward = -z)
@@ -1744,22 +1818,28 @@
       g.box(-1.0, -0.95, -1.6, 0.12, 0.12, 3.2, G.UV0, dark); g.box(0.88, -0.95, -1.6, 0.12, 0.12, 3.2, G.UV0, dark);   // skids
       g.box(-1.0, -0.85, -0.9, 0.1, 0.65, 0.1, G.UV0, dark); g.box(0.9, -0.85, -0.9, 0.1, 0.65, 0.1, G.UV0, dark);
       g.box(-1.0, -0.85, 0.7, 0.1, 0.65, 0.1, G.UV0, dark); g.box(0.9, -0.85, 0.7, 0.1, 0.65, 0.1, G.UV0, dark);
-      var hull = new THREE.Mesh(g.build(), A.propMaterial()); hull.castShadow = true; hull.name = 'hull';
       var rg = new G({ color: true });
       rg.box(-4.6, 0, -0.14, 9.2, 0.07, 0.28, G.UV0, dark); rg.box(-0.14, 0, -4.6, 0.28, 0.07, 9.2, G.UV0, dark);
-      var rotor = new THREE.Mesh(rg.build(), A.propMaterial()); rotor.position.set(0, 1.68, 0); rotor.name = 'rotor';
       var tg = new G({ color: true }); tg.box(-0.05, -0.7, -0.09, 0.1, 1.4, 0.18, G.UV0, dark);
-      var tail = new THREE.Mesh(tg.build(), A.propMaterial()); tail.position.set(0.12, 0.9, 4.95); tail.name = 'tailRotor';
+      Heli._res = {
+        hull: g.build(), rotor: rg.build(), tail: tg.build(), cone: new THREE.ConeGeometry(1, 1, 24, 1, true), pool: new THREE.PlaneGeometry(16, 16),
+        // one pass for both faces: additive without depth writes looks the same, and r152's back-then-front split for a
+        // transparent double-sided material cost a second program and a material re-key every frame
+        coneMat: new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: true, forceSinglePass: true }),
+        poolMat: new THREE.MeshBasicMaterial({ map: A.glow, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xfff1cc })
+      };
+      return Heli._res;
+    }
+    static buildMesh() {
+      var A = GTP.Assets, S = Heli.resources(), grp = new THREE.Group(), body = new THREE.Group();
+      var hull = new THREE.Mesh(S.hull, A.propMaterial()); hull.castShadow = true; hull.name = 'hull';
+      var rotor = new THREE.Mesh(S.rotor, A.propMaterial()); rotor.position.set(0, 1.68, 0); rotor.name = 'rotor';
+      var tail = new THREE.Mesh(S.tail, A.propMaterial()); tail.position.set(0.12, 0.9, 4.95); tail.name = 'tailRotor';
       body.add(hull); body.add(rotor); body.add(tail);
       grp.add(body);
-      var light = new THREE.SpotLight(0xfff0c8, 6, 90, 0.2, 0.55, 1); light.castShadow = false; light.position.set(0, -0.9, 0);
-      var target = new THREE.Object3D(); target.position.set(0, -30, 0);
-      light.target = target; grp.add(light); grp.add(target);
-      var cone = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: true }));
-      cone.renderOrder = 6; cone.name = 'cone'; grp.add(cone);
-      var pool = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.MeshBasicMaterial({ map: A.glow, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xfff1cc }));
-      pool.rotation.x = -Math.PI / 2; pool.renderOrder = 5; pool.name = 'pool'; grp.add(pool);
-      grp.userData = { body: body, rotor: rotor, tailRotor: tail, light: light, target: target, cone: cone, pool: pool, up: new THREE.Vector3(0, 1, 0), dirV: new THREE.Vector3() };
+      var cone = new THREE.Mesh(S.cone, S.coneMat); cone.renderOrder = 6; cone.name = 'cone'; grp.add(cone);
+      var pool = new THREE.Mesh(S.pool, S.poolMat); pool.rotation.x = -Math.PI / 2; pool.renderOrder = 5; pool.name = 'pool'; grp.add(pool);
+      grp.userData = { body: body, rotor: rotor, tailRotor: tail, cone: cone, pool: pool, up: new THREE.Vector3(0, 1, 0), dirV: new THREE.Vector3() };
       grp.name = 'heli';
       return grp;
     }
@@ -1959,6 +2039,9 @@
     var Ev = GTP.Events, I = GTP.Interiors, v = pl.inVehicle, rec = { id: d.id, kind: d.kind, t: simT() };
     doors.latched[d.id] = true; doors.last = rec; doors.log.push(rec); if (doors.log.length > 20) doors.log.shift();
     if (d.foot) doors.latched[d.foot] = true;   // a garage sharing the kerb with its front door: stepping out of the car does not walk in
+    // Spin Doctor's bay: the vehicles module runs the drive-in itself (GTP.Vehicles.modshop: modshop:open with the catalog,
+    // modshop:close on the way out, its own no-heat rule); a second modshop:open from the marker opened the UI twice
+    if (d.kind === 'modshop' && GTP.Vehicles && GTP.Vehicles.modshop) { rec.result = 'vehicles'; return; }
     if (d.kind !== 'armory' && storyBusy()) { toast('Finish what you started first.'); rec.result = 'busy'; return; }
     if (wanted.level > 0 && d.kind !== 'armory') { toast('Lose the heat first.'); rec.result = 'wanted'; return; }
     Ev.emit('door:enter', { door: d, landmark: d.landmark, kind: d.kind, vehicle: v || null });
@@ -2435,7 +2518,7 @@
         garageCheck(dt);
         residentsTick(dt);
         coverTick();
-        if (police.heli && police.heli.removed) police.heli = null;
+        if (police.heli && police.heli.removed) { if (heliLamp.owner === police.heli) heliLamp.off(); police.heli = null; }
       } catch (e) { U.reportError(e, 'ai.police'); }
       try { doorsTick(dt); } catch (e) { U.reportError(e, 'ai.doors'); }
       try { eventsTick(dt); } catch (e) { U.reportError(e, 'ai.events'); }
@@ -2444,7 +2527,7 @@
     updateRespawn: updateRespawn,
     reset: function () {
       stepN = 0; alarms.length = 0;
-      wanted.clear(); wanted.lastSeen = -1e9;
+      wanted.clear(); wanted.lastSeen = -1e9; wanted.graceUntil = -1e9; resetHeatStamps();
       spawner.reset(); police.reset();
       if (events.cur) eventCleanup(events.cur, true);
       events.cur = null; events.t = 0; events.next = 0; events.lastId = null; events.ended.length = 0;
