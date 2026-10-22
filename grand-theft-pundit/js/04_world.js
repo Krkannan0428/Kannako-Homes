@@ -1325,7 +1325,9 @@
         case 'ferry': {
           // the waiting room, a 2 x 6 tile pier into the water (the dock rule), the ferry alongside, a ticket kiosk, benches, the board
           var fz = lot.z + lot.d, fpx = lot.x + 6, flen = 6;
-          for (z = fz; z < Math.min(World.h, fz + flen); z++) for (var dx4 = 0; dx4 < 2; dx4++) { i = z * w + fpx + dx4; if (tiles[i] === T.WATER) { tiles[i] = T.PLAZA; meta[i] |= M.DOCK; } }
+          // the pier reaches past the district rectangle: it takes the terminal's district (QA-A-GEO-06: it read OPEN WATER)
+          var fzone = World.zone[(fz - 1) * w + fpx];
+          for (z = fz; z < Math.min(World.h, fz + flen); z++) for (var dx4 = 0; dx4 < 2; dx4++) { i = z * w + fpx + dx4; if (tiles[i] === T.WATER) { tiles[i] = T.PLAZA; meta[i] |= M.DOCK; if (!World.zone[i]) World.zone[i] = fzone; } }
           World.piers.push({ tx: fpx, tz: fz, tw: 2, len: flen });
           P({ kind: 'ferryboat', x: (fpx + 2) * TILE + 5.2, z: (fz + 2.5) * TILE, y: WATER_Y + 0.3, rot: 0, r: 0, solid: false, h: 5 });
           for (k = -1; k <= 1; k++) P({ kind: 'ferryboat', x: (fpx + 2) * TILE + 5.2, z: (fz + 2.5) * TILE + k * 7, y: WATER_Y + 0.3, rot: 0, r: 4.5, solid: true, h: 5, hidden: true });

@@ -487,6 +487,9 @@ H.run('world', async (t) => {
     out.trees = W.props.filter((p) => p.kind === 'tree' || p.kind === 'palm').length;
     // QAC-45: pole billboards are wider than tall (a duplicate h key made them 9 x 9 m)
     out.squareBoards = W.props.filter((p) => p.kind === 'billboard' && p.pole && !(p.h < p.w)).length;
+    // GEO-06: every land tile (the ferry pier included) belongs to a district
+    out.noDistrict = 0; for (let i = 0; i < N; i++) if (W.tiles[i] !== T.WATER && !W.zone[i]) out.noDistrict++;
+    out.ferryPier = (W.districtAt(770, 870) || {}).id || null;
     const ccc = W.landmark('memo_press');
     out.memo = ccc && ccc.building ? [ccc.building.tx, ccc.building.tz, ccc.building.tw, ccc.building.td] : null;
     out.coupon = W.streetAt ? [W.streetAt(30 * 4, 122 * 4), W.streetAt(60 * 4, 122 * 4)] : null;
@@ -497,7 +500,8 @@ H.run('world', async (t) => {
   t.assert(lay.laneIntoWall.length === 0, 'no ground lane runs into a building wall or a ramp deck end (QA-A-GEO-01/02, TRF-08): ' + lay.laneIntoWall.slice(0, 10).join(' '));
   t.assert(lay.halfBox.length === 0, 'every junction box carries both lane axes (QA-A-TRF-09): ' + lay.halfBox.join(' '));
   t.assert(lay.treesInWalls.length === 0 && lay.trees > 600, 'tree canopies stay out of the facades (QA-A-VIS-04): ' + lay.trees + ' trees, in walls ' + lay.treesInWalls.slice(0, 8).join(' '));
-  t.assert(lay.squareBoards === 0, 'pole billboards are 9 x 3.4 m panels, not 9 x 9 (QAC-45): ' + lay.squareBoards);
+  t.assert(lay.noDistrict === 0 && lay.ferryPier === 'port', 'every land tile has a district, the ferry pier reads Manifest Harbor (QA-A-GEO-06): ' + lay.noDistrict + ' ' + lay.ferryPier);
+  t.assert(lay.squareBoards === 0,'pole billboards are 9 x 3.4 m panels, not 9 x 9 (QAC-45): ' + lay.squareBoards);
   t.assert(lay.rampPosts >= 30,'bollards stand in front of the ramps\' deck-end faces on the plaza under the Loop: ' + lay.rampPosts);
   // TRF-08 / GEO-02: an AI car climbing the Manifest Ramp westbound comes out on the Lower Loop deck (it used to keep
   // the ground street's lane and hit the deck's far barrier, or a street car rammed the ramp's 7 m end)
