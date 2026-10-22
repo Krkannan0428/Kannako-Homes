@@ -2037,6 +2037,8 @@
     hud: function () { var e = Bosses.active; return e && e.state !== 'ended' ? e.hud() : null; },
     target: function () { var e = Bosses.active; return e ? e.target() : null; },
     resumeInfo: function () { return resume; },
+    // a fight is a set piece (intro, fight, break, the defeat beat): 07_ai.js keeps crimes and heat out of it through this
+    fighting: function () { return fighting(); },
     // the arena as a mission target (an approach objective: {type:'goto', target: GTP.Bosses.arenaTarget('b01_goldplate'), radius: 160})
     arenaTarget: function (id) { var a = DEFS[id] && DEFS[id].arena; return a ? { landmark: a.landmark, offset: { x: (a.offset && a.offset.x) || 0, z: (a.offset && a.offset.z) || 0 }, metres: true } : null; },
     arena: function (id) { var d = DEFS[id]; if (!d) return null; var c = resolveArena(d); return { x: c.x, z: c.z, y: groundY(c.x, c.z, 0), landmark: d.arena.landmark }; },
