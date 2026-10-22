@@ -123,4 +123,15 @@ first-person camera vector).
   - the `fly_to` GPS line to a helipad.
 - `tests/audio.js`: PASS (new counts for every audio fix above). `tests/radio.js`: PASS.
 - `tests/content_audit.js`: OK (238 files, 0 hits).
-- Other tracks' tests that touch these paths: see below.
+- Other tracks' tests that touch these paths, run on this branch. Each failure was compared with a clean worktree of the
+  base `10ba585`:
+  - PASS: `world`, `ai`, `render`, `smoke`.
+  - `events`: on the base it fails at "driving into the mod shop" (two `modshop:open`, `spin_doctor_strip` and
+    `spin_strip`: the double open fixed here). On this branch that passes, and it fails later at "the pictured civilian
+    cowers" (`{mode: 'wander', cowering: false}`). The base fails the same step identically once the mod shop assert
+    is skipped, so this is the world / AI track's (07_ai cower), not this branch's.
+  - `ui_v03`: the mod shop BUY step passes (it failed on the round-1 base). It then fails at the wardrobe, as in round 1
+    (the UI reads the content track's clothing; the test expects the UI's fallback list).
+  - `campaign` (`no marker for m01b_airport: m01c_both_sides`), `strands` (the race car is not entered at lr_01) and
+    `perf` (sim 562 steps/s under the parallel load, against the 600 bar; the base measured 417 the same way) fail
+    exactly as on the base.
