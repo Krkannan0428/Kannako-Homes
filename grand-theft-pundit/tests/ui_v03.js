@@ -202,15 +202,17 @@ H.run('ui_v03', async (t) => {
     const m = T_.ui.modal, p = GTP.game.player;
     T_.press('confirm'); T_.press('back'); T_.press('back'); T_.adv(0.3); GTP.game.render();   // into PRIMARY COLOR, two down: a preview
     const a = { focus: m.focus, previews: MODS.length, preview: m.preview.paint.primary, money0: p.money };
-    T_.press('confirm'); a.money1 = p.money; a.applied = m.applied.paint.primary; a.ev = T_.last('shop:buy') && T_.last('shop:buy').item.kind;
-    T_.press('left'); m.cat = 6; T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.engPreview = m.preview.engine;
+    const cats = GTP.UI._v3.modCats(MODV), row = cats[m.cat], opt = row && row.price;   // the real catalog: a colour costs the respray (Vehicles.priceOf)
+    a.price = opt != null ? opt : 300;
+    T_.press('confirm'); a.money1 = p.money; a.applied = m.applied.paint.primary; const ev = T_.last('shop:buy'); a.ev = ev && (typeof ev.item === 'string' ? ev.item.split(':')[0] : ev.item.kind);
+    T_.press('left'); m.cat = cats.findIndex((c) => c.id === 'engine'); T_.press('confirm'); T_.press('back'); T_.adv(0.3); a.engPreview = m.preview.engine;
     return a;
   });
   await shot('modshop_engine');
   const mod3 = await page.evaluate(() => { T_.press('cancel'); T_.press('cancel'); T_.adv(0.2); const v = MODV; return { modal: !!T_.ui.modal, free: GTP.Render.free, engine: v.mods.engine, primary: v.mods.paint.primary, ctl: GTP.game.player.controlEnabled }; });
   console.log('  modshop: ' + JSON.stringify([mod, mod2, mod3]));
   t.assert(mod.modal === 'modshop' && mod.free === true, 'modshop:open opens Spin Doctor Customs with the orbit camera');
-  t.assert(mod2.previews >= 1 && mod2.preview && mod2.money1 === mod2.money0 - 300 && mod2.applied === mod2.preview && mod2.ev === 'mod', 'a paint previews through Vehicles.mod, BUY pays and emits shop:buy: ' + JSON.stringify(mod2));
+  t.assert(mod2.previews >= 1 && mod2.preview && mod2.money1 === mod2.money0 - mod2.price && mod2.applied === mod2.preview && mod2.ev === 'mod' && mod2.engPreview >= 1, 'a paint previews through Vehicles.mod, BUY pays and emits shop:buy: ' + JSON.stringify(mod2));
   t.assert(!mod3.modal && !mod3.free && mod3.engine === 0 && mod3.primary === mod2.applied && mod3.ctl, 'leaving reverts the unbought engine preview and gives the camera back: ' + JSON.stringify(mod3));
 
   // ---- 8. wardrobe and barber ----

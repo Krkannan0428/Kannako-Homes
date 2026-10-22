@@ -715,6 +715,7 @@
   }
   function drawMinimap(ctx) {
     var p = player(), Rd = GTP.Render, m = minimapRect(); if (!p || !Rd) return;
+    if (indoors()) { drawIndoorMinimap(ctx, m); return; }
     var size = m.s, cx = m.x + size / 2, cy = m.y + size / 2, r = size / 2;
     var zoom = (size / 180) * (p.inVehicle ? 0.78 : 1);   // px per metre
     var yaw = Rd.rig ? Rd.rig.yaw : 0;
@@ -780,7 +781,11 @@
     var near = nearLandmark(p);
     if (street && Wd.loopAt && Wd.lowerLoopName && Wd.loopAt(p.x, p.z, p.y) === 'lower' && street === (Wd.loopName || 'The Loop')) street = Wd.lowerLoopName;
     var line1 = d ? String(d.name || d.id).toUpperCase() : 'OPEN WATER', line2 = near ? landmarkLabel(near) : (street || '');
-    var chipFont = F(13, 'bold'), cw = Math.max(measure(ctx, line1, F(10, 'bold')), measure(ctx, line2, chipFont)) + px(22);
+    drawPlaceChip(ctx, m, line1, line2);
+  }
+  // the district / street chip by the minimap (sets ui.chipBottom for what stacks under it)
+  function drawPlaceChip(ctx, m, line1, line2) {
+    var size = m.s, chipFont = F(13, 'bold'), cw = Math.max(measure(ctx, line1, F(10, 'bold')), measure(ctx, line2, chipFont)) + px(22);
     cw = Math.min(cw, portrait ? W - safe.l - safe.r : px(360));
     var chx = m.left ? m.x : m.x + size - cw, chy = m.top ? m.y + size + px(6) : m.y - px(44);
     panel(ctx, chx, chy, cw, px(38), px(8), COL.panelSoft, 'rgba(255,255,255,0.12)');
@@ -788,6 +793,25 @@
     txt(ctx, line1, tx, chy + px(14), { font: F(10, 'bold'), color: COL.cyan, align: al, outline: false, maxW: cw - px(20) });
     txt(ctx, line2, tx, chy + px(30), { font: chipFont, color: COL.ink, align: al, outline: false, maxW: cw - px(20) });
     ui.chipBottom = chy + px(38);
+  }
+  // inside a GTP.Interiors room (built far from the city): no city map, no GPS chip, no 4 km objective arrow; the minimap
+  // says where the player is and how out works
+  function indoors() { var I = GTP.Interiors; return !!(I && I.active); }
+  function drawIndoorMinimap(ctx, m) {
+    var size = m.s, cx = m.x + size / 2, cy = m.y + size / 2, I = ui.interior || {};
+    var name = storeLabel(I.store || I.landmark, I.kind) || INTERIOR_NAMES[I.kind] || 'Indoors';
+    ctx.save();
+    rr(ctx, m.x, m.y, size, size, px(14)); ctx.fillStyle = '#121626'; ctx.fill(); ctx.clip();
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    for (var g2 = px(16); g2 < size; g2 += px(16)) { ctx.beginPath(); ctx.moveTo(m.x + g2, m.y); ctx.lineTo(m.x + g2, m.y + size); ctx.moveTo(m.x, m.y + g2); ctx.lineTo(m.x + size, m.y + g2); ctx.stroke(); }
+    // a door glyph and the way out
+    ctx.fillStyle = COL.green; rr(ctx, cx - px(11), cy - px(30), px(22), px(32), px(3)); ctx.fill();
+    ctx.fillStyle = '#121626'; ctx.beginPath(); ctx.arc(cx + px(5), cy - px(13), px(2), 0, Math.PI * 2); ctx.fill();
+    txt(ctx, 'INDOORS', cx, cy + px(22), { font: F(12, '900'), color: COL.ink, align: 'center', outline: false });
+    txt(ctx, 'Walk out the door to leave', cx, cy + px(38), { font: F(9, 'bold'), color: COL.muted, align: 'center', outline: false, maxW: size - px(16) });
+    ctx.restore();
+    rr(ctx, m.x, m.y, size, size, px(14)); ctx.lineWidth = px(3); ctx.strokeStyle = 'rgba(238,241,251,0.85)'; ctx.stroke();
+    drawPlaceChip(ctx, m, 'INSIDE', name);
   }
   function nearLandmark(p) {
     var Wd = GTP.World, lms = Wd && Wd.landmarks; if (!lms) return null;
@@ -1057,7 +1081,7 @@
     return null;
   }
   function drawObjectiveArrow(ctx) {
-    var Rd = GTP.Render, p = player(); if (!Rd || !p) return;
+    var Rd = GTP.Render, p = player(); if (!Rd || !p || indoors()) return;
     var at = arrowTarget(); if (!at) return;
     var t = at.t, col = at.col;
     var s = Rd.worldToScreen(t.x, (t.y || 0) + 2.6, t.z);
@@ -3708,7 +3732,7 @@
   }
   // the route chip: the next turn and the distance, the destination and the total underneath
   function drawGpsChip(ctx) {
-    var G = ui.gps, g = game(); if (!G || !g || g.state !== 'playing' || !G.turn) return;
+    var G = ui.gps, g = game(); if (!G || !g || g.state !== 'playing' || !G.turn || indoors()) return;
     var col = gpsColor(G.kind), m = minimapRect(), w = Math.min(px(250), m.left ? W - safe.l - safe.r : px(260)), h = px(46);
     var x, y;
     if (m.top) { x = m.left ? m.x : m.x + m.s - w; y = ui.chipBottom + px(6); }
@@ -3748,7 +3772,7 @@
   }
   function drawMarkerLabels(ctx) {
     var Rd = GTP.Render, p = player(), g = game(); if (!Rd || !Rd.worldToScreen || !p || !g || g.state !== 'playing') return;
-    var list = labelTargets(), rects = [], G = ui.gps;
+    var list = indoors() ? [] : labelTargets(), rects = [], G = ui.gps;
     ui.labelsDrawn = 0; ui.gpsLabelDrawn = false;
     for (var i = 0; i < list.length; i++) {
       var L = list[i], y = (typeof L.y === 'number' ? L.y : groundY(L.x, L.z)) + 3.6, s;
@@ -5959,7 +5983,7 @@
     gps: { set: gpsSet, clear: function () { ui.gps = null; }, get: function () { return ui.gps; } },
     skipCall: skipCallLine,
     wantsMenuPad: function () { var c = ui.card; return !!(c && c.kind === 'failed' && retryOffer() && c.t >= 0.8); },
-    phoneTabs: PHONE_TABS, allMarkers: allMarkers, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
+    phoneTabs: PHONE_TABS, allMarkers: allMarkers, pauseItems: function () { return PAUSE_ITEMS.map(function (it) { return { id: it.id, label: it.id === 'mute' ? 'MUTE: ' + (ui.muted ? 'ON' : 'OFF') : it.label }; }); }, openStory: function () { openPause('phone'); ui.pause.tab = PHONE_TABS.indexOf('STORY'); ui.pause.row = 0; ui.pause.scroll = 0; },
     state: ui,
     _v3: { crossState: crossState, drawCrosshair: drawCrosshair, gpsTurn: gpsTurn, armoryState: function () { return ui.modal && ui.modal.kind === 'armory' ? armoryState() : null; }, retryOffer: retryOffer, stockList: stockList, wardrobeCats: wardrobeCats, modCats: modCats, heistDef: heistDef, vehCat: vehCat, chuteState: chuteState, promptList: promptList, missionRowActivate: missionRowActivate, retryActivate: retryActivate }
   };
