@@ -1,7 +1,6 @@
 # UI track (`js/11_ui.js`, `js/02_input.js`): final state for v0.3.0
 
-Branch `v03/ui`, merged with `game/grand-theft-pundit` 10ba585 (the latest integration head; `git merge` reports it up to
-date). Details: `docs/v03/ui.md` (screens, the real APIs each one reads, decisions) and `docs/v03/triage_ui.md` (all 73
+Branch `v03/ui`, merged with `game/grand-theft-pundit` a94bf77 (round 2; round 1 was on 10ba585). Details: `docs/v03/ui.md` (screens, the real APIs each one reads, decisions) and `docs/v03/triage_ui.md` (all 73
 QA findings that point at this track).
 
 ## Done in the final round
@@ -47,7 +46,12 @@ QA findings that point at this track).
   `boss:phase` payload, PHASE n / N announced again (08b skips its banner under the UI's bar), and `GTP.UI.drawsBossShield`
   / `handlesBossEnd` set so 08b's caption and bar clearing stand down.
 
-## Test results (current head)
+Round-2 results on the a94bf77 merge (head of v03/ui): `tests/ui.js` PASS, `tests/ui_v03.js` PASS (the mod shop now opens
+with the player in the car, which the vehicles module requires; `Strangers.strands()` replaces the now-empty `list()`;
+the radio feed is set through its setters), `tests/radio.js` PASS, `tests/content_audit.js` PASS (256 files, 0 hits),
+`tests/artifact.js` FAIL only on the `30_game.js` comment above.
+
+## Test results (round 1, at 69478b9)
 
 All runs on the merged build (v03/ui with game/grand-theft-pundit 10ba585), Chromium via Playwright, `NODE_PATH=/opt/node-tools/node_modules`.
 
