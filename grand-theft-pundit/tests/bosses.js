@@ -71,8 +71,14 @@ function installBot() {
     if (!tg) { moveDir(mx, mz); In.set('aim', false); In.set('shoot', false); return; }
     // the camera turns to the target: the lock-on takes the best target within 20 degrees of the rig's yaw
     const dx = tg.x - p.x, dz = tg.z - p.z, dist = Math.hypot(dx, dz);
-    GTP.Render.rig.yaw = U.dirToYaw(dx, dz);
+    // aim like a player with the assist on: while the lock holds the target, the assist steers the camera (yaw and pitch);
+    // otherwise face it and re-press aim, since the assist grabs a target in a 20 degree cone on the press
+    const CB = GTP.Combat, locked = CB.aim && CB.aim.active && CB.aim.target === tg;
+    if (!locked) GTP.Render.rig.yaw = U.dirToYaw(dx, dz);
+    bot.relock = !locked && In.down('aim') && (bot.relockT = (bot.relockT || 0) + 1) % 3 === 0;
     const melee = enc.id === 'b05_dunk';
+    // a player switches to a gun for a gun fight
+    if (!melee && !p.inVehicle) { const W = GTP.Combat.WEAPONS || {}, cur = W[p.weapon]; if (!cur || cur.melee || cur.cone || cur.lobbed || cur.rocket || cur.cls === 'thrown') { for (const w of ['rifle', 'smg', 'pistol', 'revolver']) if (p.weapons[w] > 0 && W[w]) { p.weapon = w; break; } } }
     let want = melee ? 1.1 : (enc.id === 'b01_goldplate' && tg.kind === 'heli' ? 7 : 9);
     let attack = true;
     if (melee) {
@@ -86,7 +92,7 @@ function installBot() {
       else if (dist < want - 2.5) { mx = -dx; mz = -dz; }
     }
     moveDir(mx, mz);
-    In.set('aim', attack);
+    In.set('aim', attack && !bot.relock);
     In.set('shoot', attack && (melee ? dist < 2.2 : dist < 32));
   };
   bot.run = function (seconds, every) {
@@ -192,6 +198,45 @@ H.run('bosses', async (t) => {
     const after = await page.evaluate((id) => { const peds = GTP.Entities.list.filter((e) => e.kind === 'ped' && e.bossId === id); return { peds: peds.length, alive: peds.every((e) => e.alive), humiliated: peds.some((e) => e.humiliated) }; }, id);
     t.assert(after.peds === 0 || (after.alive && after.humiliated), id + ': the boss is humiliated, never killed: ' + JSON.stringify(after));
     await page.evaluate(() => { GTP.game.advance(2); });
+  }
+
+  // the content track's six boss missions end to end (when they exist): prep, the approach objectives forced through, the walk
+  // to the arena (a teleport), the fight by the bot, the mission's own dialogue and outro, MISSION PASSED
+  if (!ONLY || ONLY.includes('content')) {
+    const have = await page.evaluate((ids) => ids.filter((id) => { const m = GTP.Missions.missionById(id); return m && (m.objectives || []).some((o) => o.type === 'boss' || o._boss); }), ALL);
+    for (const id of have) {
+      await page.evaluate((id) => {
+        const B = GTP.Bosses, M = GTP.Missions, g = GTP.game, p = g.player;
+        B.endAll('test'); if (M.state.active) M.abort(); M.state.completed.delete(id);
+        if (p.inVehicle) p.exitVehicle();
+        p.hp = p.maxHp; p.armor = 50; g.debug.giveWeapon('pistol', 600); p.weapon = id === 'b05_dunk' ? 'fist' : 'pistol';
+        window.__bossLog.dmg = {}; window.__curMission = id; window.__bot.stats = { steps: 0, jumps: 0, dodges: 0, deaths: 0, retries: 0, debates: 0, hpLost: 0 }; window.__bot.lastHp = p.hp;
+        M.prep(id, {});
+      }, id);
+      let simT = 0, st = null;
+      while (simT < 420) {
+        st = await page.evaluate((id) => {
+          const M = GTP.Missions, B = GTP.Bosses, g = GTP.game, b = window.__bot;
+          for (let k = 0; k < 20; k++) {
+            const cur = M.current && M.current(), e = B.active;
+            if (g.state === 'playing' && cur && cur.def && cur.def.type !== 'boss' && !cur.def._boss && cur.def.type !== 'dialogue' && (!e || e.state === 'ended')) M.completeObjective();
+            if (e && e.state === 'travel') { const p = g.player; if (p.inVehicle) p.exitVehicle(); g.debug.teleport(e.center.x + 12, e.center.z + 12); }
+            b.run(0.25);
+          }
+          const e = B.active;
+          return { done: M.state.completed.has(id), active: M.state.active, enc: e ? e.state : null, phase: e ? e.phase : 0, gs: g.state, retry: !!M.lastFail(), dbg: e ? { hp: Math.round(e.hp), mode: e.data.mode, popped: e.data.popped, need: e.data.need, pT: e.data.patchT, pat: !!e.data.patch, log: e.log.slice(-3), parts: e.liveParts(), shield: e.shield, tgt: (e.target() && e.target().entity && e.target().entity.kind) || null, lock: GTP.Combat.aim.target ? GTP.Combat.aim.target.kind : null, aim: GTP.Combat.aim.active, d: Math.round(Math.hypot(g.player.x - e.center.x, g.player.z - e.center.z)), w: g.player.weapon, ammo: g.player.weapons.pistol, ts: g.time.clock.toFixed(1) } : null };
+        }, id);
+        simT += 5;
+        if (process.env.BOSS_DEBUG && simT % 30 === 0) console.log('    ' + simT + ' ' + JSON.stringify(st));
+        if (st.done) break;
+        if (!st.active && !st.retry && st.gs === 'playing') break;
+      }
+      const res = await page.evaluate((id) => ({ done: GTP.Missions.state.completed.has(id), bot: window.__bot.stats, dmg: window.__bossLog.dmg, errors: GTP.errors.slice(0, 4).map((e) => e.where + ': ' + e.message) }), id);
+      console.log('  content ' + id + ': ' + JSON.stringify(Object.assign({ sim: simT, last: st }, res)));
+      t.assert(res.done, 'content mission ' + id + ' passes end to end: ' + JSON.stringify(st));
+      t.assert(res.errors.length === 0, id + ' (content): no errors: ' + res.errors.join(' | '));
+    }
+    if (!have.length) console.log('  content: no boss missions in this build');
   }
 
   // the phase checkpoint: die in phase 2 of the President, RETRY resumes in phase 2 at the phase's start
@@ -331,6 +376,15 @@ H.run('bosses', async (t) => {
       out.before = { ents: count(), scene: scene() };
       g.newGame(7); g.advance(0.2);
       out.afterNewGame = { state: e.state, active: !!B.active, ents: count(), scene: scene() };
+      // 6. the content's approach can end far from the arena: the fight waits in 'travel' (no leash) until the player arrives
+      M.registerTest({ id: 't_travel', title: 'Travel', objectives: [{ type: 'boss', bossId: 'b01_goldplate', text: 'Ground him' }] });
+      const tw = GTP.World.landmark('goldplate_tower'); g.debug.teleport(tw.door.x, tw.door.z);
+      M.start('t_travel', { skipIntro: true }); g.advance(12);
+      const te = B.active, tgt = M.objectiveTarget();
+      out.travel = { state: te && te.state, mission: M.state.active, dist: te ? Math.round(Math.hypot(g.player.x - te.center.x, g.player.z - te.center.z)) : -1, arrowToArena: !!(tgt && te && Math.hypot(tgt.x - te.center.x, tgt.z - te.center.z) < 30), hint: M.state.hint };
+      g.debug.teleport(te.center.x + 10, te.center.z + 10); g.advance(0.5);
+      out.travel.after = te.state;
+      M.abort();
       // 5. focus and the X key: no slow motion in a menu, the X latch ignored while paused
       for (const k of GTP.Specials.ids) GTP.Specials.unlock(k);
       GTP.Input.set('aim', true); g.step(); GTP.Specials.trigger('focus'); const ts = g.timeScale;
@@ -340,9 +394,11 @@ H.run('bosses', async (t) => {
       return out;
     });
     await page.keyboard.press('x');
-    lc.latch = await page.evaluate(() => { const g = GTP.game, S = GTP.Specials; S.meters.shout = 1; g.setState('playing'); g.advance(0.2); return +S.meters.shout.toFixed(2); });
+    // the loop keeps stepping while paused (a frame ends every step), then play resumes
+    lc.latch = await page.evaluate(() => { const g = GTP.game, S = GTP.Specials; S.meters.shout = 1; g.step(); g.step(); g.setState('playing'); g.advance(0.2); return +S.meters.shout.toFixed(2); });
     lc.errors = await page.evaluate(() => GTP.errors.slice(0, 4).map((e) => e.where + ': ' + e.message));
     console.log('  lifecycle: ' + JSON.stringify(lc));
+    t.assert(lc.travel.state === 'travel' && lc.travel.mission === 't_travel' && lc.travel.dist > 100 && lc.travel.arrowToArena && (lc.travel.after === 'intro' || lc.travel.after === 'fight'), 'a far start waits in travel, the arrow on the arena, and opens on arrival: ' + JSON.stringify(lc.travel));
     t.assert(lc.takeoffLanding === 'landing', 'spools cut during takeoff still bring the helicopter down');
     t.assert(lc.endedOnDeath, 'a fight outside a mission ends when the player dies');
     t.assert(lc.wreckKept && lc.parked && lc.scootersGone, 'wrecks stay tracked and clear with the fight; vehicles brake between phases');
