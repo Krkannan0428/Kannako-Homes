@@ -123,7 +123,8 @@ H.run('ui', async (t) => {
     return out;
   });
   console.log('  nap ads: ' + JSON.stringify(nap));
-  t.assert(nap.length === 4 && nap.every(Boolean), 'the mattress ad runs at minute 20 on every station');
+  const nStations = await page.evaluate(() => GTP.Content.radio.stations.length);
+  t.assert(nap.length === nStations && nStations >= 4 && nap.every(Boolean), 'the mattress ad runs at minute 20 on every station (' + nStations + ')');
 
   // ---- 3. dialogue with a cast portrait ----
   const dlg = await page.evaluate(() => {
@@ -175,10 +176,13 @@ H.run('ui', async (t) => {
   const aborted = await page.evaluate(() => {
     T_.press('left'); T_.press('left'); T_.press('left'); GTP.game.render();   // back to MISSIONS (its rows come from the draw)
     const rows = GTP.UI.state.pause.rows.map((r) => r.kind);
-    T_.press('secondary'); GTP.game.advance(0.2);
-    return { rows, active: GTP.Missions.state.active, state: GTP.game.state };
+    T_.press('secondary'); GTP.game.advance(0.5); GTP.game.render();
+    const asked = !!GTP.UI.state.confirm, still = GTP.Missions.state.active;   // abandoning asks first (QA-B-TCH-04)
+    if (GTP.UI.state.confirm) GTP.UI.state.confirm.sel = 0;
+    T_.press('confirm'); GTP.game.advance(0.2);
+    return { rows, asked, still, active: GTP.Missions.state.active, state: GTP.game.state };
   });
-  t.assert(aborted.rows[0] === 'active' && aborted.active === null && aborted.state === 'playing', 'Delete in the missions tab aborts the mission and closes the page: ' + JSON.stringify(aborted));
+  t.assert(aborted.rows[0] === 'active' && aborted.asked && aborted.still && aborted.active === null && aborted.state === 'playing', 'Delete in the missions tab asks, then aborts the mission and closes the page: ' + JSON.stringify(aborted));
   const route = await page.evaluate(() => {
     GTP.game.advance(2.2);
     const r = GTP.UI.state.map.route, p = GTP.game.player, wp = GTP.game.waypoint;
