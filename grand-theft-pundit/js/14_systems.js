@@ -69,6 +69,11 @@
   function rrange(a, b) { return a + (b - a) * rnd(); }
   function gauss() { var u = Math.max(1e-9, rnd()), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(Math.PI * 2 * v); }
 
+  // run fn without moving the city's own random stream (a spawned vehicle or ped draws colours and looks from GTP.rng)
+  function keepRng(fn) {
+    var M = GTP.rng, st = M && M.state ? M.state() : null;
+    try { return fn(); } finally { if (st != null && M.setState) M.setState(st); }
+  }
   function lmById(id) { var Wd = W(); if (!id || !Wd || !Wd.landmark) return null; try { return Wd.landmark(id) || null; } catch (e) { return null; } }
   function groundY(x, z) { var Wd = W(); try { var y = Wd && Wd.heightAt ? Wd.heightAt(x, z, 0) : 0; return y > -1 ? y : 0; } catch (e) { return 0; } }
   function blockedFoot(x, z) {
@@ -962,7 +967,7 @@
       if (p && g && g.debug && g.debug.spawnVehicle && W().nearestRoadPoint) {
         var f = yawDir(p.yaw || 0), rp = inInterior() ? null : W().nearestRoadPoint(p.x + f.x * 8, p.z + f.z * 8), v = null;
         if (!rp) { toast('No road here. The truck is circling the block.'); return; }
-        try { v = g.debug.spawnVehicle(rp.x, rp.z, d.vehicle || 'sedan', { wrap: d.wrap, color: d.color }); } catch (e) { v = g.debug.spawnVehicle(rp.x, rp.z, d.vehicle || 'sedan', { color: d.color }); }
+        v = keepRng(function () { try { return g.debug.spawnVehicle(rp.x, rp.z, d.vehicle || 'sedan', { wrap: d.wrap, color: d.color }); } catch (e) { return g.debug.spawnVehicle(rp.x, rp.z, d.vehicle || 'sedan', { color: d.color }); } });
         if (v) v.tag = v.tag || 'sys_cheat';
       }
     }
@@ -1104,7 +1109,7 @@
   function speedOf(v) { if (!v) return 0; if (v.speed2d) { try { return v.speed2d(); } catch (e) { /* fallthrough */ } } return Math.abs(v.speed || 0); }
   // keep each job's vehicle parked at its spot while the player is within CAR_NEAR of it (once a second): spawned when
   // missing, never under the player's nose once one was wrecked; an unused parked one is cleared beyond CAR_FAR
-  var CAR_NEAR = 220, CAR_FAR = 320, carT = 0, carSpots = {};
+  var CAR_NEAR = 100, CAR_FAR = 180, carT = 0, carSpots = {};
   function ensureJobCars(dt, force) {
     carT -= dt || 0; if (carT > 0 && !force) return; carT = 1;
     var g = game(), p = player(); if (!g || !g.debug || !g.debug.spawnVehicle || !p || inInterior()) return;
@@ -1118,10 +1123,12 @@
       if (cur && !cur._sysReleased) { cur.persistent = false; cur.sysJob = null; cur._sysReleased = true; }   // a wreck: the normal wreck timer clears it
       if (cur && GTP.Entities.list.indexOf(cur) >= 0) return;   // a new one waits until the wreck is gone
       if (dd > CAR_NEAR) return;
-      if (cur && dd < 120) return;   // and comes back out of sight
+      if (cur && dd < 60) return;   // and comes back out of the player's way
       var v = null, o = { color: d.vehicle.color, tag: 'sys_job:' + d.id };
-      try { v = g.debug.spawnVehicle(spot.x, spot.z, d.vehicle.type || 'van', Object.assign({ wrap: d.vehicle.wrap }, o)); }
-      catch (e) { try { v = g.debug.spawnVehicle(spot.x, spot.z, d.vehicle.type || 'van', o); } catch (e2) { report(e2, 'job.vehicle'); } }
+      v = keepRng(function () {
+        try { return g.debug.spawnVehicle(spot.x, spot.z, d.vehicle.type || 'van', Object.assign({ wrap: d.vehicle.wrap }, o)); }
+        catch (e) { try { return g.debug.spawnVehicle(spot.x, spot.z, d.vehicle.type || 'van', o); } catch (e2) { report(e2, 'job.vehicle'); return null; } }
+      });
       if (!v) return;
       v.persistent = true; v.tag = 'sys_job:' + d.id; v.label = d.vehicle.label || d.name; v.sysJob = d.id;
       if (flags().damage_controlled && d.kind === 'rescue') { v.maxHp = (v.maxHp || v.hp) * 2; v.hp = v.maxHp; }   // the reward: the van has armor
@@ -1172,7 +1179,7 @@
       var leg = dist(p.x, p.z, c.x, c.z);
       if (d.kind === 'rescue') {
         var dp = dropPoint(c.x, c.z); leg += dp ? dist(c.x, c.z, dp.x, dp.z) : 150;
-        try { var g = game(); if (g && g.debug && g.debug.spawnPed) { c.ped = g.debug.spawnPed(c.x, c.z, null, 'civ'); if (c.ped) { c.ped.persistent = true; c.ped.tag = 'sys_patient'; if (c.ped.stop) c.ped.stop(); } } } catch (e) { report(e, 'job.spawnPed'); c.ped = null; }
+        try { var g = game(); if (g && g.debug && g.debug.spawnPed) { c.ped = keepRng(function () { return g.debug.spawnPed(c.x, c.z, null, 'civ'); }); if (c.ped) { c.ped.persistent = true; c.ped.tag = 'sys_patient'; if (c.ped.stop) c.ped.stop(); } } } catch (e) { report(e, 'job.spawnPed'); c.ped = null; }
       }
       time += leg * d.timer.perMetre + d.timer.perCall;
       c.mesh = markerAt(c.x, c.y, c.z, d.kind === 'rescue' ? 0x2fd6ff : 0xff7a20);
