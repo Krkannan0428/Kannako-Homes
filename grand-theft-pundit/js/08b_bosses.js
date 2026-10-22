@@ -416,6 +416,8 @@
     constructor(enc, o) {
       super({ kind: 'heli', x: o.x, y: o.y, z: o.z, radius: o.radius || 1.2, height: o.height || 1.6, hp: o.hp || 50, persistent: true });
       this.boss = enc; this.bossPart = o.kind || 'part'; this.label = o.label || 'WEAK POINT';
+      // the lock-on ranks hostiles first (Combat's hostileRole reads `hostile`): a weak point competes with the goons around it
+      this.hostile = true;
       this.down = false; this.leaving = false; this.invuln = false; this.invulnText = o.invulnText || 'NO EFFECT';
       this.onBreak = o.onBreak || null; this.onHit = o.onHit || null; this.follow = o.follow || null; this.data = o.data || {};
       this.flashT = 0; this.noteT = 0;
@@ -629,7 +631,7 @@
     var now = simT();
     if (!force && now - this.lastEmit < 0.1) { this._pendingEmit = true; return; }
     this.lastEmit = now; this._pendingEmit = false;
-    emit('boss:phase', { id: this.id, phase: this.phase, phases: this.phases, hp: Math.round(this.hp), maxHp: this.maxHp, name: this.name, shield: this.shield, state: this.state, hint: this.hint });
+    emit('boss:phase', { id: this.id, phase: this.phase, phases: this.phases, hp: Math.round(this.hp), maxHp: this.maxHp, name: this.name, shield: this.shield, shieldText: this.shield ? this.shieldText : null, state: this.state, hint: this.hint });
   };
   EP.bark = function (text, who) {
     who = who || this.castId;
@@ -1426,7 +1428,7 @@
       d.patch = pt;
     },
     _van: function (enc, k) {
-      var c = enc.center, a = k * Math.PI + enc.rng.range(-0.3, 0.3), r = 22;
+      var c = enc.center, a = k * Math.PI + enc.rng.range(-0.3, 0.3), r = DEFS.b04_redacted._lap(enc, a);
       var s = spotNear(enc.rng, c.x + Math.cos(a) * r, c.z + Math.sin(a) * r, 0, 6, true);
       var v = new GTP.Vehicle({ x: s.x, z: s.z, type: 'van', color: '#4c4c4c', persistent: true, tag: 'ova_van' });
       v.y = s.y; v.yaw = a; v.snap(); v.bossVan = enc.id; E().add(v); enc.vehicles.push(v);
@@ -1438,21 +1440,43 @@
     phase: function (enc, n) {
       var d = enc.data, def = enc.def;
       d.need = def.patches[n - 1]; d.popped = 0; d.patchT = 0;
-      DEFS.b04_redacted._patch(enc);
+      // one patch at a time: a patch still up from the last stage carries over
+      if (!d.patch || d.patch.removed || d.patch.down) DEFS.b04_redacted._patch(enc);
       var vans = 0; for (var i = 0; i < enc.vehicles.length; i++) { var vv = enc.vehicles[i]; if (!vv.wreck && !vv.removed && !vv._bossCounted && vv.driver) vans++; }
       for (i = vans; i < def.vans[n - 1]; i++) DEFS.b04_redacted._van(enc, i);
     },
     partBroken: function (enc, pt) {
       var d = enc.data, b = enc.balloon, def = enc.def;
       if (pt.bossPart !== 'patch') return;
-      d.popped++; d.patch = null;
+      d.popped++; if (d.patch === pt) d.patch = null;
       fx({ type: 'puff', x: pt.x, y: pt.y, z: pt.z, size: 4, life: 0.8, color: 0xf0f0f0 });
       textFx('PSSSHT', pt.x, pt.y + 1, pt.z, '#ffffff', 1.4);
       b.data.scale = Math.max(0.45, (b.data.scale || 1) - 0.065);
       enc.randomBark('pop');
       var share = (enc.maxHp / enc.phases) / d.need;
       enc.hurt(share + 0.01);
-      if (enc.state === 'fight' && d.popped < d.need) d.patchT = 3;
+      if (enc.state === 'fight' && d.popped < d.need && !d.patch) d.patchT = 3;
+    },
+    // the vans' lap: 22 m out, pulled in wherever the lot ends (the depot sits on the waterfront: a van never laps into the
+    // harbour or a wall); one radius per 15 degrees, from the tiles
+    _lap: function (enc, ang) {
+      var d = enc.data, c = enc.center, n = 24, i;
+      if (!d.lap) {
+        var Wd = W(), T = Wd.T;
+        var ok = function (x, z) { var t = Wd.tileAt(x, z); return (t === T.ROAD || t === T.PARKING || t === T.PLAZA || t === T.SIDEWALK || t === T.GRASS || t === T.SAND) && !Wd.solidAt(x, z, 0.5); };
+        d.lap = [];
+        for (i = 0; i < n; i++) {
+          var a = i / n * TAU, ca = Math.cos(a), sa = Math.sin(a), r = 22;
+          for (; r > 9; r -= 1.5) {
+            var good = true;
+            for (var q = -4; q <= 4 && good; q += 2) good = ok(c.x + ca * (r + q), c.z + sa * (r + q)) && ok(c.x + ca * r - sa * q, c.z + sa * r + ca * q);
+            if (good) break;
+          }
+          d.lap.push(r);
+        }
+      }
+      var k = ((ang / TAU) % 1 + 1) % 1 * n, i0 = Math.floor(k) % n, f = k - Math.floor(k);
+      return d.lap[i0] * (1 - f) + d.lap[(i0 + 1) % n] * f;
     },
     update: function (enc, dt) {
       var d = enc.data, def = enc.def, n = enc.phase, p = player(), c = enc.center, b = enc.balloon, i;
@@ -1493,7 +1517,8 @@
         }
         if (vd.dropT <= 0) { vd.dropT = 9; vd.stopT = 2.4; vd.dropped = false; continue; }
         vd.ang += dt * 0.3;
-        steerTo(v, c.x + Math.cos(vd.ang) * 22, c.z + Math.sin(vd.ang) * 22, 11);
+        var lr = DEFS.b04_redacted._lap(enc, vd.ang + 0.35);
+        steerTo(v, c.x + Math.cos(vd.ang + 0.35) * lr, c.z + Math.sin(vd.ang + 0.35) * lr, 11);
       }
       if (d.vanRespawn > 0) { d.vanRespawn -= dt; if (d.vanRespawn <= 0 && liveVans < def.vans[n - 1]) DEFS.b04_redacted._van(enc, liveVans); }
     },
@@ -2242,7 +2267,17 @@
     var g = game(); if (!g || (g.state !== 'playing' && g.state !== 'cutscene') || (g.loading && g.loading.active)) return;
     var S = U.clamp(Math.min(w / 1280, h / 720), 0.62, 1.3), UI = GTP.UI;
     var b = Bosses.hud(), M = GTP.Missions, talking = g.state === 'cutscene' || (M && M.dialogue && M.dialogue.active);
-    if (b && !UI.drawsBossBar && b.state !== 'done' && !talking) {
+    // the ui track's own bar and rings (11_ui.js keeps them in UI.state.boss / UI.state.specials, fed by boss:phase / special:state)
+    var uiBar = !!UI.drawsBossBar || !!(UI.state && Object.prototype.hasOwnProperty.call(UI.state, 'boss'));
+    var uiSpecials = !!UI.drawsSpecials || !!(UI.state && UI.state.specials && typeof UI.state.specials === 'object');
+    if (b && uiBar && b.shield && b.state === 'fight' && !talking && !UI.drawsBossShield) {
+      // its bar has no shield state: the reason the boss takes no damage, a line above the bar's name
+      ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.font = '700 ' + Math.round(12 * S) + 'px sans-serif';
+      ctx.lineWidth = 3 * S; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(b.shieldText, w / 2, h - 74 * S);
+      ctx.fillStyle = '#d0d0d0'; ctx.fillText(b.shieldText, w / 2, h - 74 * S);
+      ctx.restore();
+    }
+    if (b && !uiBar && b.state !== 'done' && !talking) {
       // bottom centre, above the ticker: the objective panel and the hints own the top of the screen
       var bw = Math.min(w * 0.5, 520 * S), bx = (w - bw) / 2, by = h - 96 * S, bh = 12 * S;
       ctx.save();
@@ -2263,7 +2298,7 @@
       if (b.shield && b.hint) { ctx.fillStyle = '#ffd45a'; ctx.fillText(b.hint, w / 2, by + bh + 32 * S); }
       ctx.restore();
     }
-    if (!UI.drawsSpecials) {
+    if (!uiSpecials) {
       var st = Specials.state(), any = false, id;
       for (id in st) if (st[id].unlocked) any = true;
       if (!any) return;

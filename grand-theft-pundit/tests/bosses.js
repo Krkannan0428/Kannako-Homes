@@ -16,10 +16,20 @@ function installBot() {
   const bot = window.__bot = { stats: { steps: 0, jumps: 0, dodges: 0, deaths: 0, retries: 0, debates: 0, hpLost: 0 }, debateT: 0, lastHp: 100 };
   bot.release = function () { for (const k of keys) In.set(k, false); };
   // move along world direction (dx, dz) relative to the camera yaw (the player's control reads the keys camera-relative)
+  // a player sees the harbour: a step that would go into the water turns along the shore instead (or back to the arena)
+  function wet(x, z) { const W = GTP.World; return W.tileAt(x, z) === W.T.WATER; }
   function moveDir(dx, dz) {
-    const l = Math.hypot(dx, dz);
+    let l = Math.hypot(dx, dz);
     In.set('forward', false); In.set('back', false); In.set('left', false); In.set('right', false);
     if (l < 0.01) return;
+    const p = GTP.game.player;
+    if (wet(p.x + dx / l * 3, p.z + dz / l * 3)) {
+      const e = GTP.Bosses.active, a = [-dz, dx], b = [dz, -dx];
+      if (!wet(p.x + a[0] / l * 3, p.z + a[1] / l * 3)) { dx = a[0]; dz = a[1]; }
+      else if (!wet(p.x + b[0] / l * 3, p.z + b[1] / l * 3)) { dx = b[0]; dz = b[1]; }
+      else if (e) { dx = e.center.x - p.x; dz = e.center.z - p.z; }
+      l = Math.hypot(dx, dz); if (l < 0.01) return;
+    }
     const f = U.yawToDir(GTP.Render.rig.yaw), rx = -f.z, rz = f.x;
     const fw = (dx * f.x + dz * f.z) / l, rt = (dx * rx + dz * rz) / l;
     if (fw > 0.3) In.set('forward', true); else if (fw < -0.3) In.set('back', true);
@@ -34,7 +44,7 @@ function installBot() {
       if (bot.debateT > 40) { bot.debateT = 0; bot.stats.debates++; B.debug.resolveDebate(true); }
       return;
     }
-    if (M.canRetry && M.canRetry()) { bot.release(); bot.stats.retries++; M.retry(); return; }
+    if (M.canRetry && M.canRetry()) { bot.release(); bot.stats.retries++; const lf = M.lastFail && M.lastFail(); (bot.stats.fails = bot.stats.fails || []).push(lf ? String(lf.reason || '?') + (lf.text ? ': ' + String(lf.text).slice(0, 60) : '') : '?'); M.retry(); return; }
     if (g.state !== 'playing') { bot.release(); return; }
     if (p.hp < bot.lastHp) bot.stats.hpLost += bot.lastHp - p.hp;
     bot.lastHp = p.hp;
@@ -76,6 +86,7 @@ function installBot() {
     GTP.Render.rig.yaw = U.dirToYaw(dx, dz);
     const melee = enc.id === 'b05_dunk';
     let want = melee ? 1.1 : (enc.id === 'b01_goldplate' && tgE && tgE.kind === 'heli' ? 7 : 9);
+    if (nearAdd && !melee) want = dist;   // a goon in your face: stand and shoot (backing off drags the fight out of the arena)
     let attack = true;
     if (melee) {
       const card = enc.data.card, mode = enc.data.mode;
@@ -90,10 +101,16 @@ function installBot() {
     moveDir(mx, mz);
     // a player re-aims at a new target: looks at it and presses aim again (the lock-on takes what is in front on the press;
     // a held aim only re-acquires what passes under the crosshair, and the camera may still be tilted up at the helicopter)
-    let aimOn = attack;
+    // a dodge is a sprint: a player lets go of aim (an aiming player only walks)
+    let aimOn = attack && !(dodging && !melee);
     if (attack && !melee && tgE && tgE.kind && p.lockTarget !== tgE) {
       if (!(tgE.y > p.y + 4)) GTP.Render.rig.pitch = 0.15;
-      if (p.aiming && bot.stats.steps - (bot.reaimAt || -99) > 6) { bot.reaimAt = bot.stats.steps; bot.stats.reaims = (bot.stats.reaims || 0) + 1; aimOn = false; }
+      if (p.aiming && bot.stats.steps - (bot.reaimAt || -99) > 6) {
+        bot.reaimAt = bot.stats.steps;
+        // locked on something else: Tab cycles the lock through the cone; nothing locked: let go of aim and press it again
+        if (p.lockTarget) { In.press('lockOn'); bot.stats.cycles = (bot.stats.cycles || 0) + 1; }
+        else { bot.stats.reaims = (bot.stats.reaims || 0) + 1; aimOn = false; }
+      }
     }
     In.set('aim', aimOn);
     In.set('shoot', aimOn && (melee ? dist < 2.2 : dist < 32));
