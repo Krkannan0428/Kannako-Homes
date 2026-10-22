@@ -389,6 +389,7 @@ H.run('world', async (t) => {
       // 40 m of run-up; the deck jump (sj_03) runs across the 16 m deck from its south edge
       const back = r.y > 3 ? 7.5 : 40, f = U.yawToDir(r.yaw), sx = r.x - f.x * back, sz = r.z - f.z * back;
       if (p.inVehicle) p.exitVehicle();
+      if (p.alive && p.maxHp) p.hp = p.maxHp;
       E.list.forEach((e) => { if (!e.removed && e !== p && (e.kind === 'vehicle' || e.kind === 'ped') && !e.persistent && Math.hypot(e.x - r.x, e.z - r.z) < 90) e.destroy(); });
       const v = new GTP.Vehicle({ x: sx, z: sz, type: 'sports' }); v.y = W.heightAt(sx, sz, r.y); v.yaw = r.yaw; v.snap(); E.add(v);
       const sd = W.solidAt(sx - f.z * 2.5, sz + f.x * 2.5, v.y + 0.5) ? -1 : 1;   // the clear side of the car (the yard's lanes are narrow)
@@ -409,7 +410,8 @@ H.run('world', async (t) => {
       }
       GTP.Input.set('forward', false);
       out[r.id] = last ? { ok: last.ok, air: last.airT, reason: last.reason, speed: last.speed, inZone: last.inZone } : { ok: false, reason: 'no landing', launched, top: Math.round(top), at: [Math.round(v.x), Math.round(v.z)], state: g.state, seated: p.inVehicle === v, ts: g.timeScale };
-      if (p.inVehicle) p.exitVehicle(); g.advance(1.2); v.destroy(); g.advance(0.2);
+      // stop before stepping out: bailing from a moving car hurts (v0.3), and nine bails in a row used to kill the player before sj_10
+      v.vx = v.vz = 0; v.speed = 0; if (p.inVehicle) p.exitVehicle(); g.advance(1.2); v.destroy(); g.advance(0.2);
     }
     GTP.Events.off('stunt:land', on);
     g.timeScale = 1;
