@@ -1,26 +1,37 @@
 /* Grand Theft Pundit: 05b_assets_weapons.js
  * The v0.3 arsenal's meshes: low-poly, vertex-coloured, built once per (id, tint) with GTP.GeoBuilder and shared between
- * every hand, holster, rack and crate. 36 built weapons (fists have no mesh) plus a class fallback, so a weapon id that only
- * exists in GTP.Content.parity.weapons still gets a believable gun of its class.
+ * every hand, holster, rack and crate. 44 built weapons (fists have no mesh), the parity ids that reuse one of them (ALIAS:
+ * selfie_stick, heavy_pistol, machine_pistol, micro_smg, pdw, battle_rifle, both_barrels, auto_shotgun, heavy_sniper, sticky,
+ * spin_smoke, grenade_launcher, minigun -> the builder they share, fit and geometry and all), plus a class fallback, so a weapon
+ * id that only exists in GTP.Content.parity.weapons still gets a believable gun of its class. Built for the content table:
+ * clipboard, golf_club, mic_stand (melee), pocket (a derringer), flare_gun, merch_cannon, mute_button (upright), flashbang.
  *
  * Weapon-space convention (every gun): the trigger hand's palm sits at the origin, the barrel runs along +x, up is +y, the
  * grip goes down -y. Melee weapons put the handle at the origin and the head along +x. Thrown things and the megaphone stand
  * upright along +y (fit.upright).
  *
  *   GTP.Assets.weaponMeshes[id]          builder fn(g) -> fills a GeoBuilder
- *   GTP.Assets.weaponFit[id]             {len, hold:'one'|'two', holster:'hip'|'back'|'none', upright, knuckle, pickupScale,
- *                                         muzzle:[x,y,z], support:[x,y,z]|null (the off hand), rail:[x,y,z] (top), under:[x,y,z]
- *                                         (below the barrel), mag:[x,y,z] (the magazine's bottom), slots:[...]}
- *   GTP.Assets.weaponFitFor(id, cls)     the fit of a built weapon, or of the class fallback for an unknown id
+ *   GTP.Assets.weaponFit[id]             {len, hold:'one'|'two', holster:'hip'|'back'|'none', upright, knuckle, melee, shoulder,
+ *                                         spinBarrels, pickupScale, muzzle:[x,y,z], support:[x,y,z]|null (the off hand),
+ *                                         rail:[x,y,z] (top), under:[x,y,z] (below the barrel), mag:[x,y,z] (the magazine's
+ *                                         bottom), slots:[...], cls, base (the builder drawn)}; filled lazily on first read for
+ *                                         any built, aliased, parity or Combat id (a Proxy over weaponFitFor)
+ *   GTP.Assets.weaponFitFor(id, cls)     the fit of a built or aliased weapon, or of the class fallback for an unknown id
  *   GTP.Assets.weaponGeometry(id, tint)  cached BufferGeometry (null for fists); tint recolours the dark metal and polymer
  *   GTP.Assets.weaponMesh(id, mods)      a fresh THREE.Object3D: the weapon plus its attachments (mods = player.weaponMods[id]:
- *                                         {muzzle, mag, optic, grip, light, tint}); every child is named 'held' (the damage
- *                                         flash skips it); the hot mic carries a 'cap' child, the launcher two RATIO stencils,
- *                                         the minigun a 'spin' barrel cluster, a flashlight a 'lens'
+ *                                         {muzzle, mag, optic, grip, light, tint}; the parity attachment ids (flash_hider,
+ *                                         ext_mag, drum_mag, red_dot, holo, scope_4x, scope_8x, fore_grip, angled_grip, laser)
+ *                                         and the older ones both render); every child is named 'held' (the damage flash skips
+ *                                         it); the hot mic carries a 'cap' child, the launcher two RATIO stencils, the minigun a
+ *                                         'spin' barrel cluster, a flashlight or laser a 'lens'
  *   GTP.Assets.weaponMuzzle(id, mods)    the muzzle point in weapon space with the muzzle attachment's length added
- *   GTP.Assets.weaponTints               [{id, name, main, second, price}] (index 0 'stock')
+ *   GTP.Assets.weaponTintOf(id)          {id, main:[r,g,b], second:[r,g,b]} for a tint id: GTP.Content.parity.tints first
+ *                                         (main = its colour, second = 30% toward white), then the local TINTS; null for
+ *                                         'stock' or an unknown id
+ *   GTP.Assets.weaponTints               [{id, name, main, second, price}] (index 0 'stock'; Combat prefers the parity tints)
  *   GTP.Assets.weaponAttachments         {slot: [{id, name, price}]} the fallback attachment variants (Combat merges the parity table)
- *   GTP.Assets.weaponClassOf(id)         the class a built weapon was drawn as (for the fallback)
+ *   GTP.Assets.weaponClassOf(id)         the class a built or aliased weapon is drawn as (for the fallback)
+ *   GTP.Assets.weaponAliases             {parityId: builderId}
  */
 (function () {
   'use strict';
@@ -172,7 +183,7 @@
     // ---- melee ----
     // the folding table leg: a chrome tube, a tape grip, a rubber foot and the folding bracket it came off with
     tableleg: function (g) {
-      tube(g, 0, 0.66, 0.022, 0.022, CHROME, 7); tube(g, 0.0, 0.17, 0.027, 0.027, TAPE, 7); tube(g, -0.06, -0.0, 0.026, 0.022, RUBBER, 7);
+      tube(g, 0, 0.66, 0.022, 0.022, CHROME, 7); tube(g, 0.0, 0.17, 0.027, 0.027, POLY, 7);   // the grip tape (tintable) tube(g, -0.06, -0.0, 0.026, 0.022, RUBBER, 7);
       box(g, 0.58, -0.055, -0.045, 0.08, 0.012, 0.09, GREY); box(g, 0.58, 0.043, -0.045, 0.08, 0.012, 0.09, GREY);
       box(g, 0.6, -0.045, -0.05, 0.04, 0.09, 0.012, GREY); tube(g, 0.57, 0.67, 0.01, 0.01, STEEL, 5, 0, 0.045);
       return { len: 0.72, holster: 'back', hold: 'one', melee: true };
@@ -201,8 +212,50 @@
       bx(g, -0.005, 0.01, -0.03, 0.01, 0.09, BRASS);
       return { len: 0.06, knuckle: true, holster: 'none', hold: 'one', melee: true };
     },
+    // The Run of Show: a clipboard held by its bottom edge, the board along +x, a sheet of cue cards and a steel clip at the top
+    clipboard: function (g) {
+      bx(g, -0.02, 0.31, -0.11, 0.11, 0.01, POLY);                                        // the board
+      bx(g, 0.0, 0.25, -0.095, 0.095, 0.014, CREAM);                                      // the paper
+      for (var i = 0; i < 6; i++) bx(g, 0.03 + i * 0.033, 0.036 + i * 0.033, -0.075, 0.075 - (i % 2) * 0.04, 0.016, GREY);   // the lines
+      bx(g, 0.03, 0.06, -0.075, -0.04, 0.017, PINK);                                       // a pink check mark block
+      bx(g, 0.255, 0.3, -0.045, 0.045, 0.024, CHROME); bx(g, 0.24, 0.26, -0.03, 0.03, 0.03, STEEL);   // the clip
+      tubeZ(g, 0.29, 0, -0.018, 0.018, 0.008, GUN2, 6);                                   // the clip's hinge
+      bx(g, -0.03, 0.04, -0.03, 0.03, 0.022, RUBBER);                                     // the hand's edge pad
+      return { len: 0.33, holster: 'hip', hold: 'one', melee: true };
+    },
+    // the Par Ten Putter: a tintable grip, a chrome shaft and a gold putter head with a dark face
+    golf_club: function (g) {
+      tube(g, -0.08, 0.22, 0.017, 0.014, POLY, 7); tube(g, -0.09, -0.08, 0.019, 0.019, GUN2, 7);
+      tube(g, 0.22, 0.86, 0.009, 0.007, CHROME, 6); tube(g, 0.84, 0.9, 0.009, 0.013, GUN2, 6);   // the shaft and the hosel
+      box(g, 0.88, -0.035, -0.03, 0.055, 0.04, 0.13, GOLD);                               // the head (toe toward +z)
+      box(g, 0.935, -0.032, -0.025, 0.006, 0.034, 0.12, GUN);                              // the face
+      box(g, 0.89, 0.005, 0.02, 0.035, 0.004, 0.012, WHITE);                               // the sight line
+      return { len: 0.96, holster: 'back', hold: 'two', melee: true };
+    },
+    // The Mic Stand: a round weighted base, a chrome pole with a clutch, a mic on a clip at the top
+    mic_stand: function (g) {
+      tube(g, -0.36, -0.33, 0.13, 0.12, GUN, 12); tube(g, -0.33, -0.28, 0.03, 0.02, GUN2, 8);   // the base
+      tube(g, -0.28, 0.42, 0.014, 0.014, CHROME, 7); tube(g, 0.42, 0.92, 0.011, 0.011, CHROME, 7);   // the two-stage pole
+      tube(g, 0.4, 0.45, 0.02, 0.02, GUN2, 8); tubeZ(g, 0.425, 0, 0.018, 0.05, 0.008, GUN2, 6);   // the clutch and its knob
+      tube(g, -0.06, 0.12, 0.018, 0.018, RUBBER, 7);                                       // where you grab it
+      tube(g, 0.9, 0.96, 0.016, 0.016, GUN, 7);                                            // the clip
+      tube(g, 0.96, 1.06, 0.017, 0.022, GUN, 7); tube(g, 1.06, 1.08, 0.028, 0.028, CREAM, 8);   // the mic's handle and ring
+      g.sphere(1.12, 0, 0, 0.042, 8, 4, STEEL);                                            // the grille
+      return { len: 1.2, holster: 'back', hold: 'two', melee: true };
+    },
     // ---- special ----
     megaphone: function (g) { g.cylinder(0, 0, 0, 0.05, 0.14, 0.3, 8, c('#e64d33')); g.cylinder(0, 0.3, 0, 0.14, 0.145, 0.015, 8, CREAM); box(g, -0.03, -0.12, -0.03, 0.06, 0.14, 0.06, GUN); box(g, -0.015, 0.02, -0.07, 0.03, 0.05, 0.05, RUBBER); return { len: 0.3, upright: true, holster: 'none', hold: 'one' }; },
+    // The Mute Button: a handheld remote stood upright, a big red button on top, a few small ones and an IR eye on the front
+    mute_button: function (g) {
+      box(g, -0.016, 0.0, -0.026, 0.032, 0.14, 0.052, GUN);                                // the body
+      box(g, -0.018, 0.0, -0.028, 0.036, 0.04, 0.056, POLY);                               // the rubber base
+      g.cylinder(0, 0.14, 0, 0.026, 0.026, 0.008, 10, GUN2);                               // the button's collar
+      g.cylinder(0, 0.148, 0, 0.022, 0.018, 0.016, 10, RED);                               // the big red button
+      for (var i = 0; i < 3; i++) box(g, 0.015, 0.06 + i * 0.022, -0.012, 0.004, 0.012, 0.024, GREY);   // the small buttons
+      box(g, 0.015, 0.123, -0.014, 0.004, 0.01, 0.028, CYAN);                              // the screen
+      box(g, -0.006, 0.164, -0.004, 0.012, 0.004, 0.008, WHITE);                           // a glint on the dome
+      return { len: 0.17, upright: true, holster: 'none', hold: 'one', muzzle: [0.02, 0.16, 0] };
+    },
     // ---- pistols ----
     pistol: function (g) { return pistolKit(g, { len: 0.19 }); },
     oped: function (g) { return pistolKit(g, { len: 0.16, slide: CHROME, grip: POLY, gripLen: 0.085, w: 0.025 }); },
@@ -216,6 +269,30 @@
       triggerGuard(g, 0.0, 0.05, GUN);
       bx(g, -0.065, -0.04, 0.05, 0.075, 0.012, STEEL); frontSight(g, 0.375, 0.07);
       return { muzzle: [0.38, 0.045, 0], rail: [0.04, 0.062, 0], under: [0.25, 0.028, 0], mag: [-0.03, -0.1, 0], support: [-0.012, -0.05, 0.03], len: 0.45 };
+    },
+    // The Footnote: a two-shot over-under derringer, a pearl bird's-head grip, a spur trigger and a hammer
+    pocket: function (g) {
+      bx(g, -0.04, 0.02, 0.0, 0.07, 0.026, GUN2);                                          // the frame
+      tube(g, 0.02, 0.13, 0.013, 0.013, GUN, 8, 0.051, 0); tube(g, 0.02, 0.13, 0.013, 0.013, GUN, 8, 0.024, 0);   // two barrels
+      bx(g, 0.02, 0.13, 0.03, 0.045, 0.012, GUN);                                          // the web between them
+      tube(g, 0.128, 0.132, 0.008, 0.008, RUBBER, 7, 0.051, 0); tube(g, 0.128, 0.132, 0.008, 0.008, RUBBER, 7, 0.024, 0);   // the bores
+      tubeZ(g, 0.025, 0.065, -0.016, 0.016, 0.005, STEEL, 6);                              // the hinge pin
+      prism(g, [[-0.036, 0.008], [0.01, 0.008], [-0.006, -0.052], [-0.028, -0.062], [-0.046, -0.052]], 0.026, CREAM);   // the grip
+      bx(g, 0.0, 0.008, -0.024, 0.0, 0.006, STEEL);                                        // the spur trigger
+      bx(g, -0.05, -0.034, 0.055, 0.08, 0.008, STEEL);                                     // the hammer
+      bx(g, 0.1, 0.11, 0.064, 0.072, 0.006, STEEL);                                        // the sight blade
+      return { muzzle: [0.13, 0.051, 0], rail: [-0.01, 0.07, 0], under: [0.08, 0.008, 0], mag: [-0.04, -0.07, 0], support: [-0.012, -0.05, 0.03], len: 0.18 };
+    },
+    // The Signal Boost: a chunky orange flare pistol, a fat short barrel, a break-open hinge and a tintable grip
+    flare_gun: function (g) {
+      bx(g, -0.05, 0.05, -0.002, 0.07, 0.04, ORANGE);                                      // the frame
+      tube(g, 0.02, 0.2, 0.032, 0.032, ORANGE, 10, 0.048, 0); tube(g, 0.19, 0.215, 0.037, 0.037, c('#ff7a33'), 10, 0.048, 0);   // the barrel and its lip
+      tube(g, 0.213, 0.216, 0.024, 0.024, RUBBER, 10, 0.048, 0);                           // the bore
+      tubeZ(g, 0.03, 0.012, -0.024, 0.024, 0.009, GUN2, 6);                                // the hinge
+      pistolGrip(g, POLY, 0.105, 0.036, 0.03); triggerGuard(g, 0.0, 0.05, ORANGE);
+      bx(g, -0.065, -0.045, 0.05, 0.08, 0.012, GUN);                                       // the hammer
+      bx(g, 0.04, 0.17, 0.08, 0.084, 0.03, WHITE);                                         // a white stripe on top
+      return { muzzle: [0.216, 0.048, 0], rail: [0.08, 0.08, 0], under: [0.12, 0.016, 0], mag: [-0.05, -0.1, 0], support: [-0.012, -0.05, 0.03], len: 0.27 };
     },
     // ---- smgs and machine guns ----
     smg: function (g) { return rifleKit(g, { rx0: -0.06, rx1: 0.22, rh: 0.075, rw: 0.042, bore: 0.05, mag: 'straight', magX: 0.11, magLen: 0.15, magW: 0.036, hg: 0.08, barrel: 0.08, stock: 'folded', grip: BROWN }); },
@@ -302,8 +379,24 @@
       prism(g, [[-0.05, 0.05], [-0.05, 0.0], [-0.38, -0.07], [-0.39, 0.03]], 0.04, WOOD); pistolGrip(g, WOOD2, 0.1, 0.03); bx(g, 0.2, 0.24, -0.06, 0.05, 0.03, WOOD2);
       return { muzzle: [0.68, 0.09, 0], rail: [0.1, 0.14, 0], under: [0.22, 0.04, 0], mag: [-0.25, 0.09, 0], support: [0.22, -0.04, 0], len: 1.07, holster: 'back', hold: 'two', shoulder: true };
     },
+    // The Merch Cannon: a fat launch tube with a rolled shirt in the mouth, a chrome air tank slung under it, a fore handle
+    merch_cannon: function (g) {
+      tube(g, -0.22, 0.52, 0.06, 0.06, GUN, 10, 0.11, 0);                                  // the tube
+      tube(g, 0.5, 0.56, 0.068, 0.068, GUN2, 10, 0.11, 0); tube(g, 0.555, 0.56, 0.048, 0.048, RUBBER, 10, 0.11, 0);   // the mouth
+      tube(g, 0.05, 0.2, 0.062, 0.062, PINK, 10, 0.11, 0);                                 // the pink band
+      tube(g, 0.5, 0.555, 0.04, 0.04, WHITE, 8, 0.11, 0); tube(g, 0.5, 0.554, 0.042, 0.042, PINK, 8, 0.11, 0.002);   // the rolled shirt
+      tube(g, -0.26, -0.22, 0.064, 0.05, GUN2, 10, 0.11, 0);                               // the breech cap
+      tube(g, 0.1, 0.4, 0.034, 0.034, CHROME, 10, 0.016, 0); tube(g, 0.08, 0.1, 0.02, 0.034, CHROME, 10, 0.016, 0);   // the air tank
+      tube(g, 0.4, 0.42, 0.034, 0.022, CHROME, 10, 0.016, 0);
+      g.cylinder(0.25, 0.04, 0.0, 0.006, 0.006, 0.02, 6, GUN2); g.cylinder(0.25, 0.058, 0.0, 0.016, 0.016, 0.008, 8, WHITE);   // the gauge
+      bx(g, 0.07, 0.1, 0.016, 0.055, 0.02, GUN2);                                          // the valve to the tube
+      bx(g, -0.06, 0.04, 0.03, 0.06, 0.04, GUN2); pistolGrip(g, POLY, 0.1, 0.034); triggerGuard(g, 0.0, 0.045, GUN);
+      bx(g, 0.44, 0.48, -0.07, 0.05, 0.03, POLY);                                          // the fore handle
+      bx(g, -0.24, -0.18, 0.0, 0.06, 0.05, RUBBER);                                        // the shoulder pad
+      return { muzzle: [0.56, 0.11, 0], rail: [0.15, 0.17, 0], under: [0.3, -0.02, 0], mag: [0.25, -0.02, 0], support: [0.46, -0.03, 0], len: 0.82, holster: 'back', hold: 'two', shoulder: true };
+    },
     // ---- thrown (upright) ----
-    hottake: function (g) { g.cylinder(0, 0, 0, 0.06, 0.06, 0.18, 8, ORANGE); g.cylinder(0, 0.18, 0, 0.06, 0.04, 0.03, 8, c('#ff9a40')); box(g, -0.04, 0.2, -0.04, 0.08, 0.04, 0.08, c('#ffd27a')); return { len: 0.24, upright: true, holster: 'none', hold: 'one' }; },
+    hottake: function (g) { g.cylinder(0, 0, 0, 0.06, 0.06, 0.18, 8, ORANGE); g.cylinder(0, 0.02, 0, 0.0615, 0.0615, 0.022, 8, GUN2); /* a tintable band */ g.cylinder(0, 0.18, 0, 0.06, 0.04, 0.03, 8, c('#ff9a40')); box(g, -0.04, 0.2, -0.04, 0.08, 0.04, 0.08, c('#ffd27a')); return { len: 0.24, upright: true, holster: 'none', hold: 'one' }; },
     // the Hot Mic: a handheld mic with a red ON AIR cap (a separate child, Combat blinks it) and a cable tail
     hotmic: function (g) {
       g.cylinder(0, 0, 0, 0.024, 0.028, 0.2, 7, GUN); g.cylinder(0, 0.2, 0, 0.03, 0.038, 0.06, 7, GUN2); g.sphere(0, 0.32, 0, 0.058, 8, 4, STEEL);
@@ -312,6 +405,16 @@
     },
     // Smoke & Mirrors: a canister with a mirrored band and a pin
     smoke: function (g) { g.cylinder(0, 0, 0, 0.035, 0.035, 0.14, 8, GREY); g.cylinder(0, 0.06, 0, 0.037, 0.037, 0.03, 8, CHROME); g.cylinder(0, 0.14, 0, 0.02, 0.02, 0.025, 6, GUN); box(g, 0.015, 0.11, -0.005, 0.012, 0.06, 0.01, STEEL); tubeZ(g, -0.03, 0.17, -0.003, 0.003, 0.014, STEEL, 6); return { len: 0.18, upright: true, holster: 'none', hold: 'one' }; },
+    // Breaking News: a stun canister with vent holes, a red-and-white chyron band, a spoon lever and a pin ring
+    flashbang: function (g) {
+      g.cylinder(0, 0, 0, 0.033, 0.033, 0.13, 8, GUN);
+      g.cylinder(0, 0.07, 0, 0.0345, 0.0345, 0.022, 8, RED); g.cylinder(0, 0.092, 0, 0.0345, 0.0345, 0.008, 8, WHITE);   // the chyron band
+      for (var i = 0; i < 8; i++) { var a = (i + 0.5) / 8 * TAU; box(g, Math.cos(a) * 0.031 - 0.005, 0.02, Math.sin(a) * 0.031 - 0.005, 0.01, 0.03, 0.01, RUBBER); }   // the vents
+      g.cylinder(0, 0.13, 0, 0.018, 0.018, 0.022, 6, GUN2);                                // the fuse head
+      box(g, 0.026, 0.06, -0.006, 0.01, 0.094, 0.012, STEEL);                              // the spoon
+      tubeZ(g, -0.028, 0.162, -0.003, 0.003, 0.015, STEEL, 6);                             // the pin ring
+      return { len: 0.17, upright: true, holster: 'none', hold: 'one' };
+    },
     // the Sticky Note: a yellow pad with a blinking light and a timer strip
     stickynote: function (g) { box(g, -0.045, 0.0, -0.045, 0.09, 0.03, 0.09, YELLOW); box(g, -0.04, 0.03, -0.04, 0.08, 0.004, 0.08, c('#ffe98a')); box(g, -0.01, 0.034, -0.01, 0.02, 0.012, 0.02, RED); box(g, -0.035, 0.034, 0.02, 0.07, 0.004, 0.012, GUN); return { len: 0.09, upright: true, holster: 'none', hold: 'one' }; },
     // the Scalding Latte: a paper cup, a sleeve, a lid
@@ -323,19 +426,35 @@
     pistol: 'pistol', oped: 'pistol', filibuster: 'pistol', revolver: 'pistol', smg: 'smg', threadpistol: 'smg', liveblog: 'smg', pocketsmg: 'smg',
     lmg: 'lmg', combatmg: 'lmg', rifle: 'rifle', carbine: 'rifle', battlerifle: 'rifle', bullpup: 'rifle', shotgun: 'shotgun', doublebarrel: 'shotgun',
     autoshotgun: 'shotgun', sawnoff: 'shotgun', sniper: 'sniper', marksman: 'sniper', heavysniper: 'sniper', ratio: 'launcher', confetti: 'launcher',
-    spin: 'launcher', firework: 'launcher', hottake: 'thrown', hotmic: 'thrown', smoke: 'thrown', stickynote: 'thrown', coffee: 'thrown'
+    spin: 'launcher', firework: 'launcher', hottake: 'thrown', hotmic: 'thrown', smoke: 'thrown', stickynote: 'thrown', coffee: 'thrown',
+    // built for the content table
+    clipboard: 'melee', golf_club: 'melee', mic_stand: 'melee', pocket: 'pistol', flare_gun: 'special', merch_cannon: 'special',
+    mute_button: 'special', flashbang: 'thrown',
+    // the parity ids drawn by an older builder (ALIAS); the class is the parity table's
+    selfie_stick: 'melee', heavy_pistol: 'pistol', machine_pistol: 'pistol', micro_smg: 'smg', pdw: 'smg', battle_rifle: 'rifle',
+    both_barrels: 'shotgun', auto_shotgun: 'shotgun', heavy_sniper: 'sniper', sticky: 'thrown', spin_smoke: 'thrown',
+    grenade_launcher: 'launcher', minigun: 'special'
   };
-  // attachment slots by class (a weapon's own list from the parity table wins in Combat)
+  // parity id -> the builder it shares (the fit, the geometry, the 'spin' child: everything but the id)
+  var ALIAS = {
+    selfie_stick: 'selfie', heavy_pistol: 'filibuster', machine_pistol: 'threadpistol', micro_smg: 'pocketsmg', pdw: 'liveblog',
+    battle_rifle: 'battlerifle', both_barrels: 'doublebarrel', auto_shotgun: 'autoshotgun', heavy_sniper: 'heavysniper',
+    sticky: 'stickynote', spin_smoke: 'smoke', grenade_launcher: 'confetti', minigun: 'spin'
+  };
+  // attachment slots by class (a weapon's own list from the parity table wins in Combat); melee, thrown, special and
+  // launcher have none here (weaponMesh also honours a parity weapon's own attachments list, e.g. a launcher's optic)
   var SLOTS = { pistol: ['muzzle', 'mag', 'optic', 'light'], smg: ['muzzle', 'mag', 'optic', 'grip', 'light'], rifle: ['muzzle', 'mag', 'optic', 'grip', 'light'],
     lmg: ['muzzle', 'optic', 'grip'], shotgun: ['muzzle', 'mag', 'optic', 'grip', 'light'], sniper: ['muzzle', 'mag', 'optic'] };
-  var NO_MAG = { doublebarrel: 1, sawnoff: 1, revolver: 1 };
+  var NO_MAG = { doublebarrel: 1, sawnoff: 1, revolver: 1, pocket: 1 };
   // per weapon fit overrides (hold, holster, pickup scale)
   var FIT_X = {
     pistol: { hold: 'one', holster: 'hip' }, oped: { hold: 'one', holster: 'hip' }, filibuster: { hold: 'one', holster: 'hip' }, revolver: { hold: 'one', holster: 'hip' },
     threadpistol: { hold: 'one', holster: 'hip' }, pocketsmg: { hold: 'one', holster: 'hip' }, sawnoff: { hold: 'one', holster: 'hip' },
     tableleg: { pickupScale: 0.85 }, bat: { pickupScale: 0.7 }, selfie: { pickupScale: 0.75 }, rifle: { pickupScale: 0.8 }, carbine: { pickupScale: 0.8 }, battlerifle: { pickupScale: 0.7 },
     lmg: { pickupScale: 0.65 }, combatmg: { pickupScale: 0.65 }, shotgun: { pickupScale: 0.7 }, doublebarrel: { pickupScale: 0.7 }, autoshotgun: { pickupScale: 0.75 },
-    sniper: { pickupScale: 0.55 }, marksman: { pickupScale: 0.6 }, heavysniper: { pickupScale: 0.5 }, ratio: { pickupScale: 0.55 }, firework: { pickupScale: 0.6 }, spin: { pickupScale: 0.6 }
+    sniper: { pickupScale: 0.55 }, marksman: { pickupScale: 0.6 }, heavysniper: { pickupScale: 0.5 }, ratio: { pickupScale: 0.55 }, firework: { pickupScale: 0.6 }, spin: { pickupScale: 0.6 },
+    pocket: { hold: 'one', holster: 'hip' }, flare_gun: { hold: 'one', holster: 'hip' },
+    golf_club: { pickupScale: 0.7 }, mic_stand: { pickupScale: 0.55 }, merch_cannon: { pickupScale: 0.75 }
   };
 
   // ---------------------------------------------------- tints and attachments --
@@ -356,19 +475,45 @@
     grip: [{ id: 'grip', name: 'Firm Handshake Grip', price: 300 }],
     light: [{ id: 'flashlight', name: 'Spotlight Segment', price: 250 }]
   };
-  // the muzzle attachment's length along +x (Combat moves the flash and the shot origin out by it)
-  var MUZZLE_LEN = { suppressor: 0.16, compensator: 0.05 };
+  // an attachment id (the parity table's or the older ones above) -> the variant mesh drawn for it
+  var VARIANT = {
+    suppressor: 'suppressor', compensator: 'compensator', flash_hider: 'flash_hider',
+    extended: 'extended', ext_mag: 'extended', drum_mag: 'drum',
+    reddot: 'reddot', red_dot: 'reddot', holo: 'holo', scope: 'scope', scope_4x: 'scope', scope_8x: 'scope8',
+    grip: 'grip', fore_grip: 'grip', angled_grip: 'angled',
+    flashlight: 'flashlight', laser: 'laser'
+  };
+  var SLOT_DEFAULT = { muzzle: 'compensator', mag: 'extended', optic: 'reddot', grip: 'grip', light: 'flashlight' };
+  function variantOf(slot, id) { return VARIANT[id] || SLOT_DEFAULT[slot] || id; }
+  // the muzzle attachment's length along +x (Combat moves the flash and the shot origin out by it); keyed by variant
+  var MUZZLE_LEN = { suppressor: 0.16, compensator: 0.05, flash_hider: 0.065 };
+  function muzzleLen(id) { return id ? (MUZZLE_LEN[variantOf('muzzle', id)] || 0) : 0; }
+
+  // a tint id -> {id, main, second} as [r,g,b]: the parity table first (looked up at call time, it loads after this file;
+  // main = its colour, second = 30% toward white), then the local TINTS; null for 'stock' and unknown ids
+  function tintOf(id) {
+    if (!id || id === 'stock') return null;
+    var P = GTP.Content && GTP.Content.parity, pt = P && P.tints, i;
+    if (pt && pt.length) for (i = 0; i < pt.length; i++) if (pt[i] && pt[i].id === id && pt[i].color) {
+      var m = c(pt[i].color);
+      return { id: id, main: m, second: [m[0] + (1 - m[0]) * 0.3, m[1] + (1 - m[1]) * 0.3, m[2] + (1 - m[2]) * 0.3] };
+    }
+    for (i = 0; i < TINTS.length; i++) if (TINTS[i].id === id && TINTS[i].main) return { id: id, main: c(TINTS[i].main), second: c(TINTS[i].second) };
+    return null;
+  }
+  function tintKey(t) { return t ? t.main.concat(t.second).map(function (v) { return Math.round(v * 255); }).join(',') : 'stock'; }
 
   // ---------------------------------------------------------------- cache --
-  var geoCache = {}, fitCache = {}, stencilTex = null, capMatProto = null, lensMat = null, attachGeo = {}, capGeo = null, stencilGeo = null, stencilMat = null;
+  var geoCache = {}, fitCache = {}, stencilTex = null, capMatProto = null, lensMat = null, laserMat = null, lensGeo = null, laserGeo = null, attachGeo = {}, capGeo = null, stencilGeo = null, stencilMat = null;
   function hashId(id) { var h = 2166136261; for (var i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   // the builder for an id: its own, else a built weapon of its class (picked by a hash of the id, so it is stable)
   function builderFor(id, cls) {
-    if (BUILD[id]) return id;
     if (!id || id === 'fist') return null;
+    if (BUILD.hasOwnProperty(id) && BUILD[id]) return id;
+    if (ALIAS.hasOwnProperty(id)) return ALIAS[id];
     cls = cls || clsHint(id);
-    var pool = []; for (var k in CLASS_OF) if (CLASS_OF[k] === cls) pool.push(k);
-    if (!pool.length) for (k in CLASS_OF) if (CLASS_OF[k] === 'pistol') pool.push(k);
+    var pool = []; for (var k in CLASS_OF) if (CLASS_OF[k] === cls && BUILD[k]) pool.push(k);
+    if (!pool.length) for (k in CLASS_OF) if (CLASS_OF[k] === 'pistol' && BUILD[k]) pool.push(k);
     return pool[hashId(id) % pool.length];
   }
   function clsHint(id) {
@@ -395,10 +540,10 @@
       fitCache[base] = finishFit(base, base, f);
       geoCache[base + '|stock'] = g.build();
     }
-    if (!tint || tint === 'stock') return geoCache[key];
-    var t = null; for (var i = 0; i < TINTS.length; i++) if (TINTS[i].id === tint) t = TINTS[i];
-    if (!t || !t.main) return geoCache[base + '|stock'];
-    return (geoCache[key] = recolor(geoCache[base + '|stock'], c(t.main), c(t.second)));
+    var t = tintOf(tint);
+    if (!t) return geoCache[base + '|stock'];
+    key = base + '|' + tintKey(t);   // keyed by the colours, so a parity table that loads late never meets a stale entry
+    return geoCache[key] || (geoCache[key] = recolor(geoCache[base + '|stock'], t.main, t.second));
   }
   // a tint: the dark metal and the polymer take the tint's pair; wood, steel, brass and the accents keep their colours
   function recolor(src, main, second) {
@@ -425,33 +570,87 @@
     return stencilTex;
   }
   // ------------------------------------------------------- attachment meshes --
+  // variant: a variantOf() result (suppressor compensator flash_hider | extended drum | reddot holo scope scope8 |
+  // grip angled | flashlight laser)
   function attachmentGeometry(slot, variant, f) {
     var key = slot + ':' + variant + ':' + f.base;
     if (attachGeo[key]) return attachGeo[key];
-    var g = new GB({ color: true }), m = f.muzzle, r = f.rail, u = f.under, mg = f.mag, big = f.cls === 'rifle' || f.cls === 'lmg' || f.cls === 'sniper' || f.cls === 'shotgun' || f.cls === 'smg';
+    var g = new GB({ color: true }), m = f.muzzle, r = f.rail, u = f.under, mg = f.mag, big = f.cls === 'rifle' || f.cls === 'lmg' || f.cls === 'sniper' || f.cls === 'shotgun' || f.cls === 'smg', k;
     if (slot === 'muzzle' && variant === 'suppressor') { var sr = big ? 0.026 : 0.02; tube(g, m[0] - 0.01, m[0] + MUZZLE_LEN.suppressor, sr, sr, GUN, 10, m[1], 0); tube(g, m[0] + MUZZLE_LEN.suppressor - 0.006, m[0] + MUZZLE_LEN.suppressor, sr * 0.6, sr * 0.6, RUBBER, 8, m[1], 0); }
-    else if (slot === 'muzzle') { tube(g, m[0] - 0.005, m[0] + MUZZLE_LEN.compensator, 0.02, 0.02, GUN2, 8, m[1], 0); for (var k = 0; k < 3; k++) bx(g, m[0] + 0.008 + k * 0.014, m[0] + 0.014 + k * 0.014, m[1] + 0.012, m[1] + 0.024, 0.044, GUN); }
+    else if (slot === 'muzzle' && variant === 'flash_hider') {
+      // a birdcage: a collar and four open prongs
+      var fl = MUZZLE_LEN.flash_hider, fr = big ? 0.017 : 0.014;
+      tube(g, m[0] - 0.005, m[0] + 0.02, fr, fr, GUN2, 8, m[1], 0);
+      for (k = 0; k < 4; k++) { var pa = (k + 0.5) / 4 * TAU; tube(g, m[0] + 0.02, m[0] + fl, 0.0045, 0.0045, GUN, 4, m[1] + Math.cos(pa) * fr * 0.8, Math.sin(pa) * fr * 0.8); }
+      tube(g, m[0] + fl - 0.006, m[0] + fl, fr * 0.95, fr * 0.95, GUN2, 8, m[1], 0); tube(g, m[0] + fl - 0.0005, m[0] + fl + 0.0005, fr * 0.7, fr * 0.7, RUBBER, 8, m[1], 0);
+    }
+    else if (slot === 'muzzle') { tube(g, m[0] - 0.005, m[0] + MUZZLE_LEN.compensator, 0.02, 0.02, GUN2, 8, m[1], 0); for (k = 0; k < 3; k++) bx(g, m[0] + 0.008 + k * 0.014, m[0] + 0.014 + k * 0.014, m[1] + 0.012, m[1] + 0.024, 0.044, GUN); }
     else if (slot === 'optic' && variant === 'reddot') { bx(g, r[0] - 0.025, r[0] + 0.025, r[1], r[1] + 0.012, 0.024, GUN); prism(g, [[r[0] - 0.02, r[1] + 0.012], [r[0] + 0.022, r[1] + 0.012], [r[0] + 0.022, r[1] + 0.05], [r[0] - 0.012, r[1] + 0.05]], 0.03, GUN2); bx(g, r[0] + 0.019, r[0] + 0.023, r[1] + 0.016, r[1] + 0.046, 0.022, c('#ff2d4a')); }
+    else if (slot === 'optic' && variant === 'holo') {
+      // a box sight: a base, a square hood, a blue-green window
+      bx(g, r[0] - 0.035, r[0] + 0.035, r[1], r[1] + 0.014, 0.03, GUN);
+      bx(g, r[0] - 0.03, r[0] + 0.03, r[1] + 0.014, r[1] + 0.02, 0.036, GUN2); bx(g, r[0] - 0.03, r[0] + 0.03, r[1] + 0.056, r[1] + 0.062, 0.036, GUN2);
+      bx(g, r[0] + 0.022, r[0] + 0.03, r[1] + 0.014, r[1] + 0.062, 0.036, GUN2); bx(g, r[0] - 0.03, r[0] - 0.022, r[1] + 0.014, r[1] + 0.062, 0.036, GUN2);
+      bx(g, r[0] - 0.001, r[0] + 0.001, r[1] + 0.02, r[1] + 0.056, 0.03, c('#3fd2b0'));
+    }
+    else if (slot === 'optic' && variant === 'scope8') { scopeTube(g, r[0] - 0.19, r[0] + 0.19, r[1] + 0.046, big ? 0.028 : 0.02, GUN); tubeZ(g, r[0] - 0.02, r[1] + 0.046, -0.04, 0.04, 0.012, GUN2, 6); }
     else if (slot === 'optic') { scopeTube(g, r[0] - 0.13, r[0] + 0.13, r[1] + 0.04, big ? 0.024 : 0.018, GUN); }
+    else if (slot === 'mag' && variant === 'drum') { var dr = big ? 0.055 : 0.034; bx(g, mg[0] - 0.022, mg[0] + 0.022, mg[1] - 0.03, mg[1] + 0.01, 0.03, GUN2); tubeZ(g, mg[0], mg[1] - 0.02 - dr, -0.03, 0.03, dr, GUN2, 12); tubeZ(g, mg[0], mg[1] - 0.02 - dr, 0.03, 0.034, dr * 0.36, RUBBER, 8); }
     else if (slot === 'mag') { bx(g, mg[0] - 0.024, mg[0] + 0.024, mg[1] - 0.07, mg[1] + 0.01, 0.03, GUN2); bx(g, mg[0] - 0.026, mg[0] + 0.026, mg[1] - 0.078, mg[1] - 0.068, 0.034, RUBBER); }
+    else if (slot === 'grip' && variant === 'angled') { bx(g, u[0] - 0.03, u[0] + 0.03, u[1] - 0.012, u[1] + 0.004, 0.026, GUN); prism(g, [[u[0] - 0.03, u[1] - 0.012], [u[0] + 0.03, u[1] - 0.012], [u[0] - 0.012, u[1] - 0.06], [u[0] - 0.03, u[1] - 0.06]], 0.026, POLY); }
     else if (slot === 'grip') { prism(g, [[u[0] - 0.018, u[1] + 0.004], [u[0] + 0.018, u[1] + 0.004], [u[0] + 0.014, u[1] - 0.085], [u[0] - 0.016, u[1] - 0.085]], 0.026, POLY); }
+    else if (slot === 'light' && variant === 'laser') {
+      // a slim boxy module, a short emitter (the red 'lens' child sits on it) and a red stripe on the side
+      box(g, u[0] - 0.045, u[1] - 0.027, 0.017, 0.09, 0.03, 0.026, GUN); tube(g, u[0] + 0.045, u[0] + 0.056, 0.008, 0.008, GUN2, 7, u[1] - 0.012, 0.03);
+      bx(g, u[0] - 0.03, u[0] + 0.02, u[1] - 0.008, u[1] + 0.004, 0.03, GUN2); box(g, u[0] - 0.03, u[1] - 0.016, 0.043, 0.05, 0.006, 0.002, RED);
+    }
     else if (slot === 'light') { tube(g, u[0] - 0.05, u[0] + 0.05, 0.016, 0.016, GUN, 8, u[1] - 0.012, 0.03); bx(g, u[0] - 0.03, u[0] + 0.02, u[1] - 0.008, u[1] + 0.004, 0.03, GUN2); }
     return (attachGeo[key] = g.build());
   }
 
+  var own = Object.prototype.hasOwnProperty;
+  function parityWeapon(id) {
+    var P = GTP.Content && GTP.Content.parity, ws = P && P.weapons;
+    if (ws && ws.length) for (var i = 0; i < ws.length; i++) if (ws[i] && ws[i].id === id) return ws[i];
+    return null;
+  }
+  // an id weaponFit[id] may fill on first read: built, aliased, or known to the parity table or Combat
+  function knownId(id) {
+    if (!id || id === 'fist') return false;
+    if ((own.call(BUILD, id) && BUILD[id]) || own.call(ALIAS, id) || own.call(CLASS_OF, id)) return true;
+    var W = GTP.Combat && GTP.Combat.WEAPONS;
+    return !!((W && own.call(W, id)) || parityWeapon(id));
+  }
+  // weaponFit: the cache weaponFitFor fills, read through a Proxy so a reader that indexes it directly (the animation's
+  // weaponInfo, the interiors' racks) gets the fit of any known id without calling weaponFitFor first
+  var FIT_VIEW = typeof Proxy === 'function' ? new Proxy(FIT, {
+    get: function (t, k) {
+      if (typeof k !== 'string' || own.call(t, k)) return t[k];
+      if (!knownId(k)) return t[k];
+      try { return A.weaponFitFor(k); } catch (e) { return undefined; }
+    }
+  }) : FIT;
+
   A.weaponMeshes = BUILD;
-  A.weaponFit = FIT;
+  A.weaponFit = FIT_VIEW;
+  A.weaponAliases = ALIAS;
   A.weaponTints = TINTS;
+  A.weaponTintOf = tintOf;
   A.weaponAttachments = ATTACH;
   A.weaponClassOf = function (id) { return CLASS_OF[id] || null; };
-  // the fit for an id (built weapons by name; others by the class fallback); also kept in weaponFit[id]
+  // the fit for an id (built and aliased weapons by name; others by the class fallback); also kept in weaponFit[id]
   A.weaponFitFor = function (id, cls) {
     if (!id || id === 'fist') return null;
-    if (FIT[id]) return FIT[id];
+    if (own.call(FIT, id)) return FIT[id];
     var base = builderFor(id, cls); if (!base) return null;
     geometryFor(base, null);
     var f = Object.assign({}, fitCache[base]); f.id = id;
-    var W = GTP.Combat && GTP.Combat.WEAPONS, w = W && W[id];
+    if (base !== id && own.call(ALIAS, id)) {
+      // an alias keeps its builder's fit but takes its own class (and the class's slots: none for the minigun)
+      f.cls = CLASS_OF[id] || f.cls;
+      f.slots = (SLOTS[f.cls] || []).filter(function (s) { return !(s === 'mag' && NO_MAG[base]); });
+    }
+    var W = GTP.Combat && GTP.Combat.WEAPONS, w = W && own.call(W, id) ? W[id] : null;
     if (w && w.hold) f.hold = w.hold;
     if (w && w.holster) f.holster = w.holster;
     return (FIT[id] = f);
@@ -462,9 +661,15 @@
   };
   A.weaponMuzzle = function (id, mods) {
     var f = A.weaponFitFor(id); if (!f) return [0.3, 0.04, 0];
-    var m = f.muzzle.slice(); if (mods && mods.muzzle && MUZZLE_LEN[mods.muzzle]) m[0] += MUZZLE_LEN[mods.muzzle];
+    var m = f.muzzle.slice(); if (mods && mods.muzzle) m[0] += muzzleLen(mods.muzzle);
     return m;
   };
+  // a slot renders when the fit's class has it or the parity table lists it for this weapon
+  function slotRenders(id, f, slot) {
+    if (f.slots.indexOf(slot) >= 0) return true;
+    var pw = parityWeapon(id);
+    return !!(pw && pw.attachments && pw.attachments.indexOf(slot) >= 0);
+  }
   A.weaponMesh = function (id, mods) {
     var base = builderFor(id); if (!base) return null;
     var f = A.weaponFitFor(id), geo = geometryFor(base, mods && mods.tint);
@@ -483,30 +688,40 @@
       var sa = new THREE.Mesh(stencilGeo, sm); sa.position.set(0.11, 0.1, 0.069); sa.name = 'held'; m.add(sa);
       var sb = new THREE.Mesh(stencilGeo, sm); sb.position.set(0.11, 0.1, -0.069); sb.rotation.y = Math.PI; sb.name = 'held'; m.add(sb);
     } else if (base === 'spin') {
-      var key = 'spin:' + ((mods && mods.tint) || 'stock'), sg = attachGeo[key];
+      var t = tintOf(mods && mods.tint), sg = attachGeo['spin:stock'];
       if (!sg) {
         var g = new GB({ color: true });
         for (var i = 0; i < 6; i++) { var a = i / 6 * TAU; tube(g, 0.0, 0.6, 0.012, 0.012, i % 2 ? GUN : GUN2, 6, Math.cos(a) * 0.035, Math.sin(a) * 0.035); }
         tubeZ(g, 0.08, 0, -0.05, 0.05, 0.0, GUN, 4); tube(g, 0.06, 0.1, 0.055, 0.055, GUN2, 10, 0, 0); tube(g, 0.5, 0.53, 0.052, 0.052, GUN2, 10, 0, 0);
-        sg = attachGeo[key] = g.build();
-        if (mods && mods.tint && mods.tint !== 'stock') { var t = null; for (var ti = 0; ti < TINTS.length; ti++) if (TINTS[ti].id === mods.tint) t = TINTS[ti]; if (t && t.main) sg = attachGeo[key] = recolor(sg, c(t.main), c(t.second)); }
+        sg = attachGeo['spin:stock'] = g.build();
       }
+      if (t) { var tk = 'spin:' + tintKey(t); sg = attachGeo[tk] || (attachGeo[tk] = recolor(sg, t.main, t.second)); }
       var spinM = new THREE.Mesh(sg, mat); spinM.position.set(0.12, 0.02, 0); spinM.name = 'spin'; spinM.castShadow = true; m.add(spinM);
     }
     if (mods) {
       var slots = ['muzzle', 'mag', 'optic', 'grip', 'light'];
       for (var s = 0; s < slots.length; s++) {
-        var v = mods[slots[s]]; if (!v || f.slots.indexOf(slots[s]) < 0) continue;
-        var am = new THREE.Mesh(attachmentGeometry(slots[s], v, f), mat); am.name = 'held'; am.castShadow = true; am.userData.attachment = slots[s] + ':' + v; m.add(am);
+        var v = mods[slots[s]]; if (!v || !slotRenders(id, f, slots[s])) continue;
+        var vv = variantOf(slots[s], v);
+        var am = new THREE.Mesh(attachmentGeometry(slots[s], vv, f), mat); am.name = 'held'; am.castShadow = true; am.userData.attachment = slots[s] + ':' + v; m.add(am);
         if (slots[s] === 'light') {
+          var laser = vv === 'laser';
           if (!lensMat) lensMat = new THREE.MeshBasicMaterial({ color: 0xfff4c8 });
-          var lens = new THREE.Mesh(new THREE.CircleGeometry(0.014, 8), lensMat); lens.rotation.y = Math.PI / 2; lens.position.set(f.under[0] + 0.051, f.under[1] - 0.012, 0.03); lens.name = 'lens'; m.add(lens);
+          if (!laserMat) laserMat = new THREE.MeshBasicMaterial({ color: 0xff2030 });
+          if (!lensGeo) { lensGeo = new THREE.CircleGeometry(0.014, 8); laserGeo = new THREE.CircleGeometry(0.0075, 8); }
+          var lens = new THREE.Mesh(laser ? laserGeo : lensGeo, laser ? laserMat : lensMat); lens.rotation.y = Math.PI / 2;
+          lens.position.set(f.under[0] + (laser ? 0.057 : 0.051), f.under[1] - 0.012, 0.03); lens.name = 'lens'; lens.userData.laser = laser; m.add(lens);
         }
       }
     }
     return m;
   };
-  // every built id gets its fit up front (Combat, the armory racks and tests read A.weaponFit directly)
+  // every built and aliased id (and every parity weapon) gets its fit up front on request (readers of A.weaponFit also
+  // fill it lazily through the Proxy)
   A.weaponIds = function () { return Object.keys(CLASS_OF); };
-  A._prefitWeapons = function () { for (var id in CLASS_OF) A.weaponFitFor(id); };
+  A._prefitWeapons = function () {
+    for (var id in CLASS_OF) A.weaponFitFor(id);
+    var P = GTP.Content && GTP.Content.parity, ws = P && P.weapons;
+    if (ws && ws.length) for (var i = 0; i < ws.length; i++) if (ws[i] && ws[i].id !== 'fist') A.weaponFitFor(ws[i].id, ws[i].class);
+  };
 })();

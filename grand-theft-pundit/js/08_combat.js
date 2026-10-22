@@ -93,7 +93,7 @@
   };
   // the twelve wheel slots (the wheel shows one weapon per slot; R cycles a slot's weapons while the wheel is open)
   var SLOTS = [
-    { id: 'hand', name: 'Unarmed' }, { id: 'melee', name: 'Melee' }, { id: 'special', name: 'Megaphone' }, { id: 'pistol', name: 'Pistols' },
+    { id: 'hand', name: 'Unarmed' }, { id: 'melee', name: 'Melee' }, { id: 'special', name: 'Specials' }, { id: 'pistol', name: 'Pistols' },
     { id: 'heavypistol', name: 'Heavy Pistols' }, { id: 'smg', name: 'SMGs & MGs' }, { id: 'rifle', name: 'Rifles' }, { id: 'shotgun', name: 'Shotguns' },
     { id: 'sniper', name: 'Snipers' }, { id: 'thrown', name: 'Thrown' }, { id: 'explosive', name: 'Explosives' }, { id: 'heavy', name: 'Heavy' }
   ];
@@ -122,6 +122,30 @@
     suppressor: { range: 0.9, dmg: 0.95, quiet: true }, compensator: { recoil: 0.7 }, extended: { mag: 1.5 },
     reddot: { aimSpread: 0.8, ads: -3 }, scope: { aimSpread: 0.65, ads: -14 }, grip: { recoil: 0.8, bloomAdd: 0.85 }, flashlight: {}
   };
+  // a content attachment's effects (GTP.Content.parity.attachments: `mods` multiply the numbers, noise -1 is a suppressor, adsZoom
+  // the optic's magnification) in MOD_FX's shape, cached by id; the fallback variants above stay for a build without the table
+  var parityAtt = { src: null, byId: {} };
+  function parityAttachments() {
+    var P = GTP.Content && GTP.Content.parity, pa = P && P.attachments;
+    if (pa !== parityAtt.src) {
+      parityAtt.src = pa; parityAtt.byId = {};
+      var arr = !pa ? [] : Array.isArray(pa) ? pa : Object.keys(pa).map(function (k) { var o = pa[k]; if (o && !o.id) o.id = k; return o; });
+      for (var i = 0; i < arr.length; i++) {
+        var a = arr[i]; if (!a || !a.id || !(a.slot || a.kind)) continue;
+        var m = a.mods || {}, f = {};
+        if (m.noise != null && m.noise < 0) f.quiet = true;
+        if (m.range) f.range = m.range; if (m.dmg) f.dmg = m.dmg; if (m.recoil) f.recoil = m.recoil; if (m.mag) f.mag = m.mag; if (m.reload) f.reload = m.reload;
+        if (m.spread) { f.aimSpread = m.spread; f.spread = m.spread; }
+        if (m.hipSpread) f.spread = (f.spread || 1) * m.hipSpread;
+        if (m.mobility) f.mobility = m.mobility;
+        if (m.adsZoom) { f.ads = -Math.round(20 * (1 - 1 / m.adsZoom)); if (m.adsZoom >= 3) f.scopeZoom = m.adsZoom; }
+        if (m.light || m.laser) f.light = true;
+        parityAtt.byId[a.id] = { id: a.id, slot: a.slot || a.kind, name: a.name || a.id, price: a.price != null ? a.price : 400, pitch: a.flavor || '', fits: a.fits || null, fx: f };
+      }
+    }
+    return parityAtt.byId;
+  }
+  function modFx(v) { if (!v) return null; var pa = parityAttachments()[v]; return pa ? pa.fx : (MOD_FX[v] || null); }
   var settings = { aimAssist: true, holsters: true };
   // the aim rig the Render.rig.update wrapper puts in place while it runs (metres: behind, right, camera height, look height)
   var AIM_CAM = { dist: 1.55, side: 0.78, height: 1.72, look: 1.5 };
@@ -136,7 +160,11 @@
   function player() { return GTP.game ? GTP.game.player : null; }
   function simT() { return (GTP.game && GTP.game.time) ? GTP.game.time.t : 0; }
   function fx(o) { if (GTP.Render && GTP.Render.fx) { try { GTP.Render.fx.add(o); } catch (e) { /* fx optional */ } } }
-  function sfx(name, x, z, gain) { if (GTP.Audio && GTP.Audio.play) { try { GTP.Audio.play(name, { x: x, z: z, gain: gain }); } catch (e) { /* audio optional */ } } }
+  function sfx(name, x, z, gain, extra) {
+    if (!GTP.Audio || !GTP.Audio.play) return;
+    var o = { x: x, z: z, gain: gain }; if (extra) for (var k in extra) o[k] = extra[k];
+    try { GTP.Audio.play(name, o); } catch (e) { /* audio optional */ }
+  }
   function toast(t) { if (GTP.UI && GTP.UI.toast) { try { GTP.UI.toast(t); } catch (e) { /* ui optional */ } } }
   function shake(a) { if (GTP.Render && GTP.Render.rig) GTP.Render.rig.shake(a); }
   function rig() { return GTP.Render && GTP.Render.rig ? GTP.Render.rig : null; }
@@ -191,12 +219,16 @@
     var o = Object.assign({}, w); o._src = w; o._base = w;
     var slots = ['muzzle', 'mag', 'optic', 'grip', 'light'];
     for (var i = 0; i < slots.length; i++) {
-      var v = m[slots[i]], f = v && MOD_FX[v]; if (!f || !slotAllowed(id, slots[i])) continue;
+      var v = m[slots[i]], f = modFx(v); if (!f || !slotAllowed(id, slots[i]) || !variantAllowed(id, slots[i], v)) continue;
       if (f.range) o.range = w.range * f.range;
       if (f.dmg) o.dmg = o.dmg * f.dmg;
       if (f.quiet) o.quiet = true;
       if (f.recoil) o.recoil = (o.recoil || 0) * f.recoil;
       if (f.mag && w.mag > 1) o.mag = Math.round(w.mag * f.mag);
+      if (f.reload && o.reload) o.reload = o.reload * f.reload;
+      if (f.spread && w.spread) o.spread = (o.spread != null ? o.spread : w.spread) * f.spread;
+      if (f.mobility) o.mobilityMul = (o.mobilityMul || 1) * f.mobility;
+      if (f.scopeZoom) o.scopeZoom = f.scopeZoom;
       if (f.aimSpread) { o.aimSpread = (w.aimSpread != null ? w.aimSpread : (w.spread || 0) * 0.7) * f.aimSpread; if (w.scopedSpread != null) o.scopedSpread = w.scopedSpread * f.aimSpread; }
       if (f.ads) o.adsDeg = (o.adsDeg || 0) + f.ads;
       if (f.bloomAdd && w.bloom) o.bloom = { add: w.bloom.add * f.bloomAdd, max: w.bloom.max, decay: w.bloom.decay };
@@ -211,7 +243,8 @@
   }
   function variantAllowed(id, slot, variant) {
     if (!slotAllowed(id, slot)) return false;
-    var w = WEAPONS[id];
+    var w = WEAPONS[id], pa = parityAttachments()[variant];
+    if (pa) return pa.slot === slot && (!pa.fits || pa.fits.indexOf(w.cls) >= 0);   // the content's own fits by class
     if (slot === 'optic' && variant === 'scope' && (w.cls === 'pistol' || w.cls === 'shotgun')) return false;   // a pistol takes the dot, not the tube
     if (slot === 'optic' && variant === 'reddot' && w.cls === 'sniper') return false;
     return true;
@@ -224,6 +257,7 @@
   function slotForClass(w) {
     var c = w.cls;
     if (c === 'melee') return w.slot != null ? w.slot : 1;
+    if (w.heavy) return c === 'rifle' || c === 'lmg' || c === 'smg' ? 5 : 11;   // the parity lmg sits with the MGs, the minigun with the heavies
     if (c === 'special') return 2;
     if (c === 'pistol') return (w.dmg || 0) >= 30 ? 4 : 3;
     if (c === 'smg' || c === 'lmg') return 5;
@@ -248,10 +282,29 @@
     if (src.pellets) o.pellets = src.pellets;
     if (src.auto != null) o.auto = !!src.auto;
     if (src.pack) o.pack = src.pack;
+    // the engine extras the parity table may carry (the plan's schema plus the WEAPONS fields)
+    var extras = ['lunge', 'knock', 'launch', 'flipWindow', 'vehicleDmg', 'vehicleMul', 'headMul', 'aimSpread', 'scopedSpread', 'pointShots', 'casingDelay', 'speed', 'fuse', 'blast', 'ring', 'stun',
+      'smoke', 'smokeSeconds', 'splash', 'burn', 'restitution', 'bounces', 'spinUp', 'mobility', 'zoom', 'arc', 'push', 'heat'];
+    for (i = 0; i < extras.length; i++) if (typeof src[extras[i]] === 'number' && isFinite(src[extras[i]])) o[extras[i]] = src[extras[i]];
+    var flags = ['shellReload', 'driveBy', 'scope', 'noAuto', 'floors', 'cone', 'heavy', 'breaksSight', 'quiet', 'flips', 'cook'];
+    for (i = 0; i < flags.length; i++) if (src[flags[i]] != null) o[flags[i]] = !!src[flags[i]];
+    if (src.sticks || src.stick) o.stick = true;
+    if (src.remote) { o.remote = true; delete o.fuse; }   // a remote charge waits for the detonator (R), not a fuse
+    if (typeof src.glow === 'string') o.glow = src.glow;
     var pj = src.projectile;
     if (cls === 'melee') { o.melee = true; o.ammo = Infinity; o.lunge = o.lunge || 2.4; o.knock = o.knock || 3.2; o.range = Math.min(o.range || 1.8, 3); }
     else if (pj === 'rocket') { o.rocket = true; o.lobbed = false; o.speed = o.speed || 40; o.blast = o.blast || 7; o.noAuto = true; o.vehicleDmg = o.vehicleDmg || o.dmg; }
-    else if (pj === 'lobbed') { o.lobbed = true; o.speed = o.speed || 18; if (!o.stun && !o.fuse && !o.smoke && !o.splash && !o.impact) { if (cls === 'launcher') { o.impact = true; o.blast = o.blast || 4; } else { o.fuse = o.fuse || 2.2; o.blast = o.blast || 5; o.ring = o.ring || 3; } } o.vehicleDmg = o.vehicleDmg || (o.dmg || 50) * 2; }
+    else if (pj === 'lobbed') {
+      o.lobbed = true; o.speed = o.speed || 18;
+      if (o.smoke && !o.fuse) o.fuse = 1.2;   // a smoke can pops on a short fuse
+      if (!o.stun && !o.fuse && !o.smoke && !o.splash && !o.impact && !o.stick) {
+        if (cls === 'launcher') { o.impact = true; o.blast = o.blast || 4; }
+        else if (cls === 'thrown') { o.fuse = 2.2; o.blast = o.blast || 5; o.ring = o.ring || 3; }
+        else if (!o.blast) o.bump = true;   // a special that lobs a harmless thing (the merch cannon): it knocks over what it hits
+        else o.impact = true;
+      }
+      if (o.blast || o.impact) o.vehicleDmg = o.vehicleDmg || (o.dmg || 50) * 2;
+    }
     else if (!base || (!base.cone && !base.lobbed && !base.rocket)) {
       if (o.mag == null && cls !== 'special') o.mag = 12;
       if (o.spread == null) o.spread = 0.02;
@@ -266,7 +319,8 @@
     if (!o.rate) o.rate = 1; if (o.range == null) o.range = 30; if (o.dmg == null) o.dmg = 10; if (o.price == null) o.price = 500;
     // a thrown thing (and the megaphone) has no magazine whatever the table says; a magazine always has a reload time; a
     // shell-by-shell reload takes the table's whole-magazine time per shell
-    if ((o.lobbed && !o.impact) || o.cone || o.melee) delete o.mag;
+    if (cls === 'thrown' || o.cone || o.melee) delete o.mag;
+    if (o.mag != null && !(o.mag > 0)) delete o.mag;
     if (o.mag > 0 && !(o.reload > 0)) o.reload = base && base.reload > 0 ? base.reload : 1.8;
     if (o.shellReload && o.mag > 0 && typeof src.reload === 'number' && src.reload > 0) o.reload = base && base.reload > 0 && Math.abs(src.reload - base.reload) < 1e-6 ? base.reload : Math.max(0.25, src.reload / o.mag);
     o.slot = base && base.slot != null && base.cls === cls ? base.slot : slotForClass(o);
@@ -274,6 +328,9 @@
     return o;
   }
   var arsenal = { sig: null, parity: 0 };
+  // the fallback additions (everything past the original twelve), kept so a parity table can override or retire them
+  var ORIG_DEFS = {}, FALLBACK_DEFS = {};
+  (function () { for (var id in WEAPONS) { ORIG_DEFS[id] = WEAPONS[id]; if (BASE_ORDER.indexOf(id) < 0) FALLBACK_DEFS[id] = WEAPONS[id]; } })();
   function rebuildOrder() {
     var ids = Object.keys(WEAPONS);
     ids.sort(function (a, b) { var wa = WEAPONS[a], wb = WEAPONS[b]; return (wa.slot - wb.slot) || ((wa.price || 0) - (wb.price || 0)) || (a < b ? -1 : 1); });
@@ -291,11 +348,29 @@
     var sig = arr ? arr.length + ':' + (arr[0] && arr[0].id) + ':' + (arr[arr.length - 1] && arr[arr.length - 1].id) : 'none';
     if (sig === arsenal.sig && ORDER.length) return;
     arsenal.sig = sig; arsenal.parity = 0;
+    var seen = {}, k;
     if (arr) for (var i = 0; i < arr.length; i++) {
       var s = arr[i]; if (!s || !s.id || s.id === 'fist') continue;
-      try { var n = normalize(s, WEAPONS[s.id] || null); WEAPONS[s.id] = n; arsenal.parity++; } catch (e) { U.reportError(e, 'combat.arsenal ' + s.id); }
+      try { var n = normalize(s, ORIG_DEFS[s.id] || null); WEAPONS[s.id] = n; seen[s.id] = true; arsenal.parity++; } catch (e) { U.reportError(e, 'combat.arsenal ' + s.id); }
+    }
+    // a full parity table (the plan's 32+) replaces the fallback additions: the ones it does not list leave the wheel and the shop
+    // (an old save's ids map onto their parity cousins, canonId); a partial table only overrides by id
+    for (k in FALLBACK_DEFS) {
+      if (seen[k]) continue;
+      if (arsenal.parity >= 32) delete WEAPONS[k];
+      else if (!WEAPONS[k]) WEAPONS[k] = FALLBACK_DEFS[k];
     }
     rebuildOrder();
+  }
+  // an id from an older save or another track that names a fallback weapon the parity table replaced
+  var LEGACY_ID = { selfie: 'selfie_stick', filibuster: 'heavy_pistol', threadpistol: 'machine_pistol', pocketsmg: 'micro_smg', liveblog: 'pdw', battlerifle: 'battle_rifle',
+    doublebarrel: 'both_barrels', sawnoff: 'both_barrels', autoshotgun: 'auto_shotgun', heavysniper: 'heavy_sniper', stickynote: 'sticky', smoke: 'spin_smoke', confetti: 'grenade_launcher',
+    spin: 'minigun', combatmg: 'lmg', knuckles: 'clipboard', gavel: 'mic_stand', bat: 'golf_club', oped: 'pocket', firework: 'ratio', coffee: 'hottake' };
+  function canonId(id) {
+    if (!id || WEAPONS[id]) return id;
+    syncArsenal();
+    if (WEAPONS[id]) return id;
+    var m = LEGACY_ID[id]; return m && WEAPONS[m] ? m : id;
   }
   rebuildOrder();
 
@@ -613,7 +688,7 @@
     aim.active = active;
     var range = w.melee ? 7 : Math.max(w.range, 8);
     if (!active) {
-      aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0;
+      aim.target = null; aim.point = null; aim.targetScreen = null; aim.zone = null; p.lockTarget = null; aim.snapT = 0; aim.relock = false;
       aim.hip = !!(p.alive && !p.inVehicle && !w.melee && !w.cone && p.weapon !== 'fist');
       if (aim.hip) {
         // the hip crosshair: a dot where a hip shot would go (the UI draws it from hud().crosshair)
@@ -628,11 +703,17 @@
     var cur = p.lockTarget;
     if (scope.active) cur = null;   // the scope is a pure sight: no lock-on magnetism
     else {
-      if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) cur = null;
-      var cycle = In.pressed('lockOn') && !wheel.open;
-      if ((rising && settings.aimAssist) || cycle) {
-        var cands = lockCandidates(p, cd, range, (rising ? 20 : 45) * DEG, candBuf, !!w.rocket);
+      if (cur && !lockValid(p, cur, cd, reachFor(cur, range))) {
+        // a hard (helicopter-kind) lock that ends left the camera pitched at the sky: the next target in the cone is taken the way
+        // a fresh press takes one, until one turns up (a boss steps out of the landed helicopter seconds after its last spool)
+        if (cur.kind === 'heli') aim.relock = true;
+        cur = null;
+      }
+      var cycle = In.pressed('lockOn') && !wheel.open, fresh = rising || (!cur && aim.relock);
+      if ((fresh && settings.aimAssist) || cycle) {
+        var cands = lockCandidates(p, cd, range, (fresh ? 20 : 45) * DEG, candBuf, !!w.rocket);
         if (cands.length) {
+          aim.relock = false;
           if (cycle && cur) {
             cands.sort(function (a, b) { return a.ang - b.ang; });
             var idx = -1;
@@ -656,6 +737,8 @@
         if (pick) { cur = pick.e; aim.lockT = simT(); aim.snapT = 0.31; }   // no snap: it is already under the sight
       }
     }
+    // waiting to re-lock after a sky lock: the camera eases back toward its resting pitch so the ground comes back into view
+    if (aim.relock && !cur) { var rr = rig(); if (rr && rr.pitch < 0.1) rr.pitch = U.damp(rr.pitch, 0.15, 2.5, dt); }
     // the assist: a snap onto the lock (0.3 s), then a light stickiness while the crosshair stays near it; looking well away
     // from it drops the lock (free aim)
     var cr = cameraRay();
@@ -665,7 +748,10 @@
       aim.snapT += dt;
       var tp = cur.kind === 'ped' || cur.kind === 'player' ? zonePoint(cur, 'torso', 0) : { x: cur.x, y: chestY(cur), z: cur.z };
       var off = rayAngleTo(cr, tp.x, tp.y, tp.z);
-      if (aim.snapT > 0.35 && off > 10 * DEG && !hard) cur = null;
+      // the shoulder camera sits beside the body: close in, the crosshair cannot sit exactly on a lock, so the limits widen by
+      // that parallax (about 11° at 5 m, 3° at 20 m)
+      var par = Math.atan2(AIM_CAM.side + 0.3, Math.max(1, U.dist2d(p.x, p.z, cur.x, cur.z)));
+      if (aim.snapT > 0.35 && off > 10 * DEG + par && !hard) cur = null;
       else steerCamera(tp.x, tp.y, tp.z, aim.snapT <= 0.3 ? 16 : (settings.aimAssist ? 3.5 : 0), dt);
     }
     p.lockTarget = aim.target = cur;
@@ -675,7 +761,7 @@
     pt = cp;
     if (cur && cp.entity !== cur && cr && !(cp.entity && cp.entity !== cur)) {
       var cx = chestY(cur);
-      if (hard || rayAngleTo(cr, cur.x, cx, cur.z) < (p.inVehicle ? 8 : 3) * DEG || aim.snapT <= 0.3) pt = { x: cur.x, y: cx, z: cur.z, entity: cur, zone: 'torso', dist: U.dist2d(p.x, p.z, cur.x, cur.z) };
+      if (hard || rayAngleTo(cr, cur.x, cx, cur.z) < (p.inVehicle ? 8 : 3) * DEG + par || aim.snapT <= 0.3) pt = { x: cur.x, y: cx, z: cur.z, entity: cur, zone: 'torso', dist: U.dist2d(p.x, p.z, cur.x, cur.z) };
     }
     aim.point = pt; aim.hover = pt.entity || null; aim.zone = pt.entity ? pt.zone : null; aim.range = pt.dist || 0;
     aim.inRange = U.dist2d(p.x, p.z, pt.x, pt.z) <= w.range + 0.5;
@@ -920,7 +1006,12 @@
       if (!isPlayer) dmg *= id === 'rifle' ? AI_RIFLE_MUL : AI_DAMAGE_MUL;
       var before = e.alive;
       e.applyDamage(dmg, shooter, id);
-      if (e.alive && !e.knockedDown && !e.inVehicle) {
+      if (w.stun && !w.lobbed && e.alive && !e.inVehicle) {
+        // the mute button: they stop talking (and everything else) for w.stun seconds
+        if (!e.knockedDown) e.knockDown(d.x * 0.6, d.z * 0.6, 0, shooter, id);
+        e.downT = Math.max(e.downT || 0, w.stun);
+        textFx('MUTED', e.x, e.y + 2.1, e.z, '#ff3b30', 0.9);
+      } else if (e.alive && !e.knockedDown && !e.inVehicle) {
         if (w.floors && zone !== 'head' && isPlayer && e.kind !== 'player') e.knockDown(d.x * w.knock, d.z * w.knock, 0, shooter, id);   // the Rebuttal puts a body hit on the floor
         else { e.vx += d.x * (w.knock || 1); e.vz += d.z * (w.knock || 1); }
         // a hit reaction the anim reads (pose.hit): the zone, which way it came from
@@ -955,7 +1046,7 @@
         markHit(shooter, e, !wasDown && e.down, null, hit, id);
         // shooting the police helicopter is a crime: it keeps the heat alive (and the helicopter on station) while it takes fire
         var wd = wanted(), nowH = simT();
-        if (wd && !e.down && nowH - (shooter._heliHeatT || -9) > 0.6) { shooter._heliHeatT = nowH; try { wd.crime('attackCop', 'shootHeli'); } catch (err) { /* ai optional */ } }
+        if (wd && !e.down && !e.bossPart && nowH - (shooter._heliHeatT || -9) > 0.6) { shooter._heliHeatT = nowH; try { wd.crime('attackCop', 'shootHeli'); } catch (err) { /* ai optional */ } }
       }
       return true;
     }
@@ -1004,7 +1095,7 @@
       if (pelletHits[pk] >= 3 && e.alive && !e.knockedDown && !e.inVehicle && U.dist2d(e.x, e.z, ped.x, ped.z) < 7) e.knockDown(ctx.dir.x * 4.5, ctx.dir.z * 4.5, 0, ped, id);
     }
     var gain = w.cls === 'shotgun' ? 1 : w.cls === 'smg' ? 0.5 : w.cls === 'sniper' || id === 'revolver' ? 0.95 : 0.8;
-    sfx(w.quiet ? 'reloadDone' : 'shot', o.x, o.z, w.quiet ? 0.5 : gain);
+    sfx('shot', o.x, o.z, w.quiet ? 0.5 : gain, { weapon: id, ped: ped, cls: w.cls, suppressed: !!w.quiet });   // the audio track routes the report by class
     shotAlarm(ped, w.quiet ? 8 : w.cls === 'sniper' ? 40 : 24);
     if (isPlayer) {
       ped.stats.shots = (ped.stats.shots || 0) + 1; ped.stats.shooting = (ped.stats.shooting || 0) + 1; copHeat(ped, w.quiet);
@@ -1073,7 +1164,7 @@
     pr.snap();
     E().add(pr);
     ped.firePoseT = 0.5;
-    sfx(w.impact ? 'shot' : 'jump', o.x, o.z, w.impact ? 0.7 : 0.4);
+    if (w.impact || w.mag) sfx('shot', o.x, o.z, 0.7, { weapon: id, ped: ped, cls: w.cls }); else sfx('jump', o.x, o.z, 0.4);
     if (w.impact) { muzzleFlash(o, ctx.dir, false); if (ped.kind === 'player') { recoilKick(ped, w, id); muzzleLight(o, ctx.dir, w); } }
     if (ped.kind === 'player') { ped.stats.hottakes = (ped.stats.hottakes || 0) + 1; ped.stats.shooting = (ped.stats.shooting || 0) + 1; }
     return true;
@@ -1090,7 +1181,7 @@
     var r = R(), bx = o.x - d.x * 1.1, bz = o.z - d.z * 1.1;
     for (var i = 0; i < 4; i++) fx({ type: 'smoke', x: bx, y: o.y, z: bz, vx: -d.x * 4 + r.range(-1, 1), vy: 0.6, vz: -d.z * 4 + r.range(-1, 1), size: 1.3, life: 0.8, color: 0x8a8a90 });
     fx({ type: 'explosion', x: bx, y: o.y, z: bz, size: 1.6, life: 0.12, color: 0xffd0a0 });
-    sfx('shot', o.x, o.z, 1);
+    sfx('shot', o.x, o.z, 1, { weapon: id, ped: ped, cls: w.cls });
     sfx('jump', o.x, o.z, 0.6);
     ped.firePoseT = 0.6;
     if (ped.kind === 'player') {
@@ -1165,6 +1256,7 @@
     var floors = ms.type === 'heavy' || ms.type === 'counter' || (ms.type === 'light' && ms.combo >= 2);
     if (target.alive && !target.knockedDown) {
       if (flip) { target.knockDown(dx * w.knock * 2.2, dz * w.knock * 2.2, 0, ped, id); target.downT = 2.4; textFx('FLIPPED', target.x, target.y + 2.1, target.z, '#ffbe3c', 1.0); }
+      else if (w.launch) { target.knockDown(dx * w.knock, dz * w.knock, 0, ped, id); target.vy = Math.max(target.vy || 0, 2.2 + w.launch * 3.2); if (isPlayer) textFx('FORE', target.x, target.y + 2.1, target.z, '#e8b53a', 0.9); }   // the putter sends them up the fairway
       else if (floors || target.hp < dmg * 1.5 || (isPlayer && R().chance(0.12))) target.knockDown(dx * (floors ? 5 : 3), dz * (floors ? 5 : 3), 0, ped, id);
       else { target.vx += dx * w.knock; target.vz += dz * w.knock; var hr = target._hitReact || (target._hitReact = { t: 0, zone: null, dx: 0, dz: 0 }); hr.t = 0.3; hr.zone = 'torso'; hr.dx = dx; hr.dz = dz; }
       target.lastHitBy = ped;
@@ -1257,8 +1349,14 @@
       var m = this.mesh; if (!m) return;
       var a = alpha == null ? 1 : alpha;
       m.position.set(this._px + (this.x - this._px) * a, this._py + (this.y - this._py) * a, this._pz + (this.z - this._pz) * a);
-      if (this.rest || this.stuck) m.rotation.set(this.weaponId === 'stickynote' ? 0 : Math.PI / 2, 0, 0.3);
+      if (this.rest || this.stuck) m.rotation.set(this.weaponId === 'stickynote' || this.weaponId === 'sticky' ? 0 : Math.PI / 2, 0, 0.3);
       else { m.rotation.x = this.age * this.spin; m.rotation.z = this.age * this.spin * 0.4; }
+    }
+    destroy() {
+      // the ON AIR cap's material is a per-mic clone (it blinks on its own): free it with the mic
+      var cap = this._cap; this._cap = null;
+      if (cap && cap.material && !(cap.material.userData && cap.material.userData.shared)) cap.material.dispose();
+      return super.destroy();
     }
     land() {
       var w = WEAPONS[this.weaponId];
@@ -1269,7 +1367,7 @@
       this.age += dt;
       var w = WEAPONS[this.weaponId] || WEAPONS.hotmic;
       if (w.fuse) { this.fuse -= dt; if (this.fuse <= 0) { if (w.smoke) { startSmoke(this); this.destroy(); } else this.hit(null); return; } }
-      if (this.age > 13) { this.destroy(); return; }
+      if (this.age > (w.remote ? 240 : 13)) { this.destroy(); return; }
       if (this.stuck) {
         var v = this.stuck;
         if (v.removed) { this.stuck = null; this.rest = false; }
@@ -1368,19 +1466,26 @@
       }
     }
   }
-  // the hottake's 5 m stun
+  // the stun burst: the hottake's 5 m (stun is its radius), the flashbang's ring (ring is the radius, stun the seconds down), the
+  // flare's 2 m pink pop. Everyone inside goes down; cars take a scorch.
+  var STUN_FX = { hottake: { col: 0xff8a30, text: 'RESPECTFULLY.', css: '#ff7a20', fire: true }, flashbang: { col: 0xffffff, text: 'BREAKING NEWS', css: '#ffffff', flash: true },
+    flare_gun: { col: 0xff3fa4, text: 'SIGNAL BOOSTED', css: '#ff3fa4', fire: true } };
   function takeBlast(proj, owner) {
-    var w = WEAPONS.hottake, r = R();
+    var kind = WEAPONS[proj.weaponId] && WEAPONS[proj.weaponId].stun ? proj.weaponId : 'hottake';
+    var w = WEAPONS[kind] || ORIG_DEFS.hottake, r = R(), sf = STUN_FX[kind] || { col: w.glow ? parseInt(String(w.glow).slice(1), 16) : 0xff8a30, text: String(w.name || 'TAKE').toUpperCase(), css: w.glow || '#ff7a20', fire: true };
     var x = proj.x, y = proj.y, z = proj.z, Wd = W();
     var gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
-    var rad = w.stun || 5, i;
-    fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: 3.2, life: 0.5, color: 0xff8a30 });
-    fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.55, color: 0xff9a40 });
-    for (i = 0; i < 6; i++) fx({ type: 'fire', x: x + r.range(-0.5, 0.5), y: y + 0.3 + r.range(0, 0.6), z: z + r.range(-0.5, 0.5), vx: r.range(-2, 2), vy: r.range(1.5, 4), vz: r.range(-2, 2), size: r.range(0.8, 1.5), life: r.range(0.3, 0.6) });
-    for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: 0x553322 });
-    for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: 0xffb060 }); }
-    fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
-    textFx('RESPECTFULLY.', x, y + 1.6, z, '#ff7a20', 1.3);
+    var rad = w.ring || w.stun || 5, downT = w.ring ? w.stun : 0, i;
+    fx({ type: 'explosion', x: x, y: y + 0.5, z: z, size: sf.flash ? 6 : 3.2 * Math.min(1, rad / 4 + 0.3), life: sf.flash ? 0.25 : 0.5, color: sf.col });
+    fx({ type: 'ring', x: x, y: gy + 0.1, z: z, size: rad, life: 0.55, color: sf.col });
+    if (sf.fire) for (i = 0; i < 6; i++) fx({ type: 'fire', x: x + r.range(-0.5, 0.5), y: y + 0.3 + r.range(0, 0.6), z: z + r.range(-0.5, 0.5), vx: r.range(-2, 2), vy: r.range(1.5, 4), vz: r.range(-2, 2), size: r.range(0.8, 1.5), life: r.range(0.3, 0.6), color: kind === 'hottake' ? undefined : sf.col });
+    for (i = 0; i < 5; i++) fx({ type: 'smoke', x: x + r.range(-0.6, 0.6), y: y + 0.6, z: z + r.range(-0.6, 0.6), vx: r.range(-1, 1), vy: r.range(1, 2.5), vz: r.range(-1, 1), size: r.range(1.2, 2.2), life: r.range(1, 1.8), color: sf.flash ? 0xe8e8f0 : 0x553322 });
+    for (i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2, sp = r.range(3, 8); fx({ type: 'spark', x: x, y: y + 0.4, z: z, vx: Math.cos(a) * sp, vy: r.range(2, 6), vz: Math.sin(a) * sp, size: 0.35, life: r.range(0.3, 0.6), color: sf.flash ? 0xffffff : kind === 'hottake' ? 0xffb060 : sf.col }); }
+    if (!sf.flash) fx({ type: 'decal', x: x, y: gy, z: z, size: 2.2, size2: 2.2, life: 30, color: 0x2a1a10 });
+    textFx(sf.text, x, y + 1.6, z, sf.css, 1.3);
+    // the flashbang whites out the player's screen when it pops in view and in range
+    var pl0 = player();
+    if (sf.flash && pl0 && pl0.alive && U.dist2d(pl0.x, pl0.z, x, z) < rad * 1.6 && losClear(x, y + 0.5, z, pl0.x, pl0.y + 1.6, pl0.z)) Combat.flashT = U.clamp(1.6 - U.dist2d(pl0.x, pl0.z, x, z) / (rad * 1.6), 0.4, 1.6);
     var list = E().hash.query(x, z, rad + 2.5, scratch);
     for (i = 0; i < list.length; i++) {
       var e = list[i]; if (e === proj || e.removed) continue;
@@ -1389,22 +1494,53 @@
       var fall = 1 - 0.55 * Math.min(1, d / rad), nx = dx / (d || 1), nz = dz / (d || 1);
       if (e.kind === 'ped' || e.kind === 'player') {
         if (!e.alive || e.inVehicle) continue;
-        var dmg = proj.dmg * fall * (e === owner ? 0.5 : 1), was = e.alive;
-        e.knockDown(nx * 6 * fall, nz * 6 * fall, dmg, owner, 'hottake');
+        var dmg = proj.dmg * fall * (e === owner ? 0.5 : 1), was = e.alive, push = sf.flash ? 1.5 : 6;
+        e.knockDown(nx * push * fall, nz * push * fall, dmg, owner, kind);
+        if (downT > 0 && e.knockedDown) e.downT = Math.max(e.downT || 0, downT * (0.5 + 0.5 * fall));
         e.lastHitBy = owner || e.lastHitBy;
         if (e.kind === 'player') { Combat.hurtFlash = 0.7; }
-        blastCredit(owner, e, was, 'hottake', e.x, e.y + 1, e.z);
-      } else if (e.kind === 'vehicle' && !e.wreck && !e.sinking) {
-        e.applyDamage(18 * fall, owner, 'hottake'); e.vx += nx * 2 * fall; e.vz += nz * 2 * fall;
+        blastCredit(owner, e, was, kind, e.x, e.y + 1, e.z);
+      } else if (e.kind === 'vehicle' && !e.wreck && !e.sinking && !sf.flash) {
+        e.applyDamage(18 * fall, owner, kind); e.vx += nx * 2 * fall; e.vz += nz * 2 * fall;
       }
     }
-    sfx('explode', x, z, 0.6);
+    sfx('explode', x, z, sf.flash ? 0.9 : 0.6);
     var pl = player(); if (pl) shake(U.clamp(0.9 - U.dist2d(pl.x, pl.z, x, z) / 25, 0.1, 0.9));
     alarm(x, z, 28, owner || proj, false);
+  }
+  // the merch cannon's shirt: no blast, a shove that floors whoever it hits (they keep the shirt)
+  function bumpHit(proj, target, owner) {
+    var w = WEAPONS[proj.weaponId] || {}, r = R(), vl = Math.sqrt(proj.vx * proj.vx + proj.vz * proj.vz) || 1, nx = proj.vx / vl, nz = proj.vz / vl, k = w.knock || 5;
+    for (var i = 0; i < 6; i++) fx({ type: 'spark', x: proj.x, y: proj.y + 0.2, z: proj.z, vx: r.range(-2, 2), vy: r.range(1, 3), vz: r.range(-2, 2), size: 0.3, life: 0.5, color: [0xff3fa4, 0xffffff, 0x2ee6ff][i % 3] });
+    fx({ type: 'puff', x: proj.x, y: proj.y, z: proj.z, size: 0.6, life: 0.3, color: 0xfff6f0 });
+    sfx('punch', proj.x, proj.z, 0.6);
+    if (!target) return;
+    if (target.kind === 'ped' || target.kind === 'player') {
+      if (!target.alive || target.inVehicle) return;
+      var was = target.alive;
+      if (target.knockDown) target.knockDown(nx * k, nz * k, proj.dmg, owner, proj.weaponId);
+      target.lastHitBy = owner || target.lastHitBy;
+      textFx('REACH', target.x, target.y + 2.1, target.z, '#ff3fa4', 0.9);
+      if (owner && owner.kind === 'player') markHit(owner, target, false, null, { x: target.x, y: target.y + 1, z: target.z }, proj.weaponId);
+      blastCredit(owner, target, was, proj.weaponId, target.x, target.y + 1, target.z);
+    } else if (target.kind === 'vehicle' && target.applyDamage) { target.applyDamage(proj.dmg, owner, proj.weaponId); target.vx += nx * 0.5; target.vz += nz * 0.5; }
+  }
+  // the remote charges (the sticky take): R with the charge in hand sets every one of the owner's off
+  function detonate(owner) {
+    var n = 0, list = E().list || [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var e = list[i]; if (!e || e.removed || e.kind !== 'projectile' || e.owner !== owner) continue;
+      var w = WEAPONS[e.weaponId]; if (!w || !w.remote) continue;
+      e.hit(null); n++;
+    }
+    if (n) { sfx('ui', owner.x, owner.z, 0.4); emit('combat:detonate', { owner: owner, count: n }); }
+    return n;
   }
   // the big ones: the hot mic's 6 m blast (+ a 5 m knockdown ring), the sticky note's 5 m, the confetti shell's 4 m, the firework's
   // 6 m and the rocket's 8 m blast that flips cars
   var BLAST_COL = { ratio: [0xff9ad0, 0xff3fa4, 0x2a1a24], firework: [0xb0e8ff, 0x7a4aff, 0x221a2a], confetti: [0xfff0a0, 0xff3fa4, 0x2a2420], hotmic: [0xffb040, 0xff4a2a, 0x1e1a18], stickynote: [0xffe070, 0xff8a2a, 0x1e1a18] };
+  BLAST_COL.sticky = BLAST_COL.stickynote; BLAST_COL.grenade_launcher = BLAST_COL.confetti;
+  var BLAST_TEXT = { confetti: 'CONGRATULATIONS', firework: 'TRENDING', stickynote: 'REMINDER', sticky: 'REMINDER', grenade_launcher: 'FOLLOW-UP', hotmic: 'HOT MIC' };
   function areaBlast(proj, owner, kind) {
     var w = WEAPONS[kind] || WEAPONS.hotmic, r = R(), Wd = W();
     var x = proj.x, y = proj.y, z = proj.z, gy = Wd.heightAt(x, z, y); if (y < gy) y = gy;
@@ -1418,9 +1554,10 @@
     for (i = 0; i < (rocket ? 10 : 7); i++) fx({ type: 'fire', x: x + r.range(-1.2, 1.2), y: y + r.range(0.2, 1.6), z: z + r.range(-1.2, 1.2), vx: r.range(-4, 4), vy: r.range(3, 9), vz: r.range(-4, 4), size: r.range(1.6, 3), life: r.range(0.5, 1) });
     for (i = 0; i < 7; i++) fx({ type: 'smoke', x: x + r.range(-0.8, 0.8), y: y + 1 + i * 0.5, z: z + r.range(-0.8, 0.8), vx: r.range(-0.7, 0.7), vy: r.range(2, 4), vz: r.range(-0.7, 0.7), size: r.range(2.5, 4.5), life: r.range(1.8, 3), color: col[2] });
     var confettiCols = [0xff3fa4, 0x2ee6ff, 0xffd84a, 0x9dff3c, 0xff7a20];
-    for (i = 0; i < (kind === 'confetti' || kind === 'firework' ? 26 : 14); i++) { var a = r.random() * Math.PI * 2, sp = r.range(4, 13); fx({ type: 'spark', x: x, y: y + 0.6, z: z, vx: Math.cos(a) * sp, vy: r.range(3, 9), vz: Math.sin(a) * sp, size: 0.45, life: r.range(0.3, 0.9), color: kind === 'confetti' || kind === 'firework' ? confettiCols[i % 5] : (rocket ? 0xffb0e0 : 0xffc060) }); }
+    var party = kind === 'confetti' || kind === 'firework' || kind === 'grenade_launcher';
+    for (i = 0; i < (party ? 26 : 14); i++) { var a = r.random() * Math.PI * 2, sp = r.range(4, 13); fx({ type: 'spark', x: x, y: y + 0.6, z: z, vx: Math.cos(a) * sp, vy: r.range(3, 9), vz: Math.sin(a) * sp, size: 0.45, life: r.range(0.3, 0.9), color: party ? confettiCols[i % 5] : (rocket ? 0xffb0e0 : 0xffc060) }); }
     fx({ type: 'decal', x: x, y: gy, z: z, size: rad * 0.7, size2: rad * 0.7, life: 60, color: 0x16120f });
-    textFx(kind === 'ratio' ? failText('wasted') : kind === 'confetti' ? 'CONGRATULATIONS' : kind === 'firework' ? 'TRENDING' : kind === 'stickynote' ? 'REMINDER' : 'HOT MIC', x, y + 2.2, z, kind === 'ratio' ? '#ff3fa4' : '#ff4a2a', 1.4);
+    textFx(kind === 'ratio' ? failText('wasted') : BLAST_TEXT[kind] || 'HOT MIC', x, y + 2.2, z, kind === 'ratio' ? '#ff3fa4' : '#ff4a2a', 1.4);
     var list = E().hash.query(x, z, ring + 4, scratch), direct = proj._direct || null;
     for (i = 0; i < list.length; i++) {
       var e = list[i]; if (e === proj || e.removed) continue;
@@ -1457,8 +1594,9 @@
   // smoke: a cloud that sits for w.smoke seconds; AI shots through it go wide (smokeBetween), and the AI module may ask Combat.inSmoke
   var smokes = [];
   function startSmoke(proj) {
-    var w = WEAPONS[proj.weaponId] || WEAPONS.smoke;
-    smokes.push({ x: proj.x, y: proj.y, z: proj.z, r: 5.5, t: w.smoke || 12, emitT: 0 });
+    // the fallback can's `smoke` is its seconds; the parity table's is the radius with `smokeSeconds` beside it
+    var w = WEAPONS[proj.weaponId] || FALLBACK_DEFS.smoke, secs = w.smokeSeconds ? w.smokeSeconds : (w.smoke || 12), rad = w.smokeSeconds ? (w.smoke || 5.5) : 5.5;
+    smokes.push({ x: proj.x, y: proj.y, z: proj.z, r: rad, t: secs, emitT: 0 });
     sfx('static', proj.x, proj.z, 0.5);
     textFx('NO COMMENT', proj.x, proj.y + 1.8, proj.z, '#cfd6e6', 1.6);
     alarm(proj.x, proj.z, 14, proj.owner || proj, true);
@@ -1484,8 +1622,8 @@
   // the latte: a scalding puddle for w.burn seconds (every 0.5 s: a little damage, and the peds in it run)
   var puddles = [];
   function coffeeSplash(proj, owner) {
-    var w = WEAPONS.coffee, x = proj.x, z = proj.z, gy = W().heightAt(x, z, proj.y + 0.5), r = R();
-    puddles.push({ x: x, y: gy, z: z, r: w.splash, t: w.burn, tickT: 0, owner: owner || null });
+    var w = WEAPONS[proj.weaponId] || FALLBACK_DEFS.coffee, x = proj.x, z = proj.z, gy = W().heightAt(x, z, proj.y + 0.5), r = R();
+    puddles.push({ x: x, y: gy, z: z, r: w.splash, t: w.burn || 4, tickT: 0, owner: owner || null, id: proj.weaponId, dmg: w.dmg || 5 });
     fx({ type: 'decal', x: x, y: gy, z: z, size: w.splash * 0.8, size2: w.splash * 0.8, life: 12, color: 0x5a3418 });
     for (var i = 0; i < 8; i++) { var a = r.random() * Math.PI * 2; fx({ type: 'puff', x: x, y: gy + 0.2, z: z, vx: Math.cos(a) * 3, vy: r.range(1, 2), vz: Math.sin(a) * 3, size: 0.5, life: 0.5, color: 0x8a5a30 }); }
     textFx('EXTRA HOT', x, gy + 1.6, z, '#ffbe3c', 1.2);
@@ -1501,14 +1639,15 @@
       var list = E().hash.query(pd.x, pd.z, pd.r + 1, scratch3);
       for (var k = 0; k < list.length; k++) {
         var e = list[k]; if ((e.kind !== 'ped' && e.kind !== 'player') || !e.alive || e.inVehicle || U.dist2d(e.x, e.z, pd.x, pd.z) > pd.r) continue;
-        var was = e.alive; e.applyDamage(WEAPONS.coffee.dmg * (e === pd.owner ? 0.5 : 1), pd.owner, 'coffee');
+        var was = e.alive; e.applyDamage(pd.dmg * (e === pd.owner ? 0.5 : 1), pd.owner, pd.id);
         if (e.kind === 'ped' && e.alive && e.state !== 'flee') { e.state = 'flee'; e.fleeFrom = pd.owner; e.fleeTimer = 4; }
-        blastCredit(pd.owner, e, was, 'coffee', e.x, e.y + 1, e.z);
+        blastCredit(pd.owner, e, was, pd.id, e.x, e.y + 1, e.z);
       }
     }
   }
   function projectileHit(proj, target) {
     var id = proj.weaponId, owner = proj.owner, w = WEAPONS[id];
+    if (w && w.bump) { bumpHit(proj, target, owner); return; }
     if (id === 'hottake' || (w && w.stun && !w.blast)) { takeBlast(proj, owner); return; }
     if (w && w.splash) { if (!proj.splashed) { proj.splashed = true; coffeeSplash(proj, owner); } return; }
     if (w && w.smoke) { startSmoke(proj); return; }
@@ -1694,20 +1833,26 @@
   // Combat.scope: a scoped weapon's sight (the Fact Checker, the Peer Reviewer, the Long Form). Holding aim puts the rig at eye
   // height (the player's cameraMode is parked and set to 'first' so the body hides), fov 30 (2x) or 15 (4x; [ ] / the wheel
   // toggles), a breath sway, 1/zoom look.
-  var scope = { active: false, zoom: 2, fov: 30, range: 0, sway: 0.15, t: 0, stillT: 0, target: null };
+  var scope = { active: false, hi: false, zoom: 2, fov: 30, range: 0, sway: 0.15, t: 0, stillT: 0, target: null };
+  // the two zoom steps of the weapon in hand: 2x and the weapon's own (the parity `zoom`, a long optic's adsZoom; 4x by default)
+  function scopeSteps(p) {
+    var w = p && p.weapon ? eff(p, p.weapon) : null, hiZ = Math.max(2.5, (w && w.zoom) || 4, (w && w.scopeZoom) || 0);
+    return [Math.min(2, hiZ), hiZ];
+  }
+  function applyZoom(p) { var st = scopeSteps(p); scope.zoom = scope.hi ? st[1] : st[0]; scope.fov = 60 / scope.zoom; }
   function updateScope(p, dt) {
     var w = WEAPONS[p.weapon];
     var want = !!(p.alive && !p.inVehicle && w && w.scope && p.aiming && !p.knockedDown && !p.swimming && !(p.cover && !p.cover.peek && p.cover.high) && GTP.game && GTP.game.state === 'playing');
-    if (want && !scope.active) { scope.active = true; scope.t = 0; scope.stillT = 0; p._scopeCam = p.cameraMode; p.cameraMode = 'first'; sfx('ui', p.x, p.z, 0.25); emit('scope', { active: true, zoom: scope.zoom }); }
+    if (want && !scope.active) { applyZoom(p); scope.active = true; scope.t = 0; scope.stillT = 0; p._scopeCam = p.cameraMode; p.cameraMode = 'first'; sfx('ui', p.x, p.z, 0.25); emit('scope', { active: true, zoom: scope.zoom }); }
     else if (!want && scope.active) { scope.active = false; if (p.cameraMode === 'first') p.cameraMode = p._scopeCam || 'chase'; p._scopeCam = null; emit('scope', { active: false, zoom: scope.zoom }); }
     if (!scope.active) { scope.target = null; return; }
     scope.t += dt;
     var still = Math.abs(p.vx || 0) + Math.abs(p.vz || 0) < 0.3;
     scope.stillT = still ? scope.stillT + dt : 0;
-    scope.fov = scope.zoom >= 4 ? 15 : 30;
+    applyZoom(p);
     scope.range = aim.range || 0; scope.target = aim.hover || null;
   }
-  function toggleZoom() { scope.zoom = scope.zoom >= 4 ? 2 : 4; sfx('ui', 0, 0, 0.2); emit('scope', { active: scope.active, zoom: scope.zoom }); }
+  function toggleZoom() { scope.hi = !scope.hi; var p = player(); if (p) applyZoom(p); else scope.zoom = scope.hi ? 4 : 2; sfx('ui', 0, 0, 0.2); emit('scope', { active: scope.active, zoom: scope.zoom }); }
 
   // ------------------------------------------------------------ the wheel --
   // Combat.wheel: hold lockOn (Tab) for 0.18 s while not aiming. Twelve slots (SLOTS), index 0 at the top, clockwise; the mouse
@@ -1744,11 +1889,14 @@
     var In = GTP.Input, g = GTP.game;
     var tabDown = In.down('lockOn') || In.down('wheel');
     if (!wheel.open) {
-      if (tabDown && !p.aiming && p.alive && !p.knockedDown && g && g.state === 'playing') { wheel.hold += dt; if (wheel.hold >= 0.18) openWheel(p, 'key'); }
+      // never under a shop page or with the player's control off (QA-B-TCH-07: Tab in the shop opened an invisible wheel)
+      var uiBusy = p.controlEnabled === false || !!(GTP.UI && GTP.UI.state && (GTP.UI.state.shopOpen || GTP.UI.state.modal)) || !!shop.state.open;
+      if (tabDown && !uiBusy && !p.aiming && p.alive && !p.knockedDown && g && g.state === 'playing') { wheel.hold += dt; if (wheel.hold >= 0.18) openWheel(p, 'key'); }
       else wheel.hold = 0;
       return;
     }
     wheel.t += dt;
+    if (p.controlEnabled === false || !!(GTP.UI && GTP.UI.state && GTP.UI.state.shopOpen) || !!shop.state.open) { closeWheel(p, false); return; }
     var n = SLOTS.length, look = In.look, pad = In.gamepad;
     if (look && (look.dx || look.dy)) { wheel.vx += look.dx; wheel.vy += look.dy; var m = Math.sqrt(wheel.vx * wheel.vx + wheel.vy * wheel.vy); if (m > 60) { wheel.vx *= 60 / m; wheel.vy *= 60 / m; } look.dx = 0; look.dy = 0; }   // the wheel owns the mouse: the camera holds
     if (pad && pad.index >= 0 && (pad.rx || pad.ry)) { wheel.vx = pad.rx * 60; wheel.vy = pad.ry * 60; }
@@ -1934,7 +2082,7 @@
     else if (ms.type === 'counter') { var hk = Math.sin(Math.PI * k); parts.armR.rotation.set(1.3 * hk + 0.3, 0, -0.5 + 1.1 * hk); }
     else { var pk = Math.sin(Math.PI * k); if (ms.combo === 1) { parts.armL.rotation.set(0.4 + 1.3 * pk, 0, 0.2); } else parts.armR.rotation.set(0.4 + 1.35 * pk, 0, ms.combo === 2 ? -0.1 - 0.7 * pk : -0.1); }
   }
-  var _hf = {}, _pt = {}, _pt2 = {};
+  var _hf = {}, _pt = {}, _pt2 = {}, _v3a = typeof THREE !== 'undefined' ? new THREE.Vector3() : null;
   // the held weapon's mesh and the holstered ones, made or swapped when the weapon or its mods change (also run from the update, so
   // the meshes exist without a render); returns the held id
   function ensureHeld(e) {
@@ -1975,8 +2123,13 @@
     var w = WEAPONS[heldId], fit = fitOf(heldId) || {}, held = e._held;
     var raised = !e.knockedDown && !(e._melee) && !fit.melee && !fit.knuckle && (e.aiming || e.firePoseT > 0 || !!e._cook || (e.cover && (e.cover.peek || e.cover.blindT > 0)) || (e.kind !== 'player' && e.hostile && !w.melee));
     if (e.reloadT > 0 && !fit.upright) raised = false;
-    var yaw = m.rotation.y;
-    if (raised) {
+    var yaw = m.rotation.y, ab = anim && e._anim && e._anim.B;
+    if (ab && ab.handR && held.parent === ab.handR) {
+      // the models track (06c) owns the held gun: it sits in the hand bone at its grip and both arms are IK'd to it, so
+      // leave its transform alone (placing it against the root here would tear it off the hand); report where the hands are
+      held.getWorldPosition(_v3a); hands.right.x = _v3a.x; hands.right.y = _v3a.y; hands.right.z = _v3a.z;
+      if (ab.handL) { ab.handL.getWorldPosition(_v3a); hands.left.x = _v3a.x; hands.left.y = _v3a.y; hands.left.z = _v3a.z; hands.leftOn = holdOf(heldId) === 'two' || raised; }
+    } else if (raised) {
       var fr = gunFrame(e, heldId, true, null, yaw, e._aimPitch || 0);
       fr.gx += m.position.x - e.x; fr.gy += bodyY - e.y; fr.gz += m.position.z - e.z;   // gunFrame crouches on its own   // the interpolated body
       placeWorld(held, m, fr.gx, fr.gy, fr.gz, fr.X, fr.Y, fr.Z, fr.s);
@@ -2333,9 +2486,13 @@
     labelTex[label] = tex;
     return tex;
   }
+  // labels, planes and glows are shared per label / size / colour (QAC-09: every crate made 2-4 planes and materials that nothing
+  // freed); userData.shared keeps any generic dispose pass off them
+  var labelMat = {}, planeGeo = {}, glowMat = {};
   function labelMesh(label, w, h) {
-    var mat = new THREE.MeshBasicMaterial({ map: labelTexture(label), transparent: false });
-    var m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.name = 'label';
+    var mat = labelMat[label]; if (!mat) { mat = labelMat[label] = new THREE.MeshBasicMaterial({ map: labelTexture(label), transparent: false }); mat.userData.shared = true; }
+    var gk = w + 'x' + h, g = planeGeo[gk]; if (!g) { g = planeGeo[gk] = new THREE.PlaneGeometry(w, h); g.userData.shared = true; }
+    var m = new THREE.Mesh(g, mat); m.name = 'label';
     return m;
   }
   function geo(key, build) {
@@ -2362,7 +2519,9 @@
   }
   function glowSprite(color, scale) {
     var A = GTP.Assets;
-    var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: A.glow, color: color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }));
+    var gk = String(color), gm = glowMat[gk];
+    if (!gm) { gm = glowMat[gk] = new THREE.SpriteMaterial({ map: A.glow, color: color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }); gm.userData.shared = true; }
+    var sp = new THREE.Sprite(gm);
     sp.scale.set(scale, scale, 1); sp.position.y = 0.15; sp.name = 'glow';
     return sp;
   }
@@ -2517,7 +2676,7 @@
     if (kind === 'police') {
       // the fine by the stars at the bust (GDD_EXPANSION 6.9: $500, $800 at 3+, never over 15% of the cash)
       var lvl = Combat.death && Combat.death.level != null ? Combat.death.level : 1;
-      fine = GTP.AI && GTP.AI.bustFine ? GTP.AI.bustFine(lvl, p.money) : C.ECONOMY.bustedFine;
+      fine = Combat.death && Combat.death.fine != null ? Combat.death.fine : GTP.AI && GTP.AI.bustFine ? GTP.AI.bustFine(lvl, p.money) : C.ECONOMY.bustedFine;
       p.money = Math.max(0, p.money - fine); p.stats.busted = (p.stats.busted || 0) + 1;
     }
     else { fine = Math.round(p.money * C.ECONOMY.deathCashLoss); p.money = Math.round(p.money * (1 - C.ECONOMY.deathCashLoss)); p.stats.deaths = (p.stats.deaths || 0) + 1; }
@@ -2586,6 +2745,12 @@
   }
   // a hot mic in flight / a rocket in flight: skin the entity's default sphere with the real thing
   var ROCKET_GEO = null;
+  // the render module gives every projectile its own little sphere: dispose it when the weapon's shared geometry replaces it
+  // (QAC-08 / QA-D-08: one GPU geometry leaked per throw)
+  function disposeOwnGeo(mesh) {
+    var g = mesh.geometry;
+    if (g && g !== ROCKET_GEO && !(g.userData && g.userData.shared) && g.type === 'SphereGeometry') g.dispose();
+  }
   function skinProjectile(e) {
     if (e._skinned || !e.mesh) return;
     e._skinned = true;
@@ -2593,10 +2758,12 @@
     var w = WEAPONS[e.weaponId] || {};
     if ((e instanceof HotMic || w.fuse || w.smoke || w.splash || w.stick) && A.weaponGeometry && A.weaponGeometry(e.weaponId)) {
       var wm = A.weaponMesh(e.weaponId); if (!wm) return;
+      disposeOwnGeo(e.mesh);
       e.mesh.geometry = wm.geometry; e.mesh.material = wm.material; e.mesh.scale.setScalar(1.1);
       var cap = wm.getObjectByName('cap'); if (cap) { wm.remove(cap); e.mesh.add(cap); e._cap = cap; }
     } else if (w.rocket) {
       if (!ROCKET_GEO) { var g = new GTP.GeoBuilder({ color: true }); g.cylinder(0, -0.3, 0, 0.09, 0.09, 0.5, 7, [0.35, 0.37, 0.4]); g.cylinder(0, 0.2, 0, 0.09, 0.02, 0.2, 7, [1, 0.25, 0.64]); g.box(-0.16, -0.3, -0.01, 0.32, 0.12, 0.02, GTP.GeoBuilder.UV0, [0.9, 0.9, 0.95]); g.box(-0.01, -0.3, -0.16, 0.02, 0.12, 0.32, GTP.GeoBuilder.UV0, [0.9, 0.9, 0.95]); ROCKET_GEO = g.build(); }
+      disposeOwnGeo(e.mesh);
       e.mesh.geometry = ROCKET_GEO; e.mesh.material = A.propMaterial ? A.propMaterial() : e.mesh.material;
     }
   }
@@ -2626,7 +2793,11 @@
     p._coverNearT = (p._coverNearT || 0) - dt;
     if (p._coverNearT <= 0 && !p.cover && !p.inVehicle) { p._coverNearT = 0.25; p._coverNear = (p.alive && GTP.game && GTP.game.state === 'playing') ? findCover(p, 1.8) : null; }
     if (!p.alive || !p.controlEnabled) return;
-    if (In.pressed('reload') && !wheel.open && !p._cook) { if (!p.inVehicle || driveByWeapon(p.weapon)) Combat.reload(p); }
+    if (In.pressed('reload') && !wheel.open && !p._cook) {
+      var rw = WEAPONS[p.weapon];
+      if (rw && rw.remote) detonate(p);   // the sticky take's detonator
+      else if (!p.inVehicle || driveByWeapon(p.weapon)) Combat.reload(p);
+    }
     if (p.inVehicle && p.inVehicle.driver === p && w) {
       // thrown things go out of the window without aim (one per press: a held trigger never cooks a second mic, QA CMB-12); the long
       // guns refuse with a toast
@@ -2638,7 +2809,8 @@
   function moveScale(p) {
     if (!p || p.kind !== 'player') return 1;
     var w = WEAPONS[p.weapon]; if (!w) return 1;
-    var mob = MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.8;
+    var mob = w.mobility != null ? w.mobility : MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.8;
+    var mw = eff(p, p.weapon); if (mw && mw.mobilityMul) mob *= mw.mobilityMul;
     if (w.spinUp) return p.aiming || p._spin > 0.2 ? 0.45 : 0.85;
     return p.aiming ? 0.7 + 0.3 * mob : 1;
   }
@@ -2679,27 +2851,24 @@
   function attachmentList() {
     var A = GTP.Assets, base = (A && A.weaponAttachments) || {}, P = GTP.Content && GTP.Content.parity, list = {}, s;
     for (s in base) list[s] = base[s].slice();
-    var pa = P && P.attachments;
-    if (pa) {
-      var arr = Array.isArray(pa) ? pa : Object.keys(pa).map(function (k) { var o = pa[k]; if (o && !o.id) o.id = k; return o; });
-      for (var i = 0; i < arr.length; i++) {
-        var a = arr[i]; if (!a || !a.id) continue;
-        var slot = a.slot || a.kind; if (!slot) continue;
-        var known = MOD_FX[a.id] ? a.id : (a.variant && MOD_FX[a.variant] ? a.variant : (slot === 'muzzle' ? 'suppressor' : slot === 'mag' ? 'extended' : slot === 'optic' ? (/scope|lens|long/i.test(a.id + a.name) ? 'scope' : 'reddot') : slot === 'grip' ? 'grip' : 'flashlight'));
-        list[slot] = list[slot] || [];
-        var found = null; for (var k = 0; k < list[slot].length; k++) if (list[slot][k].id === known) found = list[slot][k];
-        if (found) { if (a.name) found.name = a.name; if (a.price != null) found.price = a.price; if (a.flavor) found.pitch = a.flavor; }
-        else list[slot].push({ id: known, name: a.name || known, price: a.price != null ? a.price : 400, pitch: a.flavor || '' });
-      }
+    // the content's table replaces the fallback variants outright (its ids are the variants; 05b draws each one)
+    var pa = parityAttachments(), any = false;
+    for (var k in pa) {
+      if (!any) { any = true; list = {}; }
+      var a = pa[k]; (list[a.slot] = list[a.slot] || []).push({ id: a.id, name: a.name, price: a.price, pitch: a.pitch, fits: a.fits });
     }
+    void P;
     return list;
   }
   function tintList() {
     var A = GTP.Assets, base = (A && A.weaponTints) || [{ id: 'stock', name: 'Factory Finish', price: 0 }], P = GTP.Content && GTP.Content.parity, pt = P && P.tints;
     if (!pt) return base;
     var arr = Array.isArray(pt) ? pt : Object.keys(pt).map(function (k) { var o = pt[k]; if (o && !o.id) o.id = k; return o; });
-    var out = base.map(function (t) { return Object.assign({}, t); });
-    for (var i = 0; i < arr.length; i++) { var t = arr[i]; if (!t || !t.id) continue; for (var k = 0; k < out.length; k++) if (out[k].id === t.id) { if (t.name) out[k].name = t.name; if (t.price != null) out[k].price = t.price; } }
+    // the content's tints replace the fallback finishes (05b's tintOf paints them from their one colour)
+    var out = [];
+    for (var i = 0; i < arr.length; i++) { var t = arr[i]; if (!t || !t.id) continue; out.push({ id: t.id, name: t.name || t.id, price: t.price || 0, color: t.color || null, unlock: t.unlock && t.unlock.mission ? t.unlock.mission : (typeof t.unlock === 'string' ? t.unlock : null) }); }
+    if (!out.length) return base;
+    if (out[0].id !== 'stock') { var st = null; for (i = 0; i < out.length; i++) if (out[i].id === 'stock') st = out.splice(i, 1)[0]; out.unshift(st || { id: 'stock', name: 'Factory Finish', price: 0, unlock: null }); }
     return out;
   }
   function shopItems() {
@@ -2735,8 +2904,9 @@
     var vol = w.pellets ? w.dmg : w.dmg, dps = w.melee ? w.dmg * w.rate : w.cone ? 0 : vol * Math.min(w.rate, 18);
     var acc = w.melee ? 1 : w.cone || w.lobbed && !w.rocket ? 0.45 : U.clamp(1 - ((w.aimSpread != null ? w.aimSpread : w.spread || 0) + (w.bloom ? w.bloom.max * 0.5 : 0)) / 0.12, 0.08, 1);
     if (w.scope) acc = Math.max(acc, 0.92);
-    var mob = MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.7;
-    if (p && modsOf(p, id) && modsOf(p, id).optic === 'scope') mob *= 0.95;
+    var mob = w.mobility != null ? w.mobility : MOBILITY[w.cls] != null ? MOBILITY[w.cls] : 0.7;
+    if (w.mobilityMul) mob *= w.mobilityMul;
+    if (p && modsOf(p, id) && /scope/.test(modsOf(p, id).optic || '')) mob *= 0.95;
     return { damage: U.clamp(vol / 160, 0.04, 1), rate: U.clamp(w.rate / 14, 0.03, 1), range: U.clamp(w.range / 160, 0.02, 1), accuracy: acc, mobility: U.clamp(mob, 0.05, 1), volume: U.clamp((w.mag || w.reserve || 1) / 30, 0.05, 1), dps: dps };
   }
   var shop = {
@@ -2759,7 +2929,9 @@
       var p = player(), raw = shopItems(), out = [], disc = shop.discount();
       for (var i = 0; i < raw.length; i++) {
         var it = raw[i]; if (tab && it.tab !== tab) continue;
-        var w = it.weapon ? WEAPONS[it.weapon] : null, tot = p && w ? p.weapons[it.weapon] : 0, a = p && w && tot > 0 ? ammoOf(p, it.weapon) : null, lock = !unlocked(it);
+        // rounds for a gun the player already owns are never locked (the gun's own unlock may name another mission than the
+        // shop row's: the content tables disagree on the pistol's)
+        var w = it.weapon ? WEAPONS[it.weapon] : null, tot = p && w ? p.weapons[it.weapon] : 0, a = p && w && tot > 0 ? ammoOf(p, it.weapon) : null, lock = !unlocked(it) && !(it.tab === 'ammo' && tot > 0);
         var notOwned = it.tab === 'ammo' && !!w && !(tot > 0);
         out.push(Object.assign({}, it, {
           listPrice: it.price, price: Math.round(it.price * (1 - disc)), locked: lock, lockedBy: lock ? missionTitle(it.unlock) : null,
@@ -2844,7 +3016,7 @@
     var atts = attachmentList(), tints = tintList();
     for (i = 1; i < ORDER.length; i++) {
       var id = ORDER[i], w = WEAPONS[id]; if (w.melee || w.cone || w.cls === 'thrown') continue;
-      var own = owns(p, id), wl = !unlocked({ unlock: UNLOCK[id], weapon: id }), lr = wl ? 'Unlocked by ' + missionTitle(UNLOCK[id]) : !own ? 'Buy the weapon first' : null, m = modsOf(p, id) || {}, mo = (p && p.weaponModsOwned && p.weaponModsOwned[id]) || {};
+      var own = owns(p, id), wl = !unlocked({ unlock: UNLOCK[id], weapon: id }), lr = own ? null : wl ? 'Unlocked by ' + missionTitle(UNLOCK[id]) : 'Buy the weapon first', m = modsOf(p, id) || {}, mo = (p && p.weaponModsOwned && p.weaponModsOwned[id]) || {};
       for (var s in atts) {
         if (!slotAllowed(id, s)) continue;
         for (var k = 0; k < atts[s].length; k++) {
@@ -2856,9 +3028,9 @@
       }
       if (w.melee) continue;
       for (k = 0; k < tints.length; k++) {
-        var t = tints[k], ownedT = t.id === 'stock' || !!mo['tint:' + t.id];
+        var t = tints[k], ownedT = t.id === 'stock' || !!mo['tint:' + t.id], lt = lr || (t.unlock && !unlocked({ unlock: t.unlock }) ? 'Unlocked by ' + missionTitle(t.unlock) : null);
         out.push({ id: 'tint_' + id + '_' + t.id, kind: 'tint', weaponId: id, slot: 'tint', variant: t.id, name: t.name, price: ownedT ? 0 : Math.round((t.price || 0) * (1 - disc)), listPrice: t.price || 0, owned: ownedT, equipped: (m.tint || 'stock') === t.id,
-          locked: !!lr, lockReason: lr, stats: null, tab: 'mods', pitch: '', cls: w.cls });
+          locked: !!lt, lockReason: lt, stats: null, tab: 'mods', pitch: '', cls: w.cls, color: t.color || t.main || null });
       }
     }
     return out;
@@ -2986,6 +3158,28 @@
   // GTP.SaveRegistry.combat (when the story track's registry exists): the attachments and tints the player owns and wears, and the
   // aim-assist setting; weapons and ammo stay in the save's player block as before
   var pendingSave = null;
+  // an older save's fallback ids (the ones a full parity table retired) move to their parity cousins: rounds, mods, the gun in hand
+  function migrateLegacy(p) {
+    if (!p || !p.weapons) return;
+    var maps = [p.weapons, p.weaponMods, p.weaponModsOwned, p.ammo];
+    for (var k in p.weapons) {
+      if (k === 'fist' || WEAPONS[k]) continue;
+      var to = canonId(k); if (to === k || !WEAPONS[to]) continue;
+      for (var i = 0; i < maps.length; i++) {
+        var M = maps[i]; if (!M || M[k] == null) continue;
+        if (M === p.weapons) M[to] = Math.max(M[to] || 0, M[k]); else if (M[to] == null) M[to] = M[k];
+        delete M[k];
+      }
+      if (p.weapon === k) p.weapon = to;
+    }
+    if (p.weapon && !WEAPONS[p.weapon]) p.weapon = 'fist';
+  }
+  // a death or a bust during a cutscene ends it first, without its onDone (QAC-11: the cutscene ran on through WASTED and its
+  // onDone fired after the respawn)
+  function endCutscene() {
+    var Cs = GTP.Cutscenes;
+    if (Cs && Cs.active && typeof Cs.cancel === 'function') { try { Cs.cancel(); } catch (e) { U.reportError(e, 'combat.endCutscene'); } }
+  }
   function registerSave() {
     var SR = GTP.SaveRegistry = GTP.SaveRegistry || {}; if (SR.combat) return;
     SR.combat = {
@@ -2995,6 +3189,7 @@
         if (!p) { pendingSave = j; return; }   // a load before the player exists: applied on the first update
         pendingSave = null;
         p.weaponMods = j.mods && typeof j.mods === 'object' ? j.mods : {}; p.weaponModsOwned = j.owned && typeof j.owned === 'object' ? j.owned : {};
+        migrateLegacy(p);
         if (j.aimAssist != null) settings.aimAssist = !!j.aimAssist;
         if (j.holsters != null) settings.holsters = !!j.holsters;
         p._effCache = null;
@@ -3027,7 +3222,7 @@
     shop: shop,
     smokes: smokes,
     death: null,
-    hurtFlash: 0,
+    hurtFlash: 0, flashT: 0,
     pickups: new Map(),
     HotMic: HotMic,
     Rocket: Rocket,
@@ -3051,6 +3246,14 @@
     coverToggle: coverToggle,
     coverControl: coverControl,
     coverFind: function (p) { return findCover(p || player()); },
+    // the UI's prompt query (docs/v03/ui.md): is there cover to take right here, and which
+    cover: {
+      available: function (p) { p = p || player(); return !!(p && !p.cover && !p.inVehicle && p.alive && (p._coverNear || findCover(p, 1.8))); },
+      candidate: function (p) { p = p || player(); return p ? (p._coverNear || findCover(p, 1.8)) : null; },
+      active: function (p) { p = p || player(); return p ? p.cover || null : null; }
+    },
+    detonate: function (p) { return detonate(p || player()); },
+    canonId: canonId,
     coverEnter: function (p, cand) { return enterCover(p || player(), cand || findCover(p || player())); },
     coverExit: function (p, why) { exitCover(p || player(), why); },
     coverShield: coverShield,
@@ -3079,8 +3282,9 @@
       updateFlash();
       tickMuzzleLight(dt, p, GTP.Input);
       if (Combat.hurtFlash > 0) Combat.hurtFlash = Math.max(0, Combat.hurtFlash - dt * 2.5);
+      if (Combat.flashT > 0) Combat.flashT = Math.max(0, Combat.flashT - dt * 0.6);
       pickupT += dt;
-      if (pickupT > 2) { pickupT = 0; spawnWorldPickups(); }
+      if (pickupT > 2) { pickupT = 0; spawnWorldPickups(); migrateLegacy(p); }
     },
 
     // Fire the ped's weapon toward its target. Rate-limited per ped; the player spends ammo (and reloads an empty magazine).
@@ -3147,11 +3351,12 @@
     spawnWorldPickups: spawnWorldPickups,
     openWheel: function (source) { var p = player(); if (p) openWheel(p, source || 'api'); return wheel; },
     closeWheel: function (equip) { closeWheel(player(), equip !== false); return wheel; },
-    setZoom: function (z) { scope.zoom = z >= 4 ? 4 : 2; emit('scope', { active: scope.active, zoom: scope.zoom }); },
+    setZoom: function (z) { scope.hi = z >= 4; var p = player(); if (p) applyZoom(p); else scope.zoom = scope.hi ? 4 : 2; emit('scope', { active: scope.active, zoom: scope.zoom }); },
 
     onPlayerDeath: function (p, src, type) {
       var g = GTP.game; if (!g || !p) return;
       if (Combat.death && Combat.death.kind === 'wasted') return;
+      endCutscene();
       p.controlEnabled = false; p.aiming = false; p.lockTarget = null; p.firePoseT = 0; p.punchT = 0;
       p.intent.x = p.intent.z = 0;
       aim.active = false; aim.target = null;
@@ -3170,6 +3375,7 @@
     onPlayerBusted: function (p, cop) {
       var g = GTP.game; if (!g || !p) return;
       if (Combat.death) return;
+      endCutscene();
       p.controlEnabled = false; p.stop(); p.aiming = false; p.lockTarget = null; p.firePoseT = 0; p.punchT = 0;
       aim.active = false; aim.target = null;
       cancelReload(p); p._cook = null; p._melee = null;
@@ -3179,6 +3385,8 @@
       if (p.inVehicle) { var v = p.inVehicle; v.setControls(0, 0, true, 1); p.exitVehicle(); }
       p.vx = p.vz = 0;
       Combat.death = { kind: 'busted', t: 0, cop: cop || null, text: failText('busted'), level: GTP.AI && GTP.AI.wanted ? GTP.AI.wanted.level : (p.wanted | 0) };
+      // the fine is set at the bust, so the DEPLATFORMED card and the release toast name the same number (QA-B-TXT-06)
+      Combat.death.fine = GTP.AI && GTP.AI.bustFine ? GTP.AI.bustFine(Combat.death.level || 1, p.money) : C.ECONOMY.bustedFine;
       sfx('fail', p.x, p.z, 1);
       toast(failText('busted'));
       if (g.state !== 'busted') g.setState('busted');
@@ -3189,7 +3397,7 @@
       crng = GTP.rng.fork(0xC0B);
       flashing.length = 0; aim.active = false; aim.target = null; aim.hover = null; aim.point = null; aim.screen = null; aim.targetScreen = null; aim.hip = false; aim.wasActive = false;
       var p = player(); if (p) clearPlayerCombatState(p);
-      scope.active = false; scope.zoom = 2; wheel.open = false; wheel.hold = 0; wheel.pick = {}; bloom.cone = 0; bloom.k = 0; hitmark.t = -9; hitmark.kill = false;
+      scope.active = false; scope.zoom = 2; scope.hi = false; wheel.open = false; wheel.hold = 0; wheel.pick = {}; bloom.cone = 0; bloom.k = 0; hitmark.t = -9; hitmark.kill = false; aim.relock = false;
       shop.state.open = false; shop.state.landmark = null; shop.state.store = null; shop._seed = null; shop._cur = null; shop._hold = 0; shop.rangeT = 0;
       smokes.length = 0; puddles.length = 0;
       casingClear(); if (holes.im) holeClear();
@@ -3206,7 +3414,7 @@
         weapon: { id: w, name: Combat.weaponName(w), ammo: inf ? null : (ammo | 0), infinite: inf, cls: def ? def.cls : 'melee', magSize: ew && ew.mag ? ew.mag : 0, slot: slotOf(w), hold: holdOf(w),
           mag: a && def && def.mag ? (a.mag === Infinity ? null : a.mag) : null, reserve: a ? (a.reserve === Infinity ? null : a.reserve) : null,
           reloading: p.reloadT > 0 ? { t: p.reloadT, total: p.reloadTotal || 1, k: 1 - p.reloadT / (p.reloadTotal || 1) } : null, mods: modsOf(p, w), spin: p._spin || 0 },
-        aim: aim, death: Combat.death, hurtFlash: Combat.hurtFlash,
+        aim: aim, death: Combat.death, hurtFlash: Combat.hurtFlash, flash: Combat.flashT || 0,
         bloom: { cone: bloom.cone, k: bloom.k, max: bloom.max },
         // the crosshair the UI draws: 'aim' (dot + ticks opened by the bloom), 'hip' (a dot), 'scope', 'none'; hostile/target colouring
         crosshair: { mode: scope.active ? 'scope' : aim.active ? 'aim' : aim.hip ? 'hip' : 'none', k: bloom.k, spreadPx: 4 + 18 * bloom.k, screen: aim.screen, hostile: !!(aim.hover && hostileRole(aim.hover)), target: !!aim.hover, inRange: aim.inRange, assist: settings.aimAssist, locked: !!aim.target },
@@ -3225,6 +3433,7 @@
     drawAimOverlay: function (ctx, w, h) {
       var g = GTP.game; if (!g || g.state !== 'playing' || !ctx) return;
       var s = aim.screen, t = aim.target, ts = aim.targetScreen, now = simT();
+      if (Combat.flashT > 0) { ctx.save(); ctx.fillStyle = 'rgba(255,255,255,' + Math.min(1, Combat.flashT).toFixed(3) + ')'; ctx.fillRect(0, 0, w, h); ctx.restore(); }
       if (!aim.active && aim.hip && s && s.visible) { ctx.save(); ctx.fillStyle = aim.hover && hostileRole(aim.hover) ? 'rgba(255,59,48,0.95)' : 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.arc(s.sx, s.sy, 2.4, 0, Math.PI * 2); ctx.fill(); ctx.restore(); return; }
       if (!aim.active) return;
       ctx.save();

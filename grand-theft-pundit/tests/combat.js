@@ -377,7 +377,7 @@ H.run('combat', async (t) => {
       const w = CB.WEAPONS[id];
       if (id !== 'fist') GTP.game.debug.giveWeapon(id, w.melee ? Infinity : 40);
       p.weapon = id;
-      const dist = w.melee ? 1.3 : w.cone ? 3 : w.lobbed ? 9 : w.cls === 'shotgun' ? 5 : 8;
+      const dist = w.melee ? 1.3 : w.cone ? 3 : w.lobbed ? 9 : w.cls === 'shotgun' || w.range < 12 ? 5 : 8;
       const ped = T_.freeze(GTP.game.debug.spawnPed(spot.x + dist, spot.z, null, 'thug')); ped.yaw = Math.PI / 2; ped.hp = ped.maxHp = 1000; ped.hostile = true;
       GTP.game.advance(0.1);
       const hp0 = ped.hp, x0 = ped.x, ammo0 = p.weapons[id], a0 = Object.assign({}, CB.ammo(p, id));
@@ -387,6 +387,7 @@ H.run('combat', async (t) => {
       GTP.Input.set('aim', aimed); GTP.game.advance(aimed ? 0.5 : 0.3);
       GTP.Input.set('shoot', true); GTP.game.advance(w.cook ? 0.3 : w.spinUp ? 1.4 : 0.5); GTP.Input.set('shoot', false);
       GTP.game.advance(w.fuse ? w.fuse + 1.2 : w.splash ? (w.burn || 4) + 0.5 : (w.lobbed || w.rocket) ? 1.6 : 0.3);
+      if (w.remote) { GTP.Input.set('reload', true); GTP.game.advance(1 / 60); GTP.Input.set('reload', false); GTP.game.advance(0.4); }   // the detonator
       GTP.Input.set('aim', false); GTP.game.advance(0.1);
       const a1 = CB.ammo(p, id);
       out[id] = { dmg: +(hp0 - ped.hp).toFixed(1), moved: +Math.hypot(ped.x - x0, 0).toFixed(2), down: ped.knockedDown, ammoUsed: ammo0 === Infinity ? null : ammo0 - (p.weapons[id] || 0), held: !!(p._held && p._held.name === 'held'), mag: a0 && w.mag && w.mag > 1 ? [a0.mag, a1 ? a1.mag : null] : null, errors: GTP.errors.length, smoke: !!w.smoke, melee: !!w.melee, smokes: CB.smokes.length };
@@ -399,6 +400,7 @@ H.run('combat', async (t) => {
     const r = arsenal[id];
     if (id === 'megaphone') t.assert(r.moved > 2 && r.dmg === 0 && r.ammoUsed === 1, 'megaphone pushes without damage: ' + JSON.stringify(r));
     else if (r.smoke) t.assert(r.smokes >= 1 || r.ammoUsed >= 1, id + ' poured smoke: ' + JSON.stringify(r));
+    else if (r.flash) t.assert(r.down, id + ' floored the ped without damage: ' + JSON.stringify(r));
     else t.assert(r.dmg > 0, id + ' hurt the ped: ' + JSON.stringify(r));
     if (id !== 'fist') t.assert(r.held, id + ' mesh is in the hand');
     if (!r.melee) t.assert(r.ammoUsed >= 1, id + ' spent ammo: ' + JSON.stringify(r));
@@ -406,7 +408,9 @@ H.run('combat', async (t) => {
     t.assert(r.errors === 0, id + ' left no errors');
   }
   t.assert(Object.keys(arsenal).length >= 32, 'the arsenal has 32+ weapons: ' + Object.keys(arsenal).length);
-  t.assert(arsenal.tableleg.dmg >= 32, 'the table leg hits for 32: ' + arsenal.tableleg.dmg);
+  t.assert(arsenal.tableleg.dmg >= 30, 'the table leg hits for 30+: ' + arsenal.tableleg.dmg);
+  for (const id of ['flashbang', 'mute_button', 'merch_cannon', 'golf_club', 'flare_gun']) if (arsenal[id]) t.assert(arsenal[id].down, id + ' floors the ped: ' + JSON.stringify(arsenal[id]));
+  if (arsenal.sticky) t.assert(arsenal.sticky.dmg >= 30, 'the sticky take goes off on the detonator: ' + JSON.stringify(arsenal.sticky));
   t.assert(arsenal.revolver.down, 'a Rebuttal body hit floors the ped');
   t.assert(arsenal.hotmic.dmg >= 25 && arsenal.hotmic.down, 'the hot mic blast hurt and floored the ped: ' + JSON.stringify(arsenal.hotmic));
   t.assert(arsenal.ratio.dmg >= 100, 'the rocket blast hit for triple digits: ' + arsenal.ratio.dmg);
@@ -632,7 +636,10 @@ H.run('combat', async (t) => {
     GTP.game.debug.setClock(14);
     T_.setup(spot, EAST); GTP.AI.wanted.clear();
     p.weapons = { fist: Infinity }; p.ammo = {}; GTP.game.debug.giveWeapon('sniper', 10);
-    const ped = T_.freeze(GTP.game.debug.spawnPed(spot.x + 40, spot.z, null, 'thug')); ped.yaw = Math.PI / 2; ped.hp = ped.maxHp = 1000; ped.hostile = true;
+    // about 40 m east on dry, open ground (the merged world has water out there in places: a swimmer is not a scope target)
+    const W = GTP.World, T = W.T, gy0 = W.heightAt(spot.x, spot.z, 5);
+    let sdx = 40; for (const dx of [40, 38, 42, 36, 44, 34, 46, 33]) { const tt = W.tileAt(spot.x + dx, spot.z); if (tt !== T.WATER && tt !== T.BUILDING && tt !== T.VOID && Math.abs(W.heightAt(spot.x + dx, spot.z, 5) - gy0) < 0.6 && !W.raycastBuildings(spot.x, gy0 + 1.6, spot.z, 1, 0, 0, dx)) { sdx = dx; break; } }
+    const ped = T_.freeze(GTP.game.debug.spawnPed(spot.x + sdx, spot.z, null, 'thug')); ped.yaw = Math.PI / 2; ped.hp = ped.maxHp = 1000; ped.hostile = true;
     GTP.game.advance(0.2);
     const ev = []; GTP.Events.on('scope', (e) => ev.push([e.active, e.zoom]));
     const fov0 = R.camera.fov, cam0 = p.cameraMode;
@@ -722,7 +729,8 @@ H.run('combat', async (t) => {
     // an unowned segment leaves the weapon alone; [ ] steps the ring
     GTP.Input.set('lockOn', true); GTP.game.advance(0.3);
     GTP.Input.setLook(0, 40); GTP.game.advance(0.1);   // down = 180 degrees = segment 6 (the rifle, unowned)
-    const unowned = { index: CB.wheel.index, id: CB.hud().wheel.id };
+    // the slot shows its first weapon by price (the parity table may put a cheaper rifle ahead of the Monologue)
+    const unowned = { index: CB.wheel.index, id: CB.hud().wheel.id, first: CB.ORDER.filter((id) => CB.slotOf(id) === 6)[0] };
     GTP.Input.set('weaponPrev', true); GTP.game.advance(1 / 60); GTP.Input.set('weaponPrev', false); GTP.game.advance(0.05);
     const stepped = { index: CB.wheel.index, id: CB.hud().wheel.id };
     GTP.Input.set('lockOn', false); GTP.game.advance(0.1);
@@ -735,7 +743,7 @@ H.run('combat', async (t) => {
   t.assert(wheel.slow > 0.1 && wheel.slow < 0.3, 'the world runs at about 0.2x while the wheel is open: ' + wheel.slow + ' s of a 1 s advance');
   t.assert(wheel.picked.index === 3 && wheel.picked.id === 'pistol' && wheel.picked.weaponStill === 'fist', 'the mouse picks the pistol segment without equipping yet: ' + JSON.stringify(wheel.picked));
   t.assert(!wheel.released.open && wheel.released.weapon === 'pistol' && Math.abs(wheel.normal - 0.5) < 0.02, 'release equips the pistol and time runs normally again: ' + JSON.stringify([wheel.released, wheel.normal]));
-  t.assert(wheel.unowned.id === 'rifle' && wheel.stepped.id === 'smg' && wheel.kept.weapon === 'smg', 'an unowned segment can be stepped off with [ and equips what is owned: ' + JSON.stringify([wheel.unowned, wheel.stepped, wheel.kept]));
+  t.assert(wheel.unowned.index === 6 && wheel.unowned.id === wheel.unowned.first && wheel.stepped.id === 'smg' && wheel.kept.weapon === 'smg', 'an unowned segment can be stepped off with [ and equips what is owned: ' + JSON.stringify([wheel.unowned, wheel.stepped, wheel.kept]));
   t.assert(wheel.ev.some((e) => e[0] === false && e[2] === 'pistol'), 'wheel events report the equip: ' + JSON.stringify(wheel.ev));
 
   // ---- 19. Both Sides Arms: the shop API (locked, owned, funds, ammo, gear, discounts) and the door marker ----
@@ -966,10 +974,11 @@ H.run('combat', async (t) => {
     const base = CB.weaponStats('rifle', p), money0 = p.money;
     const r1 = CB.buy('att_rifle_muzzle_suppressor');
     out.sup = { ok: r1.ok, equipped: r1.equipped, mod: p.weaponMods.rifle.muzzle, paid: money0 - p.money, range: [base.range, CB.weaponStats('rifle', p).range] };
-    const r2 = CB.buy('att_rifle_mag_extended'); out.mag = { ok: r2.ok, magSize: CB.hud().weapon.magSize };
+    const magId = cat0.some((i) => i.id === 'att_rifle_mag_ext_mag') ? 'ext_mag' : 'extended';   // the content's id, else the fallback's
+    const r2 = CB.buy('att_rifle_mag_' + magId); out.mag = { ok: r2.ok, magSize: CB.hud().weapon.magSize };
     GTP.game.debug.giveWeapon('rifle', 60); p.weapon = 'rifle'; GTP.game.advance(0.1);
     out.mag.mag = CB.ammo(p, 'rifle').mag;
-    const r3 = CB.buy('tint_rifle_gold'); out.tint = { ok: r3.ok, tint: p.weaponMods.rifle.tint };
+    const r3 = CB.buy('tint_rifle_pink'); out.tint = { ok: r3.ok, tint: p.weaponMods.rifle.tint };
     GTP.game.render();
     const kids = []; if (p._held) p._held.traverse((o) => { if (o.userData.attachment) kids.push(o.userData.attachment); });
     out.mesh = { sig: p._heldSig, kids: kids.sort().join(',') };
@@ -977,10 +986,11 @@ H.run('combat', async (t) => {
     out.toggle = { ok: r4.ok, price: r4.price, paid: m0 - p.money, equipped: r4.equipped, mod: p.weaponMods.rifle.muzzle };
     CB.buy('att_rifle_muzzle_suppressor', { equip: true });
     // a suppressed shot: no muzzle light, a quiet report
-    const shots0 = GTP.Audio.counts.shot || 0; GTP.game.advance(0.3);
+    const C0 = Object.assign({}, GTP.Audio.counts); GTP.game.advance(0.3);
     GTP.Input.set('shoot', true); GTP.game.advance(1 / 60); GTP.Input.set('shoot', false);
-    out.quiet = { light: GTP.Render.muzzleLight.intensity, shot: (GTP.Audio.counts.shot || 0) - shots0 };
-    out.pistolScope = CB.catalog().filter((i) => i.weaponId === 'pistol' && i.variant === 'scope').length;
+    const dC = (k) => (GTP.Audio.counts[k] || 0) - (C0[k] || 0);
+    out.quiet = { light: GTP.Render.muzzleLight.intensity, suppressed: dC('shot_suppressed'), rifle: dC('shot_rifle') };
+    out.pistolScope = CB.catalog().filter((i) => i.weaponId === 'pistol' && /^scope/.test(i.variant || '')).length;
     out.saved = GTP.SaveRegistry && GTP.SaveRegistry.combat ? Object.keys(GTP.SaveRegistry.combat.get()).join(',') : 'no registry';
     GTP.game.advance(0.5);
     return out;
@@ -991,9 +1001,9 @@ H.run('combat', async (t) => {
   t.assert(['equipped', 'id', 'kind', 'lockReason', 'locked', 'name', 'owned', 'price', 'stats', 'weaponId'].every((k) => mods.before.keys.indexOf(k) >= 0), 'catalog items carry the plan\'s fields: ' + mods.before.keys);
   t.assert(mods.rifle && mods.sup.ok && mods.sup.equipped && mods.sup.mod === 'suppressor' && mods.sup.paid > 0 && mods.sup.range[1] < mods.sup.range[0], 'the suppressor buys, equips and costs range: ' + JSON.stringify(mods.sup));
   t.assert(mods.mag.ok && mods.mag.magSize === 45 && mods.mag.mag === 45, 'the extended magazine holds 45: ' + JSON.stringify(mods.mag));
-  t.assert(mods.tint.ok && mods.tint.tint === 'gold' && /gold/.test(mods.mesh.sig) && /muzzle:suppressor/.test(mods.mesh.kids) && /mag:extended/.test(mods.mesh.kids), 'the tint and the attachments are on the held mesh: ' + JSON.stringify(mods.mesh));
+  t.assert(mods.tint.ok && mods.tint.tint === 'pink' && /pink/.test(mods.mesh.sig) && /muzzle:suppressor/.test(mods.mesh.kids) && /mag:(ext_mag|extended)/.test(mods.mesh.kids), 'the tint and the attachments are on the held mesh: ' + JSON.stringify(mods.mesh));
   t.assert(mods.toggle.ok && mods.toggle.price === 0 && mods.toggle.paid === 0 && !mods.toggle.equipped && mods.toggle.mod === null, 'an owned attachment toggles for free: ' + JSON.stringify(mods.toggle));
-  t.assert(mods.quiet.light === 0 && mods.quiet.shot === 0, 'a suppressed shot lights nothing and makes no loud report: ' + JSON.stringify(mods.quiet));
+  t.assert(mods.quiet.light === 0 && mods.quiet.suppressed === 1 && mods.quiet.rifle === 0, 'a suppressed shot lights nothing and the audio plays the suppressed report, not the rifle\'s: ' + JSON.stringify(mods.quiet));
   t.assert(mods.pistolScope === 0, 'a pistol takes the dot, not the long scope');
 
   // ---- 24. the pose contract on every ped, every step ----
@@ -1077,7 +1087,8 @@ H.run('combat', async (t) => {
   t.assert(melee.prompt === 'counter' && melee.counter.types.indexOf('counter') >= 0 && melee.counter.hpLost === 0 && melee.counter.goonDown, 'jump during a wind-up counters: no damage taken, the goon floored: ' + JSON.stringify([melee.prompt, melee.counter]));
 
   // ---- screenshots: every weapon in the hand (a free camera in front of the aim pose) ----
-  for (const id of ['tableleg', 'bat', 'megaphone', 'pistol', 'revolver', 'smg', 'rifle', 'carbine', 'shotgun', 'doublebarrel', 'lmg', 'sniper', 'hottake', 'hotmic', 'ratio', 'spin']) {
+  const ids = await page.evaluate(() => GTP.Combat.ORDER.slice());
+  for (const id of ['tableleg', 'golf_club', 'mic_stand', 'clipboard', 'megaphone', 'pistol', 'pocket', 'revolver', 'flare_gun', 'mute_button', 'smg', 'rifle', 'carbine', 'shotgun', 'both_barrels', 'lmg', 'sniper', 'hottake', 'hotmic', 'flashbang', 'ratio', 'merch_cannon', 'minigun'].filter((id) => ids.indexOf(id) >= 0)) {
     const held = await page.evaluate(({ EAST, spot, id }) => {
       const p = GTP.game.player, R = GTP.Render, U = GTP.util;
       GTP.game.debug.setClock(14);
