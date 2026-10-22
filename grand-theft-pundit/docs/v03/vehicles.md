@@ -236,6 +236,27 @@ Deferred (DOMContentLoaded before the autoboot, or the first vehicle add / step)
   `weapon:dry`, `gps:set {kind: 'story'}`, `parachute:land {water}` and `vehicle:sunk` (splash).
 - `Audio.render(kind, opts)` now also reports `zcr` (zero crossings per second over the audible samples) and renders
   the new engine kinds; `Audio.state().engine.kind`.
+- Round 2 (the merged world / environment build):
+  - `shot` with no ped at the muzzle within 4 m of the live police heli is the door gunner: `smg`.
+  - `melee {phase}`: `start` plays only the swing (`whoosh`), `impact` plays `melee_<type>` without its own swing
+    (`noSwing`); a miss emits no impact, so it is a whoosh only. The dead `melee:hit` listener is gone.
+  - `reload` is routed by the reloading weapon (`ped.reloadId`): shotgun class / shell loaders `reloadShell`; `reloadDone`
+    of a sniper / marksman `reloadBolt` (only while a reload 03 saw start is open: a quiet gun's shot also plays
+    `reloadDone` in 08_combat).
+  - `shop:buy` also stands down for `kind: 'property' | 'clothing' | 'barber'` (14_systems plays `cash`).
+  - `race:finish`: first place the mission fanfare, a loss or DNF a soft fail (not inside a mission).
+  - `golfCup` on `golf:hole` (not when picked up), no longer on `golf:end`.
+  - `range:end`: exactly one sound: `rangeMedal` for a medal (the UI's `achievement` chime in the same dispatch is
+    dropped), a soft fail without one, nothing when `aborted`.
+  - `interior:exit {quiet}` rings no bell; `heist:plan` stands down for the UI (it plays `cash`).
+  - The siren scan skips driverless parked / roadblock cruisers at zero stars (QA stab-QA-D-03); `Audio.heli(false)` is
+    ignored while the police heli is leaving, alive and not removed (stab-QA-D-09).
+  - The first-star whoop keeps its own last wanted level (scripted `wanted` events carry `prev === level`).
+  - Call blips: `Audio.update` watches `GTP.UI.state.call` (ring > talk > end) and plays `phoneBlip` / `phoneHang` unless
+    a `phone:answer` / `phone:end` event already did.
+  - New cues: `garageDoor` (`garage:store` / `garage:retrieve`), `eventSting` (`event:start`), `gasp` (`ped:cower`, 25 m).
+  - 06b: `mod()` previews are silent; `buyMod` plays `modApply` (`modSpray` for paint); the wrench plays on any
+    `modshop:open`.
 
 ## Tests
 
