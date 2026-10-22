@@ -72,7 +72,8 @@ function dataChecks(t) {
   const ids = R.stations.map((s) => s.id);
   t.assert(ids.length >= 6 && new Set(ids).size === ids.length, 'six or more unique stations: ' + ids.join(','));
   ['wail_101', 'pennant_fm', 'velvetine_888', 'quiet_signal'].forEach((id, i) => t.assert(ids[i] === id, 'the four GDD stations keep their order: ' + id));
-  t.assert(R.station(R.defaultStation).id === 'wail_101' && R.napMinute === 20, 'default station and the Nap Dynasty minute');
+  t.assert(R.defaultStation === 'wail_101' && R.station(R.defaultStation) === R.stations[0] && R.napMinute === 20, 'default station and the Nap Dynasty minute');
+  t.assert(R.timeline('no_such_station').length === 0 && R.songStarts('no_such_station').length === 0 && R.cue('no_such_station', 1) === false && R.nowPlaying('no_such_station') === null, 'song helpers do not fall back to WAIL 101 on an unknown id');
   t.assert(Array.isArray(R.ticker) && R.ticker.length >= 12 && R.ticker.every((x) => typeof x === 'string'), 'the ticker stays a plain array of strings');
   t.assert(R.barks && R.barks.ped.length === 20 && R.barks.cop.length === 8 && R.failTexts.wasted === 'RATIO\'D', 'barks and fail texts intact');
 
@@ -158,6 +159,30 @@ function dataChecks(t) {
   fake.id = 'wail_101'; const before = R2.nowPlaying('pennant_fm').pos; fake.talkBar = 40; pen.pattern.bass;
   t.assert(R2.nowPlaying('pennant_fm').pos === before, 'an off-air station holds its place');
 
+  // an on-air cue on the talk station keeps the engine's 12-bar bumper/talk cycle on the song's sections
+  const fw = { id: 'wail_101', talkBar: -1 }, R5 = loadRadio({ Audio: { radio: { state: () => ({ id: fw.id, talkBar: fw.talkBar }) } } }).Content.radio, w5 = R5.station('wail_101');
+  for (fw.talkBar = -1; fw.talkBar <= 40; fw.talkBar++) w5.pattern.bass;
+  R5.cue('wail_101', 2); let aligned = true, reached2 = false;
+  for (fw.talkBar = 41; fw.talkBar < 70; fw.talkBar++) { w5.pattern.bass; const np5 = R5.nowPlaying('wail_101'); if ((fw.talkBar % 12 >= 4) !== (np5.section === 'talk')) aligned = false; if (np5.song === w5.songs[2].id && fw.talkBar % 12 === 0) reached2 = true; }
+  t.assert(aligned && reached2, 'an on-air cue on WAIL 101 starts the song at the next 12-bar cycle and stays in phase');
+
+  // the wrappers: installed once, following the module now in GTP.Content.radio; the feeds work with no engine
+  let fbar = -1; const code = fs.readFileSync(SRC, 'utf8');
+  const W = { GTP: { Audio: { update() {}, render() { return null; }, radio: { current: () => W.GTP.Content.radio.stations[1], nowPlaying: () => 'ENGINE TEXT', isPlaying: () => true, state: () => ({ id: 'pennant_fm', talkBar: fbar }) } } } };
+  W.window = W;
+  vm.runInNewContext(code, W); const up1 = W.GTP.Audio.update, np1 = W.GTP.Audio.radio.nowPlaying, rd1 = W.GTP.Audio.render;
+  vm.runInNewContext(code, W);
+  t.assert(W.GTP.Audio.update === up1 && W.GTP.Audio.radio.nowPlaying === np1 && W.GTP.Audio.render === rd1, 'a second load wraps nothing twice');
+  const pw = W.GTP.Content.radio.station('pennant_fm'); for (fbar = -1; fbar < 70; fbar++) pw.pattern.bass;
+  const npw = W.GTP.Audio.radio.nowPlaying();
+  t.assert(typeof npw === 'string' && npw.indexOf(W.GTP.Content.radio.onAir('pennant_fm').title + '  ·  ') === 0 && /ENGINE TEXT$/.test(npw), 'the nowPlaying wrapper follows the current module: ' + npw);
+  pw.nowPlaying = { kind: 'news', text: 'OVERRIDE LINE' };
+  t.assert(W.GTP.Audio.radio.nowPlaying() === 'OVERRIDE LINE  ·  ENGINE TEXT', 'an assigned nowPlaying feed reaches the wrapper string');
+  pw.nowPlaying = null;
+  t.assert(pw.nowPlaying.kind === 'song', 'assigning null restores the live feed');
+  W.GTP.Audio.radio.isPlaying = () => false;
+  t.assert(pw.nowPlaying === null, 'nothing is "now playing" while the engine is silent (parachute, stopped)');
+
   // news
   const N = R.news, flagsInOrder = N.order.filter((k) => k.indexOf('mission:') < 0), missionsInOrder = N.order.filter((k) => k.indexOf('mission:') === 0).map((k) => k.slice(8));
   t.assert(Object.keys(N.byFlag).every((f) => flagsInOrder.includes(f)) && Object.keys(N.byMission).every((m) => missionsInOrder.includes(m)), 'every news key is placed in story order');
@@ -177,10 +202,54 @@ function dataChecks(t) {
   const hA = R.bulletin('wail_101', 10, { flags: { has_table: true, has_van: true } }).headlines, hB = R.bulletin('wail_101', 11, { flags: { has_table: true, has_van: true } }).headlines;
   t.assert(hA.join() !== hB.join(), 'bulletins rotate by the hour');
 
+  // the news follows the real story chain: play GTP.Content.parity.chain in order with every content file loaded
+  const CW = { GTP: {} }; CW.window = CW;
+  ['20_content_world', '21_content_cast', '22_content_missions', '23_content_radio', '24_content_expansion', '25_content_parity'].forEach((f) => vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'js', f + '.js'), 'utf8'), CW, { filename: f }));
+  const CC = CW.GTP.Content, RC = CC.radio, NC = RC.news, byId = {};
+  [].concat(CC.missions || [], (CC.expansion && CC.expansion.missions) || [], (CC.parity && CC.parity.missions) || []).forEach((m) => { byId[m.id] = m; });
+  const chain = (CC.parity && CC.parity.chain) || [];
+  t.assert(chain.length >= 30 && chain.every((id) => byId[id]), 'the story chain resolves: ' + chain.length);
+  const cf = {}, cd = [], darkSteps = [], leads = new Set();
+  for (const id of chain) {
+    const oc = byId[id].onComplete || {}, fl = [].concat(oc.setFlag ? [oc.setFlag] : [], oc.setFlags || []);
+    fl.forEach((f) => { cf[f] = true; }); cd.push(id);
+    const mine = NC.order.filter((k) => k === 'mission:' + id || fl.indexOf(k) >= 0);
+    const b = RC.bulletin('wail_101', 3, { flags: cf, completed: cd });
+    if (!mine.length || b.stage !== mine[mine.length - 1]) darkSteps.push(id + ' -> ' + b.stage + ' (own keys: ' + mine.join(',') + ')');
+    if (b.stage) leads.add(b.stage);
+  }
+  t.assert(darkSteps.length === 0, 'after every chain mission its own story beat leads the bulletin:\n  ' + darkSteps.join('\n  '));
+  t.assert(NC.order.every((k) => leads.has(k) || /^ending_/.test(k)), 'every news key leads at some point: ' + NC.order.filter((k) => !leads.has(k)).join(','));
+  // parity.radio (content track) is merged: its mission news joins byMission, outcome lines wait for their mission
+  RC.mergeParity();
+  const PR = CC.parity.radio;
+  t.assert(RC._parityMerged && Object.keys(PR.news).every((m) => NC.byMission[m] && (NC.byMission[m].indexOf(PR.news[m]) >= 0 || RC.paritySkipped.indexOf(PR.news[m]) >= 0)), 'parity news lines join their missions (or are skipped as a near-duplicate of a line already there)');
+  console.log('  parity merge skipped as near-duplicates: ' + JSON.stringify(RC.paritySkipped));
+  t.assert(Object.values(PR.news).every((l) => RC.ticker.indexOf(l) < 0), 'outcome headlines never sit in the always-on ticker');
+  const pqs = RC.station('quiet_signal'), djLocked = pqs.dj.slice();
+  CW.GTP.Missions = { state: { flags: {}, completed: new Set(['b04_redacted', 'h03_job']) } };
+  t.assert(pqs.dj.length > djLocked.length && djLocked.every((l) => !/balloon was popped/i.test(l)) && pqs.dj.some((l) => /balloon was popped/i.test(l)), 'a parity DJ line about an outcome airs only after its mission');
+  t.assert(RC.stations.every((st) => /Nap Dynasty|mattress/i.test(st.ads[st.napAd])), 'napAd still points at the mattress ad after every append');
+
   // call-in show
   const C = R.callin, wail = R.station('wail_101');
   t.assert(C.segments.length >= 6 && C.segments.every((s) => s.title && s.intro && s.outro && s.exchanges.length >= 4), 'call-in show: six or more full segments');
-  t.assert(R.segment(0).id !== R.segment(1).id && wail.djAll.length > 40, 'segments rotate by game hour; djAll lists every line');
+  t.assert(wail.djAll.length > 40, 'djAll lists every line');
+  // the feeds' shapes, and the segment rotating at minute 5 with dj, callers and the on-air line together
+  const G3 = loadRadio({ game: { time: { day: 0, clock: 0 } } }), R3 = G3.Content.radio, w3 = R3.station('wail_101');
+  R3.stations.forEach((st) => {
+    const np = st.nowPlaying, b = st.bulletins;
+    t.assert(st.id === 'wail_101' ? (np.kind === 'show' && np.title.indexOf(R3.callin.show + ': ') === 0 && np.text && np.host) : (np.kind === 'song' && np.id && np.title && np.artist && np.section), st.id + ': nowPlaying shape ' + JSON.stringify(np));
+    t.assert(Array.isArray(b) && b.length === 1 && b[0].text === R3.bulletin(st.id).text && b[0].headline && 'stage' in b[0] && Number.isInteger(b[0].hour), st.id + ': bulletins shape');
+    t.assert((st.id === 'wail_101') === Array.isArray(st.callers), st.id + ': callers only on WAIL 101');
+  });
+  for (let h = 0; h < R3.callin.segments.length + 1; h++) {
+    G3.game.time.clock = h + 6 / 60; const seg = R3.segment(), cs = w3.callers;
+    t.assert(cs.length === seg.exchanges.length && cs.every((c, i) => c.caller !== 'A caller' && seg.exchanges[i] === 'CALLER, ' + c.caller + ': ' + c.text), 'hour ' + h + ': callers are {caller, text} of ' + seg.id);
+    t.assert(w3.nowPlaying.id === seg.id && w3.dj[0].indexOf(seg.title.toUpperCase()) > 0 && w3.dj.indexOf(seg.outro) > 0, 'hour ' + h + ': show, dj and callers rotate together');
+    G3.game.time.clock = h + 1 + 2 / 60;   // the top of the next hour: still the same segment (the bulletin's window)
+    t.assert(R3.segment().id === seg.id, 'hour ' + h + ': the segment holds through the bulletin minutes');
+  }
 
   // every string through the content audit, plus length and PG-13 sanity
   const all = strings(R, 'radio', [], new Set());
@@ -188,10 +257,23 @@ function dataChecks(t) {
   const audit = auditLines(all.map((x) => x.s));
   console.log('  audit on ' + all.length + ' runtime strings: ' + (audit.log.concat(audit.err).join(' | ').slice(0, 400)));
   t.assert(audit.code === 0 && /0 hits/.test(audit.log.join(' ')), 'content audit passes on every runtime string');
+  // composed lines the walker cannot see (getters, functions): on-air titles, WAIL's dj per segment, callers, bulletins
+  const extra = [];
+  for (let h = 0; h < R3.callin.segments.length; h++) {
+    G3.game.time.clock = h + 0.5;
+    R3.stations.forEach((st) => { const o = st.nowPlaying; extra.push({ at: st.id + '.nowPlaying@' + h, s: o.title + '  ·  ' + (o.artist || o.text) }); });
+    w3.dj.forEach((s, i) => extra.push({ at: 'wail.dj@' + h + '[' + i + ']', s }));
+    w3.callers.forEach((c, i) => extra.push({ at: 'wail.callers@' + h + '[' + i + ']', s: c.caller + ': ' + c.text }));
+  }
+  const fl2 = {}, dn2 = [];
+  N.order.forEach((key) => { if (key.indexOf('mission:') === 0) dn2.push(key.slice(8)); else fl2[key] = true; ids.forEach((id) => { for (let h = 0; h < 4; h++) extra.push({ at: 'bulletin@' + id + '/' + key + '/' + h, s: R.bulletin(id, h, { flags: fl2, completed: dn2 }).text }); }); });
+  const audit2 = auditLines(extra.map((x) => x.s));
+  t.assert(audit2.code === 0 && /0 hits/.test(audit2.log.join(' ')), 'content audit passes on ' + extra.length + ' composed ticker lines: ' + audit2.err.join(' | '));
+  t.assert(extra.every((x) => x.s.length <= (/^bulletin@/.test(x.at) ? 340 : 160)), 'composed lines fit the ticker (bulletins scroll): ' + extra.filter((x) => x.s.length > (/^bulletin@/.test(x.at) ? 340 : 160)).map((x) => x.at + ' ' + x.s.length).join(', '));
   const rot13 = (s) => s.replace(/[a-z]/gi, (c) => String.fromCharCode((c <= 'Z' ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26));
   const strong13 = ['shpx', 'fuvg', 'ovgpu', 'phag', 'qvpx', 'cvff', 'onfgneq', 'nffubyr', 'jnax', 'gjng'].map(rot13);
   const bad = all.filter((x) => strong13.some((w) => new RegExp('(?<![a-z])' + w, 'i').test(x.s)) || /TODO|FIXME|lorem/i.test(x.s) || x.s.length > 160);
-  t.assert(bad.length === 0, 'PG-13, no placeholders, every line fits the ticker: ' + bad.map((x) => x.at + ': ' + x.s).join('\n'));
+  t.assert(bad.length === 0, 'PG-13, no placeholders, every atomic line fits the ticker: ' + bad.map((x) => x.at + ': ' + x.s).join('\n'));
   return R;
 }
 
@@ -234,6 +316,34 @@ H.run('radio', async (t) => {
     out.feed = feed;
     const np = A.radio.nowPlaying();
     out.np = { str: String(np), type: typeof np, onAir: Rd.onAir('loop_174') };
+    // an assigned feed reaches the ticker, null hands it back
+    const pen = Rd.station('pennant_fm'); A.radio.setStation(Rd.stations.indexOf(pen)); GTP.game.debug.setClock(14.01);
+    pen.nowPlaying = { kind: 'song', id: 'ovr', title: 'OVERRIDE SONG', artist: 'Test Desk' }; pen.bulletins = [{ text: 'OVERRIDE BULLETIN' }];
+    tk.lastNp = null; tk.lastBulletin = -1; tk.n = 0; tk.queue.length = 0; const ov = [];
+    for (let i = 0; i < 4; i++) { tk.cur = null; GTP.UI.update(1 / 60); if (tk.cur) ov.push(tk.cur.text); }
+    pen.nowPlaying = null; pen.bulletins = null;
+    out.override = { np: ov.some((l) => /OVERRIDE SONG/.test(l)), bul: ov.some((l) => /OVERRIDE BULLETIN/.test(l)), restored: !!pen.nowPlaying && pen.nowPlaying.kind === 'song' && pen.bulletins[0].text !== 'OVERRIDE BULLETIN', lines: ov };
+    // the Nap Dynasty ad at minute 20 on every station's ticker
+    out.nap = Rd.stations.map((st, i) => { A.radio.setStation(i); GTP.game.debug.setClock(14 + 20.5 / 60); tk.lastNapHour = -1; tk.queue.length = 0; tk.cur = null; GTP.UI.update(1 / 60); return st.id + ':' + !!(tk.cur && tk.cur.nap && tk.cur.text === st.ads[st.napAd]); });
+    // station.bulletins follows the live mission state (flags and the completed Set)
+    const M = GTP.Missions.state, pq = Rd.station('pennant_fm'), saved = { flags: Object.assign({}, M.flags), done: new Set(M.completed) };
+    Object.keys(M.flags).forEach((k) => delete M.flags[k]); M.completed.clear();
+    out.newsLive = [pq.bulletins[0].stage];
+    M.flags.has_table = true; out.newsLive.push(pq.bulletins[0].stage);
+    M.completed.add('b01_goldplate'); out.newsLive.push(pq.bulletins[0].stage);
+    Object.keys(M.flags).forEach((k) => delete M.flags[k]); Object.assign(M.flags, saved.flags); M.completed.clear(); saved.done.forEach((x) => M.completed.add(x));
+    // real time on WAIL 101: the ticker runs from 13:57 to about 14:17 (the draw-side line timer emulated, as headless never
+    // draws); the hourly bulletin must get its slot and the new call-in segment follows after minute 5
+    A.radio.setStation(Rd.stations.findIndex((s) => s.id === 'wail_101')); GTP.game.debug.setClock(13 + 57 / 60);
+    tk.cur = null; tk.queue.length = 0; tk.forceT = 0; tk.lastBulletin = -1; const seen = []; let lastCur = null;   // hour 14's bulletin already ran in the quick checks above
+    for (let i = 0; i < 60 * 30; i++) {
+      GTP.game.advance(1 / 60);
+      const c = tk.cur;
+      if (c && c !== lastCur) { lastCur = c; const clk = GTP.game.time.clock; seen.push(Math.floor(clk) + ':' + String(Math.floor((clk % 1) * 60)).padStart(2, '0') + ' ' + c.tag + ': ' + c.text.slice(0, 70)); }
+      if (c && !c.done && tk.lineT > Math.max(4.5, (c.text.length * 7.5 - 700) / 70 + 3.5)) c.done = true;
+    }
+    out.wailLive = seen;
+    out.eventsBeforeFoot = events.length;
     // on foot: no bulletin event
     const vv = p.inVehicle; if (vv) { vv.speed = 0; vv.vx = 0; vv.vz = 0; } GTP.game.advance(0.1);
     press('enter'); GTP.game.advance(0.6);
@@ -255,7 +365,15 @@ H.run('radio', async (t) => {
   t.assert(F.pennant_fm.some((l) => /^NEWS 14:00: PENNANT FM NEWS/.test(l)) && F.loop_174.some((l) => /^NEWS 14:00: LOOP 174 NEWS/.test(l)), 'the hourly bulletin shows in each station voice');
   t.assert(F.wail_101.some((l) => /^ON AIR: Uproar at Large: .+WAIL 101/.test(l)) && F.wail_101.some((l) => /^CALLER: .+ on the line: /.test(l)) && F.wail_101.some((l) => /^NEWS 14:00: WAIL 101 NEWS/.test(l)), 'WAIL 101 shows the show on air, callers and the bulletin');
   t.assert(hl.np.type === 'string' && hl.np.str.indexOf(hl.np.onAir.title + '  ·  ' + hl.np.onAir.artist) === 0 && /Loop 174/.test(hl.np.str), 'Audio.radio.nowPlaying() is a string naming the song, then the station: ' + JSON.stringify(hl.np));
-  t.assert(hl.onFoot && hl.eventsTotal === 1 && hl.shownTotal === 0, 'no bulletin on foot, and nothing pushed past the UI');
+  t.assert(hl.eventsBeforeFoot === 2, 'one radio:news per hour turned in the car (14:00 twice: the quick check and the real-time run): ' + hl.eventsBeforeFoot);
+  t.assert(hl.onFoot && hl.eventsTotal === hl.eventsBeforeFoot && hl.shownTotal === 0, 'no bulletin on foot, and nothing pushed past the UI');
+  t.assert(hl.override.np && hl.override.bul && hl.override.restored, 'feed setters reach the ticker and null restores them: ' + JSON.stringify(hl.override));
+  t.assert(hl.nap.every((x) => /:true$/.test(x)), 'the Nap Dynasty ad runs at minute 20 on every station: ' + hl.nap.join(' '));
+  t.assert(JSON.stringify(hl.newsLive) === JSON.stringify([null, 'has_table', 'mission:b01_goldplate']), 'station.bulletins follows live flags and completed missions: ' + JSON.stringify(hl.newsLive));
+  console.log('  WAIL 101 in real time:\n    ' + hl.wailLive.join('\n    '));
+  const bIdx = hl.wailLive.findIndex((l) => /^14:0[0-2] NEWS 14:00: WAIL 101 NEWS/.test(l)), sIdx = hl.wailLive.findIndex((l) => /^14:(0[5-9]|[1-5]\d) ON AIR: Uproar at Large: /.test(l));
+  t.assert(bIdx >= 0, 'in real time the hourly bulletin gets its slot on WAIL 101');
+  t.assert(sIdx > bIdx, 'the next call-in segment goes on air after the bulletin');
   t.assert(hl.errors.length === 0, 'headless errors: ' + hl.errors.join('\n'));
   const herrs = await t.errors(hctx);
   t.assert(herrs.length === 0, 'headless page errors:\n' + herrs.join('\n'));
@@ -311,8 +429,24 @@ H.run('radio', async (t) => {
   t.assert(live.filter((l) => l.sections.length >= 2).length >= 2, 'the view crossed a section boundary live (stations with short intros): ' + live.map((l) => l.id + ':' + l.sections.join('/')).join(' '));
   t.assert(audioState.errors === 0 && !audioState.disabled, 'audio healthy after the live run: ' + JSON.stringify({ errors: audioState.errors, disabled: audioState.disabled }));
 
+  const final = await page.evaluate(() => GTP.Audio.state());
+  t.assert(final.errors === 0, 'audio errors after the live run: ' + final.errors);
+  const errs = [].concat(pageErrors.map((e) => 'pageerror: ' + e), consoleErrors.map((e) => 'console: ' + e), await t.gameErrors(page));
+  t.assert(errs.length === 0, 'live page errors:\n' + errs.join('\n'));
+  await page.close();
+
   // ---- 4. offline renders of every song ----
-  const renders = await page.evaluate(async () => {
+  // a fresh headless page: no AudioContext and no real-time loop, so nothing draws from the engine's noise RNG
+  // between renders and the peaks are the same on every run
+  const rctx = await t.boot({ seed: 7 });
+  const isolation = await rctx.page.evaluate(async () => {
+    const A = GTP.Audio, Rd = GTP.Content.radio, i = Rd.stations.findIndex((s) => s.id === 'velvetine_888');
+    const before = Rd.nowPlaying('velvetine_888').pos;
+    await A.render('radio', { station: i, seconds: 4 });
+    return { before, after: Rd.nowPlaying('velvetine_888').pos, rendered: (Rd.lastRender.velvetine_888 || []).slice() };
+  });
+  t.assert(isolation.before === isolation.after && isolation.rendered.length >= 1, 'a radio render leaves the live song where it was: ' + JSON.stringify(isolation));
+  const renders = await rctx.page.evaluate(async () => {
     const A = GTP.Audio, Rd = GTP.Content.radio, out = [];
     for (let i = 0; i < Rd.stations.length; i++) {
       const st = Rd.stations[i];
@@ -320,10 +454,10 @@ H.run('radio', async (t) => {
         Rd.cue(st.id, k);
         const secs = st.id === 'quiet_signal' ? 16 : st.id === 'wail_101' ? 10 : 12;
         const r = await A.render('radio', { station: i, seconds: secs });
-        const np = Rd.nowPlaying(st.id);
+        const played = (Rd.lastRender[st.id] || []).map((n) => st.songs[n].id);
         Rd.cue(st.id, k);
         const r6 = await A.render('radio', { station: i, seconds: st.id === 'wail_101' ? 14 : 6 });   // the window tests/audio.js renders
-        out.push({ station: st.id, song: st.songs[k].id, playedSong: np && np.song, peak: r && r.peak, peak6: r6 && r6.peak, rms: r && r.rms, env: r && r.env });
+        out.push({ station: st.id, song: st.songs[k].id, played, peak: r && r.peak, peak6: r6 && r6.peak, rms: r && r.rms, env: r && r.env });
       }
     }
     return out;
@@ -332,8 +466,8 @@ H.run('radio', async (t) => {
   console.log('  renders:\n    ' + renders.map((r) => `${r.station.padEnd(14)} ${r.song.padEnd(18)} peak ${r.peak} (opening ${r.peak6})  rms ${r.rms}  cv ${stats(r.env).cv.toFixed(2)}`).join('\n    '));
   // raw offline peaks skip the engine's music bus (x 0.6) and compressor: the opening (the window tests/audio.js
   // checks) stays under 0.995 and the whole song keeps in-game headroom (under 0.75 after the bus)
-  const badR = renders.filter((r) => !(r.rms > 0.008) || !(r.peak6 < 0.995) || !(r.peak < 1.25) || r.playedSong !== r.song);
-  t.assert(badR.length === 0, 'every song renders audible with headroom, and the render played the cued song: ' + JSON.stringify(badR.map((r) => [r.station, r.song, r.peak, r.rms, r.playedSong])));
+  const badR = renders.filter((r) => !(r.rms > 0.008) || !(r.peak6 < 0.995) || !(r.peak < 1.25) || r.played.length !== 1 || r.played[0] !== r.song);
+  t.assert(badR.length === 0, 'every song renders audible with headroom, and the render sequenced only the cued song: ' + JSON.stringify(badR.map((r) => [r.station, r.song, r.peak, r.peak6, r.rms, r.played])));
   const flat = renders.filter((r) => stats(r.env).cv < 0.15);
   t.assert(flat.length === 0, 'no song renders as a flat drone (envelope variation): ' + flat.map((r) => r.station + '/' + r.song).join(','));
   // songs on a station differ from each other (mean envelope distance)
@@ -347,9 +481,9 @@ H.run('radio', async (t) => {
     }
     t.assert(minD > 0.004, id + ': every pair of songs sounds different (min envelope distance ' + minD.toFixed(4) + ')');
   }
-  const final = await page.evaluate(() => GTP.Audio.state());
-  t.assert(final.errors === 0, 'audio errors after renders: ' + final.errors);
-  const errs = [].concat(pageErrors.map((e) => 'pageerror: ' + e), consoleErrors.map((e) => 'console: ' + e), await t.gameErrors(page));
-  t.assert(errs.length === 0, 'live page errors:\n' + errs.join('\n'));
-  await page.close();
+  const rfinal = await rctx.page.evaluate(() => GTP.Audio.state());
+  t.assert(rfinal.errors === 0, 'audio errors after renders: ' + rfinal.errors);
+  const rerrs = await t.errors(rctx);
+  t.assert(rerrs.length === 0, 'render page errors:\n' + rerrs.join('\n'));
+  await rctx.page.close();
 });

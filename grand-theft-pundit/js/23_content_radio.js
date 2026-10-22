@@ -210,15 +210,15 @@
         'Goldplate Goldplate Stadium. Both words. Both tens.',
         'Nap Dynasty. Official mattress of Goldplate. Code TENOUTOFTEN.',
         'Goldplate Weather. Tomorrow: a ten.',
-        'Goldplate Steaks. Well done, rated a ten, served with Goldplate Ketchup. Also a ten.',
-        'Goldplate University. Four-year degree, two-week program. Every graduate a ten, says the dean, Goldplate.',
+        'Goldplate Doormats. Your name, crossed out. His name, in gold. Wipe your feet on a ten.',
+        'Goldplate Plaques. Every plaque says Goldplate. Some say it twice. All plaques a ten.',
         'Goldplate Cologne. Smells like a ten. Notes of hard hat and fresh ribbon.',
         'Goldplate Goldplate Memorial. Formerly St. Somebody\'s. Now a ten. Bandage coupon included.',
         'Goldplate Ribbon Co. There is always a ribbon. Every ribbon a ten.',
         'Goldplate Helicopters. A fleet of both. Each one a ten. Together a twenty, which is a ten.',
         'Goldplate Bottled Air. Breathe in a ten. Breathe out a nine. Breathe out less.',
         'Goldplate Hard Hats. As worn at every ribbon cutting. Rated a ten by the head inside.',
-        'Goldplate International. Runway numbered ten at both ends. Your flight is delayed. The delay is a ten.',
+        'Goldplate Gate Ten. Every gate is Gate Ten. Your gate has changed. It is still Gate Ten.',
         'Goldplate Calendar. Every month renamed Goldplate. Twelve tens. Leap years get a bonus ten.'
       ],
       napAd: 4,
@@ -282,7 +282,7 @@
         {
           // bossa: a 3-2 clave on the rim, root-fifth bass, a stepwise melody; the
           // last verse lifts a step (shift 1)
-          id: 'gold_escalator', title: 'Gold Escalator (Bossa)', artist: 'The Atrium Quartet',
+          id: 'ribbon_cutting', title: 'Ribbon Cutting (Bossa)', artist: 'The Gold Hard Hat Quartet',
           swing: 0.08, sustain: 0.7,
           fill: { k: 'x..x....x..x....', s: 'x..x..x...x.xxxx', h: 'x.x.x.x.x.x.x.x.' },
           sections: {
@@ -334,7 +334,7 @@
         },
         {
           // a swung shuffle with a boogie walking bass; the last chorus goes up a step
-          id: 'both_tens', title: 'Both Tens (Shuffle)', artist: 'The Ribbon Cutters',
+          id: 'both_tens', title: 'Both Tens (Shuffle)', artist: 'The Ribbon Cutting Committee',
           swing: 0.28, sustain: 0.6,
           fill: { k: 'x.......x.......', s: '....x.......xxxx', h: 'x.xxx.xxx.......' },
           sections: {
@@ -406,7 +406,7 @@
       // drop does not come (one empty bar and the groove carries on). That is the joke.
       songs: [
         {
-          id: 'eleven_minutes', title: 'Eleven Minutes of Build', artist: 'DJ Spreadsheet',
+          id: 'eleven_minutes', title: 'Eleven Minutes of Build', artist: 'DJ Column C',
           fill: { k: 'x...x...x...x...', s: '....x.......x.xx', h: '..x...x...xxxxxx' },
           sections: {
             In: { c: [0, 0, 3, 3], l: [R0, '. . . . . . . . . . . . . . 14 .', R0, '. . . . . . . 11 . . . . . . 14 .'], k: 'x...x...x...x...', h: ['..x...x...x...x.', '..x...x...x...x.', '..x...x...x...x.', '..x...x...x...xx'] },
@@ -756,7 +756,7 @@
         'Gus\'s Garage. Pay-and-spray. Wanted stars out, new color in. A hundred bucks a star.',
         'Loud Cab. A ride with a podcast you can\'t turn off. Fare includes three hot takes.',
         'Spin Doctor Customs Horns. Forty tones. Every one of them says "Respectfully."',
-        'The Lower Loop. Opening soon. Drivers legally a layover. Passengers legally a carpool.'
+        'The Lower Loop. Now open. Drivers legally a layover. Passengers legally a carpool.'
       ],
       napAd: 0,
       dj: [
@@ -773,14 +773,14 @@
         'BUCKLE UP! THE PARTY IS LEGALLY BINDING!',
         'FOUR-MINUTE TRACK, ONE LAP! THAT\'S OVER THE LIMIT! PULL OVER EMOTIONALLY!',
         'SPONSORED BY SPIN DOCTOR CUSTOMS! THEY SPIN IT! I SHOUT IT! FIFTY-FIVE!',
-        'LOWER LOOP OPENING SOON! STILL FIFTY-FIVE DOWN THERE! GRAVITY DOES NOT COUNT!'
+        'LOWER LOOP IS OPEN! STILL FIFTY-FIVE DOWN THERE! GRAVITY DOES NOT COUNT!'
       ],
       // Drum and bass: an atmospheric intro, a snare-roll build, a two-step drop
       // with a rolling bass and square stabs, a breakdown with bell melodies, a
       // second build, an amen-style drop that lifts a third (shift 2), an outro.
       songs: [
         {
-          id: 'legally_a_party', title: 'Legally a Party', artist: 'Rumble Strip',
+          id: 'legally_a_party', title: 'Legally a Party', artist: 'Painted Median',
           fill: { k: 'x...............', s: 'x.xxx.x.xxxxxxxx', h: 'x.x.x.x.........' },
           sections: {
             In: {
@@ -812,7 +812,7 @@
           form: 'In In U D D D D! Br Br U D2^2 D2^2 D2 D2! Out'
         },
         {
-          id: 'speed_limit', title: 'Speed Limit (Suggested)', artist: 'Merge Left',
+          id: 'speed_limit', title: 'Speed Limit (Suggested)', artist: 'The Zipper Merge Society',
           fill: { k: 'x.........x.....', s: '....x..xx.xxxxxx', h: 'x.x.x.x.x.x.....' },
           sections: {
             In: { c: [0, 5, 2, 6], sus: 3, wave: { bass: 'sawtooth', lead: 'triangle' }, h: 'x.x.x.x.x.x.x.x.', l: ['. . . . . . . . . . . . 7 . . .', R0, '. . . . . . . . . . . . 9 . . .', '. . . . . . . . 10 . . . . . . .'] },
@@ -837,7 +837,7 @@
         },
         {
           // liquid: bells throughout, half-time drums under the first drop, then the roller
-          id: 'lower_loop', title: 'Lower Loop Layover', artist: 'Hazard Lights',
+          id: 'lower_loop', title: 'Lower Loop Layover', artist: 'The Shoulder Lane Social Club',
           wave: { bass: 'sawtooth', lead: 'sine' }, sustain: 2,
           fill: { k: 'x...............', s: '....x.xxx.xxxxxx', h: 'x.x.x.x.x.x.x.x.' },
           sections: {
@@ -858,7 +858,7 @@
         },
         {
           // amen-heavy breakbeat; the lead is a two-tone siren
-          id: 'four_stars', title: 'Four Stars From the Chase Cop', artist: 'The Rumble Strip Soundsystem',
+          id: 'four_stars', title: 'Four Stars From the Chase Cop', artist: 'The Painted Median Soundsystem',
           fill: { k: 'x.x.............', s: 'x.x.xxx.xxx.xxxx', h: 'x.x.x.x.x.x.....' },
           sections: {
             In: { c: [0, 0, 6, 6], l: ['11 . . . . . . . 9 . . . . . . .', '11 . . . . . . . 9 . . . . . . .', '10 . . . . . . . 8 . . . . . . .', '10 . . . . . . . 8 . . . . . . .'], sus: 3, h: 'x.x.x.x.x.x.x.x.' },
@@ -932,7 +932,7 @@
           'CALLER, Margery in Culdesac Heights: "My neighbor\'s mailbox is two inches too tall." THAD: "Two stars. Maybe three. Lock your doors."',
           'CALLER, Doug on Trustless Terrace: "The HOA gave me a wanted level for a hose." THAD: "Was it coiled? No? Then you know what you did."',
           'CALLER, Patrice in Culdesac Heights: "Can the HOA arrest me?" THAD: "Legally, no. Spiritually, they already have."',
-          'CALLER, Al on Pellet Place: "The gas price went up again." THAD: "The HOA approved the pump, Al. Not the price. Not you."',
+          'CALLER, Al on Pellet Place: "The gas price went up again." THAD: "Blame the pump, Al. The HOA approved it. They will not approve you."',
           'CALLER, Gail in Culdesac Heights: "I\'d like to report myself." THAD: "Finally, a responsible citizen. Four stars, in your own driveway."'
         ],
         outro: 'HOA Hotline is closed. Your lawn was measured during the call.'
@@ -993,7 +993,7 @@
     },
     start: [
       'LOCAL STUDENT HAULS FOLDING TABLE ONTO QUAD; NO CHAIRS SIGHTED',
-      'NAP DYNASTY SPONSORS NOON; NOON NOW FIRMER',
+      'NAP DYNASTY EXTENDS CODE TAKES20 INDEFINITELY; NOBODY KNOWS WHAT IT IS FOR',
       'FOUNDERS\' COLLEGE REPORTS RECORD TABLE ATTENDANCE; CLASSROOMS EMPTY',
       'GOLDPLATE RATES THIS MORNING A TEN; MORNING DISPUTES IT',
       'FULCRUM ANNOUNCES STUDY OF UPCOMING STUDY; RESULTS ALREADY KNOWN',
@@ -1003,12 +1003,13 @@
       has_table: [
         'TAKESWORTH WINS FIRST QUAD DEBATE ON VOLUME; OPPONENT HAD DONE THE READING',
         'FRESHMAN WHO READ THE BOOK DEFEATED; BOOK UNAVAILABLE FOR COMMENT',
-        'LOCAL PUNDIT DECLARED "PRE-VIRAL"; DOCTORS UNSURE IF CONTAGIOUS'
+        'QUAD DEBATE ENDS WITH ZERO MINDS CHANGED; CROWD WAS LOUD, WHICH COUNTS HERE'
       ],
       has_van: [
         'LOUD & CORRECT VAN WRAPPED; PRESIDENT RATES IT A TWO, PERSONALLY',
         'PODCAST VAN SPOTTED ON THE LOOP; LEGALLY A PARTY OF ONE',
-        'TAKESWORTH NOW OWNS A VAN; NEIGHBORS LOCK UP THEIR MICROPHONES'
+        'TAKESWORTH NOW OWNS A VAN; NEIGHBORS LOCK UP THEIR MICROPHONES',
+        'LOCAL PUNDIT DECLARED "PRE-VIRAL"; DOCTORS UNSURE IF CONTAGIOUS'
       ],
       seen_airport: [
         'TAKESWORTH VISITS GOLDPLATE INTERNATIONAL; GATE CHANGES WHEN HE REACHES IT',
@@ -1034,11 +1035,11 @@
         'VAULTWRIGHT CALLS THE SALE "A HEDGE"; HEDGE MAZE DECLINES COMMENT'
       ],
       table_loaned: [
-        'TAKESWORTH TABLE GOES UNDER GLASS AT MUSEUM OF TAKES; GIFT SHOP SELLS THE GLASS',
+        'MUSEUM OF TAKES LOSES ITS FIRST TAKE; TABLE NOW ON LOAN TO A HEDGE MAZE',
         'HEIRLOOM CLUB ADMIRES FOLDING TABLE; ASKS WHO ITS GRANDFATHER LISTENED WITH'
       ],
       show_renamed: [
-        'GOLDPLATE RENAMES LOUD & CORRECT "GOLDPLATE & GOLDPLATE"; RATES IT A TEN',
+        'GOLDPLATE RENAMES LOUD & CORRECT "THE GOLDPLATE HOUR WITH GOLDPLATE"; RATES IT A TEN',
         'TAKESWORTH SHOW HAS A NEW NAME; HOST LAST TO KNOW',
         'PRESIDENT RENAMES PODCAST TWICE; SECOND NAME IS THE FIRST NAME AGAIN'
       ],
@@ -1053,8 +1054,8 @@
       ],
       scooters_billed: [
         'DEFENSE SCOOTERS BILLED TO PODCAST; WARBANNER SAYS THAT\'S WHY WE NEED THE JETS',
-        'LOUD & CORRECT NOW OWES BRAVADIA FORTY SCOOTERS; SCOOTERS SOLD TO BOTH SIDES',
-        'TAKESWORTH OPENS SCOOTER INVOICE; INVOICE ENDS "AND THAT\'S WHY WE NEED THE JETS"'
+        'LOUD & CORRECT BILLED FOR FOUR HUNDRED SCOOTERS; SCOOTERS SOLD TO BOTH SIDES',
+        'TAKESWORTH OPENS SCOOTER INVOICE; INVOICE SIGNED "RESPECTFULY," ONE L'
       ],
       jets_arrived: [
         'BRAVADIA\'S JETS ARRIVE ON A TRUCK; WARBANNER DECLARES LIFT',
@@ -1072,7 +1073,7 @@
       ],
       hoa_enemy: [
         'HOA ISSUES WANTED LEVEL ON LOCAL PUNDIT; ALSO ON HIS MAILBOX, PRE-EMPTIVELY',
-        'CLARITY PELLET BARN DISTURBED; PELLETS REPORT NO CHANGE, AS USUAL',
+        'PELLET DELIVERY REACHES HOA HALL; TWO PATROL SUVS DECLARED "CLEANSED"',
         'TAKESWORTH NOW WANTED IN CULDESAC HEIGHTS; LAWN SIGNS SHARPENED'
       ],
       rugged: [
@@ -1116,18 +1117,23 @@
     },
     byMission: {
       m01c_both_sides: [
-        'MERLE FIRMNESS GIVES LOCAL PUNDIT A FREE LOANER; CALLS IT "BALANCE"',
-        'BOTH SIDES ARMS HOSTS RANGE LESSON; CARDBOARD CUTOUTS FILE HOA COMPLAINT'
+        'MERLE FIRMNESS GIVES LOCAL PUNDIT A FREE PISTOL; BULLETS ARE THE BUSINESS MODEL',
+        'BOTH SIDES ARMS ENROLLS LOCAL PUNDIT IN LOYALTY PROGRAM; NOBODY HAS EVER QUALIFIED'
+      ],
+      m03_ratio: [
+        'TAKESWORTH WINS RATIO WAR ON BOTH BILLBOARDS; PTOLEMY DUNK REPLIES WITHOUT READING',
+        'DUNK\'S CHAT VISITS IMPRESSION ALLEY; FOUR ATTENDEES COUNTED AS REACH',
+        'LOCAL PUNDIT ACQUIRES MEGAPHONE; NEIGHBORS ACQUIRE EARPLUGS'
       ],
       b01_goldplate: [
-        'GOLD HELICOPTER GROUNDED BY RIBBON SPOOLS; ROOF SIGN STILL READS "BOTH"',
+        'GOLD HELICOPTER GROUNDED BY RIBBON SPOOLS; ROOF SIGN STILL COUNTS 2, TICKER STILL SAYS BOTH',
         'PRESIDENT\'S HELICOPTER TANGLED IN OWN RIBBON; RIBBON RATED A TEN',
         'GOLDPLATE SAYS HELICOPTER IS "RESTING"; RENAMES THE GROUND "GOLDPLATE GROUND"'
       ],
       b02_velvetine: [
-        'SILENT YACHT LOSES ITS SPEAKERS; NOBODY NOTICES THE DIFFERENCE',
-        'AFTERPARTY SPEAKERS WRECKED; BARON TOASTS "TO THE QUIET"',
-        'VELVETINE YACHT STILL HAS NOT SAILED; NOW ALSO HAS NOT PLAYED'
+        'SILENT YACHT\'S SPEAKERS SWITCHED ON; SIX BLOW, GUESTS ENJOY IT ANYWAY',
+        'AFTERPARTY PLAYS MUSIC FOR THE FIRST TIME; BARON TOASTS "TO LIKING IT, I SUPPOSE"',
+        'VELVETINE YACHT STILL HAS NOT SAILED; HAS NOW, BRIEFLY, PLAYED'
       ],
       b03_warbanner: [
         'JET FLYOVER MISSES LOCAL PUNDIT; WARBANNER SAYS THAT\'S WHY WE NEED BETTER JETS',
@@ -1140,17 +1146,17 @@
         'WEATHER BALLOON REPAIR DEPOT FINALLY HAS A BALLOON TO REPAIR'
       ],
       h01_casing: [
-        'SUSPICIOUS VAN CIRCLES MONDAY MEMO PRINT WORKS; VAN RATED A TWO',
-        'PRINT WORKS GUARD REPORTS MAN TAKING NOTES; FIRST NOTES TAKEN IN CITY IN YEARS'
+        'VAULTWRIGHT CAPITAL VISITED BY "TOURISTS" PHOTOGRAPHING ONLY THE VAULT DOOR; VAULT DOOR IS A HEDGE',
+        'BANK GUARDS REVEALED TO BE UNPAID INTERNS; LOCAL INTERN, 54, CALLS IT A UNION'
       ],
       h02_prep: [
-        'LOCAL INTERN, 54, BUYS FORTY REAMS OF BLANK PAPER; ASKS IF IT\'S PAID',
-        'GUS\'S GARAGE RESPRAYS PODCAST VAN BEIGE; VAN NOW BLENDS INTO OVA FLEET'
+        'GUS\'S GARAGE TAKES IN A VEHICLE NOBODY WILL ADMIT TO; GUS CALLS IT "PREP"',
+        'LOCAL INTERN, 54, LAMINATES A PLAN; ASKS IF LAMINATING IS PAID'
       ],
       h03_job: [
-        '4,000 MONDAY MEMOS GO MISSING; CITY HAS NO TALKING POINTS FOR ONE DAY',
-        'PUNDITS OPEN MOUTHS, NOTHING COMES OUT; EXPERTS CALL IT "PEACEFUL"',
-        'MONDAY MEMO SWAPPED FOR BLANK PAGE; EVERY FACTION AGREES WITH IT ANYWAY'
+        'VAULTWRIGHT CAPITAL REPORTS A "RETRIEVAL"; HEDGE CASH DOWN, HEDGE MAZE UNMOVED',
+        'TAKESWORTH RECOVERS OWN CONTRACT; BACK PAGE IS A MEMO SUBSCRIPTION SIGNED "RESPECTFULY"',
+        'VAULTWRIGHT WHISPERS THE LOSS; NOBODY HEARS THE FIGURE, EVERYONE HEARS THE ALARM'
       ],
       b05_dunk: [
         'TABLE-TO-TABLE BRAWL ON THE QUAD; PTOLEMY DUNK DIDN\'T READ THE RULES',
@@ -1158,14 +1164,14 @@
         'FOLDING TABLE INDUSTRY REPORTS RECORD QUARTER AFTER QUAD BRAWL'
       ],
       b06_panel: [
-        'FIVE-PERSON PANEL BESTED BY ONE FOLDING TABLE; CHYRON MUST LEAVE IT THERE',
-        'PANEL ANSWERS FROM MEMO; MEMO ANSWERS FROM COMMENTS; COMMENTS UNAVAILABLE',
-        'DEBATE ARENA REPORTS ZERO MINDS CHANGED; MINDS CHANGED COURT STILL EMPTY'
+        'STADIUM UNDERCARD: DEBATE ROUNDS, GOON WAVES, ONE FOLDING TABLE STILL STANDING',
+        'PRESIDENT LOSES UNDERCARD HE WAS ON; RATES LOSING A TEN',
+        'UNDERCARD CROWD TURNS OUT TO BE EVERYONE\'S GOONS; STADIUM SELLS OUT BOTH WORDS'
       ]
     },
     // story order (v0.3 chain); the two endings share the last slot
     order: [
-      'has_table', 'has_van', 'seen_airport', 'mission:m01c_both_sides', 'sponsored', 'range_trained', 'a_voice',
+      'has_table', 'has_van', 'mission:m01c_both_sides', 'seen_airport', 'sponsored', 'mission:m03_ratio', 'range_trained', 'a_voice',
       'contract_sold', 'table_loaned', 'show_renamed', 'mission:b01_goldplate', 'theft_pinned', 'ferry_friend',
       'mission:b02_velvetine', 'scooters_billed', 'jets_arrived', 'mission:b03_warbanner', 'has_memo', 'byline',
       'mission:b04_redacted', 'hoa_enemy', 'rugged', 'knows_memo', 'cited', 'mission:h01_casing', 'mission:h02_prep',
@@ -1197,7 +1203,7 @@
       'CAWTI PROTESTS TUESDAY, COUNTER-PROTESTS ITSELF WEDNESDAY',
       'NAP DYNASTY SPONSORS THE WEATHER; WEATHER NOW FIRMER',
       'LOCAL PUNDIT NOT A JOURNALIST, JOURNALISTS CONFIRM',
-      'NAP DYNASTY SPONSORS GRAVITY; EVERYTHING NOW SLIGHTLY FIRMER',
+      'NAP DYNASTY SHOWROOM PODIUM HOSTS THIRD BRIEFING THIS WEEK; MATTRESS TAKES NO QUESTIONS',
       'GOLDPLATE RATES THE MOON A NINE; MOON TO BE RENAMED',
       'WARBANNER OFFERS CONDOLENCES; ALSO NEEDS JETS',
       'CLARITY PELLETS NOW IN GUMMY FORM; YOUR DOCTOR STILL WON\'T SAY',
@@ -1423,16 +1429,29 @@
   // ----------------------------------------------------- live pattern view --
   // `station.pattern` keeps the v0.2 schema; each lane is a getter for the bar
   // now playing. The bar comes from the engine's own bar counter
-  // (GTP.Audio.radio.state().talkBar, which restarts at a retune); without it a
-  // wall-clock bar count stands in. A retune moves on to the next song.
-  var LIVE = {};
+  // (GTP.Audio.radio.state().talkBar, which restarts at a retune). While the
+  // engine is not sequencing (muted, no or suspended AudioContext, headless) a
+  // wall-clock bar count carries the song on, so the ticker does not freeze on
+  // one title. Loaded with no engine at all (node, tools) the wall clock stands
+  // in; it is not phase-locked to an engine's step grid. A retune moves on to
+  // the next song.
+  var LIVE = {}, rendering = 0;
   function songOf(T, pos) { var s = 0; for (var i = 0; i < T.starts.length; i++) if (T.starts[i] <= pos) s = i; return s; }
+  function wallBar(st) { return Math.floor(Date.now() / 1000 / (240 / (st.bpm || 120))); }
   function engineBar(st) {
-    var A = GTP.Audio, rs = null;
+    var A = GTP.Audio, rs = null, L = LIVE[st.id];
     try { rs = A && A.radio && typeof A.radio.state === 'function' ? A.radio.state() : null; } catch (e) { rs = null; }
     if (rs && rs.id != null && rs.id !== st.id) return { off: true };
-    if (rs && typeof rs.talkBar === 'number' && isFinite(rs.talkBar)) return { bar: rs.talkBar };
-    return { bar: Math.floor(Date.now() / 1000 / (240 / (st.bpm || 120))), clock: true };
+    if (rs && typeof rs.talkBar === 'number' && isFinite(rs.talkBar)) {
+      if (!rendering && rs.playing === true && rs.live === false) {   // on air but not sequencing: keep time by the clock
+        var w = wallBar(st);
+        if (L.wall0 == null) L.wall0 = w - Math.max(0, L.last);
+        return { bar: w - L.wall0, clock: true };
+      }
+      L.wall0 = null;
+      return { bar: rs.talkBar };
+    }
+    return { bar: wallBar(st), clock: true };
   }
   function current(st) {
     var L = LIVE[st.id], T = L.T;
@@ -1449,10 +1468,11 @@
       L.last = cb;
       L.pos = (((L.offset + Math.max(0, cb)) % T.bars.length) + T.bars.length) % T.bars.length;
     }
+    if (rendering) { var seen = RADIO.lastRender[st.id] || (RADIO.lastRender[st.id] = []); if (seen.indexOf(T.bars[L.pos].song) < 0) seen.push(T.bars[L.pos].song); }
     return T.bars[L.pos];
   }
   function makeView(st, T) {
-    LIVE[st.id] = { T: T, last: -2, offset: 0, pos: 0, cued: null };
+    LIVE[st.id] = { T: T, last: -2, offset: 0, pos: 0, cued: null, wall0: null };
     var view = { steps: 16, transposeBass: false, kit: st.kit || null };
     if (st.talk) view.talk = true;
     if (st.jingle) view.jingle = st.jingle;
@@ -1470,31 +1490,17 @@
     if (!st.jingle) delete st.jingle;
   }
 
-  // a segment intro without a repeat of the segment title ("HOA Hotline. Report..." -> "Report...")
-  function introText(seg) { var t = seg.title + '. '; return seg.intro.indexOf(t) === 0 ? seg.intro.slice(t.length) : seg.intro; }
-  // WAIL 101's `dj`: the call-in segment for this game hour, framed by the
-  // GDD lines; `djAll` holds every line (credits, audits).
-  (function () {
-    var wail = station('wail_101');
-    if (!wail || wail.id !== 'wail_101') return;
-    var segLists = CALLIN.segments.map(function (seg, i) {
-      var base = wail.djBase, list = [CALLIN.show.toUpperCase() + ': ' + seg.title.toUpperCase() + '. ' + introText(seg)];
-      // the calls themselves go out as `callers` (the UI's CALLER lines); the DJ slots carry the host
-      for (var e = 0; e < 4; e++) list.push(base[(i * 4 + e) % base.length]);
-      list.push(seg.outro);
-      return list;
-    });
-    var all = wail.djBase.slice();
-    CALLIN.segments.forEach(function (seg) { all.push(seg.intro); all = all.concat(seg.exchanges); all.push(seg.outro); });
-    wail.djAll = all;
-    Object.defineProperty(wail, 'dj', { enumerable: true, configurable: true, get: function () { return segLists[RADIO.segmentIndex()]; } });
-  })();
-
   // ---------------------------------------------------------- helpers --
   function station(id) {
     var s = RADIO.stations;
     for (var i = 0; i < s.length; i++) if (s[i].id === id) return s[i];
     return s[0];
+  }
+  // the exact station or null (the song helpers must not fall back to WAIL 101 on a typo)
+  function exact(id) {
+    var s = RADIO.stations;
+    for (var i = 0; i < s.length; i++) if (s[i].id === id) return s[i];
+    return null;
   }
   RADIO.station = station;
   // Bark pool for a ped: by role when the role has its own lines, else by
@@ -1507,37 +1513,156 @@
     return B.ped;
   };
   function hourKey() { var g = GTP.game, t = g && g.time; return t ? (t.day | 0) * 24 + Math.floor(t.clock || 0) : 0; }
-  // the call-in segment on air this game hour
-  RADIO.segmentIndex = function (hk) { var n = CALLIN.segments.length; hk = hk == null ? hourKey() : hk; return ((hk % n) + n) % n; };
-  RADIO.segment = function (hk) { return CALLIN.segments[RADIO.segmentIndex(hk)]; };
+  // Call-in segments change at minute 5 of the game hour, after the top-of-the-hour
+  // bulletin: the UI shows station.bulletins in minutes 0-3 but puts a changed
+  // on-air line first, so a segment change at minute 0 would take the bulletin's slot.
+  var SEGMENT_MINUTE = 5;
+  function segmentKey() { var g = GTP.game, t = g && g.time; return t ? Math.floor((t.day | 0) * 24 + (t.clock || 0) - SEGMENT_MINUTE / 60) : 0; }
+  RADIO.segmentMinute = SEGMENT_MINUTE;
+  RADIO.segmentIndex = function (k) { var n = CALLIN.segments.length; k = k == null ? segmentKey() : k; return ((k % n) + n) % n; };
+  RADIO.segment = function (k) { return CALLIN.segments[RADIO.segmentIndex(k)]; };
   // the flat bar list of a station (every bar shaped like `pattern`), and its song starts
-  RADIO.timeline = function (id) { var L = LIVE[(station(id) || {}).id]; return L ? L.T.bars : []; };
-  RADIO.songStarts = function (id) { var L = LIVE[(station(id) || {}).id]; return L ? L.T.starts.slice() : []; };
+  RADIO.timeline = function (id) { var st = exact(id), L = st && LIVE[st.id]; return L ? L.T.bars : []; };
+  RADIO.songStarts = function (id) { var st = exact(id), L = st && LIVE[st.id]; return L ? L.T.starts.slice() : []; };
   // what a station is playing (or would play): song, artist, section, bar
   RADIO.nowPlaying = function (id) {
-    var st = station(id), L = st && LIVE[st.id]; if (!L || !L.T.bars.length) return null;
+    var st = exact(id), L = st && LIVE[st.id]; if (!L || !L.T.bars.length) return null;
+    current(st);   // a read advances a station the engine is not sequencing (muted, headless)
     var b = L.T.bars[L.pos], s = st.songs[b.song];
     return { station: st.id, song: s.id, title: s.title, artist: s.artist, section: b.section, shift: b.shift, bar: L.pos - L.T.starts[b.song], bars: s.bars, pos: L.pos };
   };
-  // start song k now (or at the next retune when the station is off air)
+  // Start song k now, or at the next retune when the station is off air. On air,
+  // a talk station keeps the engine's 12-bar bumper/talk phase (cycleBar % 12):
+  // song k then starts at the next cycle and the current song plays on until it.
   RADIO.cue = function (id, k) {
-    var st = station(id), L = st && LIVE[st.id]; if (!L) return false;
-    k = ((k | 0) % L.T.starts.length + L.T.starts.length) % L.T.starts.length;
-    L.cued = k; L.offset = L.T.starts[k] - Math.max(0, L.last); L.pos = L.T.starts[k];
+    var st = exact(id), L = st && LIVE[st.id]; if (!L) return false;
+    var n = L.T.starts.length, len = L.T.bars.length; k = ((k | 0) % n + n) % n;
+    var cb = Math.max(0, L.last), lead = 0;
+    if (st.pattern && st.pattern.talk && L.last >= 0 && !engineBar(st).off && cb % 12) lead = 12 - cb % 12;
+    L.cued = k; L.offset = L.T.starts[k] - cb - lead;
+    L.pos = (((L.offset + cb) % len) + len) % len;
     return true;
   };
+
+  // a segment intro without a repeat of the segment title ("HOA Hotline. Report..." -> "Report...")
+  function introText(seg) { var t = seg.title + '. '; return seg.intro.indexOf(t) === 0 ? seg.intro.slice(t.length) : seg.intro; }
 
   // Story progress for the news: flags and completed missions.
   function progress() {
     var M = GTP.Missions && GTP.Missions.state, flags = (M && M.flags) || {}, done = M && M.completed;
     return { flags: flags, done: function (id) { return !!done && (typeof done.has === 'function' ? done.has(id) : (Array.isArray(done) ? done.indexOf(id) >= 0 : !!done[id])); } };
   }
+
+  // ------------------------------------------------- parity radio merge --
+  // js/25_content_parity.js (content track) loads after this file and carries
+  // GTP.Content.parity.radio {ticker, ads, dj, news}. It is merged once, on first
+  // use: news[missionId] joins NEWS.byMission; ads are appended (napAd stays
+  // valid); ticker and DJ lines that tell a boss or heist outcome stay off air
+  // until that mission is done, the rest join the rotation; near-duplicates of
+  // lines already on a station are skipped.
+  var PARITY_GATES = [
+    [/helicopter|bunker/i, 'b01_goldplate'], [/yacht/i, 'b02_velvetine'], [/flyover|second jet/i, 'b03_warbanner'],
+    [/balloon/i, 'b04_redacted'], [/nine tables|brawl/i, 'b05_dunk'], [/undercard/i, 'b06_panel'],
+    [/bank was visited|retrieval|vault/i, 'h03_job']
+  ];
+  var parityDj = {};   // station id -> [{text, gate}]
+  var STOP = ' that this with from have been they your what will were when then there their them than into just only also about after again over same both each very ';
+  function words(x) {
+    var out = [];
+    String(x).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).forEach(function (w) { if (w.length > 3 && STOP.indexOf(' ' + w + ' ') < 0 && out.indexOf(w) < 0) out.push(w); });
+    return out;
+  }
+  // two lines tell the same joke: most of the shorter line's content words recur in the other
+  function similar(a, b) {
+    var A = words(a), B = words(b), hit = 0; if (A.length < 3 || B.length < 3) return false;
+    for (var i = 0; i < A.length; i++) if (B.indexOf(A[i]) >= 0) hit++;
+    return hit / Math.min(A.length, B.length) >= 0.7;
+  }
+  function nearDup(line, lists) {
+    for (var i = 0; i < lists.length; i++) for (var j = 0; j < lists[i].length; j++) if (lists[i][j] === line || similar(lists[i][j], line)) return true;
+    return false;
+  }
+  function gateOf(line) { for (var i = 0; i < PARITY_GATES.length; i++) if (PARITY_GATES[i][0].test(line)) return PARITY_GATES[i][1]; return null; }
+  function mergeParity() {
+    if (RADIO._parityMerged) return;
+    var P = GTP.Content.parity && GTP.Content.parity.radio;
+    if (!P) return;
+    RADIO._parityMerged = true;
+    var newsLines = [], m, id, skipped = RADIO.paritySkipped = [];
+    for (m in (P.news || {})) {
+      var line = P.news[m]; if (typeof line !== 'string') continue;
+      newsLines.push(line);
+      var list = NEWS.byMission[m] || (NEWS.byMission[m] = []);
+      if (nearDup(line, [list])) skipped.push(line); else list.push(line);
+    }
+    (P.ticker || []).forEach(function (t) {
+      if (typeof t !== 'string' || newsLines.indexOf(t) >= 0 || gateOf(t)) return;   // outcome lines air as news after their mission
+      if (nearDup(t, [RADIO.ticker])) { skipped.push(t); return; }
+      RADIO.ticker.push(t);
+    });
+    for (id in (P.ads || {})) {
+      var st = exact(id); if (!st) continue;
+      (P.ads[id] || []).forEach(function (a) { if (typeof a !== 'string') return; if (nearDup(a, [st.ads])) skipped.push(a); else st.ads.push(a); });
+    }
+    for (id in (P.dj || {})) {
+      var st2 = exact(id); if (!st2) continue;
+      var have = [st2.djBase || [], st2.djAll || [], st2.djList || []];
+      parityDj[id] = (P.dj[id] || []).filter(function (d) { if (typeof d !== 'string') return false; if (nearDup(d, have)) { skipped.push(d); return false; } return true; }).map(function (d) { return { text: d, gate: gateOf(d) }; });
+    }
+  }
+  RADIO.mergeParity = mergeParity;
+  // the parity DJ lines a station may air now (outcome lines once their mission is done)
+  function parityDjFor(id) {
+    mergeParity();
+    var list = parityDj[id]; if (!list || !list.length) return [];
+    var p = progress(), out = [];
+    for (var i = 0; i < list.length; i++) if (!list[i].gate || p.done(list[i].gate)) out.push(list[i].text);
+    return out;
+  }
+  // `dj` of the music stations: the authored lines plus any parity lines on air
+  STATIONS.forEach(function (st) {
+    if (st.id === CALLIN.station) return;
+    var base = st.dj, cache = { key: null, list: base };
+    st.djList = base;
+    Object.defineProperty(st, 'dj', {
+      enumerable: true, configurable: true,
+      get: function () { var extra = parityDjFor(st.id), key = extra.join('|'); if (key !== cache.key) { cache.key = key; cache.list = extra.length ? base.concat(extra) : base; } return cache.list; },
+      set: function (v) { if (Array.isArray(v)) base = v; cache.key = null; }
+    });
+  });
+
+  // WAIL 101's `dj`: the host's lines for the call-in segment on air, framed by
+  // the GDD lines; the calls go out as `callers`. `djAll` holds every line.
+  (function () {
+    var wail = exact('wail_101');
+    if (!wail) return;
+    var segLists = CALLIN.segments.map(function (seg, i) {
+      var base = wail.djBase, list = [CALLIN.show.toUpperCase() + ': ' + seg.title.toUpperCase() + '. ' + introText(seg)];
+      for (var e = 0; e < 4; e++) list.push(base[(i * 4 + e) % base.length]);
+      list.push(seg.outro);
+      return list;
+    });
+    var all = wail.djBase.slice();
+    CALLIN.segments.forEach(function (seg) { all.push(seg.intro); all = all.concat(seg.exchanges); all.push(seg.outro); });
+    wail.djAll = all;
+    var cache = {};
+    Object.defineProperty(wail, 'dj', {
+      enumerable: true, configurable: true,
+      get: function () {
+        var k = RADIO.segmentIndex(), extra = parityDjFor('wail_101'), key = k + '|' + extra.join('|');
+        if (cache.key !== key) { cache.key = key; cache.list = extra.length ? segLists[k].concat(extra) : segLists[k]; }
+        return cache.list;
+      }
+    });
+  })();
+
   function reached(key, p) { return key.indexOf('mission:') === 0 ? p.done(key.slice(8)) : !!p.flags[key]; }
   function linesFor(key) { return key.indexOf('mission:') === 0 ? NEWS.byMission[key.slice(8)] : NEWS.byFlag[key]; }
   // The top-of-the-hour bulletin: two headlines from the latest story beat the
   // player has reached, one from an earlier beat (or the start pool, then the
   // general ticker). `prog` may be {flags:{...}, completed:[ids]} for tests.
   RADIO.bulletin = function (stationId, hk, prog) {
+    mergeParity();
     hk = hk == null ? hourKey() : hk;
     var p = prog ? { flags: prog.flags || {}, done: function (id) { return (prog.completed || []).indexOf(id) >= 0; } } : progress();
     var got = [];
@@ -1562,6 +1687,7 @@
   var newsState = { lastHour: null, shown: 0 };
   RADIO._newsState = newsState;
   function newsTick() {
+    mergeParity();
     var g = GTP.game; if (!g || !g.time || g.state !== 'playing') return;
     var hk = hourKey();
     if (newsState.lastHour == null) { newsState.lastHour = hk; return; }
@@ -1577,25 +1703,50 @@
     if (GTP.Events && GTP.Events.emit) GTP.Events.emit('radio:news', b);
   }
   RADIO._newsTick = newsTick;
+  // the wrappers call into whichever radio module is current, so a second load of
+  // this file (a dev reload, a test) does not leave them bound to the first one
+  function liveRadio() { var M = GTP.Content && GTP.Content.radio; return M && M._newsTick ? M : RADIO; }
   if (GTP.Audio && typeof GTP.Audio.update === 'function' && !GTP.Audio._radioNewsWrapped) {
     var audioUpdate = GTP.Audio.update;
     GTP.Audio.update = function () {
       var r = audioUpdate.apply(this, arguments);
-      try { newsTick(); } catch (e) { if (GTP.util && GTP.util.reportError) GTP.util.reportError(e, 'radio.news'); }
+      try { liveRadio()._newsTick(); } catch (e) { if (GTP.util && GTP.util.reportError) GTP.util.reportError(e, 'radio.news'); }
       return r;
     };
     GTP.Audio._radioNewsWrapped = true;
+  }
+  // Audio.render('radio') tunes and sequences a station offline; the getters see
+  // its bar counter restart and would move the live song. The wrapper keeps the
+  // live song state as it was (scheduling inside render is synchronous).
+  RADIO.lastRender = {};   // station id -> song indices the last radio render sequenced (tests)
+  RADIO._renderBegin = function () {
+    var snap = {}; rendering++; RADIO.lastRender = {};
+    for (var id in LIVE) snap[id] = { last: LIVE[id].last, offset: LIVE[id].offset, pos: LIVE[id].pos, cued: LIVE[id].cued, wall0: LIVE[id].wall0 };
+    return snap;
+  };
+  RADIO._renderEnd = function (snap) {
+    rendering = Math.max(0, rendering - 1);
+    for (var id in snap) { var Lr = LIVE[id], sv = snap[id]; if (!Lr) continue; Lr.last = sv.last; Lr.offset = sv.offset; Lr.pos = sv.pos; Lr.cued = sv.cued; Lr.wall0 = sv.wall0; }
+  };
+  if (GTP.Audio && typeof GTP.Audio.render === 'function' && !GTP.Audio._radioRenderWrapped) {
+    var engineRender = GTP.Audio.render;
+    GTP.Audio.render = function (kind) {
+      if (kind !== 'radio') return engineRender.apply(this, arguments);
+      var M = liveRadio(), snap = M._renderBegin ? M._renderBegin() : null;
+      try { return engineRender.apply(this, arguments); } finally { if (snap && M._renderEnd) M._renderEnd(snap); }
+    };
+    GTP.Audio._radioRenderWrapped = true;
   }
 
   // ------------------------------------------------------ UI ticker feed --
   // The shapes docs/v03/ui.md reads: station.nowPlaying, station.bulletins,
   // station.callers. All are getters, computed when the ticker asks.
   function callerOf(line) {
-    var m = /^CALLER, ([^:]+): (.*)$/.exec(line);
-    return m ? { caller: m[1], text: m[2] } : { caller: 'A caller', text: line };
+    var mm = /^CALLER, ([^:]+): (.*)$/.exec(line);
+    return mm ? { caller: mm[1], text: mm[2] } : { caller: 'A caller', text: line };
   }
   var callerLists = CALLIN.segments.map(function (seg) { return seg.exchanges.map(callerOf); });
-  RADIO.callers = function (hk) { return callerLists[RADIO.segmentIndex(hk)]; };
+  RADIO.callers = function (k) { return callerLists[RADIO.segmentIndex(k)]; };
   // what the ticker should call "on air" for a station
   RADIO.onAir = function (id) {
     var st = station(id); if (!st) return null;
@@ -1607,7 +1758,8 @@
     return { kind: 'song', id: np.song, station: st.id, title: np.title, artist: np.artist, section: np.section };
   };
   // Each feed is a getter; assigning a value overrides it (a mission or a test
-  // can put its own lines on air) and assigning null hands it back.
+  // can put its own lines on air) and assigning null or undefined hands it back.
+  // Restore a feed by assigning null: `delete` removes the live getter itself.
   function feed(st, name, compute) {
     var over;
     Object.defineProperty(st, name, {
@@ -1616,9 +1768,11 @@
       set: function (v) { over = v; }
     });
   }
+  function onAirNow() { var AR = GTP.Audio && GTP.Audio.radio; return !(AR && typeof AR.isPlaying === 'function' && !AR.isPlaying()); }
   var bulletinCache = {};
   STATIONS.forEach(function (st) {
-    feed(st, 'nowPlaying', function () { return RADIO.onAir(st.id); });
+    // nothing is "now playing" while the engine is silent (parachute, radio stopped, on foot)
+    feed(st, 'nowPlaying', function () { return onAirNow() ? RADIO.onAir(st.id) : null; });
     feed(st, 'bulletins', function () {
       var b = RADIO.bulletin(st.id), key = st.id + '|' + b.text, c = bulletinCache[st.id];
       if (!c || c.key !== key) c = bulletinCache[st.id] = { key: key, list: [{ text: b.text, headline: b.headlines[0], stage: b.stage, hour: b.hour }] };
@@ -1628,8 +1782,8 @@
   });
   // The UI asks GTP.Audio.radio.nowPlaying() first; the engine returns only a
   // station string. Wrapped: while a station plays it returns a string that
-  // names the song (or WAIL's show) ahead of the engine's station text, so it
-  // stays a plain string for every caller and the ticker line changes per song.
+  // names what is on air (the station's nowPlaying feed, so an assigned override
+  // shows) ahead of the engine's station text. It stays a plain string.
   if (GTP.Audio && GTP.Audio.radio && typeof GTP.Audio.radio.nowPlaying === 'function' && !GTP.Audio.radio._radioWrapped) {
     var engineNowPlaying = GTP.Audio.radio.nowPlaying;
     GTP.Audio.radio.nowPlaying = function () {
@@ -1637,9 +1791,11 @@
       if (!text) return text;
       var cur = null;
       try { cur = GTP.Audio.radio.current ? GTP.Audio.radio.current() : null; } catch (e) { cur = null; }
-      var o = cur && RADIO.onAir(cur.id);
+      var o = cur && cur.nowPlaying;
       if (!o) return text;
-      return o.title + (o.artist ? '  \u00b7  ' + o.artist : '') + '  \u00b7  ' + text;
+      if (typeof o === 'string') return o + '  ·  ' + text;
+      var head = o.title || o.text || '';
+      return head ? head + (o.artist ? '  ·  ' + o.artist : '') + '  ·  ' + text : text;
     };
     GTP.Audio.radio._radioWrapped = true;
   }
