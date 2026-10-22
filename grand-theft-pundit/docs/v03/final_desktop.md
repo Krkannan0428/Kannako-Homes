@@ -121,8 +121,27 @@ On GitHub (pushes to `v03/desktop`):
     check. Under `pipefail` an `ls | grep` pipeline failed although `.background.tiff` was there.
     2022a33 replaces it with `[ -f ]` tests, which pass and fail correctly on fake DMG folders
     under `bash -eo pipefail`; actionlint is clean.
-- **Run 39849433387** (2022a33, the workflow fix only): the first run whose macOS job reaches the
-  fuse, code-signature and Apple Silicon launch steps. Result: see "macOS result" below.
+- **Run 39849433387** (2022a33):
+  - **Windows, Linux and Linux smoke: green again.**
+  - **macOS:**
+    - **Passed:** the DMG art check, then fuses and code signatures on both apps (the ad-hoc
+      re-sign after the fuse flip is valid).
+    - **Launch test, passed:** the unsigned arm64 app started with the fuses on. The game booted
+      to the title, the splash handed over, mods loaded and the navigation lock held.
+    - **Launch test, failed:** the runner VM could not create any WebGL context
+      (`VENDOR = 0xffff`, GPU process sandboxed). The game came up without a renderer and its
+      frame loop threw every frame. That means the picture checks and the error checks failed.
+      This is the CI machine; real Macs have WebGL.
+- **45fbdff** answers that:
+  - The smoke test passes `--disable-gpu-sandbox` on macOS, so software GL has a chance to start.
+  - The mac step passes `--webgl-optional`. If WebGL is still missing, only the picture checks
+    and the errors caused by the missing context are skipped, with a note.
+  - Linux and Windows keep the strict checks; Linux was re-run locally in strict mode and passed.
+  - Result: see "macOS result" below.
+
+### macOS result
+
+(filled in below once the run for 45fbdff finishes)
 
 ## Known issues
 

@@ -313,7 +313,12 @@ closing its window, so its close handlers run on every platform. It uses a throw
 (`GTP_USER_DATA_DIR`) with updates off, and writes `smoke-title.png`, `smoke-cutscene.png`,
 `smoke-objective.png` and `smoke-crash.log` to `test/out/` (CI uploads them as the `smoke`
 artifact). About 2 minutes under xvfb with software GL; the macOS and Windows CI jobs run it with
-`--no-new-game` (artifacts `smoke-mac`, `smoke-windows`).
+`--no-new-game` (artifacts `smoke-mac`, `smoke-windows`). The macOS runner VM has no GPU and may
+not be able to create a WebGL context at all, so its step adds `--webgl-optional`: when the page
+reports no WebGL, the picture checks and the errors that follow from the missing context are
+skipped with a note, and every other check (boot, title, splash, mods, navigation lock, window
+state, broken mod) still has to pass. On macOS the test also starts the app with
+`--disable-gpu-sandbox` so software GL can start.
 
 `test/check-fuses.js <app binary or .app>` reads the fuses of a packaged app and fails unless they
 match the `electronFuses` block of `electron-builder.yml` (`npm run check-fuses -- <app>`).
