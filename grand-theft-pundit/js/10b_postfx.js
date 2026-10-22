@@ -218,22 +218,39 @@
     '  col /= 4.6;',
     '  gl_FragColor = vec4( col * k, k );',
     '}'].join('\n');
+  // the circle of confusion (0..1 of DOF_RADIUS half-resolution texels), shared by the gather and the composite mix.
+  // Thin lens: blur ~ |z - f| / z, so the background tends to a fixed size and the foreground grows fast. A crisp band
+  // of +-12 % around the focus distance stays exactly sharp (the speakers), the aperture shrinks for far focus (a wide
+  // establishing shot keeps its street readable, a two-shot at 4 m softens what is behind) and the near field is capped.
+  // Before (coordinator play-through): |z - f| / z * 1.6 hit full blur at 1.4 x the focus distance and the gather spread
+  // 18 full-resolution pixels, so the whole frame smeared.
+  var DOF_COC = [
+    'uniform float dofBand, dofNearMax;',
+    'float gtpCoc( float z, float f, float ap ) {',
+    '  float r = max( abs( z - f ) / max( z, 0.1 ) - dofBand, 0.0 ) * ap * clamp( 6.0 / max( f, 0.5 ), 0.3, 1.0 );',
+    '  return z < f ? min( r, dofNearMax ) : min( r, 1.0 );',
+    '}'].join('\n');
+  var DOF_RADIUS = '6.0';
   var DOF_F = [
     'uniform sampler2D tDiffuse, tDepth; uniform vec2 texel; uniform float focus, aperture, cameraNear, cameraFar;',
     'varying vec2 vUv;',
+    DOF_COC,
     'float linDepth( float d ) { float z = d * 2.0 - 1.0; return ( 2.0 * cameraNear * cameraFar ) / ( cameraFar + cameraNear - z * ( cameraFar - cameraNear ) ); }',
-    'float coc( vec2 uv, float f ) { float z = linDepth( texture2D( tDepth, uv ).x ); return clamp( abs( z - f ) / max( z, 0.5 ) * aperture, 0.0, 1.0 ); }',
     'void main() {',
     '  float f = focus;',
     '  if ( f <= 0.0 ) f = linDepth( texture2D( tDepth, vec2( 0.5 ) ).x );',
-    '  float c0 = coc( vUv, f );',
+    '  float z0 = linDepth( texture2D( tDepth, vUv ).x );',
+    '  float c0 = gtpCoc( z0, f, aperture );',
     '  vec3 acc = texture2D( tDiffuse, vUv ).rgb; float w = 1.0;',
-    '  for ( int i = 0; i < 20; i ++ ) {',
-    '    float r = sqrt( ( float( i ) + 0.5 ) / 20.0 ), a = float( i ) * 2.39996;',
-    '    vec2 o = vec2( cos( a ), sin( a ) ) * r * 9.0 * texel;',
-    '    float cs = coc( vUv + o * c0, f );',
-    '    float ww = cs >= c0 * 0.6 ? 1.0 : 0.25;',
-    '    acc += texture2D( tDiffuse, vUv + o * c0 ).rgb * ww; w += ww;',
+    '  if ( c0 > 0.02 ) {',
+    '    for ( int i = 0; i < 20; i ++ ) {',
+    '      float r = sqrt( ( float( i ) + 0.5 ) / 20.0 ), a = float( i ) * 2.39996;',
+    '      vec2 uv = vUv + vec2( cos( a ), sin( a ) ) * r * ' + DOF_RADIUS + ' * c0 * texel;',
+    '      float zs = linDepth( texture2D( tDepth, uv ).x ), cs = gtpCoc( zs, f, aperture );',
+    // a sharper sample in front of this pixel (the in-focus speaker before a soft wall) must not bleed a halo into it
+    '      float ww = ( zs < z0 && cs < c0 * 0.5 ) ? 0.0 : 1.0;',
+    '      acc += texture2D( tDiffuse, uv ).rgb * ww; w += ww;',
+    '    }',
     '  }',
     '  gl_FragColor = vec4( acc / w, c0 );',
     '}'].join('\n');
@@ -241,6 +258,7 @@
   var COMPOSITE_F = [
     'uniform sampler2D tDiffuse, tBloom, tAO, tDepth, tSSR, tDof;',
     'uniform float useSSR, useDof, dofFocus, dofAperture;',
+    DOF_COC,
     'uniform float bloomStrength, aoStrength, exposure, vignette, grain, time, saturation, contrast, useAO, useBloom;',
     'uniform vec3 lift, gamma, gain, shadowTint, highlightTint, fogColor, sunColor, fogTint;',
     'uniform float fogDensity, fogHeight, fogBase, sunGlow, split;',
@@ -264,8 +282,9 @@
     '  if (useSSR > 0.5) { vec4 r = texture2D(tSSR, vUv); c = c * (1.0 - r.a * 0.45) + r.rgb; }',
     '  if (useDof > 0.5) {',
     '    float f = dofFocus > 0.0 ? dofFocus : linDepthC( texture2D( tDepth, vec2( 0.5 ) ).x );',
-    '    float z = linDepthC( d ), k = clamp( abs( z - f ) / max( z, 0.5 ) * dofAperture, 0.0, 1.0 );',
-    '    c = mix( c, texture2D( tDof, vUv ).rgb, smoothstep( 0.05, 0.45, k ) );',
+    // the full-resolution frame where the blur is under ~1.5 px (the focal plane stays crisp), the half-resolution gather above
+    '    float k = gtpCoc( linDepthC( d ), f, dofAperture );',
+    '    c = mix( c, texture2D( tDof, vUv ).rgb, smoothstep( 0.04, 0.25, k ) );',
     '  }',
     '  if (useAO > 0.5) { float ao = texture2D(tAO, vUv).x; c *= mix(1.0, ao, aoStrength); }',
     // height fog from depth: denser low down, tinted toward the sun where the view looks into it
@@ -392,7 +411,7 @@
       M.down = mat(DOWN_F, { tDiffuse: { value: null }, texel: { value: new THREE.Vector2(1, 1) } });
       M.up = mat(UP_F, { tDiffuse: { value: null }, tPrev: { value: null }, texel: { value: new THREE.Vector2(1, 1) }, prevWeight: { value: 1.0 } });
       M.composite = mat(COMPOSITE_F, {
-        tDiffuse: { value: null }, tBloom: { value: null }, tAO: { value: null }, tDepth: { value: null }, tSSR: { value: null }, tDof: { value: null }, useSSR: { value: 0 }, useDof: { value: 0 }, dofFocus: { value: 0 }, dofAperture: { value: 1.6 },
+        tDiffuse: { value: null }, tBloom: { value: null }, tAO: { value: null }, tDepth: { value: null }, tSSR: { value: null }, tDof: { value: null }, useSSR: { value: 0 }, useDof: { value: 0 }, dofFocus: { value: 0 }, dofAperture: { value: 0.6 }, dofBand: { value: 0.12 }, dofNearMax: { value: 0.45 },
         bloomStrength: { value: 0.55 }, aoStrength: { value: 0.65 }, exposure: { value: 1.0 }, vignette: { value: 0.38 }, grain: { value: 0.0 }, time: { value: 0 }, saturation: { value: 1.08 }, contrast: { value: 0.12 }, useAO: { value: 0 }, useBloom: { value: 1 },
         lift: { value: new THREE.Vector3(0, 0, 0) }, gamma: { value: new THREE.Vector3(1, 1, 1) }, gain: { value: new THREE.Vector3(1, 1, 1) }, shadowTint: { value: new THREE.Vector3(1, 1, 1) }, highlightTint: { value: new THREE.Vector3(1, 1, 1) },
         fogColor: { value: new THREE.Vector3(0.7, 0.8, 0.9) }, sunColor: { value: new THREE.Vector3(1, 0.95, 0.85) }, fogTint: { value: new THREE.Vector3(1, 1, 1) }, fogDensity: { value: 0.0025 }, fogHeight: { value: 42 }, fogBase: { value: -2 }, sunGlow: { value: 0.75 }, split: { value: 0.35 },
@@ -402,7 +421,7 @@
       M.taa = mat(TAA_F, { tCur: { value: null }, tHist: { value: null }, tDepth: { value: null }, invViewProj: { value: new THREE.Matrix4() }, prevViewProj: { value: new THREE.Matrix4() }, resolution: { value: new THREE.Vector2(1, 1) }, blend: { value: 0.1 } });
       M.mblur = mat(MBLUR_F, { tDiffuse: { value: null }, tDepth: { value: null }, invViewProj: { value: new THREE.Matrix4() }, prevViewProj: { value: new THREE.Matrix4() }, amount: { value: 0 } });
       M.ssr = mat(SSR_F, { tColor: { value: null }, tDepth: { value: null }, tNoise: { value: null }, resolution: { value: new THREE.Vector2(1, 1) }, projection: { value: new THREE.Matrix4() }, inverseProjection: { value: new THREE.Matrix4() }, cameraWorld: { value: new THREE.Matrix4() }, wet: { value: 0 }, cameraNear: { value: 0.3 }, cameraFar: { value: 1500 } });
-      M.dof = mat(DOF_F, { tDiffuse: { value: null }, tDepth: { value: null }, texel: { value: new THREE.Vector2(1, 1) }, focus: { value: 0 }, aperture: { value: 1.6 }, cameraNear: { value: 0.3 }, cameraFar: { value: 1500 } });
+      M.dof = mat(DOF_F, { tDiffuse: { value: null }, tDepth: { value: null }, texel: { value: new THREE.Vector2(1, 1) }, focus: { value: 0 }, aperture: { value: 0.6 }, dofBand: { value: 0.12 }, dofNearMax: { value: 0.45 }, cameraNear: { value: 0.3 }, cameraFar: { value: 1500 } });
       F._prevVP = new THREE.Matrix4(); F._curVP = new THREE.Matrix4(); F._invVP = new THREE.Matrix4(); F._lastCam = { p: new THREE.Vector3(), q: new THREE.Quaternion(), fov: 0 };
       // a plain blit with an sRGB curve: the debug views (PostFX.debugView = 'scene' | 'thresh' | 'bloom' | 'ao' | 'depth' | 'down0'..'down3' | 'up0'..'up2')
       M.copy = mat('uniform sampler2D tDiffuse; uniform float gainK; varying vec2 vUv; void main() { vec3 raw = texture2D(tDiffuse, vUv).rgb; if (raw.r != raw.r || raw.g != raw.g || raw.b != raw.b) { gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; } if (raw.r > 1e5 || raw.g > 1e5 || raw.b > 1e5) { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); return; } vec3 c = clamp(raw * gainK, 0.0, 1.0); gl_FragColor = vec4(pow(c, vec3(1.0 / 2.2)), 1.0); }', { tDiffuse: { value: null }, gainK: { value: 1 } });
@@ -552,7 +571,7 @@
         if (F.flags.dof && Rd.dofActive) {
           var du = M.dof.uniforms;
           du.tDiffuse.value = hdr; du.tDepth.value = F._rt.depthTexture; du.texel.value.set(1 / F._dofRT.width, 1 / F._dofRT.height);
-          du.focus.value = Rd.dofFocus || 0; du.aperture.value = Rd.dofAperture || 1.6; du.cameraNear.value = camera.near; du.cameraFar.value = camera.far;
+          du.focus.value = Rd.dofFocus || 0; du.aperture.value = Rd.dofAperture != null ? Rd.dofAperture : 0.6; du.dofBand.value = Rd.dofBand != null ? Rd.dofBand : 0.12; du.dofNearMax.value = Rd.dofNearMax != null ? Rd.dofNearMax : 0.45; du.cameraNear.value = camera.near; du.cameraFar.value = camera.far;
           F._pass(M.dof, F._dofRT); dofTex = F._dofRT.texture; F.stats.dof = true;
         }
         // 2. SSAO at half resolution + bilateral blur
@@ -592,7 +611,7 @@
         var cu = M.composite.uniforms;
         cu.tDiffuse.value = hdr; cu.tBloom.value = bloomTex; cu.tAO.value = aoTex; cu.tDepth.value = F._rt.depthTexture;
         cu.tSSR.value = ssrTex; cu.useSSR.value = ssrTex ? 1 : 0; cu.tDof.value = dofTex; cu.useDof.value = dofTex ? 1 : 0;
-        cu.dofFocus.value = Rd.dofFocus || 0; cu.dofAperture.value = Rd.dofAperture || 1.6;
+        cu.dofFocus.value = M.dof.uniforms.focus.value; cu.dofAperture.value = M.dof.uniforms.aperture.value; cu.dofBand.value = M.dof.uniforms.dofBand.value; cu.dofNearMax.value = M.dof.uniforms.dofNearMax.value;
         cu.useAO.value = aoTex ? 1 : 0; cu.useBloom.value = bloomTex ? 1 : 0;
         cu.cameraNear.value = camera.near; cu.cameraFar.value = camera.far;
         cu.inverseProjection.value.copy(camera.projectionMatrixInverse); cu.cameraWorld.value.copy(camera.matrixWorld);

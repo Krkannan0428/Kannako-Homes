@@ -782,7 +782,9 @@
     },
     // what the post pass needs from the game: depth of field while a cutscene runs (focused on what its camera looks
     // at), motion blur by the speed of the player's vehicle
-    dofActive: false, dofFocus: 0, dofAperture: 1.6, motionBlur: 0,
+    // dofAperture: the blur of the far background at a close focus (0..1 of the gather radius); dofBand: the share of the
+    // focus distance kept exactly sharp each side; dofNearMax: the cap on the foreground blur (10b_postfx.js gtpCoc)
+    dofActive: false, dofFocus: 0, dofAperture: 0.6, dofBand: 0.12, dofNearMax: 0.45, motionBlur: 0,
     _postInputs: function (cam) {
       var CS = GTP.Cutscenes, p = GTP.game && GTP.game.player;
       Render.dofActive = !!(CS && CS.active);
@@ -2047,55 +2049,90 @@
     },
 
     // ------------------------------------------------------------- markers --
-    // Mission markers: a translucent cylinder of light (blue: an available mission at a giver's door,
-    // yellow: the current objective) with a bright core and a ground ring. Missions owns the list and
-    // positions; Render owns the look. userData.pulse(k) breathes the opacity (k 0..1).
+    // Mission markers: a narrow soft column of light (blue: an available mission at a giver's door, yellow: the current
+    // objective) over a crisp ground ring. Missions owns the list and positions; Render owns the look. userData.pulse(k)
+    // breathes the opacity (k 0..1).
+    // The coordinator's play-through: the column was 3.2 m wide, additive and saturated; standing or aiming in it put
+    // the chase camera's view through its wall, so the player and the whole frame turned blue (and bloomed). Now the
+    // column is under 1 m wide, a lighter tint with normal blending (no bloom pickup), and it fades out within a few
+    // metres of the camera (Render.markerFade: per pixel, by view distance), so a camera at or inside it sees through it;
+    // the ground ring stays crisp. Anything added to a marker later (09_missions' story beacon) gets the same fade.
     markerGroup: null,
+    MARKER_FADE: { near: 3.5, far: 11 },
     _markerTex: function () {
       if (Render._mtex) return Render._mtex;
       var cv = document.createElement('canvas'); cv.width = 8; cv.height = 128;
       var ctx = cv.getContext('2d'), g = ctx.createLinearGradient(0, 0, 0, 128);
-      g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.45, 'rgba(255,255,255,0.35)'); g.addColorStop(0.92, 'rgba(255,255,255,0.95)'); g.addColorStop(1, 'rgba(255,255,255,0.6)');
+      // canvas top = the column's top (v = 1); the ring samples the bottom row (v ~ 0.015), the disc a dim middle row
+      g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.16)'); g.addColorStop(0.9, 'rgba(255,255,255,0.42)'); g.addColorStop(0.965, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,1)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, 8, 128);
       var tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
       Render._mtex = tex;
       return tex;
     },
-    // one shared geometry per size: the tube, a brighter core, the ground ring and a dim disc merged into a single draw;
-    // the ring and disc sample fixed rows of the gradient (bright near the bottom, dim higher up)
+    // one shared geometry per size: the column, a thin core, the ground ring and a dim disc merged into a single draw;
+    // the ring and disc sample fixed rows of the gradient. `gtpCol` marks the column (faded near the camera) apart from
+    // the ground parts (always drawn). r is the footprint (the ring); the column is at most 0.4 m in radius.
     _markerGeo: function (r, h) {
       Render._mgeo = Render._mgeo || {};
       var key = r.toFixed(2) + 'x' + h.toFixed(2);
       if (Render._mgeo[key]) return Render._mgeo[key];
-      var parts = [], m = new THREE.Matrix4();
-      function add(g, mat, u, v) {
+      var parts = [], m = new THREE.Matrix4(), rc = Math.min(0.4, r * 0.3);
+      function add(g, mat, u, v, col) {
         if (g.index) g = g.toNonIndexed();
         if (u != null) { var a = g.attributes.uv.array; for (var i = 0; i < a.length; i += 2) { a[i] = u; a[i + 1] = v; } }
-        g.applyMatrix4(mat); parts.push(g);
+        g.applyMatrix4(mat); g.userData.col = col; parts.push(g);
       }
-      add(new THREE.CylinderGeometry(r, r, h, 28, 1, true), m.makeTranslation(0, h / 2, 0));
-      add(new THREE.CylinderGeometry(r * 0.45, r * 0.45, h * 0.8, 16, 1, true), m.makeTranslation(0, h * 0.4, 0));
-      add(new THREE.RingGeometry(r * 0.78, r * 1.18, 40), m.makeRotationX(-Math.PI / 2).setPosition(0, 0.07, 0), 0.5, 0.04);
-      add(new THREE.CircleGeometry(r * 0.8, 32), m.makeRotationX(-Math.PI / 2).setPosition(0, 0.06, 0), 0.5, 0.45);
+      add(new THREE.CylinderGeometry(rc, rc, h, 20, 1, true), m.makeTranslation(0, h / 2, 0), null, null, 1);
+      add(new THREE.CylinderGeometry(rc * 0.4, rc * 0.4, h * 0.85, 10, 1, true), m.makeTranslation(0, h * 0.425, 0), null, null, 1);
+      add(new THREE.RingGeometry(r * 0.86, r, 48), m.makeRotationX(-Math.PI / 2).setPosition(0, 0.07, 0), 0.5, 0.015, 0);
+      add(new THREE.CircleGeometry(r * 0.86, 40), m.makeRotationX(-Math.PI / 2).setPosition(0, 0.06, 0), 0.5, 0.5, 0);
       var n = 0, i;
       for (i = 0; i < parts.length; i++) n += parts[i].attributes.position.count;
-      var pos = new Float32Array(n * 3), uv = new Float32Array(n * 2), o = 0;
-      for (i = 0; i < parts.length; i++) { var g = parts[i]; pos.set(g.attributes.position.array, o * 3); uv.set(g.attributes.uv.array, o * 2); o += g.attributes.position.count; g.dispose(); }
+      var pos = new Float32Array(n * 3), uv = new Float32Array(n * 2), col = new Float32Array(n), o = 0;
+      for (i = 0; i < parts.length; i++) { var g = parts[i], c = g.attributes.position.count; pos.set(g.attributes.position.array, o * 3); uv.set(g.attributes.uv.array, o * 2); col.fill(g.userData.col, o, o + c); o += c; g.dispose(); }
       var geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); geo.setAttribute('gtpCol', new THREE.BufferAttribute(col, 1));
       geo.userData.shared = true;
       Render._mgeo[key] = geo;
       return geo;
     },
+    // the near-camera fade for a marker material (once per material; one shared program per variant). With `byPart`
+    // only the vertices marked gtpCol fade (the column); without it the whole mesh does (a beacon added by Missions).
+    markerFade: function (mat, byPart) {
+      if (!mat || !mat.isMaterial || mat.userData.gtpFade) return mat;
+      mat.userData.gtpFade = true;
+      var FU = Render._markerFadeU || (Render._markerFadeU = { value: new THREE.Vector2(Render.MARKER_FADE.near, Render.MARKER_FADE.far) });
+      mat.onBeforeCompile = function (sh) {
+        sh.uniforms.uGtpFade = FU;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\n' + (byPart ? 'attribute float gtpCol;\n' : '') + 'varying vec3 vGtpMv;\nvarying float vGtpCol;')
+          .replace('#include <project_vertex>', '#include <project_vertex>\n  vGtpMv = mvPosition.xyz; vGtpCol = ' + (byPart ? 'gtpCol' : '1.0') + ';');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\nuniform vec2 uGtpFade;\nvarying vec3 vGtpMv;\nvarying float vGtpCol;')
+          .replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n  diffuseColor.a *= mix( 1.0, smoothstep( uGtpFade.x, uGtpFade.y, length( vGtpMv ) ), vGtpCol );');
+      };
+      mat.customProgramCacheKey = function () { return byPart ? 'gtpMarkerFadeCol' : 'gtpMarkerFade'; };
+      mat.needsUpdate = true;
+      return mat;
+    },
     markerMesh: function (color, opts) {
       opts = opts || {};
       var r = opts.radius || 1.6, h = opts.height || 7.5;
-      var mat = new THREE.MeshBasicMaterial({ map: Render._markerTex(), color: color, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false });
+      // a lighter, softer tint of the marker's colour, normal blending (additive bloomed and tinted what was behind it)
+      var tint = new THREE.Color(color).lerp(Render._markerWhite || (Render._markerWhite = new THREE.Color(1, 1, 1)), 0.35);
+      var mat = new THREE.MeshBasicMaterial({ map: Render._markerTex(), color: tint, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, fog: false });
+      Render.markerFade(mat, true);
       var mesh = new THREE.Mesh(Render._markerGeo(r, h), mat);
       mesh.renderOrder = 8; mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false; mesh.name = 'light';
       var grp = new THREE.Group();
       grp.add(mesh);
-      grp.userData = { color: color, mesh: mesh, pulse: function (k) { mat.opacity = 0.42 + 0.26 * k; } };
+      // a mesh added to the marker afterwards (09_missions' story beacon) fades near the camera too, so it cannot tint the frame
+      grp.add = function () {
+        for (var i = 0; i < arguments.length; i++) { var o = arguments[i]; if (o && o.isMesh) Render.markerFade(o.material, false); }
+        return THREE.Group.prototype.add.apply(this, arguments);
+      };
+      grp.userData = { color: color, mesh: mesh, pulse: function (k) { mat.opacity = 0.7 + 0.3 * k; } };
       grp.name = 'marker';
       return grp;
     },
