@@ -80,6 +80,7 @@
       posDamp: 12, yawDamp: 6, fovDamp: 4,
       fovSpeedMax: 75, fovSpeedAt: 35,
       collisionPad: 0.3,
+      near: 0.3, nearFirst: 0.1,   // camera near plane; first person on foot sits 0.25 m from a wall it faces (QA-A-CAM-02)
       shakeDecay: 5
     },
 
