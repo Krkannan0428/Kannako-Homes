@@ -57,7 +57,8 @@ upheld, 1 split, 2 refuted; every upheld one is fixed above), and measured probe
 - `tests/content_audit.js`: **PASS** (238 files, 0 hits).
 - `tests/all.js` on the branch: 13 of 32 files pass; `strangers.js` failed in that run on `st_gasp_2`'s jump and is fixed
   (above); the other 18 failures all reproduce with the strangers module stubbed out, with the same assertions, and
-  belong to other tracks: see `docs/v03/triage_strangers.md`.
+  belong to other tracks: see `docs/v03/triage_strangers.md`, which also has the root cause and a verified one-line test fix
+  for the `strands.js` race start (a systems property modal left open under the player, the same family as `st_ghost_1`).
 
 ## Still open
 

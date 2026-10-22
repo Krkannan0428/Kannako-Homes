@@ -31,9 +31,34 @@ rows: `missions.js` (the count) and `feel.js` (one more lit marker). Neither ass
 | `newplayer.js` | qa-b (tests/newplayer.js) | the new-player bar is not met; missing steps: m01c, save, ten_min | the new-player bar is not met; missing steps: m01c, save, ten_min | yes | new-player bar steps `m01c`, `save`, `ten_min` not reached |
 | `saves.js` | story (tests/saves.js / 30_game.js) | missions, flags, best times and the next light come back: m01c_both_sides | missions, flags, best times and the next light come back: m01c_both_sides | yes | the restored "next light" is `m01c_both_sides`, not what the test expects (chain change from the parity track) |
 | `story.js` | story | m01_van: the GPS and the call go to the next story mission: {"id":"m01_van","done":true,"next":null,"gps":null,"call":null,"chapter":[]} | m01_van: the GPS and the call go to the next story mission: {"id":"m01_van","done":true,"next":null,"gps":null,"call":null,"chapter":[]} | yes | after `m01_van` `Story.next()` is null: no GPS, no call, no chapter |
-| `strands.js` | story (09_missions.js GTP.Strands / tests/strands.js) | braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}} | braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}} | yes | the player never gets into the car at the Loop Race start, so no race starts |
+| `strands.js` | story (09_missions.js GTP.Strands / tests/strands.js) | braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}} | braking on the start line for a second starts the race: three racers, eight rings, a countdown: {"inCar":false,"s":-1,"active":null,"racers":0,"cps":0,"countdown":null,"rings":0,"hud":{"active":false}} | yes | the player never gets into the car at the Loop Race start: a property modal left open by the Sponsor Runs step (root cause below) |
 | `systems.js` | systems | tables: {"tickers":8,"holes":9,"ach":26,"cheats":8,"jobs":2,"props":11,"safes":5,"wrapped":true,"reg":8,"hook":true,"marks":11,"minimap":11,"untouched":true,"holeLens":[34,29,27,72,29,27,27,65,73],"course":{"x0":516,"z0":92,"x1":5... | tables: {"tickers":8,"holes":9,"ach":26,"cheats":8,"jobs":2,"props":11,"safes":5,"wrapped":true,"reg":8,"hook":true,"marks":11,"minimap":11,"untouched":true,"holeLens":[34,29,27,72,29,27,27,65,73],"course":{"x0":516,"z0":92,"x1":5... | yes | the "tables" assertion (tickers, holes, achievements, cheats, jobs, properties ...) |
 | `ui.js` | ui / radio | the mattress ad runs at minute 20 on every station | the mattress ad runs at minute 20 on every station | yes | the Nap Dynasty ad no longer runs at minute 20 on every station |
 | `ui_v03.js` | ui / vehicles | a paint previews through Vehicles.mod, BUY pays and emits shop:buy: {"focus":1,"previews":1,"preview":"#d7262e","money0":20000,"money1":20000,"applied":null,"ev":null,"engPreview":1} | a paint previews through Vehicles.mod, BUY pays and emits shop:buy: {"focus":1,"previews":1,"preview":"#d7262e","money0":20000,"money1":20000,"applied":null,"ev":null,"engPreview":1} | yes | a mod-shop paint preview through `Vehicles.mod` is never applied and BUY does not charge |
 | `vehicles.js` | vehicles | the jet ski leans into the turn with the rider on it: {"sp":12.92,"alt":0.2,"p":0.147,"r":-0.42,"hd":309,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":174,"z":533} | the jet ski leans into the turn with the rider on it: {"sp":12.92,"alt":0.2,"p":0.147,"r":-0.42,"hd":309,"thr":0.707,"gear":"F","og":true,"wreck":false,"x":174,"z":533} | yes | the jet ski does not lean into the turn with the rider on it |
 
+## Root cause: `strands.js`, the Loop Race never starts (coordinator item "strands race start")
+
+Diagnosed in the stubbed worktree (the strangers module removed), so it is not a strangers issue, but it is the same
+family as the round-1 `st_ghost_1` bug: a systems property marker opening its purchase modal under the player.
+
+- Step 3 of `tests/strands.js` (Sponsor Runs) leaves the player at the Fish Shack drop, `tests/strands.js:104`
+  (`dest.x + 2`), and waits out the 15 s (`:108-109`). That spot is the `biz_fish_shack` for-sale marker
+  (`js/14_systems.js:125`, radius 1.9 at `:1389`).
+- While the strand runs, `busy()` (`js/14_systems.js:1399`) holds the marker. The strand ends at about t 34.9
+  (`js/09_missions.js:3513`); about 0.5 s later, during `T_.reset()`, `tickMarkers` fires `openProperty`
+  (`js/14_systems.js:1411-1417` → `:411`). The UI opens `openModal('property')` (`js/11_ui.js:4945` → `:4357`), which
+  sets `player.controlEnabled = false`, and the modal stays open (`GTP.UI.modal()` still reads `property:biz_fish_shack`).
+- Steps 4 and 5 pass anyway because they use teleports and direct calls. Step 6 presses `enter` and the brake, which
+  `Player.control` ignores (`js/06_entities.js:1005` returns early). The car, the door, the lock and the input are fine;
+  step 6 alone passes. There is exactly one false-write to `controlEnabled` on that path.
+- **Test fix (story track, `tests/strands.js`)**: in `T_.reset()` (line 27) add `if (GTP.UI.modal()) GTP.UI.closeModal();`
+  after `T_.leave();`. A scratch copy with only that change passes the whole file (in the car, three racers, eight rings,
+  countdown 3).
+- **Game fix (systems track, optional)**: `js/14_systems.js` disarms the markers under the player when golf and job runs
+  end (`:760`, `:1192`) but not when a strand ends, so in real play finishing a strand on a for-sale marker pops the
+  property screen by itself. Calling `disarmNear()` on `strand:end`, next to the `strand:start` listener at `:1541`, closes
+  that gap.
+
+Probe scripts: `/tmp/claude-0/-home-user-Kannako-Homes/2f5773d0-ad2b-5087-8974-834ab085a62c/scratchpad/agent_strands/`
+(session scratch, not in the repo).
