@@ -242,7 +242,8 @@
       songs: [
         {
           // smooth sax over I vi IV V verses and a IV V vi I chorus; the last two
-          // choruses go up a fifth (shift 4: the melody moves to the dominant)
+          // choruses move to the dominant's chords (shift -3: V vi I ii, same pitch
+          // classes as a fifth up, an octave lower so the sax stays in its range)
           id: 'ten_theme', title: 'Ten Out of Ten (Theme)', artist: 'The Goldplate Pops Orchestra',
           fill: { k: 'x.....x.x.......', s: '....x.......x.xx', h: 'x.x.x.x.x.x.....' },
           sections: {
@@ -277,7 +278,7 @@
               k: ['x.....x.x.......', 'x.....x.x.......', 'x.......x.......', 'x...............'], s: ['....x.......x...', '....x.......x...', D0, D0], h: '..x...x...x...x.'
             }
           },
-          form: 'I A A2 B A A2! B Br! B^4 B^4! O'
+          form: 'I A A2 B A A2! B Br! B^-3 B^-3! O'
         },
         {
           // bossa: a 3-2 clave on the rim, root-fifth bass, a stepwise melody; the
@@ -286,16 +287,16 @@
           swing: 0.08, sustain: 0.7,
           fill: { k: 'x..x....x..x....', s: 'x..x..x...x.xxxx', h: 'x.x.x.x.x.x.x.x.' },
           sections: {
-            I: { c: [0, 0], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .', k: 'x..x....x..x....', s: 'x..x..x...x.x...', h: 'x.x.x.x.x.x.x.x.' },
+            I: { c: [0, 0], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .', k: 'x..x....x..x....', s: 'x..x..x...x..x..', h: 'x.x...x.x.x...x.' },
             A: {
               c: [0, 1, 2, 1], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
               l: ['4 . . 4 . . 2 . . . . . 4 . . .', '5 . . 5 . . 3 . . . . . 1 . . .', '6 . . 6 . . 4 . . . . . 2 . . .', '5 . . . 3 . . . 1 . . . . . . .'],
-              k: 'x..x....x..x....', s: 'x..x..x...x.x...', h: 'x.x.x.x.x.x.x.x.'
+              k: 'x..x....x..x....', s: 'x..x..x...x..x..', h: 'x.x...x.x.x...x.'
             },
             A2: {
               c: [0, 1, 2, 1], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
               l: ['4 . . 4 . . 2 . . . . . 4 . 5 .', '7 . . . 5 . . . 3 . . . . . . .', '6 . . 6 . . 4 . 2 . . . 4 . . .', '1 . . . . . . . . . . . . . . .'],
-              k: 'x..x....x..x....', s: 'x..x..x...x.x...', h: 'x.x.x.x.x.x.x.x.'
+              k: 'x..x....x..x....', s: 'x..x..x...x..x..', h: 'x.x...x.x.x...x.'
             },
             B: {
               c: [3, 3, 4, 4], rb: true, b: '0 . . 4 4 . . . 0 . . 4 4 . . .',
@@ -307,7 +308,7 @@
               l: ['9 . . . 7 . 5 . . . . . . . . .', '8 . . . 5 . 3 . . . . . . . . .', '6 . . 8 . . 10 . 11 . . . . . . .', '7 . . . . . . . . . . . . . . .'],
               k: 'x..x....x..x....', s: '..x..x....x..x..', h: 'xxx.xxx.xxx.xxx.'
             },
-            O: { c: [0, 0], rb: true, b: '0 . . 4 4 . . . 0 . . . . . . .', l: ['7 . . . 4 . . . 0 . . . . . . .', R0], s: ['x..x..x...x.x...', D0], h: 'x.x.x.x.x.x.....' }
+            O: { c: [0, 0], rb: true, b: '0 . . 4 4 . . . 0 . . . . . . .', l: ['7 . . . 4 . . . 0 . . . . . . .', R0], s: ['x..x..x...x..x..', D0], h: 'x.x.x.x.x.x.....' }
           },
           form: 'I A A2 B B2! A A2 B B2! A^1 A2^1! O'
         },
@@ -317,11 +318,16 @@
           swing: 0.15, sustain: 1.2,
           fill: { k: 'x.........x.....', s: '........x...x.xx', h: 'x.x.x.x.x.x.x.x.' },
           sections: {
-            I: { c: [0, 3], rb: true, b: '0 . . . . . . . . . . . . . . .', h: 'x.x.x.x.x.x.x.x.' },
+            I: { c: [0, 3], rb: true, b: '0 . . . . . . . . . . . . . . .', h: 'x.x...x.x.x...x.' },
             V: {
               c: [0, 2, 3, 4], rb: true, b: ['0 . . . . . . 0 . . 4 . . . . .', '0 . . . . . . 0 . . 4 . . . 2 .'],
               l: ['7 . . . . . . . 6 . . . 4 . . .', '6 . . . . . . . 4 . . . 2 . . .', '5 . . . . . . . 3 . . . 1 . . .', '4 . . . . . 2 . 1 . . . . . . .'],
-              k: ['x.........x.....', 'x......x..x.....'], s: '........x.......', h: 'x.x.x.x.x.x.x.x.'
+              k: ['x.........x.....', 'x......x..x.....'], s: '........x.......', h: 'x.x...x.x.x...x.'
+            },
+            V2: {
+              c: [0, 2, 3, 4], rb: true, b: ['0 . . . . . . 0 . . 4 . . . . .', '0 . . . . . . 0 . . 4 . . . 2 .'],
+              l: ['. . . . . . 4 5 7 . . . 9 . 7 .', '9 . . . . . . . 8 . 6 . 4 . . .', '. . . . 7 . 8 . 10 . . . 7 . . .', '8 . . . 6 . . . 4 . . . 6 . 8 .'],
+              k: ['x.........x.....', 'x......x..x.....'], s: '........x.......', h: 'x.x...x.x.x...x.'
             },
             C: {
               c: [3, 4, 2, 5], rb: true, b: '0 . . . . . . 0 . . 4 . 0 . . .',
@@ -330,18 +336,19 @@
             },
             O: { c: [0, 0], rb: true, b: '0 . . . . . . . . . . . . . . .', l: ['7 . . . . . . . . . . . 4 . . .', '7 . . . . . . . . . . . . . . .'], h: 'x...x...x...x...' }
           },
-          form: 'I V V! C V V! C C! O'
+          form: 'I V V2! C V V2! C C! O'
         },
         {
-          // a swung shuffle with a boogie walking bass; the last chorus goes up a step
+          // a shuffle: the sax and hats play long-short (off-beats on the 'a' of each beat, a
+          // light swing on top), a boogie walking bass; the last chorus goes up a step
           id: 'both_tens', title: 'Both Tens (Shuffle)', artist: 'The Ribbon Cutting Committee',
-          swing: 0.28, sustain: 0.6,
+          swing: 0.1, sustain: 0.6,
           fill: { k: 'x.......x.......', s: '....x.......xxxx', h: 'x.xxx.xxx.......' },
           sections: {
             A: {
               c: [0, 3, 0, 4], rb: true, b: ['0 . . . 2 . . . 4 . . . 5 . . .', '7 . . . 5 . . . 4 . . . 2 . . .'],
-              l: ['7 . 7 . 9 . 7 . 4 . . . 5 . 4 .', '10 . 10 . 12 . 10 . 7 . . . 8 . 7 .', '7 . 7 . 9 . 7 . 4 . . . 2 . 4 .', '8 . . . 6 . . . 4 . . . . . . .'],
-              k: 'x.......x.......', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
+              l: ['7 . . 7 9 . . 7 4 . . . 5 . . 4', '10 . . 10 12 . . 10 7 . . . 8 . . 7', '7 . . 7 9 . . 7 4 . . . 2 . . 4', '8 . . . 6 . . . 4 . . . . . . .'],
+              k: 'x.......x.......', s: '....x.......x...', h: 'x..x...xx..x...x'
             },
             B: {
               c: [3, 3, 0, 0], rb: true, b: ['0 . . . 2 . . . 4 . . . 5 . . .', '7 . . . 5 . . . 4 . . . 2 . . .'],
@@ -350,8 +357,8 @@
             },
             T: {
               c: [4, 3, 0, 4], rb: true, b: '0 . . . 2 . . . 4 . . . 5 . . .',
-              l: ['11 . . . 8 . . . 6 . . . 4 . . .', '10 . . . 7 . . . 5 . . . 3 . . .', '7 . 9 . 11 . 14 . . . . . . . . .', '8 . 9 . 10 . 11 . . . . . . . . .'],
-              k: 'x.......x.......', s: '....x.......x...', h: 'x.xxx.xxx.xxx.xx'
+              l: ['11 . . . 8 . . . 6 . . . 4 . . .', '10 . . . 7 . . . 5 . . . 3 . . .', '7 . . 9 11 . . 14 . . . . . . . .', '8 . . 9 10 . . 11 . . . . . . . .'],
+              k: 'x.......x.......', s: '....x.......x...', h: 'x..x...xx..x...x'
             },
             O: { c: [0, 0], rb: true, b: '0 . . . . . . . 0 . . . . . . .', l: ['7 . . . . . . . 4 . . . 7 . . .', '0 . . . . . . . . . . . . . . .'], k: ['x.......x.......', 'x...............'], s: ['....x.......x...', D0], h: 'x.xxx.xxx.......' }
           },
@@ -366,7 +373,7 @@
       tagline: 'Listening, never dancing.',
       genre: 'deep house with no drop, ice clinks, a spreadsheet read softly',
       bpm: 122, scale: 'minor', color: '#b56bff', kit: 'house',
-      swing: 0.08, sustain: 0.45, wave: { bass: 'triangle', lead: 'sine' },
+      swing: 0.08, sustain: 0.9, wave: { bass: 'triangle', lead: 'sine' },
       ads: [
         'Velvetine Listening Pier. A party you\'ll hear about.',
         'Velvetine Records. Nothing released. Still charting.',
@@ -452,9 +459,14 @@
               c: [0, 5, 2, 6], rb: true, b: '0 . . . 0 . . . 0 . . . 0 . . .', l: [R0, R0, '7 . 7 . 9 . 9 . 11 . 11 . 12 . 12 .', '14 . 14 . 14 . 14 . 14 14 14 14 . . . .'],
               k: 'x...x...x...x...', s: ['x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'xxxxxxxxxxxxxxxx', 'xxxxxxxxxxxx....'], h: 'xxxxxxxxxxxxxxxx'
             },
+            K: {
+              c: [0, -2, 2, -1], rb: true, sus: 1.0, b: ['0 . . 0 . . 0 . . . 0 . . 0 . .', '0 . . 0 . . 0 . . . 7 . . 0 . .'],
+              l: ['7 . . 9 . . 11 . . . 9 . . 7 . .', '7 . . 9 . . 12 . . . 9 . . 7 . .', '6 . . 9 . . 11 . . . 9 . . 6 . .', '5 . . 8 . . 10 . . . 8 . . 5 . .'],
+              k: 'x...x...x...x...', s: '....x.......x...', h: '..xx..xx..xx..xx'
+            },
             N: { c: [0], l: '14 . . . . . . . . . . . . . . .' }
           },
-          form: 'In A A C C! B U N A C^4 C^4! In'
+          form: 'In A A C C! B U N A K^4 K^4! In'
         },
         {
           id: 'drop_is_coming', title: 'The Drop Is Coming (It Is Not)', artist: 'Afterparty Allstars',
@@ -492,10 +504,10 @@
             },
             R: {
               c: [0, 3, 5, 4], rb: true, b: ['0 . . . . . 0 . . 0 . . 4 . . .', '0 . . . . . 0 . . 0 . . 7 . 4 .'],
-              l: ['7 7 . 7 . 7 7 . . 7 . 7 7 7 . .', '7 . 7 7 . . 7 . 7 7 . . 6 . . .', '7 7 . 7 . 7 7 . . 7 . 7 9 . . .', '8 . 8 8 . . 8 . . . 7 . . . . .'],
+              l: ['7 7 . 7 . 7 7 . . 7 . 7 7 7 . .', '7 . 7 7 . . 7 . 7 7 . . 5 . . .', '7 7 . 7 . 7 7 . . 7 . 7 9 . . .', '8 . 8 8 . . 8 . . . 7 . . . . .'],
               k: 'x...x...x...x...', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.'
             },
-            B: { c: [0, 3, 5, 4], sus: 3, l: ['14 . . . . . . . . . . . . . . .', '12 . . . . . . . . . . . . . . .', '12 . . . . . . . 14 . . . . . . .', '11 . . . . . . . . . . . . . . .'], h: '....x.......x...' }
+            B: { c: [0, 5, 3, 5], sus: 3, l: ['14 . . . . . . . . . . . . . . .', '12 . . . . . . . . . . . . . . .', '12 . . . . . . . 14 . . . . . . .', '11 . . . . . . . . . . . . . . .'], h: '....x.......x...' }
           },
           form: 'In G G R R! B G R^2 R^2! In'
         }
