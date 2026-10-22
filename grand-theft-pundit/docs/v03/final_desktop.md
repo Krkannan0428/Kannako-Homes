@@ -106,11 +106,23 @@ On GitHub (pushes to `v03/desktop`):
     `window.close()`); both are fixed in 5f6da67.
   - macOS: built both DMGs and zips, but the DMG art check was looking in the wrong place (the
     art is there as `.background.tiff`), so the later Mac steps were skipped; fixed in 5f6da67.
-- The CI result for the latest push is under "CI on the final commit" below.
+- The CI results for the later pushes are under "CI on the final commits" below.
 
-## CI on the final commit
+## CI on the final commits
 
-(see the section appended below)
+- **Run 39847748149** (5f6da67, all app and test code final):
+  - **Windows: green.** The build, `latest.yml` and the installer blockmap, the fuse check, and
+    the launch test on the packaged app all passed. The launch test covered the title, mods, the
+    navigation lock with the drop reaching the page, no errors, the saved window size, the
+    broken-mod report and the save on quit.
+  - **Linux build + fuses: green.**
+  - **Linux smoke (AppImage, title through New Game to the first objective): green.**
+  - **macOS:** built both DMGs and zips with `latest-mac.yml`, then failed only at the DMG art
+    check. Under `pipefail` an `ls | grep` pipeline failed although `.background.tiff` was there.
+    2022a33 replaces it with `[ -f ]` tests, which pass and fail correctly on fake DMG folders
+    under `bash -eo pipefail`; actionlint is clean.
+- **Run 39849433387** (2022a33, the workflow fix only): the first run whose macOS job reaches the
+  fuse, code-signature and Apple Silicon launch steps. Result: see "macOS result" below.
 
 ## Known issues
 
