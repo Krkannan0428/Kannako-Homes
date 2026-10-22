@@ -1582,9 +1582,11 @@
   function slotsOf(g) {
     if (!g || !g.slots) return [];
     var c = ui.slotCache;
-    if (c && c.frame === g.frames && c.steps === g.steps && !c.dirty) return c.list;
+    // decoded once until a save, delete, migration, load, state change or storage event marks it dirty (QA-D SAVE-18), and at
+    // most once every 2 s otherwise (a write from another tab with no storage event)
+    if (c && !c.dirty && ui.t - c.t < 2) return c.list;
     var list = []; try { list = g.slots() || []; } catch (e) { list = []; }
-    ui.slotCache = { frame: g.frames, steps: g.steps, list: list, dirty: false };
+    ui.slotCache = { t: ui.t, list: list, dirty: false };
     return list;
   }
   function slotsDirty() { if (ui.slotCache) ui.slotCache.dirty = true; }
@@ -1621,7 +1623,7 @@
       var bb = [], by = cy + ch - px(38), bh = px(28);
       if (mode === 'load') { if (s.corrupt) { bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else if (!s.empty) { bb.push({ id: 'load', label: 'LOAD', col: COL.lime }); bb.push({ id: 'delete', label: 'DELETE', col: COL.red }); } else bb.push({ id: 'new', label: 'NEW GAME HERE', col: COL.cyan }); }
       else if (mode === 'new') bb.push(!slotUsed(s) ? { id: 'new', label: 'START HERE', col: COL.lime } : { id: 'new', label: 'OVERWRITE', col: COL.red });
-      else if (mode === 'save') bb.push(s.empty ? { id: 'save', label: 'SAVE HERE', col: COL.lime } : { id: 'save', label: 'OVERWRITE', col: COL.amber });
+      else if (mode === 'save') bb.push(!slotUsed(s) ? { id: 'save', label: 'SAVE HERE', col: COL.lime } : { id: 'save', label: 'OVERWRITE', col: COL.amber });
       var bx = cx + px(14), tot = 0;
       for (k = 0; k < bb.length; k++) tot += measure(ctx, bb[k].label, F(11, 'bold')) + px(24) + px(8);
       if (stack) bx = cx + cw - tot - px(8);
@@ -2023,6 +2025,7 @@
   function saveBlocker() {
     var g = game(), p = player(), Cs = GTP.Cutscenes, wl = (GTP.AI && GTP.AI.wanted) ? GTP.AI.wanted.level : (p ? p.wanted | 0 : 0);
     if ((Cs && Cs.active) || ui.pause.from === 'cutscene') return 'Not during a cutscene. Let it finish.';
+    var Ms0 = GTP.Missions; if (Ms0 && Ms0.busy && call(Ms0.busy, Ms0, [], false) && !(Ms0.state && Ms0.state.active)) return 'A cutscene is about to start. Save after it.';   // the pending act / ending cutscene (QA-D SAVE-06)
     if (ui.pause.from === 'minigame' || ui.minigame) return 'Finish the argument first.';
     if (p && !p.alive) return 'You are being ratio\'d. Save later.';
     if (wl > 0) return 'Lose the stars first. The precinct does not do saves.';
@@ -2072,7 +2075,7 @@
     var slots = slotsOf(g), s = slots[slot - 1];
     sfx('ui', 0.4);
     if (action === 'save') {
-      if (s && !s.empty && slot !== g.activeSlot) askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: ['It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { doSave(slot); } });
+      if (slotUsed(s) && (slot !== g.activeSlot || s.corrupt)) askConfirm({ title: 'OVERWRITE SLOT ' + slot + '?', lines: [s.corrupt ? 'It holds a save this build cannot read (' + (s.version != null ? 'another version' : 'damaged') + ').' : 'It has ' + nMissions(s.meta.missions) + ' and ' + fmtPlay(s.meta.playTime) + ' in it.'], yes: 'OVERWRITE', no: 'BACK', danger: true, onYes: function () { doSave(slot); } });
       else doSave(slot);
       return;
     }
@@ -3480,6 +3483,7 @@
     ui.prevState = prev; ui.state = s;
     var In = GTP.Input;
     if (s !== 'playing' && s !== 'paused' && ui.modal) closeModal();
+    if (s === 'playing' && prev === 'paused' && ui.minigame) endMinigame();   // RESTART / NEW GAME from a minigame's pause drops it (else SAVE stays refused; QA-D SAVE-14)
     if (s === 'cutscene' && ui.card && ui.card.kind === 'passed') ui.card = null;   // the MISSION PASSED card never covers a letterboxed cinematic (QA-C1-12)
     if (s === 'playing' && prev && prev !== 'playing' && In && In.latch) In.latch(['shoot', 'action']);   // the press that left a menu / dialogue never fires (QA CMB-06)
     if (s !== 'playing' && ui.shopOpen) { leaveShopPage(s !== 'cutscene'); var CBs = GTP.Combat; if (CBs && CBs.shop && CBs.shop.state.open) { try { CBs.shop.close(); } catch (e) { /* optional */ } } }
@@ -6059,7 +6063,9 @@
       var r = handleInput(state);
       // a key a menu or a dialogue used is used up: the Enter that resumes, loads or advances a line never also exits the
       // car, jumps or fires in play on the same step (QA-B-FE-03, QA-D SAVE-03)
-      if (In && In.consume && g && g.state === 'playing' && (r || state !== 'playing')) In.consume(['confirm', 'enter', 'jump', 'action', 'shoot', 'cancel', 'pause', 'map']);
+      // the same for the RESUME that returns to a debate / ratio war: it never also answers WHATABOUT or posts (QA-D SAVE-14)
+      var to = g && g.state;
+      if (In && In.consume && ((to === 'playing' && (r || state !== 'playing')) || (to === 'minigame' && state !== 'minigame'))) In.consume(['confirm', 'enter', 'jump', 'action', 'shoot', 'cancel', 'pause', 'map']);
       return r;
     },
     // mission hooks
