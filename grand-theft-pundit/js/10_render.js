@@ -924,7 +924,17 @@
     },
     // Called once per fixed step. The rig is applied to the camera right away so
     // worldToScreen and headless tests see the current camera without a render.
-    updateCamera: function (dt) { if (!Render.free) { Render.rig.update(dt, GTP.Input); Render.rig.apply(); } },
+    // The pose before the step is kept for frame(alpha); a snap (teleport, respawn, cutscene end) or a jump of more than 20 m
+    // in one step is not blended across.
+    updateCamera: function (dt) {
+      if (Render.free) return;
+      var r = Render.rig, P = r._prev, snap = r._snap;
+      r._keep();
+      r.update(dt, GTP.Input);
+      var jx = r.pos.x - P.px, jy = r.pos.y - P.py, jz = r.pos.z - P.pz;
+      if (snap || r._snap || !(jx * jx + jy * jy + jz * jz < 400)) r._keep();
+      r.apply();
+    },
     freeCam: function (enabled) {
       Render.free = enabled !== false;
       if (!Render.free) Render.rig.snap();
@@ -983,37 +993,66 @@
       return total;
     },
     _disposeChunk: function (ch) {
-      ch.group.traverse(function (o) { if (o.geometry && o.userData.own) o.geometry.dispose(); });
+      ch.group.traverse(function (o) {
+        if (o.geometry && o.userData.own) o.geometry.dispose();
+        if (o.isInstancedMesh) o.dispose();   // its instanceMatrix / instanceColor buffers (geometry and material are shared)
+      });
+      // the per-chunk glow point materials (lamp heads, runway edge lights); every other material is shared and stays
+      if (ch.glowPts && ch.glowPts.material !== Render._beaconM) ch.glowPts.material.dispose();
+      if (ch.glowPts2 && ch.glowPts2.material !== Render._beaconM) ch.glowPts2.material.dispose();
       if (ch.group.parent) ch.group.parent.remove(ch.group);
+    },
+    _unbuildChunk: function (ch) {
+      Render._disposeChunk(ch);
+      Render.chunks.delete(ch.cx + ',' + ch.cz);
+      Render.stats.chunkUnbuilds = (Render.stats.chunkUnbuilds || 0) + 1;
     },
 
     // ------------------------------------------------------------- chunks --
-    // Build chunks near the camera (all needed ones at once in headless, a few per frame live).
+    // Build chunks near the camera (all needed ones at once in headless, a few per frame live, except that every chunk
+    // reaching inside the fog start is built at once: after a teleport, respawn or load the first frame has no hole where
+    // the street belongs, QA-A-CAM-07). Chunks beyond drawDistance + 140 m are unbuilt, two a frame (built inside
+    // drawDistance + 60: 80 m of hysteresis), so the resident set is the ring around the camera, not the whole city (QAC-10).
+    _want: [], _evict: [],
+    _byD: function (a, b) { return a.d - b.d; },
     ensureChunks: function () {
       var W = Render._World; if (!W.tiles) return;
-      var cam = Render.camera, cx = Math.floor(cam.position.x / (TILE * CH)), cz = Math.floor(cam.position.z / (TILE * CH));
+      var Q = C.QUALITY, cam = Render.camera, px = cam.position.x, pz = cam.position.z, S = TILE * CH;
+      // the entity draw ranges follow the fog actually drawn (preset, draw-distance setting, weather): peds are culled where
+      // the fog is pedFog thick, vehicles at vehicleFog, instead of popping in clear air (QA-A-CAM-08)
+      var fog = Render.scene && Render.scene.fog;
+      if (fog && fog.far > fog.near) { Q.pedDraw = Math.round(fog.near + (fog.far - fog.near) * (Q.pedFog || 0.6)); Q.vehicleDraw = Math.round(fog.near + (fog.far - fog.near) * (Q.vehicleFog || 0.75)); }
+      var cx = Math.floor(px / S), cz = Math.floor(pz / S);
       var nx = Math.ceil(W.w / CH), nz = Math.ceil(W.h / CH);
-      var reach = Math.ceil((C.QUALITY.drawDistance + 40) / (TILE * CH));
-      var budget = Render.headless ? 1e9 : (Render.chunks.size < 8 ? 1e9 : 3);
-      var want = [];
+      var reach = Math.ceil((Q.drawDistance + 40) / S), buildR = Q.drawDistance + 60, must = Q.fogStart || 120;
+      var budget = Render.headless || Render.chunks.size < 8 ? 1e9 : 3;
+      var want = Render._want; want.length = 0;
       for (var z = Math.max(0, cz - reach); z < Math.min(nz, cz + reach + 1); z++) for (var x = Math.max(0, cx - reach); x < Math.min(nx, cx + reach + 1); x++) {
-        var key = x + ',' + z, ch = Render.chunks.get(key);
-        var dx = (x + 0.5) * TILE * CH - cam.position.x, dz = (z + 0.5) * TILE * CH - cam.position.z, d = Math.sqrt(dx * dx + dz * dz);
-        if (!ch) { if (d < C.QUALITY.drawDistance + 60) want.push({ x: x, z: z, d: d }); }
-        else ch.group.visible = d < C.QUALITY.drawDistance + 70;
+        if (Render.chunks.has(x + ',' + z)) continue;
+        var dx = (x + 0.5) * S - px, dz = (z + 0.5) * S - pz, d = Math.sqrt(dx * dx + dz * dz);
+        if (d >= buildR) continue;
+        var ex = Math.max(x * S - px, 0, px - (x + 1) * S), ez = Math.max(z * S - pz, 0, pz - (z + 1) * S);   // to the chunk's nearest point
+        want.push({ x: x, z: z, d: d, must: ex * ex + ez * ez < must * must });
       }
-      want.sort(function (a, b) { return a.d - b.d; });
-      for (var i = 0; i < want.length && i < budget; i++) Render.buildChunk(want[i].x, want[i].z);
-      // hide chunks far from the camera; swap the LOD materials with a little hysteresis around QUALITY.lodDistance
-      var lod = C.QUALITY.lodDistance || 120, near = 0, farN = 0;
+      if (want.length) {
+        want.sort(Render._byD);
+        for (var i = 0, built = 0; i < want.length; i++) if (want[i].must || built < budget) { Render.buildChunk(want[i].x, want[i].z); built++; }
+      }
+      // hide chunks far from the camera; swap the LOD materials with a little hysteresis around QUALITY.lodDistance; unbuild
+      // the far ones (not while the camera is off the map: an interior room, a cutscene camera far out)
+      var lod = Q.lodDistance || 120, near = 0, farN = 0, show = Q.drawDistance + 70, drop = Q.drawDistance + 140;
+      var onMap = px >= 0 && pz >= 0 && px <= W.w * TILE && pz <= W.h * TILE, evict = Render._evict; evict.length = 0;
       Render.chunks.forEach(function (ch) {
-        var dx = (ch.cx + 0.5) * TILE * CH - cam.position.x, dz = (ch.cz + 0.5) * TILE * CH - cam.position.z, dd = Math.sqrt(dx * dx + dz * dz);
-        ch.group.visible = dd < C.QUALITY.drawDistance + 70;
+        var dx = (ch.cx + 0.5) * S - px, dz = (ch.cz + 0.5) * S - pz, dd = Math.sqrt(dx * dx + dz * dz);
+        ch.group.visible = dd < show;
+        if (onMap && dd > drop && evict.length < 2) evict.push(ch);
         if (!ch.group.visible) return;
         var wantFar = ch.far ? dd > lod + 24 : dd > lod + 48;
         if (wantFar !== ch.far) Render._setChunkLod(ch, wantFar);
         if (ch.far) farN++; else near++;
       });
+      for (var j = 0; j < evict.length; j++) Render._unbuildChunk(evict[j]);
+      evict.length = 0;
       Render.stats.lodNear = near; Render.stats.lodFar = farN;
     },
     _setChunkLod: function (ch, far) {
@@ -2248,11 +2287,16 @@
     //   chase in a vehicle: 7.5 m (bus 10, truck 9), 3 m up, yaw eases toward the velocity direction (reverse flips after 0.5 s),
     //                       fov 60 -> 75 with speed, slight roll on hard turns, shake on impacts
     //   close halves distances; first is at eye height (bonnet view in a car); aim is over the right shoulder
-    //   collision: raycast focus -> desired against buildings, pull in by 0.3 m; a final guard keeps the smoothed camera out of any AABB
+    //   collision: raycast pivot -> desired against buildings, big solid props and (from below) the deck slab, pull in by 0.3 m;
+    //              a vehicle's boom swings up when that leaves it short; a final guard keeps the smoothed camera out of all of them
+    //   frame(alpha) blends the pose from the previous step like the entity meshes; a non-finite target or pose never sticks
     rig: {
-      mode: 'chase', yaw: 0, pitch: 0.2, dist: C.CAMERA.footDist, fov: C.CAMERA.fov, roll: 0,
+      mode: 'chase', yaw: 0, pitch: 0.2, dist: C.CAMERA.footDist, fov: C.CAMERA.fov, roll: 0, near: C.CAMERA.near || 0.3,
       pos: { x: 0, y: 2, z: 5 }, focus: { x: 0, y: 1.25, z: 0 }, shakeAmt: 0, _shakeT: 0, _snap: true, _target: null, _lastMoveYaw: 0, pulled: false,
       kickP: 0, kickY: 0, _kickLam: 16, _swayP: 0, _swayY: 0,
+      // the pose before the last fixed step: frame(alpha) blends from it to the current one, like Entities.sync(alpha) does the meshes
+      _prev: { px: 0, py: 2, pz: 5, fx: 0, fy: 1.25, fz: 0, fov: C.CAMERA.fov, roll: 0, ok: false },
+      _des: { x: 0, y: 0, z: 0 }, _alt: { x: 0, y: 0, z: 0 }, _blk: null,   // scratch (no per-step garbage: QA QAC-49) and the camera blocker grid
       // follow an entity; ease = glide there instead of snapping (cutscenes)
       target: function (e, ease) { Render.rig._target = e; if (!ease) Render.rig._snap = true; return e; },
       reset: function () { var r = Render.rig; r.yaw = 0; r.pitch = 0.2; r._snap = true; r.shakeAmt = 0; r.fov = C.CAMERA.fov; r.roll = 0; r.kickP = r.kickY = 0; r._swayP = r._swayY = 0; },
@@ -2267,17 +2311,37 @@
         r.pitch = Math.max(Math.min(r._pitchMin != null ? r._pitchMin : C.CAMERA.pitchMin, before), r.pitch - kp); r.yaw += ky;
         r.kickP += before - r.pitch; r.kickY += ky; r._kickLam = 4 / (recover || 0.25);
       },
+      // a NaN from anywhere (the look input, a recoil, a cutscene) must not stick: the angles, kick, sway, roll, fov and shake
+      // go back to sane values, and a non-finite pose snaps on the next update (QA QAC-28)
+      _sanitize: function (t) {
+        var r = Render.rig;
+        if (!isFinite(r.yaw)) r.yaw = isFinite(t.yaw) ? t.yaw : 0;
+        if (!isFinite(r.pitch)) r.pitch = 0.2;
+        if (!isFinite(r.kickP) || !isFinite(r.kickY)) r.kickP = r.kickY = 0;
+        if (!isFinite(r._swayP) || !isFinite(r._swayY)) r._swayP = r._swayY = 0;
+        if (!isFinite(r.roll)) r.roll = 0;
+        if (!(r.fov > 1 && r.fov < 179)) r.fov = C.CAMERA.fov;
+        if (!isFinite(r.shakeAmt) || !isFinite(r._shakeT)) { r.shakeAmt = 0; r._shakeT = 0; }
+      },
+      _finitePose: function () {
+        var r = Render.rig, p = r.pos, f = r.focus;
+        return isFinite(p.x) && isFinite(p.y) && isFinite(p.z) && isFinite(f.x) && isFinite(f.y) && isFinite(f.z) && isFinite(r.fov);
+      },
       update: function (dt, input) {
         var r = Render.rig, CAM = C.CAMERA, W = Render._World;
         var t = r._target || (GTP.game && GTP.game.player);
         if (!t) return;
+        // a target with a non-finite position (one bad step anywhere) is skipped: the camera holds instead of turning NaN (QA QAC-28)
+        if (!(isFinite(t.x) && isFinite(t.z))) return;
+        var ty = isFinite(t.y) ? t.y : 0;
         var look = input ? input.look : null;
         // the sniper's scope (Combat.scope): the look is divided by the zoom, the fov follows the zoom and a breath sway rides on top
-        var sc = GTP.Combat && GTP.Combat.scope && GTP.Combat.scope.active ? GTP.Combat.scope : null, fov0 = r.fov;
+        var sc = GTP.Combat && GTP.Combat.scope && GTP.Combat.scope.active ? GTP.Combat.scope : null, fov0;
         if (sc && look && (look.dx || look.dy)) { look.dx /= sc.zoom; look.dy /= sc.zoom; }
         var v = t.inVehicle || t.vehicle || null, inCar = !!v;
         var mode = (t.cameraMode || r.mode);
         var speed = Math.sqrt((t.vx || 0) * (t.vx || 0) + (t.vz || 0) * (t.vz || 0));
+        if (!isFinite(speed)) speed = 0;
         var now = GTP.game ? GTP.game.time.t : 0;
         // aiming, the scope and first person look far further up than the chase camera can (QA CMB-07); leaving them
         // eases the pitch back into the chase range
@@ -2294,7 +2358,7 @@
               var tgt;
               if (v.reversing) tgt = v.reverseTime > CAM.reverseFlipDelay ? v.yaw + Math.PI : v.yaw;
               else tgt = speed > 2.5 ? U.dirToYaw(t.vx, t.vz) : v.yaw;
-              r.yaw = U.angleDamp(r.yaw, tgt, CAM.carAutoYawRate * U.clamp(speed / 6, 0.45, 1), dt);
+              if (isFinite(tgt)) r.yaw = U.angleDamp(r.yaw, tgt, CAM.carAutoYawRate * U.clamp(speed / 6, 0.45, 1), dt);
               r.pitch = U.damp(r.pitch, CAM.carPitch, 1.5, dt);
             }
           } else if (speed > 0.6 && since > CAM.autoYawDelay && !t.aiming && !t.knockedDown && t.alive !== false) {
@@ -2305,37 +2369,49 @@
             r.pitch = U.damp(r.pitch, 0.2, 1.5, dt);
           }
         }
+        r._sanitize(t); fov0 = r.fov;
         var dist, height, lookH;
         if (inCar) { dist = v.type === 'bus' ? CAM.busDist : v.type === 'truck' ? CAM.truckDist : CAM.carDist; height = CAM.carHeight * U.clamp(v.cls.height / 1.5, 1, 1.5); lookH = Math.min(1.7, v.cls.height * 0.6); }
         else { dist = CAM.footDist; height = CAM.footHeight; lookH = CAM.footLookHeight; }
         if (mode === 'close') { dist *= CAM.closeScale; height *= 0.8; }
         var aiming = !!t.aiming && !inCar;
-        var fx = t.x, fy = t.y + lookH, fz = t.z;
-        var d = U.yawToDir(r.yaw), rx = -d.z, rz = d.x;   // right vector
-        var desired; r.pulled = false;
+        var fx = t.x, fy = ty + lookH, fz = t.z;
+        var syw = Math.sin(r.yaw), cyw = Math.cos(r.yaw), dx = -syw, dz = -cyw, rx = cyw, rz = -syw;   // forward (U.yawToDir) and right
+        // the pivot the boom hangs from: the chase focus; for aim the head (the aim focus is 8 m ahead and may be inside a wall:
+        // casting from it put the camera inside the building, QA-A-CAM-01)
+        var px = fx, py = fy, pz = fz;
+        var desired = r._des; r.pulled = false;
+        r.near = CAM.near || 0.3;
         if (mode === 'first') {
           if (inCar) {
-            var rec = Render._A.vehicleGeometry(v.type, v.wrap), eye = rec.lightPoints.eye, ep = v.localToWorld(eye.x, -eye.z);
-            desired = { x: ep.x, y: v.y + eye.y, z: ep.z };
-          } else desired = { x: t.x + d.x * 0.15, y: t.y + C.PLAYER.eye, z: t.z + d.z * 0.15 };
+            var rec = Render._A.vehicleGeometry(v.type, v.wrap), eye = rec.lightPoints.eye;
+            var vs = Math.sin(v.yaw), vc = Math.cos(v.yaw), lr = eye.x, lf = -eye.z;   // Vehicle.localToWorld(lr, lf), no allocation
+            desired.x = v.x + vc * lr - vs * lf; desired.y = v.y + eye.y; desired.z = v.z - vs * lr - vc * lf;
+          } else {
+            desired.x = t.x + dx * 0.15; desired.y = ty + C.PLAYER.eye; desired.z = t.z + dz * 0.15;
+            // the eye is about 0.25 m from a wall the player faces: a 0.3 m near plane cut into the wall (QA-A-CAM-02)
+            r.near = CAM.nearFirst || 0.15;
+          }
           // a real yaw / pitch direction (the old 6 m flat + 3 m drop capped the look-up near 10 degrees)
           var cp = Math.cos(r.pitch), spn = Math.sin(r.pitch);
-          fx = desired.x + d.x * cp * 6; fy = desired.y - spn * 6; fz = desired.z + d.z * cp * 6;
+          fx = desired.x + dx * cp * 6; fy = desired.y - spn * 6; fz = desired.z + dz * cp * 6;
         } else if (aiming) {
           var ah = CAM.aimHeight || 1.85, al = CAM.aimLookHeight || 1.5;
-          desired = { x: t.x - d.x * CAM.aimDist + rx * CAM.aimSide, y: t.y + ah + Math.sin(r.pitch) * 1.2, z: t.z - d.z * CAM.aimDist + rz * CAM.aimSide };
+          desired.x = t.x - dx * CAM.aimDist + rx * CAM.aimSide; desired.y = ty + ah + Math.sin(r.pitch) * 1.2; desired.z = t.z - dz * CAM.aimDist + rz * CAM.aimSide;
           var cpa = Math.cos(r.pitch), spa = Math.sin(r.pitch);
-          fx = t.x + d.x * 8 * cpa + rx * CAM.aimSide; fy = t.y + al - spa * 8; fz = t.z + d.z * 8 * cpa + rz * CAM.aimSide;
-          desired = Render.rig._pullIn(t.x, t.y + 1.5, t.z, desired, 0.4);
+          fx = t.x + dx * 8 * cpa + rx * CAM.aimSide; fy = ty + al - spa * 8; fz = t.z + dz * 8 * cpa + rz * CAM.aimSide;
+          px = t.x; py = ty + 1.5; pz = t.z;
+          r._pullIn(px, py, pz, desired, 0.4);
         } else {
           var D = dist * Math.cos(r.pitch), Hh = dist * Math.sin(r.pitch) + (height - lookH);
-          desired = { x: fx - d.x * D, y: fy + Hh, z: fz - d.z * D };
-          desired = Render.rig._pullIn(fx, fy, fz, desired, 0.6);
+          desired.x = fx - dx * D; desired.y = fy + Hh; desired.z = fz - dz * D;
+          r._pullIn(fx, fy, fz, desired, 0.6);
+          if (inCar && r.pulled) r._climb(fx, fy, fz, dx, dz, dist, height - lookH, Math.sqrt(D * D + Hh * Hh), desired);
           var floor = W.heightAt(desired.x, desired.z, desired.y) + 0.45;
           if (desired.y < floor) desired.y = floor;
         }
         var targetFov = inCar ? U.lerp(CAM.fov, CAM.fovSpeedMax, U.clamp(speed / CAM.fovSpeedAt, 0, 1)) : (aiming ? CAM.aimFov : CAM.fov);
-        if (r._snap) { r.pos.x = desired.x; r.pos.y = desired.y; r.pos.z = desired.z; r.focus.x = fx; r.focus.y = fy; r.focus.z = fz; r.fov = targetFov; r.roll = 0; r._snap = false; }
+        if (r._snap || !r._finitePose()) { r.pos.x = desired.x; r.pos.y = desired.y; r.pos.z = desired.z; r.focus.x = fx; r.focus.y = fy; r.focus.z = fz; r.fov = targetFov; r.roll = 0; r._snap = false; }
         else {
           var far = U.dist2d(r.pos.x, r.pos.z, desired.x, desired.z) > 40;
           var k = far ? 1e3 : (mode === 'first' ? 60 : CAM.posDamp);
@@ -2343,14 +2419,15 @@
           r.focus.x = U.damp(r.focus.x, fx, k * 1.5, dt); r.focus.y = U.damp(r.focus.y, fy, k * 1.5, dt); r.focus.z = U.damp(r.focus.z, fz, k * 1.5, dt);
           r.fov = U.damp(r.fov, targetFov, CAM.fovDamp, dt);
         }
-        // guard: the smoothed camera never sits inside a building (smoothing can cut a corner the raycast missed)
+        // guard: the smoothed camera never sits inside a building, a big solid prop or the deck slab (smoothing can cut a
+        // corner the raycast missed); cast from the pivot, never from the aim focus
         if (mode !== 'first') {
-          var gx = r.pos.x - fx, gy = r.pos.y - fy, gz = r.pos.z - fz, gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1;
-          var ghit = W.raycastBuildings(fx, fy, fz, gx / gl, gy / gl, gz / gl, gl + CAM.collisionPad);
-          if (ghit) { var gt = Math.max(0.5, ghit.t - CAM.collisionPad); r.pos.x = fx + gx / gl * gt; r.pos.y = fy + gy / gl * gt; r.pos.z = fz + gz / gl * gt; r.pulled = true; }
+          var gx = r.pos.x - px, gy = r.pos.y - py, gz = r.pos.z - pz, gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1;
+          var gt = r._cast(px, py, pz, gx / gl, gy / gl, gz / gl, gl + CAM.collisionPad);
+          if (gt >= 0) { gt = Math.max(0.5, gt - CAM.collisionPad); r.pos.x = px + gx / gl * gt; r.pos.y = py + gy / gl * gt; r.pos.z = pz + gz / gl * gt; r.pulled = true; }
         }
         var rollT = inCar && mode !== 'first' ? U.clamp(-v.yawRate * speed * 0.0045, -CAM.rollMax, CAM.rollMax) : 0;
-        r.roll = U.damp(r.roll, rollT, CAM.rollDamp, dt);
+        r.roll = U.damp(r.roll, isFinite(rollT) ? rollT : 0, CAM.rollDamp, dt);
         if (r.shakeAmt > 0) { r._shakeT += dt * 40; r.shakeAmt = Math.max(0, r.shakeAmt - dt * CAM.shakeDecay * r.shakeAmt - dt * 0.2); }
         // recoil recovery: the kicked offset eases back out of yaw / pitch
         if (r.kickP || r.kickY) {
@@ -2360,26 +2437,165 @@
         }
         if (sc) {
           r.fov = U.damp(fov0, sc.fov, 9, dt);
-          var amp = (sc.sway || 0.15) * Math.PI / 180 * (sc.stillT > 1 ? 0.5 : 1), sy = Math.sin(sc.t * Math.PI) * amp, sp = Math.sin(sc.t * Math.PI * 1.3 + 1) * amp * 0.6;
-          r.yaw += sy - r._swayY; r.pitch += sp - r._swayP; r._swayY = sy; r._swayP = sp;
+          var amp = (sc.sway || 0.15) * Math.PI / 180 * (sc.stillT > 1 ? 0.5 : 1), swy = Math.sin(sc.t * Math.PI) * amp, swp = Math.sin(sc.t * Math.PI * 1.3 + 1) * amp * 0.6;
+          r.yaw += swy - r._swayY; r.pitch += swp - r._swayP; r._swayY = swy; r._swayP = swp;
         } else if (r._swayY || r._swayP) { r.yaw -= r._swayY; r.pitch -= r._swayP; r._swayY = r._swayP = 0; }
+        // the last line against NaN: a pose that still is not finite (a NaN vehicle yaw, say) is put back on the target
+        if (!r._finitePose()) {
+          var ok = isFinite(desired.x) && isFinite(desired.y) && isFinite(desired.z) && isFinite(fx) && isFinite(fy) && isFinite(fz);
+          r.pos.x = ok ? desired.x : t.x; r.pos.y = ok ? desired.y : ty + 2; r.pos.z = ok ? desired.z : t.z + 4;
+          r.focus.x = ok ? fx : t.x; r.focus.y = ok ? fy : ty + 1.25; r.focus.z = ok ? fz : t.z;
+          r.fov = targetFov > 1 ? targetFov : CAM.fov; r._snap = true;
+        }
       },
-      // pull the desired camera in to the first building face between the focus and the camera
+      // pull `desired` (in place) in to the first building, big solid prop or deck slab between the pivot and the camera
       _pullIn: function (fx, fy, fz, desired, minDist) {
-        var CAM = C.CAMERA, W = Render._World;
+        var CAM = C.CAMERA, r = Render.rig;
         var ddx = desired.x - fx, ddy = desired.y - fy, ddz = desired.z - fz, len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz) || 1;
-        var hit = W.raycastBuildings(fx, fy, fz, ddx / len, ddy / len, ddz / len, len + CAM.collisionPad);
-        if (hit) { var tt = Math.max(minDist, hit.t - CAM.collisionPad); Render.rig.pulled = true; return { x: fx + ddx / len * tt, y: fy + ddy / len * tt, z: fz + ddz / len * tt }; }
+        var t = r._cast(fx, fy, fz, ddx / len, ddy / len, ddz / len, len + CAM.collisionPad);
+        if (t >= 0) { var tt = Math.max(minDist, t - CAM.collisionPad); r.pulled = true; desired.x = fx + ddx / len * tt; desired.y = fy + ddy / len * tt; desired.z = fz + ddz / len * tt; }
         return desired;
       },
-      apply: function () {
-        var r = Render.rig, cam = Render.camera;
+      // a vehicle backed up to a wall: the shortened boom ends just over its own roof, which fills the screen. Swing the boom up
+      // (same length, steeper) while that frees more of it, so the camera looks down over the body (QA-A-CAM-06)
+      _climb: function (fx, fy, fz, dx, dz, dist, lift, full, desired) {
+        var r = Render.rig, W = Render._World, alt = r._alt, ex = desired.x - fx, ey = desired.y - fy, ez = desired.z - fz;
+        var best = Math.sqrt(ex * ex + ey * ey + ez * ez);
+        if (best >= full * 0.8) return;
+        for (var k = 1; k <= 4 && best < full * 0.8; k++) {
+          var e = Math.min(1.25, r.pitch + k * 0.22), D = dist * Math.cos(e), H = dist * Math.sin(e) + lift;
+          alt.x = fx - dx * D; alt.y = fy + H; alt.z = fz - dz * D;
+          r._pullIn(fx, fy, fz, alt, 0.6);
+          // a boom that clears a low building's roof would look down past its parapet: stop below the roof line
+          if (W.tile(Math.floor(alt.x / TILE), Math.floor(alt.z / TILE)) === W.T.BUILDING) break;
+          var ax = alt.x - fx, ay = alt.y - fy, az = alt.z - fz, l = Math.sqrt(ax * ax + ay * ay + az * az);
+          if (l > best + 0.25) { best = l; desired.x = alt.x; desired.y = alt.y; desired.z = alt.z; }
+        }
+        r.pulled = true;
+      },
+      // the camera's ray test: buildings (World.raycastBuildings, which the interiors wrap for their rooms), then the deck slab
+      // and the big solid props on the tiles the ray crosses. Unit direction; returns the first hit distance or -1.
+      _cast: function (ox, oy, oz, dx, dy, dz, maxT) {
+        var hb = Render._World.raycastBuildings(ox, oy, oz, dx, dy, dz, maxT), tb = hb ? hb.t : -1;
+        var te = Render.rig._castExtra(ox, oy, oz, dx, dy, dz, tb >= 0 ? tb : maxT);
+        return te >= 0 && (tb < 0 || te < tb) ? te : tb;
+      },
+      _castExtra: function (ox, oy, oz, dx, dy, dz, maxT) {
+        var W = Render._World, r = Render.rig;
+        if (!W.tiles || !W.deck) return -1;
+        var w = W.w, h = W.h, tx = Math.floor(ox / TILE), tz = Math.floor(oz / TILE);
+        if (tx < 0 || tz < 0 || tx >= w || tz >= h) return -1;   // the interiors (far off the map) and the sea beyond it
+        var B = r._blockers(W), grid = B.grid, stamp = ++B.stamp, deck = W.deck;
+        // the slab blocks rays from below only (a camera under the Loop: QA-A-DRV-07); from above the floor clamp keeps the camera on it
+        var yLo = DECK_Y - THICK, yHi = DECK_Y, under = oy < yLo && dy > 1e-6;
+        var stepX = dx > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
+        var tMaxX = Math.abs(dx) > 1e-9 ? (((dx > 0 ? tx + 1 : tx) * TILE) - ox) / dx : 1e9;
+        var tMaxZ = Math.abs(dz) > 1e-9 ? (((dz > 0 ? tz + 1 : tz) * TILE) - oz) / dz : 1e9;
+        var tDX = Math.abs(dx) > 1e-9 ? Math.abs(TILE / dx) : 1e9, tDZ = Math.abs(dz) > 1e-9 ? Math.abs(TILE / dz) : 1e9;
+        var best = maxT, hit = false, tIn = 0, guard = 0;
+        while (tIn <= best && guard++ < 64) {
+          if (tx < 0 || tz < 0 || tx >= w || tz >= h) break;
+          var i = tz * w + tx, tOut = tMaxX < tMaxZ ? tMaxX : tMaxZ;
+          if (under && deck[i]) {
+            var e0 = (yLo - oy) / dy, e1 = (yHi - oy) / dy;
+            if (e0 < tIn) e0 = tIn;
+            if (e1 > tOut) e1 = tOut;
+            if (e0 <= e1 && e0 < best) { best = e0; hit = true; }
+          }
+          var list = grid.get(i);
+          if (list) for (var k = 0; k < list.length; k++) {
+            var q = list[k];
+            if (q.st === stamp) continue;
+            q.st = stamp;
+            if (q.p.fallen) continue;
+            var tq = q.box ? r._rayBox(q, ox, oy, oz, dx, dy, dz, best) : r._rayCyl(q, ox, oy, oz, dx, dy, dz, best);
+            if (tq > 0 && tq < best) { best = tq; hit = true; }
+          }
+          if (tMaxX < tMaxZ) { tIn = tMaxX; tMaxX += tDX; tx += stepX; } else { tIn = tMaxZ; tMaxZ += tDZ; tz += stepZ; }
+        }
+        return hit ? best : -1;
+      },
+      // the props the camera cannot pass through, on a tile grid built once per world: every container (stacked ones too, which
+      // are not solid for the capsule) as its 2.4 x 6 m box, and the other solid props at least 2 m tall and 0.9 m in radius
+      // (airliners, ship hulls, kiosks, the gazebo, statues, moored boats) as their collision cylinders (QA-A-CAM-05)
+      _blockers: function (W) {
+        var B = Render.rig._blk, props = W.props || [];
+        if (B && B.props === props && B.n === props.length) return B;
+        B = Render.rig._blk = { props: props, n: props.length, grid: new Map(), stamp: 0 };
+        for (var i = 0; i < props.length; i++) {
+          var p = props[i], ph = p.h || 0, q;
+          if (p.kind === 'container') q = { box: true, hw: 1.2, hl: 3.0, r: 3.24 };
+          else if (p.solid && ph >= 2 && (p.r || 0) >= 0.9) q = { box: false, hw: 0, hl: 0, r: p.r };
+          else continue;
+          q.p = p; q.x = p.x; q.z = p.z; q.y0 = p.y || 0; q.y1 = q.y0 + (ph || 2.6); q.c = Math.cos(p.rot || 0); q.s = Math.sin(p.rot || 0); q.st = 0;
+          var tx0 = Math.max(0, Math.floor((p.x - q.r) / TILE)), tx1 = Math.min(W.w - 1, Math.floor((p.x + q.r) / TILE));
+          var tz0 = Math.max(0, Math.floor((p.z - q.r) / TILE)), tz1 = Math.min(W.h - 1, Math.floor((p.z + q.r) / TILE));
+          for (var tz = tz0; tz <= tz1; tz++) for (var tx = tx0; tx <= tx1; tx++) {
+            var key = tz * W.w + tx, arr = B.grid.get(key);
+            if (!arr) B.grid.set(key, arr = []);
+            arr.push(q);
+          }
+        }
+        return B;
+      },
+      // ray vs a vertical cylinder (q.x, q.z, q.r, q.y0..q.y1): entry distance, or -1 (a miss, or the origin inside it)
+      _rayCyl: function (q, ox, oy, oz, dx, dy, dz, maxT) {
+        var lx = ox - q.x, lz = oz - q.z, a = dx * dx + dz * dz, c = lx * lx + lz * lz - q.r * q.r, t0, t1;
+        if (a < 1e-12) { if (c > 0) return -1; t0 = -1e9; t1 = 1e9; }
+        else {
+          var b = lx * dx + lz * dz, disc = b * b - a * c;
+          if (disc < 0) return -1;
+          var sq = Math.sqrt(disc); t0 = (-b - sq) / a; t1 = (-b + sq) / a;
+        }
+        if (Math.abs(dy) < 1e-9) { if (oy < q.y0 || oy > q.y1) return -1; }
+        else {
+          var y0 = (q.y0 - oy) / dy, y1 = (q.y1 - oy) / dy;
+          if (y0 > y1) { var s = y0; y0 = y1; y1 = s; }
+          if (y0 > t0) t0 = y0;
+          if (y1 < t1) t1 = y1;
+        }
+        if (t0 > t1 || t1 < 0 || t0 > maxT) return -1;
+        return t0 > 0 ? t0 : -1;
+      },
+      // ray vs a box turned by the prop's rot (half sizes q.hw across, q.hl along, q.y0..q.y1): entry distance or -1
+      _rayBox: function (q, ox, oy, oz, dx, dy, dz, maxT) {
+        var wx = ox - q.x, wz = oz - q.z, c = q.c, s = q.s;
+        var lx = wx * c - wz * s, lz = wx * s + wz * c, ldx = dx * c - dz * s, ldz = dx * s + dz * c;
+        var t0 = -1e9, t1 = 1e9, a, b, u;
+        if (Math.abs(ldx) < 1e-9) { if (lx < -q.hw || lx > q.hw) return -1; }
+        else { a = (-q.hw - lx) / ldx; b = (q.hw - lx) / ldx; if (a > b) { u = a; a = b; b = u; } if (a > t0) t0 = a; if (b < t1) t1 = b; }
+        if (Math.abs(dy) < 1e-9) { if (oy < q.y0 || oy > q.y1) return -1; }
+        else { a = (q.y0 - oy) / dy; b = (q.y1 - oy) / dy; if (a > b) { u = a; a = b; b = u; } if (a > t0) t0 = a; if (b < t1) t1 = b; }
+        if (Math.abs(ldz) < 1e-9) { if (lz < -q.hl || lz > q.hl) return -1; }
+        else { a = (-q.hl - lz) / ldz; b = (q.hl - lz) / ldz; if (a > b) { u = a; a = b; b = u; } if (a > t0) t0 = a; if (b < t1) t1 = b; }
+        if (t0 > t1 || t1 < 0 || t0 > maxT) return -1;
+        return t0 > 0 ? t0 : -1;
+      },
+      // keep the current pose as the blend source for frame(alpha)
+      _keep: function () {
+        var r = Render.rig, P = r._prev;
+        P.px = r.pos.x; P.py = r.pos.y; P.pz = r.pos.z; P.fx = r.focus.x; P.fy = r.focus.y; P.fz = r.focus.z; P.fov = r.fov; P.roll = r.roll;
+        P.ok = r._finitePose();
+      },
+      // alpha (0..1, frame()): the pose blended from the one before the last fixed step, as the entity meshes are, so the car
+      // the camera follows does not judder against it between steps (QA-A-CAM-03, QAC-17); none / 1 = the current pose
+      apply: function (alpha) {
+        var r = Render.rig, cam = Render.camera, P = r._prev;
+        var px = r.pos.x, py = r.pos.y, pz = r.pos.z, fx = r.focus.x, fy = r.focus.y, fz = r.focus.z, fov = r.fov, roll = r.roll;
+        if (alpha != null && alpha >= 0 && alpha < 1 && P.ok) {
+          px = P.px + (px - P.px) * alpha; py = P.py + (py - P.py) * alpha; pz = P.pz + (pz - P.pz) * alpha;
+          fx = P.fx + (fx - P.fx) * alpha; fy = P.fy + (fy - P.fy) * alpha; fz = P.fz + (fz - P.fz) * alpha;
+          fov = P.fov + (fov - P.fov) * alpha; roll = P.roll + (roll - P.roll) * alpha;
+        }
+        // never write a NaN into the camera: hold the last good frame, the next update snaps (QA QAC-28)
+        if (!(isFinite(px) && isFinite(py) && isFinite(pz) && isFinite(fx) && isFinite(fy) && isFinite(fz) && fov > 1 && fov < 179)) { r._snap = true; P.ok = false; return; }
         var sx = 0, sy = 0, sr = 0;
         if (r.shakeAmt > 0) { sx = Math.sin(r._shakeT * 1.3) * r.shakeAmt * 0.12; sy = Math.cos(r._shakeT) * r.shakeAmt * 0.1; sr = Math.sin(r._shakeT * 0.7) * r.shakeAmt * 0.012; }
-        cam.position.set(r.pos.x + sx, r.pos.y + sy, r.pos.z);
-        cam.lookAt(r.focus.x, r.focus.y, r.focus.z);
-        if (r.roll || sr) cam.rotateZ(r.roll + sr);
-        if (Math.abs(cam.fov - r.fov) > 0.05) { cam.fov = r.fov; cam.updateProjectionMatrix(); }
+        cam.position.set(px + sx, py + sy, pz);
+        cam.lookAt(fx, fy, fz);
+        if (roll || sr) cam.rotateZ((roll || 0) + sr);
+        var nr = r.near > 0 ? r.near : 0.3;
+        if (Math.abs(cam.fov - fov) > 0.05 || cam.near !== nr) { cam.fov = fov; cam.near = nr; cam.updateProjectionMatrix(); }
       }
     }
   };
