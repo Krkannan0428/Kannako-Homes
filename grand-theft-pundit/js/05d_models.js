@@ -607,6 +607,9 @@
           var az = j / S * TAU, la = Math.max(lat0, lineFn(az)), s = scaleFn(la, az), cl = Math.cos(la);
           if (i === 0) cl = 0;
           var x = Math.sin(az) * cl * H.rx * s, y = H.hy + Math.sin(la) * H.ry * s, z = H.hz - Math.cos(az) * cl * H.rz * s;
+          // the skull's occiput bulges 7% at the back (headDeform): the shell follows it, with a little room for its flat quads,
+          // so the scalp never pokes through the back of the hair
+          if (z > H.hz && Math.sin(la) > -0.2) z = H.hz + (z - H.hz) * 1.085;
           if (opts.deform) { var pp = [x, y, z]; opts.deform(pp, la, az); x = pp[0]; y = pp[1]; z = pp[2]; }
           sb.v(x, y, z, WUV[0], WUV[1], typeof col === 'function' ? col(la, az) : col, b0 == null ? HEAD : b0);
         }
