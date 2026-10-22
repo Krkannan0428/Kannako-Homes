@@ -594,8 +594,13 @@
     return out;
   };
   EP.tickAdds = function (dt) {
-    for (var i = 0; i < this.adds.length; i++) { var a = this.adds[i]; if (a.ai && a.ai.mission === 'bossadd' && !a.removed) brawlerTick(this, a, a.ai, dt); }
+    for (var i = 0; i < this.adds.length; i++) {
+      var a = this.adds[i]; if (!a.ai || a.removed) continue;
+      if (a.ai.mission === 'bossadd') brawlerTick(this, a, a.ai, dt); else if (a.ai.mission === 'bossgun') gunnerTick(this, a, a.ai, dt);
+    }
   };
+  // a ranged add on this file's cadence: holds 8..14 m off, sidesteps now and then, fires every every[0]..every[1] s
+  EP.gunnerBrain = function (role, every) { return { phase: 0.5, mode: 'mission', mission: 'bossgun', ambient: false, role: role, every: every || [2.6, 3.4], shotT: this.rng.range(1.5, 2.5), side: this.rng.chance(0.5) ? 1 : -1, sideT: 0, barkT: this.rng.range(3, 8) }; };
   EP.liveAdds = function () {
     var n = 0;
     for (var i = 0; i < this.adds.length; i++) {
@@ -929,6 +934,25 @@
     }
   }
   // a brawler add: close in, wind up (the swing reads before it lands), one punch, a breather
+  function gunnerTick(enc, a, ai, dt) {
+    var p = player(), CB = GTP.Combat;
+    if (!p || !a.alive || a.knockedDown || a.inVehicle) { a.aiming = false; return; }
+    var d = U.dist2d(a.x, a.z, p.x, p.z), face = U.dirToYaw(p.x - a.x, p.z - a.z);
+    a.aimTarget = p;
+    if (d > 14) a.moveTo(p.x, p.z, d > 20);
+    else if (d < 8) { var f = U.yawToDir(face); a.moveTo(a.x - f.x * 4, a.z - f.z * 4, false); }
+    else {
+      ai.sideT -= dt; if (ai.sideT <= 0) { ai.sideT = enc.rng.range(1.5, 3); ai.side = -ai.side; }
+      var g = U.yawToDir(face); a.moveTo(a.x - g.z * ai.side * 3, a.z + g.x * ai.side * 3, false);
+    }
+    a.yaw = U.angleDamp(a.yaw, face, 6, dt); a.aimYaw = face; a.aiming = d < 22;
+    ai.shotT -= dt;
+    // nobody shoots a player on the floor (the same rule as the brawlers' and the telegraphs')
+    if (ai.shotT <= 0 && d < 22 && !p.inVehicle && !p.knockedDown && CB && CB.fire) {
+      ai.shotT = enc.rng.range(ai.every[0], ai.every[1]);
+      try { CB.fire(a, a.weapon || 'pistol'); } catch (e) { U.reportError(e, 'bosses.gunner'); }
+    }
+  }
   function brawlerTick(enc, a, ai, dt) {
     var p = player(), CB = GTP.Combat;
     if (!p || !a.alive || a.knockedDown || a.inVehicle) { if (ai.swingT > 0) ai.swingT = 0; return; }
@@ -1477,7 +1501,7 @@
     id: 'b04_redacted', name: 'Agent Pat Redacted', cast: 'redacted', title: 'Weather Balloon',
     arena: { landmark: 'balloon_depot', offset: { x: 50, z: 10 } }, place: 'the balloon depot lot',
     maxHp: 300, thresholds: [200, 100, 0], dmgScale: 1, shieldText: '[REDACTED]',
-    patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, barEvery: [4.8, 4.2, 3.8], patchHp: [110, 100, 90], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
+    patches: [3, 4, 4], vans: [1, 2, 2], agentCap: [4, 5, 5], dropEvery: 10, vanSpeed: 9, gunEvery: [2.6, 3.4], popHp: 20, barEvery: [4.8, 4.2, 3.8], patchHp: [110, 100, 90], bars: [1, 2, 2], orbit: [0.32, 0.42, 0.52],
     hints: ['Shoot the black [REDACTED] patch on the balloon. Gray means classified: wait', 'More patches. The vans drop agents; wreck a van to stop it', 'Last stage. Pop it before the leak is blamed on you'],
     ticker: 'BREAKING: OVA WEATHER BALLOON POPS OVER DEPOT; OVA CONFIRMS IT WAS NEVER THERE',
     lines: {
@@ -1556,6 +1580,11 @@
       textFx('PSSSHT', pt.x, pt.y + 1, pt.z, '#ffffff', 1.4);
       b.data.scale = Math.max(0.45, (b.data.scale || 1) - 0.065);
       enc.randomBark('pop');
+      // from the second stage each pop drops a small health crate under the balloon: progress pays for the agents' fire
+      if (enc.phase >= 2 && GTP.Combat && GTP.Combat.spawnPickup) {
+        var hs = spotNear(enc.rng, enc.center.x, enc.center.z, 3, 8);
+        try { enc.pickups.push(GTP.Combat.spawnPickup({ type: 'health', value: def.popHp, x: hs.x, z: hs.z, persistent: true })); } catch (e) { U.reportError(e, 'bosses.popHp'); }
+      }
       var share = (enc.maxHp / enc.phases) / d.need;
       enc.hurt(share + 0.01);
       if (enc.state === 'fight' && d.popped < d.need && !d.patch) d.patchT = 3;
@@ -1618,7 +1647,12 @@
               // two of the missions' gunmen on top of the bars was a wall (tests/bosses.js died four times in phase 3)
               var gun = n >= 3; for (var g2 = 0; g2 < enc.adds.length && gun; g2++) if (!pedOut(enc.adds[g2]) && enc.adds[g2].weapon === 'pistol') gun = false;
               var back = U.yawToDir(v.yaw + Math.PI);
-              for (var q = 0; q < 2; q++) enc.spawnAdd('thug', v.x + back.x * 4 + (q - 0.5) * 1.6, v.z + back.z * 4, { weapon: gun && q === 0 ? 'pistol' : 'fist', look: { shirt: '#d9cfa6', pants: '#d9cfa6', hat: 'cap' }, name: 'OVA Agent' });
+              for (var q = 0; q < 2; q++) {
+                var ag = enc.spawnAdd('thug', v.x + back.x * 4 + (q - 0.5) * 1.6, v.z + back.z * 4, { weapon: gun && q === 0 ? 'pistol' : 'fist', look: { shirt: '#d9cfa6', pants: '#d9cfa6', hat: 'cap' }, name: 'OVA Agent' });
+                // the gunman keeps his distance and fires on this fight's cadence (the missions' brain fires every 1.6 s,
+                // which killed tests/bosses.js three times in phase 3 on the merged build)
+                if (gun && q === 0) ag.ai = enc.gunnerBrain('thug', def.gunEvery);
+              }
             }
             textFx('AGENTS DEPLOYED', v.x, v.y + 2.8, v.z, '#d9cfa6', 1.4);
           }
@@ -1627,7 +1661,13 @@
         if (vd.dropT <= 0) { vd.dropT = def.dropEvery; vd.stopT = 2.4; vd.dropped = false; continue; }
         vd.ang += dt * 0.3;
         var lr = DEFS.b04_redacted._lap(enc, vd.ang + 0.35);
-        steerTo(v, c.x + Math.cos(vd.ang + 0.35) * lr, c.z + Math.sin(vd.ang + 0.35) * lr, 11);
+        steerTo(v, c.x + Math.cos(vd.ang + 0.35) * lr, c.z + Math.sin(vd.ang + 0.35) * lr, def.vanSpeed);
+        // the vans circle; they don't hunt: a player on foot in the van's path gets a brake, not a bumper (the merged
+        // vehicle physics made a lap through the player a 40-damage hit)
+        if (p && !p.inVehicle) {
+          var vf = U.yawToDir(v.yaw), rx = p.x - v.x, rz = p.z - v.z, ahead = rx * vf.x + rz * vf.z, side = Math.abs(rx * -vf.z + rz * vf.x);
+          if (ahead > 0 && ahead < 9 && side < 2.6) v.setControls(0, 0, false, 1);
+        }
       }
       if (d.vanRespawn > 0) { d.vanRespawn -= dt; if (d.vanRespawn <= 0 && liveVans < def.vans[n - 1]) DEFS.b04_redacted._van(enc, liveVans); }
     },
