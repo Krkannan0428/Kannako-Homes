@@ -28,7 +28,7 @@ H.run('interiors', async (t) => {
   const api = await page.evaluate(() => {
     const I = GTP.Interiors, W = GTP.World, CB = GTP.Combat;
     window.__ev = [];
-    ['interior:fade', 'interior:enter', 'interior:exit', 'armory:inspect', 'armory:buy', 'range:start', 'range:hit', 'range:end', 'clothing:open', 'barber:open', 'shop:open', 'shop:buy', 'safehouse:sleep', 'saved']
+    ['property:open', 'interior:fade', 'interior:enter', 'interior:exit', 'armory:inspect', 'armory:buy', 'range:start', 'range:hit', 'range:end', 'clothing:open', 'barber:open', 'shop:open', 'shop:buy', 'safehouse:sleep', 'saved']
       .forEach((n) => GTP.Events.on(n, (e) => window.__ev.push({ n, e: e ? JSON.parse(JSON.stringify(e, (k, v) => (k === 'landmark' || k === 'item' || k === 'player' || k === 'room') ? (v && v.id) || null : v)) : null })));
     return { fns: ['enter', 'exit', 'update', 'medalFor'].filter((k) => typeof I[k] !== 'function'), active: I.active, current: I.current,
       wrapped: !!(W.heightAt._interiors && W.solidAt._interiors && W.resolveCapsule._interiors && CB.fire._interiors),
@@ -50,6 +50,15 @@ H.run('interiors', async (t) => {
     const r = I.room(), ev = window.__ev.map((e) => e.n);
     const items = I.debug.items(), ids = new Set(items.map((i) => i.weaponId).filter(Boolean));
     const meshes = r.items.filter((it) => { let held = 0; it.mesh.traverse((o) => { if (o.isMesh && o.name === 'held') held++; }); return held > 0; }).length;
+    // the full merged arsenal, once each, grouped by class into its area
+    const cat = GTP.Combat.catalog ? GTP.Combat.catalog('both_sides_strip').filter((c) => c.kind === 'weapon').map((c) => c.weaponId || c.id) : GTP.Combat.ORDER.filter((id) => id !== 'fist');
+    const missing = cat.filter((id) => !ids.has(id));
+    const counts = {}; r.items.forEach((it) => { if (it.entry.weaponId) counts[it.entry.weaponId] = (counts[it.entry.weaponId] || 0) + 1; });
+    const dupes = Object.keys(counts).filter((k) => counts[k] > 1);
+    const HOME = { rifle: 'east', lmg: 'east', shotgun: 'east', sniper: 'back', launcher: 'back', special: 'back', smg: 'west', melee: 'west', pistol: 'counter', thrown: 'islands' };
+    const weapons = r.items.filter((it) => it.entry.weaponId), atHome = weapons.filter((it) => HOME[it.entry.group] === it.area).length;
+    const byArea = {}; weapons.forEach((it) => { (byArea[it.area] = byArea[it.area] || {})[it.entry.group] = ((byArea[it.area] || {})[it.entry.group] || 0) + 1; });
+    const stockInfo = { catalog: cat.length, missing, dupes, atHome, weapons: weapons.length, byArea };
     const wall = W.solidAt(r.ox - 9.3, r.oz, 1), floor = W.heightAt(r.ox, r.oz + 2, 0), inside = W.solidAt(r.ox, r.oz + 4, 0.5);
     const counter = W.solidAt(r.ox - 1, r.oz - 2.6, 0.5);
     // walk north into the counter: it stops the player
@@ -57,7 +66,7 @@ H.run('interiors', async (t) => {
     const stopped = { z: p.z - r.oz, x: p.x - r.ox };
     const merle = GTP.Entities.list.filter((e) => e.castId === 'merle' && e.interior === 'armory');
     const enterEv = window.__ev.find((e) => e.n === 'interior:enter');
-    return { ok, mid, active: I.active, cur: I.current && { id: I.current.id, kind: I.current.kind, store: I.current.store, branch: I.current.branch }, ev, enterEv: enterEv && enterEv.e, items: items.length, distinct: ids.size, ids: Array.from(ids), order: GTP.Combat.ORDER.filter((id) => id !== 'fist' && !ids.has(id)),
+    return { ok, mid, active: I.active, cur: I.current && { id: I.current.id, kind: I.current.kind, store: I.current.store, branch: I.current.branch }, ev, enterEv: enterEv && enterEv.e, items: items.length, distinct: ids.size, ids: Array.from(ids), stockInfo, order: GTP.Combat.ORDER.filter((id) => id !== 'fist' && !ids.has(id)),
       meshes, wall, floor, inside, counter, stopped, merle: merle.length, merleName: merle[0] && merle[0].name, pos: { x: p.x - r.ox, z: p.z - r.oz, y: p.y }, outside, ctlAfter: p.controlEnabled, district: (W.districtAt(p.x, p.z) || {}).id };
   });
   console.log('  enter: ' + JSON.stringify(enter));
@@ -65,7 +74,10 @@ H.run('interiors', async (t) => {
   t.assert(enter.active && enter.cur.id === 'armory' && enter.cur.store === 'both_sides_strip' && enter.cur.branch === 'strip', 'inside the Strip armory');
   t.assert(enter.ev.indexOf('interior:fade') >= 0 && enter.ev.indexOf('interior:enter') > enter.ev.indexOf('interior:fade') && enter.enterEv.id === 'armory' && enter.enterEv.store === 'both_sides_strip', 'interior:fade then interior:enter {id, kind, store}');
   t.assert(enter.ctlAfter === true, 'control comes back after the fade');
-  t.assert(enter.items >= 40 && enter.distinct >= 11 && enter.order.length === 0 && enter.meshes === enter.items - 1, 'racks stocked with every weapon as a real mesh: ' + enter.items + ' items, ' + enter.distinct + ' weapons, missing ' + enter.order);
+  const SI = enter.stockInfo;
+  t.assert(SI.missing.length === 0 && enter.meshes === enter.items - 1, 'racks stocked with every catalog weapon as a real mesh: ' + JSON.stringify(SI));
+  t.assert(SI.catalog < 30 || SI.dupes.length === 0, 'a full arsenal hangs once each, no repeats: ' + SI.dupes);
+  t.assert(SI.atHome >= SI.weapons * 0.9, 'grouped by class: long guns on the east racks, pistols in the counter, launchers and specials on the feature wall: ' + JSON.stringify(SI.byArea));
   t.assert(enter.wall === true && enter.floor === 0 && enter.inside === false && enter.counter === true, 'room collision: walls solid, floor at 0, open floor walkable, counter solid');
   t.assert(enter.stopped.z > -2.3 && enter.stopped.z < 0 && Math.abs(enter.pos.y) < 0.05, 'walking north stops at the counter: ' + JSON.stringify(enter.stopped));
   t.assert(enter.merle === 1 && enter.merleName === 'Merle Firmness', 'Merle Firmness behind the counter');
@@ -83,18 +95,26 @@ H.run('interiors', async (t) => {
   const browse = await page.evaluate(() => {
     const I = GTP.Interiors, p = GTP.game.player, In = GTP.Input, r = I.room();
     // the player in front of the west pegboard, facing it
-    const items = I.debug.items(), target = items.find((i) => i.face === 'e' && i.weaponId === 'pistol');
+    const items = I.debug.items(), target = items.find((i) => i.weaponId === 'pistol');
     const Ms = GTP.Missions.state; Object.values(GTP.Combat.UNLOCK || {}).forEach((m) => m && Ms.completed.add(m));
     p.money = 20000;
-    GTP.game.debug.teleport(target.x + 1.3, target.z); p.yaw = -Math.PI / 2; p.moveYaw = p.yaw;
-    // look where the player looks: the camera behind the shoulder, its centre on the pistol
-    GTP.game.debug.freeCam(target.x + 3.2, target.y + 0.5, target.z + 0.3, target.x, target.y, target.z);
+    // the player at the counter, the camera over the shoulder with its centre on the pistol under the glass
+    if (target.face === 'up') { GTP.game.debug.teleport(target.x, target.z + 1.05); p.yaw = 0; GTP.game.debug.freeCam(target.x + 0.35, target.y + 1.0, target.z + 2.0, target.x, target.y, target.z); }
+    else { GTP.game.debug.teleport(target.x + 1.3, target.z); p.yaw = -Math.PI / 2; GTP.game.debug.freeCam(target.x + 3.2, target.y + 0.5, target.z + 0.3, target.x, target.y, target.z); }
+    p.moveYaw = p.yaw;
     GTP.game.advance(0.3);
     const looking = I.debug.browse(), prompt1 = I.debug.prompt();
     window.__ev = [];
     In.press('action'); GTP.game.advance(0.05);
     const inspect = window.__ev.find((e) => e.n === 'armory:inspect');
     const prompt2 = I.debug.prompt();
+    // the v0.3 UI takes the purchase from here: its armory card opens on the inspected weapon
+    const uiArmory = !!GTP.UI.openArmory, modal = GTP.UI.state.modal;
+    const card = modal ? { kind: modal.kind, weaponId: modal.weaponId, store: modal.store && (modal.store.id || modal.store) } : null;
+    if (uiArmory) {
+      GTP.game.render();
+      return { uiArmory, card, looking, prompt1, inspect: inspect && inspect.e, prompt2 };
+    }
     const money0 = p.money, owned0 = p.weapons[looking && looking.weaponId] || 0;
     In.press('action'); GTP.game.advance(0.05);
     const prompt3 = I.debug.prompt(), buy = window.__ev.find((e) => e.n === 'shop:buy');
@@ -118,10 +138,29 @@ H.run('interiors', async (t) => {
   console.log('  browse: ' + JSON.stringify(browse));
   t.assert(browse.looking && browse.looking.weaponId === 'pistol' && /PISTOL/i.test(browse.prompt1), 'looking at the pistol on the rack labels it: ' + browse.prompt1);
   t.assert(browse.inspect && browse.inspect.weaponId === 'pistol' && browse.inspect.store === 'both_sides_strip', 'action emits armory:inspect {weaponId}');
-  t.assert(/Buy for \$\d+/.test(browse.prompt2) && /CONFIRM/.test(browse.prompt2), 'without an armory UI the prompt asks to confirm the purchase: ' + browse.prompt2);
-  t.assert(browse.buy && browse.owned0 === 0 && browse.owned1 > 0 && browse.spent > 0 && /SOLD/.test(browse.prompt3), 'the second press buys it: ' + browse.prompt3);
-  t.assert(/Ammo/.test(browse.prompt4) && browse.ammoBuy && /^ammo_/.test(browse.ammoBuy.item), 'an owned weapon offers ammo: ' + browse.prompt4);
-  t.assert(browse.shotOk === false && browse.quietOnAction && browse.muzzle, 'no shooting in the store; E (which also reaches fire) is not scolded, the trigger is');
+  if (browse.uiArmory) {
+    t.assert(browse.card && browse.card.kind === 'armory' && browse.card.weaponId === 'pistol', 'the UI armory card opens on the inspected weapon: ' + JSON.stringify(browse.card));
+    await shot('int_armory_card');
+    const ui2 = await page.evaluate(() => {
+      const p = GTP.game.player, In = GTP.Input;
+      for (let i = 0; i < 4 && GTP.UI.state.modal; i++) { In.press('cancel'); GTP.game.advance(0.2); }
+      const closed = !GTP.UI.state.modal;
+      const res = GTP.Combat.buy('pistol', {}), ammo = GTP.Combat.buy('ammo_pistol', {});
+      p.weapon = 'pistol';
+      const lines = []; GTP.Events.on('interior:line', (e) => lines.push(e.text));
+      const shotOk = GTP.Combat.fire(p, p.weapon), quietOnAction = lines.length === 0;
+      In.set('shoot', true); GTP.Combat.fire(p, p.weapon); In.set('shoot', false);
+      return { closed, bought: res.ok, ammo: ammo.ok, shotOk, quietOnAction, muzzle: lines.length === 1 };
+    });
+    console.log('  ui armory: ' + JSON.stringify(ui2));
+    t.assert(ui2.closed && ui2.bought && ui2.ammo, 'the card closes; the pistol and its ammo are bought through Combat.buy');
+    t.assert(ui2.shotOk === false && ui2.quietOnAction && ui2.muzzle, 'no shooting in the store; E (which also reaches fire) is not scolded, the trigger is');
+  } else {
+    t.assert(/Buy for \$\d+/.test(browse.prompt2) && /CONFIRM/.test(browse.prompt2), 'without an armory UI the prompt asks to confirm the purchase: ' + browse.prompt2);
+    t.assert(browse.buy && browse.owned0 === 0 && browse.owned1 > 0 && browse.spent > 0 && /SOLD/.test(browse.prompt3), 'the second press buys it: ' + browse.prompt3);
+    t.assert(/Ammo/.test(browse.prompt4) && browse.ammoBuy && /^ammo_/.test(browse.ammoBuy.item), 'an owned weapon offers ammo: ' + browse.prompt4);
+    t.assert(browse.shotOk === false && browse.quietOnAction && browse.muzzle, 'no shooting in the store; E (which also reaches fire) is not scolded, the trigger is');
+  }
   await shot('int_armory_browse');
   await page.evaluate(() => GTP.game.debug.followCam());
 
@@ -179,11 +218,13 @@ H.run('interiors', async (t) => {
     window.__ev = [];
     GTP.Input.press('action'); GTP.game.advance(0.1);
     const opened = window.__ev.find((e) => e.n === 'shop:open'), page = !!(GTP.UI.state && GTP.UI.state.shopOpen);
+    const modal = GTP.UI.state.modal && GTP.UI.state.modal.kind;
+    for (let i = 0; i < 4 && GTP.UI.state.modal; i++) { GTP.Input.press('cancel'); GTP.game.advance(0.2); }
     GTP.Combat.shop.close(); if (GTP.UI.closeShop) GTP.UI.closeShop(); GTP.game.advance(0.2);
-    return { opened: !!opened, store: opened && opened.e && opened.e.store, page };
+    return { opened: !!opened || modal === 'armory', modal, store: opened && opened.e && opened.e.store, page };
   });
   console.log('  counter: ' + JSON.stringify(counter));
-  t.assert(counter.opened, 'Merle\'s counter opens the Both Sides Arms shop page');
+  t.assert(counter.opened, 'Merle\'s counter opens the armory screen (the v0.3 UI card, else the v0.2 shop page)');
   const exit = await page.evaluate(() => {
     const I = GTP.Interiors, p = GTP.game.player, r = I.room(), W = GTP.World, lm = W.landmark('both_sides_strip');
     GTP.game.debug.teleport(r.ox, r.oz + 5.9); p.yaw = Math.PI; GTP.Render.rig.yaw = Math.PI; GTP.Render.rig.snap();
@@ -213,6 +254,23 @@ H.run('interiors', async (t) => {
   console.log('  door: ' + JSON.stringify(door));
   t.assert(door.active && door.id === 'both_sides_strip', 'walking into the Both Sides Arms door enters the armory');
 
+  // the green Both Sides Arms light by the door walks the player in too; a direct Combat.shop.open still opens the page
+  const light = await page.evaluate(() => {
+    const I = GTP.Interiors, p = GTP.game.player, CB = GTP.Combat, st = CB.shop.stores().find((s) => s.id === 'both_sides_strip');
+    GTP.game.debug.teleport(st.x + 6, st.z); GTP.game.advance(0.3);
+    GTP.game.debug.teleport(st.x, st.z); GTP.game.advance(1.4);
+    const r = { active: I.active, store: I.current && I.current.store, page: !!GTP.UI.state.shopOpen };
+    I.exit({ instant: true }); GTP.game.advance(0.2);
+    GTP.game.debug.teleport(st.x + 30, st.z); GTP.game.advance(0.2);
+    CB.shop.open('both_sides_strip'); GTP.game.advance(0.2);
+    r.direct = { page: !!GTP.UI.state.shopOpen || CB.shop.state.open, active: I.active };
+    CB.shop.close(); GTP.game.advance(0.3);
+    return r;
+  });
+  console.log('  shop light: ' + JSON.stringify(light));
+  t.assert(light.active && light.store === 'both_sides_strip' && !light.page, 'standing in the green shop light enters the armory');
+  t.assert(light.direct.page && !light.direct.active, 'a direct Combat.shop.open (scripts, tests) still opens the shop page');
+
   // ---- 6. the branches and the other rooms ----
   for (const b of ['both_sides_port', 'both_sides_uptown']) {
     const ok = await page.evaluate((b) => { const ok = GTP.Interiors.enter(b, { instant: true }); GTP.game.advance(0.6); return { ok, branch: GTP.Interiors.current && GTP.Interiors.current.branch }; }, b);
@@ -227,22 +285,34 @@ H.run('interiors', async (t) => {
     out.clothing = I.enter('clothing', { instant: true }); GTP.game.advance(0.5);
     const shirt0 = p.look && p.look.shirt;
     out.clothingEv = use('booth'); out.shirtChanged = p.look.shirt !== shirt0; out.clothingMesh = !!p.mesh;
+    out.wardrobe = GTP.UI.state.modal && GTP.UI.state.modal.kind === 'wardrobe' ? GTP.UI.state.modal.mode : null;
+    function closeModal() { for (let i = 0; i < 4 && GTP.UI.state.modal; i++) { GTP.Input.press('cancel'); GTP.game.advance(0.2); } }
+    closeModal();
     I.exit({ instant: true });
     out.barber = I.enter('barber', { instant: true }); GTP.game.advance(0.5);
     const hair0 = p.look.hair; out.barberEv = use('chair'); out.hairChanged = p.look.hair !== hair0;
+    out.barberUi = GTP.UI.state.modal && GTP.UI.state.modal.kind === 'wardrobe' ? GTP.UI.state.modal.mode : null;
+    closeModal();
     I.exit({ instant: true });
     const before = { x: p.x, z: p.z };
     out.safe = I.enter('safe_penthouse', { instant: true }); GTP.game.advance(0.5);
     out.safeBranch = I.current && I.current.branch;
+    const Pr = GTP.Systems && GTP.Systems.properties;
+    if (Pr && Pr.def && Pr.def('safe_penthouse')) {
+      out.unownedEv = use('bed');                                       // not yours yet: the property screen
+      closeModal();
+      GTP.Missions.state.completed.add('m12_memo'); p.money = 200000; out.bought = Pr.buy('safe_penthouse');
+    }
     out.bedEv = use('bed');
-    let saved = null; try { const g = GTP.game, raw = localStorage.getItem('gtp.save.v3.slot' + (g.activeSlot || 1)); saved = raw ? JSON.parse(raw) : null; } catch (e) { saved = null; }
-    out.savedPos = saved ? { x: saved.x, z: saved.z, far: saved.x < -1000, interiors: saved.interiors } : null;
+    let saved = null; try { const g = GTP.game, raw = localStorage.getItem('gtp.save.v4.slot' + (g.activeSlot || 1)) || localStorage.getItem('gtp.save.v3.slot' + (g.activeSlot || 1)); saved = raw ? JSON.parse(raw) : null; } catch (e) { saved = null; }
+    out.savedPos = saved ? { x: saved.x, z: saved.z, far: saved.x < -1000, interiors: saved.interiors || (saved.registry && saved.registry.interiors) } : null;
     out.before = before;
     return out;
   });
   console.log('  rooms: ' + JSON.stringify(rooms));
-  t.assert(rooms.clothing && rooms.clothingEv.indexOf('clothing:open') >= 0 && rooms.shirtChanged && rooms.clothingMesh, 'Lanyard & Co.: the changing booth emits clothing:open and (no systems yet) changes the outfit');
-  t.assert(rooms.barber && rooms.barberEv.indexOf('barber:open') >= 0 && rooms.hairChanged, 'the Clip Joint chair emits barber:open and cuts the hair');
+  t.assert(rooms.clothing && rooms.clothingEv.indexOf('clothing:open') >= 0 && (rooms.wardrobe === 'clothing' || rooms.shirtChanged) && rooms.clothingMesh, 'Lanyard & Co.: the changing booth emits clothing:open and opens the wardrobe screen (else changes the outfit)');
+  t.assert(rooms.barber && rooms.barberEv.indexOf('barber:open') >= 0 && (rooms.barberUi === 'barber' || rooms.hairChanged), 'the Clip Joint chair emits barber:open and opens the barber screen (else cuts the hair)');
+  t.assert(!rooms.unownedEv || rooms.unownedEv.indexOf('property:open') >= 0, 'an unowned safehouse bed offers the property screen: ' + rooms.unownedEv);
   t.assert(rooms.safe && rooms.safeBranch === 'safe_penthouse' && rooms.bedEv.indexOf('safehouse:sleep') >= 0, 'the safehouse bed sleeps');
   t.assert(rooms.savedPos && !rooms.savedPos.far && rooms.savedPos.interiors && rooms.savedPos.interiors.rangeBest > 0, 'a save made inside stores the door outside and the range record: ' + JSON.stringify(rooms.savedPos));
   await view('int_safehouse', [5.5, 2.4, 4.6, -3, 1.0, -3]);
@@ -263,10 +333,10 @@ H.run('interiors', async (t) => {
 
   // ---- 7. the v0.3 shop API (Combat.catalog / Combat.buy) with parity weapons that have no mesh of their own ----
   const v3 = await page.evaluate(() => {
-    const CB = GTP.Combat, I = GTP.Interiors, p = GTP.game.player, bought = [];
+    const CB = GTP.Combat, I = GTP.Interiors, p = GTP.game.player, bought = [], realCatalog = CB.catalog, realBuy = CB.buy;
     const extra = [{ id: 'carbine_x', name: 'Talking Point Carbine', price: 1900, class: 'rifle' }, { id: 'pocket_x', name: 'Pocket Rebuttal', price: 300, class: 'pistol' }];
     CB.catalog = function () {
-      return CB.shop.items('weapons').map((it) => ({ id: it.id, kind: 'weapon', weaponId: it.weapon, name: it.name, price: it.price, owned: it.owned, locked: it.locked, lockReason: it.lockedBy }))
+      return (realCatalog ? realCatalog.call(CB, 'both_sides_strip').filter((c) => c.kind === 'weapon').map((c) => ({ id: c.id, kind: 'weapon', weaponId: c.weaponId, name: c.name, price: c.price, owned: c.owned, locked: c.locked, lockReason: c.lockReason, cls: c.cls })) : CB.shop.items('weapons').map((it) => ({ id: it.id, kind: 'weapon', weaponId: it.weapon, name: it.name, price: it.price, owned: it.owned, locked: it.locked, lockReason: it.lockedBy })))
         .concat(extra.map((e) => ({ id: e.id, kind: 'weapon', weaponId: e.id, name: e.name, price: e.price, class: e.class, owned: !!p.weapons[e.id], locked: false })));
     };
     CB.buy = function (id) { bought.push(id); p.weapons[id] = 30; return { ok: true }; };
@@ -281,13 +351,16 @@ H.run('interiors', async (t) => {
     window.__ev = [];
     GTP.Input.press('action'); GTP.game.advance(0.05); GTP.Input.press('action'); GTP.game.advance(0.05);
     const inspect = window.__ev.find((e) => e.n === 'armory:inspect');
+    const card = GTP.UI.state.modal && GTP.UI.state.modal.kind;
+    for (let i = 0; i < 4 && GTP.UI.state.modal; i++) { GTP.Input.press('cancel'); GTP.game.advance(0.2); }
     GTP.game.debug.followCam(); I.exit({ instant: true });
-    delete CB.catalog; delete CB.buy;
-    return { car: !!car, pocket: !!pocket, held, look, inspect: inspect && inspect.e, bought };
+    if (realCatalog) CB.catalog = realCatalog; else delete CB.catalog;
+    if (realBuy) CB.buy = realBuy; else delete CB.buy;
+    return { car: !!car, pocket: !!pocket, held, look, inspect: inspect && inspect.e, bought, card, uiArmory: !!GTP.UI.openArmory };
   });
   console.log('  v3 shop: ' + JSON.stringify(v3));
   t.assert(v3.car && v3.pocket && v3.held > 0, 'catalog weapons without a mesh hang with their class mesh');
-  t.assert(v3.look && v3.look.weaponId === 'carbine_x' && v3.inspect && v3.inspect.weaponId === 'carbine_x' && v3.bought[0] === 'carbine_x', 'browse and the prompt buy through Combat.buy: ' + JSON.stringify(v3));
+  t.assert(v3.look && v3.look.weaponId === 'carbine_x' && v3.inspect && v3.inspect.weaponId === 'carbine_x' && (v3.uiArmory ? v3.card === 'armory' : v3.bought[0] === 'carbine_x'), 'browse inspects a catalog weapon; the UI card (else the in-world prompt through Combat.buy) takes the purchase: ' + JSON.stringify(v3));
 
   // ---- 8. loading a save in the middle of a range round: the loaded inventory wins, the room is left quietly ----
   const load = await page.evaluate(() => {

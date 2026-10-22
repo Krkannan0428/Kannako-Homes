@@ -181,6 +181,30 @@
       c.font = '900 30px "Arial Black", Arial, sans-serif'; c.fillStyle = '#2f8a4f'; c.fillText(price > 0 ? '$' + price : 'ASK MERLE', 22, 60, w - 30);
     });
   }
+  // price tags share one atlas (one material for every tag in every room): 256 x 80 cells, 8 x 25 of them
+  var tagAtlas = null;
+  function tagMesh(name, price, w, h) {
+    if (!tagAtlas) {
+      var cv = document.createElement('canvas'); cv.width = 2048; cv.height = 2048;
+      var tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = 4;
+      tagAtlas = { cv: cv, ctx: cv.getContext('2d'), tex: tx, cells: {}, n: 0, mat: new THREE.MeshStandardMaterial({ map: tx, roughness: 0.6 }) };
+    }
+    var key = name + ':' + price, ci = tagAtlas.cells[key];
+    if (ci == null) {
+      ci = tagAtlas.cells[key] = tagAtlas.n % 200; tagAtlas.n++;
+      var c = tagAtlas.ctx, x0 = (ci % 8) * 256, y0 = Math.floor(ci / 8) * 80;
+      c.save(); c.translate(x0, y0); c.clearRect(0, 0, 256, 80);
+      c.fillStyle = '#f2efe4'; c.fillRect(0, 0, 256, 80); c.fillStyle = '#d23a2a'; c.fillRect(0, 0, 12, 80);
+      c.fillStyle = '#1a1a1a'; c.textAlign = 'left'; c.textBaseline = 'middle';
+      c.font = '700 26px Arial, sans-serif'; c.fillText(String(name).toUpperCase(), 22, 26, 226);
+      c.font = '900 30px "Arial Black", Arial, sans-serif'; c.fillStyle = '#2f8a4f'; c.fillText(price > 0 ? '$' + price : 'ASK MERLE', 22, 60, 226);
+      c.restore(); tagAtlas.tex.needsUpdate = true;
+    }
+    var geo = new THREE.PlaneGeometry(w, h), uv = geo.getAttribute('uv');
+    var u0 = (ci % 8) * 256 / 2048, v1 = 1 - Math.floor(ci / 8) * 80 / 2048, du = 256 / 2048, dv = 80 / 2048;
+    for (var i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * du, v1 - dv + uv.getY(i) * dv);
+    var m = new THREE.Mesh(geo, tagAtlas.mat); m.name = 'tag'; return m;
+  }
   // the cardboard heckler (CONTENT: GDD_EXPANSION 7) and the moderator: silhouettes with alpha for the range
   function targetTex(kind) {
     return canvasTex('target:' + kind, 256, 512, function (c, w, h) {
@@ -368,13 +392,25 @@
     return k && LONG[k] ? 0.9 : 0.3;
   }
   function weaponUpright(id) { var f = GTP.Assets && GTP.Assets.weaponFit && GTP.Assets.weaponFit[id]; return f ? !!f.upright : (id === 'megaphone' || id === 'hottake' || id === 'hotmic'); }
+  // the display group of a weapon class (Combat's class aliases included)
+  var GROUP = { pistol: 'pistol', handgun: 'pistol', revolver: 'pistol', heavy_pistol: 'pistol', machine_pistol: 'pistol', machinepistol: 'pistol', sidearm: 'pistol',
+    smg: 'smg', pdw: 'smg', submachine: 'smg', rifle: 'rifle', assault: 'rifle', ar: 'rifle', carbine: 'rifle', battle: 'rifle', dmr: 'sniper',
+    lmg: 'lmg', mg: 'lmg', machinegun: 'lmg', shotgun: 'shotgun', sniper: 'sniper', marksman: 'sniper',
+    launcher: 'launcher', heavy: 'launcher', rocket: 'launcher', explosive_launcher: 'launcher', special: 'special',
+    melee: 'melee', thrown: 'thrown', throwable: 'thrown', grenade: 'thrown', explosive: 'thrown' };
+  function groupOf(cls, id, w) {
+    var g = GROUP[String(cls || '').toLowerCase()];
+    if (g) return g;
+    if (w) { if (w.melee) return 'melee'; if (w.rocket) return 'launcher'; if (w.lobbed) return 'thrown'; if (w.cone) return 'special'; }
+    return 'special';
+  }
   // the store's stock: Combat.catalog (v0.3 shop API) first, the v0.2 shop list next, the parity table and Combat's
   // WEAPONS last; each entry {itemId, weaponId, name, price, cls, long, upright}
   function stock(storeId) {
     var CB = GTP.Combat, out = [], seen = {}, i;
     function push(o) { if (!o.weaponId || seen[o.weaponId] || o.weaponId === 'fist') return; seen[o.weaponId] = true; out.push(o); }
     if (CB && typeof CB.catalog === 'function') {
-      try { var cat = CB.catalog(storeId) || []; for (i = 0; i < cat.length; i++) { var c = cat[i]; if (c && c.kind === 'weapon') push({ itemId: c.id, weaponId: c.weaponId || c.id, name: c.name, price: c.price | 0, cls: c.class || c.cls || null }); } } catch (e) { report(e, 'catalog'); }
+      try { var cat = CB.catalog(storeId) || []; for (i = 0; i < cat.length; i++) { var c = cat[i]; if (c && c.kind === 'weapon') push({ itemId: c.id, weaponId: c.weaponId || c.id, name: c.name, price: (c.listPrice || c.price) | 0, cls: c.class || c.cls || null }); } } catch (e) { report(e, 'catalog'); }
     }
     if (CB && CB.shop && CB.shop.items) {
       try { var it = CB.shop.items('weapons') || []; for (i = 0; i < it.length; i++) push({ itemId: it[i].id, weaponId: it[i].weapon || it[i].id, name: it[i].name, price: it[i].listPrice || it[i].price | 0, cls: null }); } catch (e) { report(e, 'shopItems'); }
@@ -382,10 +418,15 @@
     var P = GTP.Content && GTP.Content.parity && GTP.Content.parity.weapons;
     if (P && P.length) for (i = 0; i < P.length; i++) if (P[i] && P[i].id) push({ itemId: P[i].id, weaponId: P[i].id, name: P[i].name || P[i].id, price: P[i].price | 0, cls: P[i].class || null });
     if (CB && CB.ORDER && CB.WEAPONS) for (i = 0; i < CB.ORDER.length; i++) { var id = CB.ORDER[i], w = CB.WEAPONS[id]; if (w) push({ itemId: id, weaponId: id, name: w.name || id, price: w.price | 0, cls: null }); }
+    var A = GTP.Assets;
     for (i = 0; i < out.length; i++) {
-      var e = out[i], len = weaponLen(e.weaponId, e.cls);
-      e.upright = weaponUpright(e.weaponId); e.long = !e.upright && len >= 0.6; e.len = len;
-      if (!e.cls && CB && CB.WEAPONS && CB.WEAPONS[e.weaponId]) { var ww = CB.WEAPONS[e.weaponId]; e.cls = ww.melee ? 'melee' : ww.rocket ? 'heavy' : ww.lobbed ? 'thrown' : null; }
+      var e = out[i], ww = CB && CB.WEAPONS ? CB.WEAPONS[e.weaponId] : null;
+      if (!e.cls && A && A.weaponClassOf) { try { e.cls = A.weaponClassOf(e.weaponId) || null; } catch (err) { e.cls = null; } }
+      if (!e.cls && ww) e.cls = ww.class || (ww.melee ? 'melee' : ww.rocket ? 'launcher' : ww.lobbed ? 'thrown' : null);
+      var len = weaponLen(e.weaponId, e.cls);
+      e.upright = weaponUpright(e.weaponId); e.len = len;
+      e.group = groupOf(e.cls, e.weaponId, ww);
+      e.long = e.group === 'rifle' || e.group === 'lmg' || e.group === 'shotgun' || e.group === 'sniper' || e.group === 'launcher' || (!e.upright && len >= 0.6 && e.group !== 'melee' && e.group !== 'smg');
     }
     out.sort(function (a, b) { return (a.price || 0) - (b.price || 0); });
     return out;
@@ -579,59 +620,85 @@
       room.plane(m, x, 3.62, z, w, w / 6, face);
       room.box('metal', x - 0.01, 3.62 + w / 12, z - 0.01, 0.02, 4.2 - 3.62 - w / 12, 0.02, steel);
     }
-    hangSign('hand', 'HANDGUNS', -8.6, 2.1, 2.6, 'e'); hangSign('long', 'RIFLES & SHOTGUNS', 8.6, 2.1, 3.0, 'w');
+    hangSign('hand', 'SMGs · MELEE', -8.6, 2.1, 2.6, 'e'); hangSign('long', 'RIFLES · SHOTGUNS · LMGs', 8.6, 2.1, 3.4, 'w');
     room.plane(texMat(signTex('cat-ammo-' + branch, 'AMMO', { w: 512, h: 128, bg: '#101114', fg: '#ffd27a', border: '#ffd27a', size: 76 }), { basic: true }), -8.95, 0.98, 5.0, 0.9, 0.22, 'e');
     [[-8.7, 6.7], [8.7, 6.7], [-8.7, -6.7]].forEach(function (q) {
       room.box('matte', q[0] - 0.08, 3.9, q[1] - 0.08, 0.16, 0.3, 0.16, black);
       room.box('gloss', q[0] - 0.1 + (q[0] < 0 ? 0.12 : -0.12), 3.72, q[1] - 0.12 + (q[1] < 0 ? 0.1 : -0.1), 0.2, 0.16, 0.28, col('#e8e2d0'));
       room.box('glow', q[0] + (q[0] < 0 ? 0.12 : -0.12), 3.8, q[1] + (q[1] < 0 ? 0.25 : -0.25), 0.03, 0.03, 0.01, [2.2, 0.2, 0.2]);
     });
-    // stock the racks
-    var list = stock(B.store), longs = [], shorts = [], i;
-    for (i = 0; i < list.length; i++) (list[i].long ? longs : shorts).push(list[i]);
-    var placedShort = 0, placedLong = 0;
-    function hang(entry, x, y, z, face, scale) {
-      var m = weaponMesh(entry.weaponId, entry.cls), s = scale || 1.25;
-      var len = entry.len || 0.3;
-      m.scale.set(s, s, s);
-      var holder = new THREE.Group(); holder.add(m);
-      // centre the gun on its slot: the mesh's grip is at the origin with the barrel along +x
-      m.position.set(entry.upright ? 0 : -len * s / 2, entry.upright ? -0.15 * s : 0.04, 0);
-      if (face === 'e') holder.rotation.y = -Math.PI / 2; else if (face === 'w') holder.rotation.y = Math.PI / 2; else if (face === 'n') holder.rotation.y = Math.PI;
-      holder.position.set(x, y, z); room.group.add(holder);
-      // two pegs and a price tag
-      var off = face === 'e' ? [1, 0] : face === 'w' ? [-1, 0] : face === 's' ? [0, 1] : [0, -1];
-      var along = face === 'e' || face === 'w' ? [0, 1] : [1, 0], hw = entry.upright ? 0.05 : Math.min(0.35, len * s * 0.3);
-      for (var k = -1; k <= 1; k += 2) room.box('metal', x + along[0] * hw * k - 0.015 - off[0] * 0.04, y - 0.06, z + along[1] * hw * k - 0.015 - off[1] * 0.04, 0.03 + Math.abs(off[0]) * 0.08, 0.03, 0.03 + Math.abs(off[1]) * 0.08, steel);
-      var tag = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.13), texMat(tagTex(entry.name, entry.price), { rough: 0.6 }));
-      tag.position.set(x + off[0] * 0.02, y - 0.24, z + off[1] * 0.02);
-      if (face === 'e') tag.rotation.y = Math.PI / 2; else if (face === 'w') tag.rotation.y = -Math.PI / 2; else if (face === 'n') tag.rotation.y = Math.PI;
-      room.group.add(tag);
-      room.items.push({ entry: entry, mesh: holder, face: face });
+    // stock the store: every weapon in the catalog once, grouped by class (GTA's Ammu-Nation layout):
+    //   east wall    rifles, LMGs, shotguns on long racks          back wall  snipers, launchers, specials (the feature wall)
+    //   west wall    SMGs and melee on the pegboard                 counter    pistols lying under the glass
+    //   islands      throwables standing on the felt
+    // An area left with free slots after its own classes takes another's overflow; a stock smaller than the walls (the v0.2
+    // twelve) repeats down its own area so the store never looks empty.
+    var list = stock(B.store), i, a;
+    var AREAS = {
+      east: { groups: ['rifle', 'lmg', 'shotgun'], slots: grid(5, 3, function (r, c) { return { x: 8.9, y: 2.92 - r * 0.45, z: 0.05 + c * 2.42, face: 'w', w: 2.05, h: 0.4 }; }), items: [] },
+      back: { groups: ['sniper', 'launcher', 'special'], slots: grid(3, 5, function (r, c) { return { x: -7.35 + c * 2.22, y: 2.62 - r * 0.6, z: -6.9, face: 's', w: 1.95, h: 0.5 }; }), items: [] },
+      west: { groups: ['smg', 'melee'], slots: grid(4, 7, function (r, c) { return { x: -8.9, y: 2.8 - r * 0.5, z: -1.15 + c * 1.05, face: 'e', w: 0.92, h: 0.42 }; }), items: [] },
+      counter: { groups: ['pistol'], slots: grid(1, 8, function (r, c) { return { x: -6.45 + c * 1.27, y: 0.9, z: -2.58, face: 'up', w: 0.95, h: 0.3, d: 0.55 }; }), items: [] },
+      islands: { groups: ['thrown'], slots: grid(1, 8, function (r, c) { return { x: (c < 4 ? -5.6 : 2.9) + 0.4 + (c % 4) * 0.6, y: 0.88, z: 2.1, face: 'stand', w: 0.45, h: 0.3, d: 0.6 }; }), items: [] }
+    };
+    function grid(rows, cols, fn) { var out = []; for (var r = 0; r < rows; r++) for (var c = 0; c < cols; c++) out.push(fn(r, c)); return out; }
+    var ORDER_A = ['east', 'back', 'west', 'counter', 'islands'], home = {};
+    ORDER_A.forEach(function (k) { AREAS[k].groups.forEach(function (gname) { home[gname] = k; }); });
+    var byGroup = {}, groupOrder = ['pistol', 'smg', 'rifle', 'lmg', 'shotgun', 'sniper', 'launcher', 'special', 'melee', 'thrown'];
+    for (i = 0; i < list.length; i++) { var gk = list[i].group; (byGroup[gk] = byGroup[gk] || []).push(list[i]); }
+    var spill = [];
+    groupOrder.forEach(function (gname) {
+      var L = byGroup[gname] || [], A0 = AREAS[home[gname]];
+      for (var j = 0; j < L.length; j++) { if (A0.items.length < A0.slots.length) A0.items.push(L[j]); else spill.push(L[j]); }
+    });
+    // the overflow: long guns to the long racks first, everything else to the pegboard first
+    for (i = 0; i < spill.length; i++) {
+      var e0 = spill[i], pref = e0.long ? ['east', 'back', 'west', 'islands', 'counter'] : ['west', 'back', 'east', 'islands', 'counter'];
+      for (a = 0; a < pref.length; a++) { var A1 = AREAS[pref[a]]; if (A1.items.length < A1.slots.length) { A1.items.push(e0); break; } }
     }
-    // every slot is filled, GTA style: a stock larger than the walls hangs once each, a smaller one repeats down the rows
-    // west pegboard: handguns, SMGs, throwables (3 rows x 7)
-    var hand = shorts.filter(function (x) { return !x.upright; }), thrown = shorts.filter(function (x) { return x.upright; });
-    var westList = hand.concat(thrown); if (!westList.length) westList = shorts;
-    // the back wall behind Merle: the priciest long guns (3 rows x 4); the east rack: the rest of the long guns (4 rows x 3)
-    var backList = longs.slice().sort(function (a, b) { return (b.price || 0) - (a.price || 0); }), eastList = longs.slice();
-    if (longs.length > 24) { backList = longs.slice(longs.length - 12); eastList = longs.slice(0, longs.length - 12); }
-    function fill(list, n, i0) { var out = []; if (!list.length) return out; for (var q = 0; q < n; q++) out.push(list[(q + (i0 || 0)) % list.length]); return out; }
-    var west = westList.length >= 21 ? westList.slice(0, 21) : fill(westList, 21), east = fill(eastList, 12), back = fill(backList, 12);
-    if (westList.length > 21) back = back.concat([]);   // the overflow goes in the display islands below
-    for (var r = 0; r < 3; r++) for (var c = 0; c < 7; c++) { var we = west[r * 7 + c]; if (we) hang(we, -8.9, 2.65 - r * 0.62, -1.2 + c * 1.05, 'e', 1.35); }
-    for (r = 0; r < 4; r++) for (c = 0; c < 3; c++) { var ee = east[r * 3 + c]; if (ee) hang(ee, 8.9, 2.75 - r * 0.55, -0.3 + c * 2.35, 'w', 1.2); }
-    for (r = 0; r < 3; r++) for (c = 0; c < 4; c++) { var be = back[r * 4 + c]; if (be) hang(be, -7.0 + c * 2.8, 2.6 - r * 0.6, -6.9, 's', 1.2); }
-    void placedShort; void placedLong;
-    // the display islands: handguns lying under the glass (browsable copies of the wall's)
-    var flat = hand.length > 21 ? hand.slice(21, 27) : fill(hand.slice().reverse(), Math.min(6, hand.length * 2));
-    for (i = 0; i < flat.length; i++) {
-      var fe = flat[i], fm = weaponMesh(fe.weaponId, fe.cls), fs = 1.3, fl = (fe.len || 0.3) * fs;
-      fm.scale.set(fs, fs, fs); fm.rotation.x = -Math.PI / 2; var hold = new THREE.Group(); hold.add(fm); fm.position.set(-fl / 2, 0, 0);
-      var isl = i < 3 ? -5.6 : 2.9, k2 = i % 3;
-      hold.position.set(isl + 0.45 + k2 * 0.85, 0.9, 2.1); room.group.add(hold);
-      room.items.push({ entry: fe, mesh: hold, face: 'up' });
+    // a small stock repeats in its own area (each area keeps its own classes); a full catalog never repeats
+    var small = list.length < 30;
+    ORDER_A.forEach(function (k) {
+      var A2 = AREAS[k], n0 = A2.items.length;
+      if (small && n0) for (var q = n0; q < A2.slots.length; q++) A2.items.push(A2.items[q % n0]);
+    });
+    var tmpBox = new THREE.Box3(), tmpV = new THREE.Vector3(), tmpC = new THREE.Vector3();
+    function place(entry, sl) {
+      var m = weaponMesh(entry.weaponId, entry.cls), orient = new THREE.Group(); orient.add(m);
+      if (sl.face === 'up') orient.rotation.x = -Math.PI / 2;            // lying on its side under the glass
+      orient.updateMatrixWorld(true);
+      tmpBox.setFromObject(orient); tmpBox.getSize(tmpV); tmpBox.getCenter(tmpC);
+      var sx = Math.max(tmpV.x, 0.02), sy = Math.max(tmpV.y, 0.02), sz = Math.max(tmpV.z, 0.02);
+      var sc = Math.min(1.35, sl.w / sx, sl.h / sy, sl.d ? sl.d / sz : 9);
+      orient.scale.setScalar(sc); orient.position.set(-tmpC.x * sc, -tmpC.y * sc, -tmpC.z * sc);
+      var holder = new THREE.Group(); holder.add(orient);
+      var face = sl.face, W2 = sx * sc, H2 = sy * sc;
+      if (face === 'e') holder.rotation.y = -Math.PI / 2; else if (face === 'w') holder.rotation.y = Math.PI / 2;
+      var y = sl.y + (face === 'up' || face === 'stand' ? H2 / 2 : 0);
+      holder.position.set(sl.x, y, sl.z); room.group.add(holder);
+      var tagW = 0.42, tagH = 0.13;
+      if (face === 'up' || face === 'stand') {
+        // a tag on the felt in front of the piece
+        var tg = tagMesh(entry.name, entry.price, 0.36, 0.11); tg.rotation.x = -Math.PI / 2 + 0.35; tg.position.set(sl.x, sl.y + 0.03, sl.z + (face === 'up' ? 0.3 : 0.22)); room.group.add(tg);
+      } else {
+        var off = face === 'e' ? [1, 0] : face === 'w' ? [-1, 0] : [0, 1], along = face === 'e' || face === 'w' ? [0, 1] : [1, 0];
+        var hw = Math.min(0.4, W2 * 0.3), py = y - H2 / 2 - 0.03;
+        for (var k = -1; k <= 1; k += 2) room.box('metal', sl.x + along[0] * hw * k - 0.015 - off[0] * 0.04, py, sl.z + along[1] * hw * k - 0.015 - off[1] * 0.04, 0.03 + Math.abs(off[0]) * 0.08, 0.03, 0.03 + Math.abs(off[1]) * 0.08, steel);
+        var tag = tagMesh(entry.name, entry.price, tagW, tagH);
+        tag.position.set(sl.x + off[0] * 0.025, py - 0.1, sl.z + off[1] * 0.025);
+        if (face === 'e') tag.rotation.y = Math.PI / 2; else if (face === 'w') tag.rotation.y = -Math.PI / 2;
+        room.group.add(tag);
+      }
+      room.items.push({ entry: entry, mesh: holder, face: face === 'stand' ? 'up' : face, area: sl.area });
     }
+    ORDER_A.forEach(function (k) { var A3 = AREAS[k]; for (var q = 0; q < A3.items.length; q++) { A3.slots[q].area = k; place(A3.items[q], A3.slots[q]); } });
+    room.stockAreas = {}; ORDER_A.forEach(function (k) { room.stockAreas[k] = AREAS[k].items.map(function (x) { return x.weaponId; }); });
+    // the feature wall gets a warm wash under the big sign; the counter and the islands their own labels
+    room.box('glow', -8.3, 2.98, -6.95, 11.2, 0.03, 0.02, [1.6, 1.3, 0.9]);
+    hangSign('feature', 'SNIPERS · HEAVY · SPECIALS', -6.7, -4.6, 2.5, 's');   // left of the shop sign, never in front of it
+    room.plane(texMat(signTex('cat-pistols-' + branch, 'HANDGUNS', { w: 512, h: 96, bg: '#101114', fg: B.accent, border: B.accent, size: 58 }), { basic: true }), -4.0, 0.55, -2.14, 1.2, 0.22, 's');
+    room.plane(texMat(signTex('cat-thrown-' + branch, 'THROWABLES', { w: 512, h: 96, bg: '#101114', fg: '#ffd27a', border: '#ffd27a', size: 54 }), { basic: true }), -4.3, 0.55, 2.62, 1.2, 0.22, 's');
+    room.plane(texMat(signTex('cat-thrown-' + branch, 'THROWABLES', { w: 512, h: 96, bg: '#101114', fg: '#ffd27a', border: '#ffd27a', size: 54 }), { basic: true }), 4.2, 0.55, 2.62, 1.2, 0.22, 's');
 
     // Merle and the counter interaction
     room.npcs.push({ cast: 'merle', role: 'clerk', name: 'Merle Firmness', x: -1.5, z: -3.9, yaw: Math.PI, color: '#3fd27f', hello: function () { return pickLine(shopBarks('door') || LINES.merleHello); } });
@@ -854,7 +921,8 @@
       var board = new THREE.Mesh(geo, heck); board.castShadow = true; pivot.add(board);
       var post = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.25, 0.06), mats().metal); post.position.set(0, -0.1, -0.04); pivot.add(post);
       pivot.position.set(x, 0.12, z); pivot.rotation.x = -Math.PI / 2; pivot.visible = false; room.group.add(pivot);
-      var t = { pivot: pivot, board: board, mats: { heckler: heck, moderator: mod }, x0: room.ox + x, z: room.oz + z, x: room.ox + x, y: 0.12, state: 'down', t: 0, life: 0, ang: -Math.PI / 2, moderator: false, mover: !!mover, dir: 1, speed: 0 };
+      var anchor = new THREE.Object3D(); anchor.position.set(0, 1.25, 0.02); anchor.name = 'range_target'; anchor.userData.rangeTarget = true; pivot.add(anchor);
+      var t = { pivot: pivot, board: board, mesh: anchor, mats: { heckler: heck, moderator: mod }, x0: room.ox + x, z: room.oz + z, x: room.ox + x, y: 0.12, state: 'down', t: 0, life: 0, ang: -Math.PI / 2, moderator: false, mover: !!mover, dir: 1, speed: 0, up: false, down: true };
       list.push(t);
       return t;
     }
@@ -866,7 +934,14 @@
 
   // ------------------------------------------------------------------ state --
   var S = { active: false, current: null, room: null, rooms: {}, trans: null, ret: null, npcs: [], prompt: null, near: null, browse: null, confirm: null, doors: [], doorSeed: null, doorCount: -1, overlay: null, holdExit: 0, muzzleT: 0, saved: { rangeBest: 0, medals: {} }, envSaved: false };
-  var RANGE = { running: false, t: 0, score: 0, hits: 0, shots: 0, best: 0, last: null, spawnT: 0, hold: 0, cool: 0, loan: null, rng: null, bodyHit: 0 };
+  var RANGE = { running: false, t: 0, score: 0, hits: 0, shots: 0, best: 0, last: null, spawnT: 0, hold: 0, cool: 0, loan: null, rng: null, bodyHit: 0,
+    targets: [],   // the current room's targets: {x, y, z, mesh (a chest-height anchor), up, down, moderator, mover}
+    // the UI's range HUD reads this when present: seconds left, score, medal thresholds
+    hud: function () {
+      if (!RANGE.running) return null;
+      var el = RANGE.t - COUNTDOWN;
+      return { time: el < 0 ? ROUND : Math.max(0, ROUND - el), countdown: el < 0 ? Math.ceil(-el) : 0, score: RANGE.score, hits: RANGE.hits, shots: RANGE.shots, best: RANGE.best, medal: medalFor(RANGE.score), medals: { bronze: MEDALS.bronze, silver: MEDALS.silver, gold: MEDALS.gold } };
+    } };
 
   function roomFor(kind, branch) {
     var key = kind + ':' + branch;
@@ -978,6 +1053,21 @@
       return r;
     };
     CB.fire._interiors = true;
+    // the green Both Sides Arms light at the door (Combat's shopTick: 0.5 s standing in it) walks the player into the armory
+    // instead of opening the v0.2 page over the street; a direct Combat.shop.open(id) (a script, a test, the counter of a build
+    // without the v0.3 UI) still opens the page
+    if (CB.shop && CB.shop.open && !CB.shop.open._interiors) {
+      var oOpen = CB.shop.open;
+      CB.shop.open = function (lmArg) {
+        var p = player(), sh = CB.shop;
+        if (!S.active && !S.trans && p && Interiors.shopLightEnters !== false && fromShopLight(sh, lmArg, p)) {
+          var lm = lmArg && typeof lmArg === 'object' ? lmArg : (W() && W().landmark ? W().landmark(lmArg) : null);
+          if (lm && Interiors.enter(lm, { landmark: lm })) return sh.state;
+        }
+        return oOpen.apply(this, arguments);
+      };
+      CB.shop.open._interiors = true;
+    }
     if (CB.update) {
       var oU = CB.update;
       CB.update = function (dt) { var r = oU.apply(this, arguments); try { Interiors.update(dt); } catch (e) { report(e, 'update'); } return r; };
@@ -1020,11 +1110,45 @@
     if (R.env) R.env.exposure = 1.05;
   }
   function outdoorEnv(R) { if (R.scene && S.indoorEnv && R.scene.environment === S.indoorEnv) R.scene.environment = S.envMap || null; S.envMap = null; }
-  function ensureWrapped() { wrapWorld(); wrapCombat(); wrapRender(); }
+  // the HUD arrow and the objective blip inside a room: an objective with no point of its own that is done in here (the
+  // range, a purchase at the counter) points at the booth or Merle; an objective out in the city points at the way out
+  function wrapMissions() {
+    var Ms = GTP.Missions; if (!Ms || wrapped.missions || !Ms.objectiveTarget) return;
+    wrapped.missions = true;
+    var oT = Ms.objectiveTarget;
+    Ms.objectiveTarget = function () {
+      var t = oT.apply(this, arguments);
+      if (!S.active || !S.room) return t;
+      try { var it = indoorTarget(t); if (it) return it; } catch (e) { report(e, 'objectiveTarget'); }
+      return t;
+    };
+    Ms.objectiveTarget._interiors = true;
+  }
+  function indoorTarget(t) {
+    var room = S.room, p = player(), cur = GTP.Missions.current ? GTP.Missions.current() : null, type = cur && cur.def ? cur.def.type : (t && t.type);
+    if (!p) return null;
+    var pt = null;
+    if (t && roomAt(t.x, t.z) === room) return null;                       // already a point in here
+    if (type === 'range' && room.booth && !RANGE.running) pt = room.booth;
+    else if (type === 'range' && RANGE.running) return null;
+    else if ((type === 'buy' || type === 'shop') && room.kind === 'armory') pt = room.inter.filter(function (q) { return q.kind === 'clerk'; })[0];
+    else if (t && room.exitDoor) pt = room.exitDoor;                         // somewhere in the city: the door first
+    if (!pt) return null;
+    return { x: pt.x, y: 0, z: pt.z, dist: U.dist2d(p.x, p.z, pt.x, pt.z), text: (GTP.Missions.state && GTP.Missions.state.objectiveText) || (t && t.text) || '', type: type, interior: true };
+  }
+  function ensureWrapped() { wrapWorld(); wrapCombat(); wrapRender(); wrapMissions(); }
 
   function zoneOf(room, x, z) {
     for (var k in room.zones) { var q = room.zones[k]; if (x >= q.x0 && x <= q.x1 && z >= q.z0 && z <= q.z1) return k; }
     return null;
+  }
+  // Combat's light trigger, not a script: the store's light under the player, its hold just spent and the light disarmed
+  function fromShopLight(sh, lmArg, p) {
+    var id = lmArg && typeof lmArg === 'object' ? lmArg.id : lmArg, st = null, list = sh._stores || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) st = list[i];
+    if (!st || p.inVehicle) return false;
+    var r = (GTP.C && GTP.C.MISSIONS && GTP.C.MISSIONS.markerRadius || 1.5) + 0.6;
+    return U.dist2d(p.x, p.z, st.x, st.z) < r && sh._armed && sh._armed[id] === false && sh._hold === 0 && !(GTP.game && GTP.game.state !== 'playing');
   }
   function canShoot(p) { return !!(S.room && zoneOf(S.room, p.x, p.z) === 'range'); }
   function muzzleLine() {
@@ -1047,7 +1171,7 @@
     return d;
   }
   function setFade(a) {
-    if (GTP.UI && GTP.UI.interiorFade) return;   // the UI draws its own when it has one
+    if (GTP.UI && (GTP.UI.interiorFade || GTP.UI.openArmory)) { if (S.overlay) S.overlay.style.opacity = '0'; return; }   // the v0.3 UI draws its own fade from interior:fade
     var d = overlay(); if (d) d.style.opacity = String(U.clamp(a, 0, 1).toFixed(3));
   }
 
@@ -1136,6 +1260,7 @@
         if (t > 0 && t < bestT) { bestT = t; best = it; }
       }
     }
+    S.byRay = !!best;
     if (best) return best;
     // the fallback: the nearest item within 2.4 m in front of the player
     var f = U.yawToDir(p.yaw), bd = 1e9;
@@ -1159,9 +1284,9 @@
     if (st.owned) return [e.name, 'OWNED', '[' + k + '] INSPECT'];
     return [e.name, st.price > 0 ? '$' + st.price : 'Ask Merle', '[' + k + '] INSPECT'];
   }
-  function browseTick(dt, room, p) {
+  function browseTick(dt, room, p, pre) {
     if (S.confirm) { S.confirm.t -= dt; if (S.confirm.t <= 0) S.confirm = null; }
-    var it = lookTarget(room, p);
+    var it = pre || lookTarget(room, p);
     S.browse = it;
     if (!it) return false;
     var st = itemStatus(it.entry), off = it.face === 'e' ? [0.45, 0] : it.face === 'w' ? [-0.45, 0] : it.face === 's' ? [0, 0.45] : it.face === 'n' ? [0, -0.45] : [0, 0];
@@ -1175,7 +1300,7 @@
         clerkSay(res && res.ok ? 'sale' : res && res.reason === 'locked' ? 'locked' : 'funds');
         emit('armory:buy', { itemId: e.itemId, weaponId: e.weaponId, ok: !!(res && res.ok), reason: res && res.reason });
       } else {
-        emit('armory:inspect', { weaponId: e.weaponId, itemId: st.itemId || e.itemId, name: e.name, price: st.price, owned: st.owned, locked: st.locked, store: S.current && S.current.store });
+        emit('armory:inspect', { weaponId: e.weaponId, itemId: st.itemId || e.itemId, name: e.name, price: st.price, owned: st.owned, locked: st.locked, store: S.current && S.current.store, storeId: S.current && S.current.store });
         // no armory card in the UI yet: the in-world prompt takes the purchase (a second press confirms)
         if (!uiArmory() && !st.locked && (!st.owned || st.ammoItem)) S.confirm = { item: it, t: 5, ammo: !!st.owned };
       }
@@ -1211,23 +1336,25 @@
     var store = S.current && S.current.store, lm = S.current && S.current.landmark;
     if (q.kind === 'clerk') {
       var CB = GTP.Combat;
-      if (GTP.UI && GTP.UI.openArmory) { try { GTP.UI.openArmory({ store: store, landmark: lm, counter: true }); } catch (e) { report(e, 'ui.openArmory'); } }
+      if (GTP.UI && GTP.UI.openArmory) { try { GTP.UI.openArmory(store, null); } catch (e) { report(e, 'ui.openArmory'); } }   // UI.openArmory(storeId, weaponId)
       else if (CB && CB.shop && CB.shop.open) { try { CB.shop.open(lm || store); } catch (e2) { report(e2, 'shop.open'); } }
       clerkSay('door');
       return;
     }
     if (q.kind === 'clothing' || q.kind === 'booth' || q.kind === 'wardrobe') {
       emit('clothing:open', { store: store, wardrobe: q.kind === 'wardrobe', booth: q.kind === 'booth' });
-      if (!(GTP.UI && GTP.UI.openClothing) && !(GTP.Systems && GTP.Systems.clothing)) fallbackOutfit(p);
+      if (!wardrobeUi('clothing')) fallbackOutfit(p);
       return;
     }
     if (q.kind === 'chair') {
       emit('barber:open', { store: store });
-      if (!(GTP.UI && GTP.UI.openBarber) && !(GTP.Systems && GTP.Systems.barber)) fallbackHair(p);
+      if (!wardrobeUi('barber')) fallbackHair(p);
       return;
     }
     if (q.kind === 'bed') { sleep(p); return; }
   }
+  // the UI's wardrobe screen (UI.openWardrobe, opened by its own clothing:open / barber:open listener) or an older hook
+  function wardrobeUi(mode) { var UI = GTP.UI; return !!(UI && (UI.openWardrobe || (mode === 'barber' ? UI.openBarber : UI.openClothing))); }
   // fallbacks until the systems / ui tracks land: cycle outfits and haircuts on the player and rebuild the mesh
   var OUTFITS = [
     { name: 'The Panelist', shirt: '#1e2a44', pants: '#2a2f4a', tie: 'red' }, { name: 'The Contrarian', shirt: '#c0392b', pants: '#1c1c1e', tie: 'none' },
@@ -1256,6 +1383,18 @@
   }
   function sleep(p) {
     var g = game(); if (!g) return;
+    // the systems track's safehouses: sleeping there passes the hours, pays the businesses and saves; an unowned place
+    // offers the property screen, a mission or a wanted level says why not
+    var Pr = GTP.Systems && GTP.Systems.properties, id = S.current && (S.current.store || S.current.branch);
+    if (Pr && Pr.sleep && id && Pr.def && Pr.def(id)) {
+      var r = null; try { r = Pr.sleep(id); } catch (e) { report(e, 'properties.sleep'); }
+      if (r && r.ok) { emit('safehouse:sleep', { store: id, saved: true }); toast('Slept on it. Game saved.'); return; }
+      var why = r && r.reason;
+      if (why === 'notowned') { emit('property:open', { id: id, from: 'interior' }); toast('Not your bed yet. The deed is on the property screen.'); return; }
+      if (why === 'mission') { toast('No naps mid-mission.'); return; }
+      if (why === 'wanted') { toast('Lose the heat before you sleep it off.'); return; }
+      if (r && r.reason === 'failed') { emit('safehouse:sleep', { store: id, saved: false }); toast('Slept on it. The save didn\'t take.'); return; }
+    }
     var Ms = GTP.Missions, busy = Ms && Ms.state && Ms.state.active;
     p.hp = p.maxHp || p.hp;
     if (!busy && g.time) { g.time.clock += 6; if (g.time.clock >= 24) { g.time.clock -= 24; g.time.day = (g.time.day || 0) + 1; } }
@@ -1304,7 +1443,7 @@
     RANGE.running = true; RANGE.t = 0; RANGE.score = 0; RANGE.hits = 0; RANGE.shots = 0; RANGE.spawnT = COUNTDOWN + 0.4; RANGE.last = null;
     RANGE.rng = GTP.makeRng ? GTP.makeRng(0x7A46E + (RANGE.rounds = (RANGE.rounds || 0) + 1)) : null;
     room.range.targets.forEach(function (t) { t.state = 'down'; t.t = 0; t.ang = -Math.PI / 2; t.moderator = false; t.board.material = t.mats.heckler; if (t.mover) { t.x = t.x0; t.pivot.position.x = t.x0 - room.ox; } t.pivot.rotation.x = t.ang; t.pivot.visible = false; });
-    emit('range:start', { store: S.current && S.current.store, weapon: id, seconds: ROUND });
+    emit('range:start', { store: S.current && S.current.store, weapon: id, seconds: ROUND, medals: { bronze: MEDALS.bronze, silver: MEDALS.silver, gold: MEDALS.gold } });
     clerkSay('range');
     drawBoard();
     return true;
@@ -1314,13 +1453,14 @@
     t.state = 'rising'; t.t = 0; t.life = life; t.moderator = !!mod; t.board.material = mod ? t.mats.moderator : t.mats.heckler;
     if (t.mover) { t.dir = rr() < 0.5 ? 1 : -1; t.speed = 2.0 + rr() * 1.4 + RANGE.t / ROUND; var room = S.room; t.x = room.ox + (t.dir > 0 ? 2.0 : 10.0); t.pivot.position.x = t.x - room.ox; }
   }
+  function anchor(t) { if (t.mesh) t.mesh.userData.down = t.down; }
   function settleTargets(dt, room) {
     var R = room.range; if (!R) return;
     for (var i = 0; i < R.targets.length; i++) {
       var t = R.targets[i]; if (t.state === 'down') continue;
       t.state = 'falling'; t.ang = Math.max(-Math.PI / 2, t.ang - dt * 7);
       if (t.ang <= -Math.PI / 2) { t.state = 'down'; if (t.mover) { t.x = t.x0; t.pivot.position.x = t.x0 - room.ox; } }
-      t.pivot.rotation.x = t.ang; t.pivot.visible = t.ang > -1.45;
+      t.pivot.rotation.x = t.ang; t.pivot.visible = t.ang > -1.45; t.up = false; t.down = true; anchor(t);
     }
   }
   function rangeTick(dt, room, p) {
@@ -1347,7 +1487,7 @@
         if (t.mover) { t.x += t.dir * t.speed * dt; t.pivot.position.x = t.x - room.ox; if (t.x < room.ox + 1.9 || t.x > room.ox + 10.1) t.state = 'falling'; }
         if (t.t >= t.life) t.state = 'falling';
       } else if (t.state === 'falling') { t.ang = Math.max(-Math.PI / 2, t.ang - dt * 7); if (t.ang <= -Math.PI / 2) { t.state = 'down'; if (t.mover) { t.x = t.x0; t.pivot.position.x = t.x0 - room.ox; } } }
-      t.pivot.rotation.x = t.ang; t.pivot.visible = t.ang > -1.45;
+      t.pivot.rotation.x = t.ang; t.pivot.visible = t.ang > -1.45; t.up = t.state === 'up' || (t.state === 'rising' && t.ang > -0.3); t.down = !t.up; anchor(t);
     }
     RANGE.boardT = (RANGE.boardT || 0) - dt; if (RANGE.boardT <= 0) { RANGE.boardT = 0.1; drawBoard(); }
     if (el >= ROUND) endRange(false);
@@ -1515,6 +1655,7 @@
     var R = Rd(); if (R && R.scene && room.group.parent !== R.scene) R.scene.add(room.group);
     room.group.visible = true;
     S.room = room; S.ret = ret; S.active = true; Interiors.active = true;
+    RANGE.targets = room.range ? room.range.targets : [];
     S.current = Interiors.current = { id: tg.kind, kind: tg.kind, store: tg.store, branch: tg.branch, landmark: tg.lm || null, room: room };
     S.confirm = null; S.browse = null; S.outfit = null;
     if (p.inVehicle && p.exitVehicle) { try { p.exitVehicle(); } catch (e) { /* optional */ } }
@@ -1531,7 +1672,7 @@
     removeNpcs(); hidePrompt();
     var shop = GTP.Combat && GTP.Combat.shop; if (shop && shop.state && shop.state.open && shop.close) { try { shop.close(); } catch (e) { /* optional */ } }
     if (room) { room.group.visible = false; if (room.group.parent) room.group.parent.remove(room.group); }
-    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null; S.confirm = null; S.browse = null;
+    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null; S.confirm = null; S.browse = null; RANGE.targets = [];
     var ret = S.ret; S.ret = null;
     if (p && ret) place(p, ret.x, ret.z, ret.y, ret.yaw);
     for (var i = 0; i < S.doors.length; i++) if (p && U.dist2d(p.x, p.z, S.doors[i].x, S.doors[i].z) < 3) S.doors[i].armed = false;
@@ -1591,8 +1732,12 @@
       rangeTick(dt, room, p);
       var g = game(); if (!g || g.state !== 'playing') { hidePrompt(); return; }
       if (GTP.Combat && GTP.Combat.shop && GTP.Combat.shop.state && GTP.Combat.shop.state.open) { hidePrompt(); return; }
-      var shown = interactTick(dt, room, p);
-      if (!shown && zoneOf(room, p.x, p.z) === 'store' && room.items.length) shown = browseTick(dt, room, p);
+      // what the player is looking at wins over standing near the counter; walking into the exit always counts
+      var inStore = zoneOf(room, p.x, p.z) === 'store' && room.items.length, shown = false;
+      var nearExit = room.exitDoor && U.dist2d(p.x, p.z, room.exitDoor.x, room.exitDoor.z) < room.exitDoor.r;
+      if (inStore && !nearExit) { var look = lookTarget(room, p); if (look && S.byRay) shown = browseTick(dt, room, p, look); }
+      if (!shown) shown = interactTick(dt, room, p);
+      if (!shown && inStore) shown = browseTick(dt, room, p);
       if (!shown) hidePrompt();
     },
     // tests / tools
@@ -1610,7 +1755,7 @@
       browse: function () { return S.browse ? { weaponId: S.browse.entry.weaponId, name: S.browse.entry.name } : null; },
       startRange: function () { var p = player(); return p ? startRange(p) : false; },
       endRange: function (aborted) { endRange(!!aborted); return RANGE.last; },
-      raiseAll: function () { if (!S.room || !S.room.range) return 0; var n = 0; S.room.range.targets.forEach(function (t) { if (!t.mover) { raise(t, 30, false); t.ang = 0; t.state = 'up'; t.pivot.rotation.x = 0; t.pivot.visible = true; n++; } }); return n; },
+      raiseAll: function () { if (!S.room || !S.room.range) return 0; var n = 0; S.room.range.targets.forEach(function (t) { if (!t.mover) { raise(t, 30, false); t.ang = 0; t.state = 'up'; t.pivot.rotation.x = 0; t.pivot.visible = true; t.up = true; t.down = false; anchor(t); n++; } }); return n; },
       doors: function () { refreshDoors(); return S.doors.map(function (d) { return { id: d.lm.id, kind: d.kind, x: d.x, z: d.z, nx: d.nx, nz: d.nz }; }); }
     },
     serialize: function () { return { rangeBest: S.saved.rangeBest | 0, medals: Object.assign({}, S.saved.medals) }; },
@@ -1633,7 +1778,7 @@
     removeNpcs(); hidePrompt();
     var room = S.room; if (room) { room.group.visible = false; if (room.group.parent) room.group.parent.remove(room.group); }
     var cur = S.current;
-    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null;
+    S.active = false; Interiors.active = false; S.room = null; S.current = Interiors.current = null; RANGE.targets = [];
     var R = Rd(); if (R) { R._envClock = null; outdoorEnv(R); }
     emit('interior:exit', { id: cur ? cur.id : null, kind: cur ? cur.kind : null, store: cur ? cur.store : null, quiet: true });
   }
