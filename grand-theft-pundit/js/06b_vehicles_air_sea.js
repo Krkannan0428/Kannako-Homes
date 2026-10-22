@@ -1648,7 +1648,9 @@
   // under the canopy, the legs hang. Everything else goes straight to the anim.
   var animHooked = false;
   function hookAnim() {
-    if (animHooked || !GTP.Anim || typeof GTP.Anim.syncMesh !== 'function' || PedP.syncMesh !== GTP.Anim.syncMesh) return;
+    // 06c replaces Ped.syncMesh at load; other tracks may wrap it after (07_ai's cower pose), so wrap whatever chain is
+    // current rather than requiring the Anim function itself
+    if (animHooked || !GTP.Anim || typeof GTP.Anim.syncMesh !== 'function' || typeof PedP.syncMesh !== 'function' || PedP.syncMesh._vehiclesRider) return;
     animHooked = true;
     var animSync = PedP.syncMesh;
     PedP.syncMesh = function (alpha) {
