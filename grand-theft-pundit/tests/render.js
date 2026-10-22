@@ -413,6 +413,68 @@ H.run('render', async (t) => {
   t.assert(camRig.planeD > camRig.planeR, 'QA-A-CAM-05: the chase camera is not inside the airliner: ' + JSON.stringify([camRig.planeD, camRig.planeR]));
   t.assert(camRig.deck.length === 2 && camRig.deck.every((q) => q.under && q.pitch > 0.8 && !(q.camOverDeck && q.camY > 6.3)), 'QA-A-DRV-07: looking up under the Loop keeps the camera under the slab: ' + JSON.stringify(camRig.deck));
   t.assert(camRig.nan.cam && camRig.nan.rig && camRig.nan.d < 8 && camRig.nanYaw, 'QAC-28: a NaN target or yaw does not poison the rig: ' + JSON.stringify([camRig.nan, camRig.nanYaw]));
+  const camRig2 = await cp.evaluate(() => {
+    const g = GTP.game, p = g.player, W = GTP.World, R = GTP.Render, C = GTP.C, out = {};
+    // QA-A-CAM-03 / QAC-17: flat out, the car holds its place on screen whatever the render alpha
+    const v = g.debug.spawnVehicle(40, 90, 'sports', { yaw: GTP.util.dirToYaw(1, 0) }); v.persistent = true;
+    g.debug.teleport(40, 90); v.enter(p, 0); g.advance(0.05); R.rig.yaw = v.yaw; R.rig.snap();
+    GTP.Input.set('forward', true); for (let i = 0; i < 240; i++) g.advance(1 / 60);
+    const ys = [];
+    for (const a of [0, 0.5, 1]) { g.render(a); ys.push(R.worldToScreen(v.mesh.position.x, v.mesh.position.y + 0.8, v.mesh.position.z).sy); }
+    GTP.Input.set('forward', false);
+    out.interp = { speed: +v.speed2d().toFixed(1), range: +(Math.max(...ys) - Math.min(...ys)).toFixed(2) };
+    p.exitVehicle(); g.advance(0.1); v.destroy(); g.advance(0.05);
+    // QA-A-CAM-06: a bus backed up to a wall: the boom climbs, its own roof does not fill the screen
+    const b = W.buildings.filter((b) => b.h >= 9 && [1, 2, 3].every((k) => W.isWalkable(W.tile(b.tx - k, b.tz + (b.td >> 1))) && !W.deck[(b.tz + (b.td >> 1)) * W.w + b.tx - k]))[0];
+    const z = b.z + b.d / 2 + 0.5, yaw = Math.PI / 2;
+    const bus = g.debug.spawnVehicle(b.x - 30, z, 'bus', { yaw }); bus.persistent = true;
+    g.debug.teleport(b.x - 30, z); bus.enter(p, 0); g.advance(0.05);
+    g.debug.teleport(b.x - bus.cls.length / 2 - 0.35, z); bus.yaw = yaw; bus.snap();
+    R.rig.yaw = yaw; R.rig.pitch = 0.14; R.rig.snap(); g.advance(0.5);
+    GTP.Entities.sync(1); R.camera.updateMatrixWorld(); bus.mesh.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster(); rc.layers.enableAll(); let hit = 0, n = 0;
+    for (let i = 0; i < 32; i++) for (let j = 0; j < 18; j++) { rc.setFromCamera(new THREE.Vector2((i + 0.5) / 16 - 1, (j + 0.5) / 9 - 1), R.camera); n++; if (rc.intersectObject(bus.mesh, true).length) hit++; }
+    out.bus = { cover: +(hit / n).toFixed(2), camY: +R.camera.position.y.toFixed(2), camInB: W.tile(Math.floor(R.camera.position.x / 4), Math.floor(R.camera.position.z / 4)) === W.T.BUILDING };
+    p.exitVehicle(); g.advance(0.1); bus.destroy(); g.advance(0.05);
+    // QA-A-CAM-07: after a teleport (live chunk budget) no chunk in view and inside the fog start is missing on the first frame
+    const missing = () => {
+      const cam = R.camera, S = C.TILE * C.CHUNK_TILES; cam.updateMatrixWorld();
+      const fr = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+      const nn = Math.ceil(W.w / C.CHUNK_TILES), list = [];
+      for (let zz = 0; zz < nn; zz++) for (let xx = 0; xx < nn; xx++) {
+        const qx = Math.max(xx * S, Math.min(cam.position.x, xx * S + S)), qz = Math.max(zz * S, Math.min(cam.position.z, zz * S + S));
+        const dn = Math.hypot(qx - cam.position.x, qz - cam.position.z);
+        if (dn > R.scene.fog.near) continue;
+        if (!fr.intersectsBox(new THREE.Box3(new THREE.Vector3(xx * S, -2, zz * S), new THREE.Vector3(xx * S + S, 30, zz * S + S)))) continue;
+        if (!R.chunks.has(xx + ',' + zz)) list.push(xx + ',' + zz);
+      }
+      return list;
+    };
+    R.headless = false;
+    R.invalidateAll(); R.prebuild(110, 270, 300);
+    g.debug.teleport(560, 610); p.yaw = Math.PI; R.rig.yaw = Math.PI; R.rig.snap(); g.advance(1 / 60); g.render();
+    out.pop = missing();
+    // QAC-10: a sweep over the map keeps a ring of chunks, not the whole city
+    let maxN = 0;
+    for (const [x, zq] of [[100, 100], [800, 100], [800, 800], [100, 800], [450, 450]]) {
+      g.debug.teleport(x, zq); g.advance(1 / 60);
+      for (let i = 0; i < 80; i++) R.ensureChunks();
+      maxN = Math.max(maxN, R.chunks.size);
+    }
+    R.headless = true;
+    out.evict = { maxN, total: Math.ceil(W.w / C.CHUNK_TILES) * Math.ceil(W.h / C.CHUNK_TILES), unbuilds: R.stats.chunkUnbuilds || 0 };
+    // QA-A-CAM-08: the entity draw ranges sit inside the fog, where it already hides them
+    g.render();
+    const fog = R.scene.fog, Q = C.QUALITY;
+    out.draw = { near: fog.near, far: fog.far, ped: Q.pedDraw, car: Q.vehicleDraw, pedFog: +((Q.pedDraw - fog.near) / (fog.far - fog.near)).toFixed(2), carFog: +((Q.vehicleDraw - fog.near) / (fog.far - fog.near)).toFixed(2) };
+    return out;
+  });
+  console.log('  camera rig 2: ' + JSON.stringify(camRig2));
+  t.assert(camRig2.interp.speed > 30 && camRig2.interp.range < 2, 'QA-A-CAM-03 / QAC-17: the camera is interpolated with the car (screen drift across alpha < 2 px): ' + JSON.stringify(camRig2.interp));
+  t.assert(camRig2.bus.cover < 0.4 && !camRig2.bus.camInB, 'QA-A-CAM-06: a bus at a wall covers less than 40% of the screen: ' + JSON.stringify(camRig2.bus));
+  t.assert(camRig2.pop.length === 0, 'QA-A-CAM-07: no chunk in view inside the fog start is missing after a teleport: ' + JSON.stringify(camRig2.pop));
+  t.assert(camRig2.evict.unbuilds > 0 && camRig2.evict.maxN < camRig2.evict.total * 0.6, 'QAC-10: far chunks are unbuilt: ' + JSON.stringify(camRig2.evict));
+  t.assert(camRig2.draw.pedFog >= 0.5 && camRig2.draw.carFog >= 0.5 && camRig2.draw.ped < camRig2.draw.far && camRig2.draw.car < camRig2.draw.far, 'QA-A-CAM-08: peds and vehicles are culled inside the fog: ' + JSON.stringify(camRig2.draw));
   const crErr = await t.errors(cr);
   t.assert(crErr.length === 0, 'camera rig errors:\n' + crErr.join('\n'));
   await cp.close();
