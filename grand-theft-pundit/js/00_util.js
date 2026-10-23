@@ -8,7 +8,7 @@
   'use strict';
   var GTP = window.GTP = window.GTP || {};
   GTP.errors = GTP.errors || [];
-  GTP.VERSION = '0.2.0';
+  GTP.VERSION = '0.3.1';
 
   // ---------------------------------------------------------------- rng ----
   // mulberry32: tiny, fast, fully seedable. Math.random is banned in js/.

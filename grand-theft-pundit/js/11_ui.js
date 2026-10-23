@@ -1882,9 +1882,9 @@
     if (r.slots && r.slots[tt.slotSel]) r.slots[tt.slotSel]._sel = true;
     tt._slotInfo = r;
   }
-  // the version on the title: GTP.VERSION (00_util.js) still reads 0.2.0 in the v0.3 build; the UI shows the release it
-  // belongs to (desktop/package.json: 0.3.0) unless GTP.VERSION is newer
-  var RELEASE = '0.3.0';
+  // the version on the title: the release the build belongs to (desktop/package.json), or GTP.VERSION (00_util.js) when
+  // that is newer
+  var RELEASE = '0.3.1';
   function gameVersion() {
     var v = String(GTP.VERSION || ''), a = v.split('.').map(Number), b = RELEASE.split('.').map(Number);
     for (var i = 0; i < 3; i++) { if ((a[i] || 0) > b[i]) return v; if ((a[i] || 0) < b[i]) return RELEASE; }

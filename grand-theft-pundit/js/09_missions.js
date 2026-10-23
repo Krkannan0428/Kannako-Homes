@@ -844,7 +844,9 @@
   // door of the landmark they walked in through, so "walk up to the door" is met by a player who went straight in
   function outsidePos(p) {
     var I = GTP.Interiors, cur = I && I.active ? I.current : null, lm = cur && typeof cur === 'object' ? cur.landmark : null;
-    var d = lm ? resolvePoint({ landmark: lm }) : null;
+    // Interiors.current.landmark is the landmark object (13_interiors doEnter); resolvePoint takes its id
+    var id = lm && typeof lm === 'object' ? lm.id : lm;
+    var d = id ? resolvePoint({ landmark: id }) : null;
     return d || p;
   }
   var H = {};

@@ -1,7 +1,7 @@
 {
   "name": "grand-theft-pundit",
   "productName": "Grand Theft Pundit",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Grand Theft Pundit: a third-person open-city parody game about the pundit-industrial complex. Desktop build of the browser game.",
   "private": true,
   "license": "UNLICENSED",
