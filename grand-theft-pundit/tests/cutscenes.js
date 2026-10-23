@@ -7,7 +7,8 @@
  *  5 determinism: the same script twice puts the camera in the same place at the same time
  *  6 a mission intro (m00_intro from its light) plays cs_intro_m00_intro with the marker's giver and Kip reused; abort cleans up
  *  7 the `cutscene` objective type plays an inline script and completes; roof actors stand on Goldplate Tower
- *  8 hints: fire once per save as 'hint' events, queued 2 s apart, never two at once; h_enter from proximity */
+ *  8 hints: fire once per save as 'hint' events, queued 2 s apart, never two at once; h_enter from proximity
+ *  9 QA regressions: QA-C1-04/11/12; QAC-38 (repeated role extras), QAC-39 (a reused ped's placard), QAC-11 (death mid-cutscene) */
 'use strict';
 const H = require('./_harness');
 
@@ -249,6 +250,43 @@ H.run('cutscenes', async (t) => {
   }
   t.assert(Math.abs(ots.clockDuring - 6.4) < 0.05 && Math.abs(ots.clockAfter - ots.clock0) < 0.2, 'QA-C1-12: the script\'s clock for its duration, the game\'s back after: ' + JSON.stringify(ots));
   t.assert(ots.yDuring > 10 && ots.back < 1.5 && ots.yAfter < 3, 'QA-C1-11: the roof spot is undone when the script ends: ' + JSON.stringify(ots));
+
+  // QAC-38: six 'protester' entries are six extras; QAC-39: a placard on a reused ped rebuilds its mesh and goes back after;
+  // QAC-11: a death mid-cutscene ends it for the WASTED shot, the hidden stars stay gone, onDone waits for the respawn
+  const qa = await page.evaluate(() => {
+    const Cs = GTP.Cutscenes, g = GTP.game, p = g.player, E = GTP.Entities, out = {};
+    const hasSign = (e) => { let f = false; if (e && e.mesh) e.mesh.traverse((o) => { if (o.userData && o.userData.sign) f = true; }); return f; };
+    if (Cs.active) Cs.cancel(); g.advance(0.2);
+    if (Cs.scriptFor('cs_intro_m06_rally')) {
+      Cs.play('cs_intro_m06_rally'); g.advance(0.2);
+      const prot = E.list.filter((e) => e.cutscene && e.castId === 'protester' && !e.removed), xs = prot.map((e) => e.x);
+      out.rally = { n: prot.length, peds: new Set(prot.map((e) => e.id)).size, spread: +(Math.max.apply(null, xs) - Math.min.apply(null, xs)).toFixed(1) };
+      Cs.skip(); g.advance(0.2);
+      out.rally.left = E.list.filter((e) => e.cutscene && !e.removed).length;
+    }
+    const look = Object.assign({}, GTP.Content.cast.kip.look); delete look.sign;
+    const kip = g.debug.spawnPed(p.x + 3, p.z, look, 'npc'); kip.castId = 'kip';
+    Cs.play({ id: 't_sign', shots: [{ cam: { from: { entity: 'player', offset: { x: 0, y: 2, z: 4 } }, to: { entity: 'actor:kip' }, seconds: 1 }, actors: [{ castId: 'kip', sign: 'MATTRESS' }] }] }, null, { reuse: { kip } });
+    g.advance(0.1);
+    out.sign = { during: hasSign(kip), look: kip.look.sign };
+    Cs.skip(); g.advance(0.1);
+    out.sign.after = hasSign(kip); out.sign.lookAfter = kip.look.sign == null ? null : kip.look.sign; out.sign.inScene = !!(kip.mesh && kip.mesh.parent);
+    E.remove(kip); g.advance(0.1);
+    let done = 0;
+    GTP.AI.wanted.set(2);
+    Cs.play('cs_opening', () => { done++; }); g.advance(1);
+    p.hp = 0; g.advance(0.3);
+    out.dead = { state: g.state, active: Cs.active, letterbox: Cs.letterbox, free: !!GTP.Render.free, frozen: !!p._frozen, done };
+    let n = 0; while (g.state !== 'playing' && n++ < 300) g.advance(0.1);
+    g.advance(0.2);
+    out.respawn = { state: g.state, active: Cs.active, done, wanted: GTP.AI.wanted.level };
+    return out;
+  });
+  console.log('  qa round 1: ' + JSON.stringify(qa));
+  if (qa.rally) t.assert(qa.rally.n === 6 && qa.rally.peds === 6 && qa.rally.spread > 6 && qa.rally.left === 0, 'QAC-38: the rally\'s six protester entries are six extras across the line, all gone after: ' + JSON.stringify(qa.rally));
+  t.assert(qa.sign.during && qa.sign.look === 'MATTRESS' && !qa.sign.after && qa.sign.lookAfter === null && qa.sign.inScene, 'QAC-39: a reused ped shows the script\'s placard and gets its own look back: ' + JSON.stringify(qa.sign));
+  t.assert(qa.dead.state === 'wasted' && !qa.dead.active && !qa.dead.letterbox && !qa.dead.free && !qa.dead.frozen && qa.dead.done === 0, 'QAC-11: dying in a cutscene ends it for the WASTED shot: ' + JSON.stringify(qa.dead));
+  t.assert(qa.respawn.state === 'playing' && qa.respawn.done === 1 && qa.respawn.wanted === 0, 'QAC-11: onDone runs at the respawn and the hidden stars stay cleared: ' + JSON.stringify(qa.respawn));
 
   const errs = await t.errors(ctx);
   t.assert(errs.length === 0, 'errors:\n' + errs.join('\n'));

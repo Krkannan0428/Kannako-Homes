@@ -235,8 +235,12 @@ H.run('story', async (t) => {
     const mk = S.debug.markers().find((m) => m.id === 'rr_02');
     g.debug.teleport(mk.x + 20, mk.z); g.advance(0.3); g.debug.teleport(mk.x, mk.z); g.advance(0.8);
     const started = S.active(); g.advance(3.2);
+    // QAC-39: every heckler carries its placard (setSign rebuilds the mesh)
+    const hasSign = (e) => { let f = false; if (e && e.mesh) e.mesh.traverse((o) => { if (o.userData && o.userData.sign) f = true; }); return f; };
+    const hk = ((S.current() && S.current().hecklers) || []).filter((h) => !h.removed);
+    const signs = { hecklers: hk.length, withSign: hk.filter(hasSign).length };
     p.applyDamage(9999, null, 'debug'); g.advance(0.2);
-    out.rampage = { started, afterDeath: S.active(), pistol: p.weapons.pistol || 0 };
+    out.rampage = { started, afterDeath: S.active(), pistol: p.weapons.pistol || 0, signs };
     g.advance(12);
     out.rampage.afterRespawn = S.active(); out.rampage.state = g.state;
     // QA-CMB-06: the click that closes a line is not a shot
@@ -248,6 +252,13 @@ H.run('story', async (t) => {
     GTP.Input.set('shoot', false); g.advance(0.1);
     GTP.Input.set('shoot', true); g.advance(0.1); GTP.Input.set('shoot', false); g.advance(0.1);
     out.latch.after = (p.stats.shots || 0) - shots0;
+    // QA-B-NP-04: an enter_vehicle objective names the enter key under it while on foot, and drops it once in
+    M.registerTest({ id: 't_enter', title: 'Enter', giver: 'gus', marker: 'campus_quad', requires: [], reward: 1, intro: [], outro: [], objectives: [{ type: 'enter_vehicle', spawn: { type: 'sedan', at: { landmark: 'campus_quad' } }, text: 'Get in' }, { type: 'goto', target: { landmark: 'stadium' }, text: 'Far' }], failOn: [] });
+    M.start('t_enter', { skipIntro: true }); g.advance(0.3);
+    out.enter = { hint: M.state.hint };
+    const ev = M.current().ctx.vehicle; ev.enter(p, 0); g.advance(0.3);
+    out.enter.after = M.state.hint; out.enter.next = M.current() && M.current().def.type;
+    M.abort(); g.advance(0.2); if (p.inVehicle) p.exitVehicle(); g.advance(0.2);
     out.errors = GTP.errors.map((e) => e.where + ': ' + e.message);
     return out;
   });
@@ -260,6 +271,8 @@ H.run('story', async (t) => {
   t.assert(qa.carGoto.done, 'QA-C1-10: a goto reached by car completes once stopped: ' + JSON.stringify(qa.carGoto));
   t.assert(qa.rampage.started === 'ratio_rampages' && qa.rampage.afterDeath === null && qa.rampage.afterRespawn === null && qa.rampage.pistol === 0, 'QA-STR-01 / STR-07: death ends the rampage and the loaner goes back: ' + JSON.stringify(qa.rampage));
   t.assert(qa.latch.state === 'playing' && qa.latch.shots === 0 && qa.latch.after >= 1, 'QA-CMB-06: the press that closes the dialogue fires nothing; the next one does: ' + JSON.stringify(qa.latch));
+  t.assert(qa.rampage.signs.hecklers > 0 && qa.rampage.signs.withSign === qa.rampage.signs.hecklers, 'QAC-39: the rampage hecklers carry their placards: ' + JSON.stringify(qa.rampage.signs));
+  t.assert(/^Press (F|Y|ENTER)\b/.test(qa.enter.hint || '') && qa.enter.after === null && qa.enter.next === 'goto', 'QA-B-NP-04: "get in" names the enter key on foot, and drops it once in: ' + JSON.stringify(qa.enter));
   t.assert(qa.errors.length === 0, 'qa errors: ' + qa.errors.join(' | '));
   const qerrs = await t.errors(q);
   t.assert(qerrs.length === 0, 'errors:\n' + qerrs.join('\n'));

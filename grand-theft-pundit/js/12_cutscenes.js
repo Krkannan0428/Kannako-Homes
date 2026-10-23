@@ -193,11 +193,17 @@
     }
     // a placard (Roz's CHEESE, Kip's MATTRESS): the look changes, so the mesh is rebuilt
     if (a.sign != null && ped.look && ped.look.sign !== a.sign && ped.kind !== 'player') {
+      if (cur.spawned.indexOf(ped) < 0 && !cur.signWas.some(function (r) { return r.ped === ped; })) cur.signWas.push({ ped: ped, sign: ped.look.sign });   // a reused ped gets its own look back (QAC-39)
       ped.look.sign = a.sign;
-      var Rd = GTP.Render; if (Rd && Rd.detach && Rd.attach) { try { Rd.detach(ped); Rd.attach(ped); ped._parts = null; } catch (e) { /* cosmetic */ } }
+      remesh(ped);
     }
     if (a.anim !== undefined) pose(ped, a.anim || 'idle');
     else if (!ped.poseAnim) pose(ped, 'idle');
+  }
+  // Render.attach builds only when there is no mesh: detach (05d releases the look), drop it, attach builds the new look (QAC-39)
+  function remesh(ped) {
+    var Rd = GTP.Render; if (!Rd || !Rd.detach || !Rd.attach) return;
+    try { Rd.detach(ped); ped.mesh = null; ped._parts = null; Rd.attach(ped); } catch (e) { /* cosmetic */ }
   }
   // the pill's title: the script's own, else the mission it introduces (never a raw id like cs_intro_m12b_scope)
   function scriptTitle(c) {
@@ -212,13 +218,14 @@
     var at = a.at ? spot(a.at, true) : null, pl = player(), x = at ? at.x : (pl ? pl.x : null), z = at ? at.z : (pl ? pl.z : null);
     return AI.residents.near(id, x, z, 60);
   }
-  function actorFor(a) {
+  // slot: the key of a role's 2nd, 3rd... entry in one shot ('protester#2'): an extra of its own, never the reused or resident ped (QAC-38)
+  function actorFor(a, slot) {
     var id = a.castId || a.id; if (!id) return null;
-    var ped = cur.actors[id];
+    var key = slot || id, ped = cur.actors[key];
     if (ped && !ped.removed) return ped;
     if (id === 'player') ped = player();
-    else if (cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
-    else if (residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
+    else if (!slot && cur.reuse[id] && !cur.reuse[id].removed) { ped = cur.reuse[id]; cur.reused.push(ped); }
+    else if (!slot && residentFor(id, a)) { ped = residentFor(id, a); cur.reused.push(ped); }   // Merle already at his door: the same man, not a twin
     else {
       var at = a.at ? spot(a.at, true) : null, pl = player();
       var x = at ? at.x : (pl ? pl.x + 2 : 0), z = at ? at.z : (pl ? pl.z : 0);
@@ -232,7 +239,7 @@
       E().add(ped);
       cur.spawned.push(ped);
     }
-    cur.actors[id] = ped;
+    cur.actors[key] = ped;
     if (id === 'player') { if (ped.inVehicle && a.at) ped.exitVehicle(); ped.stop(); ped.aiming = false; ped.lockTarget = null; }
     freeze(ped);
     return ped;
@@ -241,6 +248,8 @@
     var i, p;
     for (i = 0; i < cur.spawned.length; i++) { p = cur.spawned[i]; pose(p, null); thaw(p); if (!p.removed) { if (p.destroy) p.destroy(); E().remove(p); } }
     for (i = 0; i < cur.reused.length; i++) { p = cur.reused[i]; pose(p, null); thaw(p); }
+    for (i = 0; i < cur.signWas.length; i++) { var sw = cur.signWas[i]; if (!sw.ped.removed && sw.ped.look) { sw.ped.look.sign = sw.sign; remesh(sw.ped); } }
+    cur.signWas.length = 0;
     for (i = 0; i < cur.vehicles.length; i++) { var v = cur.vehicles[i]; if (!v.removed) { if (v.destroy) v.destroy(); E().remove(v); } }
     var pl = player(); if (pl) { pose(pl, null); thaw(pl); pl.controlEnabled = true; }
     cur.spawned.length = 0; cur.reused.length = 0; cur.vehicles.length = 0; cur.actors = {};
@@ -266,8 +275,11 @@
     var s = cur.script, shot = s.shots[index], cam = shot.cam || {};
     cur.i = index; cur.shot = shot; cur.t = 0; cur.hold = 0; cur.linesDone = false; cur.camSnap = true;
     // actors first: the camera may frame them
-    var acts = shot.actors || [];
-    for (var i = 0; i < acts.length; i++) { var ped = actorFor(acts[i]); if (ped) placeActor(ped, acts[i]); }
+    var acts = shot.actors || [], seen = {};
+    for (var i = 0; i < acts.length; i++) {
+      var role = acts[i].castId || acts[i].id, nth = seen[role] = (seen[role] || 0) + 1;
+      var ped = actorFor(acts[i], nth > 1 ? role + '#' + nth : null); if (ped) placeActor(ped, acts[i]);
+    }
     // a later shot of a mission intro: whoever has no facing of their own turns to the player, and the player to the giver,
     // so the reverse shot sees faces, not the backs the first shot left them with (QA-C1-04)
     if (index > 0 && s.mission) faceForShot(acts, cam.to);
@@ -368,6 +380,18 @@
     GTP.Events.emit('cutscene:end', { id: c.script.id || null, skipped: !!c.skipped, completed: runDone !== false });
     if (runDone !== false && typeof c.onDone === 'function') { try { c.onDone(); } catch (e) { U.reportError(e, 'cutscenes.onDone'); } }
   }
+  // a death or a bust while a cutscene runs (the world keeps simulating) ends it at once, so the WASTED / BUSTED shot plays;
+  // the stars it hid stay cleared and its onDone waits for the respawn (QAC-11). A mission's cutscene is cancelled by its fail
+  var pendingDone = null;
+  function endForRespawn() {
+    if (!cur) return;
+    var done = cur.onDone; cur.onDone = null; cur.wantedWas = 0;
+    finish(false);
+    if (typeof done === 'function') pendingDone = done;
+  }
+  GTP.Events.on('player:wasted', endForRespawn);
+  GTP.Events.on('busted', endForRespawn);
+  GTP.Events.on('player:respawn', function () { var f = pendingDone; pendingDone = null; if (f) { try { f(); } catch (e) { U.reportError(e, 'cutscenes.onDone'); } } });
   var Cutscenes = GTP.Cutscenes = {
     K: K,
     active: false,
@@ -383,7 +407,7 @@
       if (!s || !s.shots || !s.shots.length || !g || !pl) return false;
       if (cur) return false;
       cur = {
-        script: s, i: -1, t: 0, shot: null, actors: {}, spawned: [], reused: [], vehicles: [], reuse: opts.reuse || {}, onDone: onDone || null, lines: opts.lines || null, mission: opts.mission || null,
+        script: s, i: -1, t: 0, shot: null, actors: {}, spawned: [], reused: [], vehicles: [], signWas: [], reuse: opts.reuse || {}, onDone: onDone || null, lines: opts.lines || null, mission: opts.mission || null,
         restore: g.state === 'cutscene' ? 'playing' : g.state, skipHoldT: 0, hold: 0, linesDone: true, lineToken: 0, wantedWas: 0, alarmWas: false, skipped: false, musicWas: null,
         from: null, moveTo: null, toSpec: null, seconds: 4, ease: 'inout', camSnap: true, lastFrom: null, look: null, startedAt: simT()
       };
@@ -422,7 +446,7 @@
     },
     skip: function () { if (!cur) return false; cur.skipped = true; finish(true); return true; },
     cancel: function () { if (!cur) return false; finish(false); return true; },
-    reset: function () { if (cur) finish(false); },
+    reset: function () { pendingDone = null; if (cur) finish(false); },
     update: function (dt) {
       if (!cur) return;
       var c = cur, g = game(), In = GTP.Input, Rd = GTP.Render, cam = Rd && Rd.camera;

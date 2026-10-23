@@ -114,8 +114,8 @@ Phone call lines are `GTP.Content.parity.calls[missionId]`, which may be an arra
 or `{from, lines}`. Without that data the call uses one of four generic giver lines naming the place and the mission title.
 
 ## Events consumed
-`interior:enter`, `shop:buy`, `range:end`, `heist:plan`, `boss:defeated`, `player:wasted`, `busted`, `vehicle:exploded`,
-`vehicle:damage`, `pickup`, `vehicle:enter`.
+`interior:enter`, `shop:buy`, `range:end`, `heist:plan`, `boss:defeated`, `player:wasted`, `busted`, `player:respawn`,
+`vehicle:exploded`, `vehicle:damage`, `pickup`, `vehicle:enter`.
 
 ## Wrappers on other modules (fold in at integration)
 - **`GTP.Events.on` / `off`** (00_util) are wrapped once at 09's load to keep a listener count per event name
@@ -163,6 +163,14 @@ addMarker, removeMarker, updateEnvironment}`, `THREE` (for the beacon mesh).
 | CMB-01 | A `vehicle:exploded` with no `vehicle:damage` (a direct rocket) records the player's weapon as the ignite hit, so m13b's vans count |
 | CMB-06 | The fire latch (above) |
 | CMB-10 | Stationary ranged goons open fire from `max(weapon range, spawn.fireRange, 140 m)`. Inside the gun's range they fire real rounds. Beyond it they take potshots that land short and wide ("badly": a tracer, a report and `mission:potshot`, but no real round), so a sniper duel does not alarm the city's police. The courier sightlines in 24_content are content-side |
+
+## Integration round 1 fixes (cutscenes cluster)
+| id | fix |
+|---|---|
+| QAC-11 | `player:wasted` / `busted` during a cutscene end it at once (no letterbox, free camera or frozen player over the WASTED / BUSTED shot). The stars it hid stay cleared, and its `onDone` is held until `player:respawn`, so `cs_opening` still starts m00 and an act cutscene still continues the story. A mission's own cutscene is cancelled by the mission fail first |
+| QAC-38 | A role listed more than once in one shot (the generated rallies' six `protester` entries) gets one extra per entry. `Cutscenes.actors()` keys the 2nd, 3rd... as `protester#2`, `protester#3`; `ped.castId` stays `protester`. A repeated entry never takes the reused or resident ped |
+| QAC-39 | A placard change rebuilds the ped's mesh (`detach`, `mesh = null`, `attach`; `Render.attach` builds only when there is no mesh). A reused ped gets its own `look.sign` and mesh back when the script ends. The same fix in 09 `setSign` makes the rampage hecklers' placards show |
+| QA-B-NP-04 | `enter_vehicle` has an objective hint while on foot: "Press F (or Enter) at a door to get in" (`GTP.UI.glyph('enter')`: Y on a pad, ENTER on touch). The h_enter proximity hint is unchanged: QA's `tests/regress/qa_b_np_04.js` expects it to fire in m00 |
 
 ## Decisions
 - The first mission starts by itself after the opening, **with** its intro cutscene. The intro is story, and the dialogue

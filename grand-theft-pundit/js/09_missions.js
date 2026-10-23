@@ -847,6 +847,12 @@
       if (vehicleLost(c.vehicle)) { c.failReason = 'vehicle_lost:' + (c.tag || c.vehicle.type); return 'fail'; }
       return (p.inVehicle === c.vehicle && c.vehicle.driver === p) ? 'done' : null;
     },
+    // the enter key under the objective while on foot (QA-B-NP-04): F (or Enter), Y on a pad, ENTER on touch
+    hint: function (o, c, p) {
+      if (p.inVehicle || vehicleLost(c.vehicle)) return null;
+      var k = GTP.UI && GTP.UI.glyph ? GTP.UI.glyph('enter') : 'F';
+      return 'Press ' + k + (k === 'F' ? ' (or Enter)' : '') + ' at a door to get in';
+    },
     target: function (o, c) { return c.vehicle && !c.vehicle.removed ? { x: c.vehicle.x, z: c.vehicle.z, y: c.vehicle.y } : null; }
   };
   H.pickup = {
@@ -3038,12 +3044,12 @@
     for (var i = 1; i < n; i++) { var t = i / n, x = a.x + dx * t, z = a.z + dz * t, y = U.lerp(a.y || 0, b.y || 0, t); if (Wd.solidAt(x, z, y + 0.8)) return false; }
     return true;
   }
-  // a heckler's cardboard sign: the look changes, so the mesh is rebuilt
+  // a heckler's cardboard sign: the look changes, so the mesh is rebuilt (Render.attach builds only when there is none; QAC-39)
   function setSign(ped, text) {
     if (!ped || !ped.look) return;
     ped.look.sign = text;
     var Rd = GTP.Render;
-    if (Rd && Rd.detach && Rd.attach) { try { Rd.detach(ped); Rd.attach(ped); } catch (e) { /* a sign is cosmetic */ } }
+    if (Rd && Rd.detach && Rd.attach) { try { Rd.detach(ped); ped.mesh = null; ped._parts = null; Rd.attach(ped); } catch (e) { /* a sign is cosmetic */ } }
   }
 
   // ------------------------------------------------------------------------- the six strands --
